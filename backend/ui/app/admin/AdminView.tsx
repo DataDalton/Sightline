@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { formatCompact } from "../../lib/format";
+import { usePageTitle } from "../hooks/usePageTitle";
 import styles from "./Admin.module.css";
 
 // Administration: adoption, cost, failures, and who can reach what.
@@ -96,6 +97,8 @@ function timeAgo(iso: string | null): string {
 }
 
 export default function AdminView() {
+	usePageTitle("Administration");
+
 	const [section, setSection] = useState<Section>("usage");
 	const [days, setDays] = useState(7);
 
