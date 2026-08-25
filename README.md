@@ -93,22 +93,30 @@ usually edited what it would overwrite.
 
 ## Deploying
 
-`backend/ui/app.yaml` is where a deployment declares itself. The split is
-deliberate:
+`app.yaml` sits at the repository root, which is where Databricks Apps reads it
+from. It holds names, never values: each entry points at a resource bound to the
+app, and the value lives in that resource. A resource that is bound but not
+named here never reaches the container.
 
-| Declared in `app.yaml` | Set in the app |
+Configuration lives in three places, and they hold different things:
+
+| Where | What |
 | --- | --- |
-| Postgres connection | Name, description, logo |
-| A warehouse binding | SQL warehouse |
-| One bootstrap admin group | Cache budgets, editor and admin groups |
-| User authorization scope | Extra policy groups |
+| `app.yaml` | Which bound resources become which environment variables |
+| The app's configuration in Databricks | The resource bindings themselves, the user authorization scope, the bootstrap admin group |
+| **Administration -> Configuration** in the app | Name, description, logo, SQL warehouse, cache budgets, editor and admin groups, extra policy groups |
 
 Connection targets have to be known **before** the platform can read its own
 settings table, so they cannot live in it. A field for the database connection
 would be a way to lock the platform out of the database holding the field.
 
-Everything else is changed under **Administration -> Configuration** and reaches
-every replica within a refresh interval, with no redeploy.
+The user authorization scope is granted on the app record rather than in
+`app.yaml`, and reads back as `user_api_scopes`. Without `sql` in that list the
+app forwards no usable token and every query fails, whatever this file says.
+`databricks apps get <name>` reports the effective list.
+
+Everything in the last row is changed without a redeploy and reaches every
+replica within a refresh interval.
 
 ### On behalf of the user
 

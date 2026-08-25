@@ -1,5 +1,9 @@
 # Databricks Apps deployment manifest.
 #
+# Lives at the repository root, which is the only place Databricks Apps looks
+# for it. The same root holds the package.json whose scripts it runs, so a copy
+# beside the application source is never read.
+#
 # Holds names, never values. Each entry below points at a resource bound to the
 # app, and the value lives in that resource: a secret, a warehouse, a database
 # instance. The binding is per deployment and private to it, so this file is the
