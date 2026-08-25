@@ -80,6 +80,45 @@ function columnWidth(name: string, hint: FormatHint): number {
 	return Math.min(Math.max(base, forKind, minColumnWidth), maxColumnWidth);
 }
 
+// The first page of each query, kept outside the component.
+//
+// Charts go through useVisualQuery, which is SWR, so leaving a report and
+// coming back re-renders them from cache. This grid owns its rows as component
+// state instead, because it also pages and reorders them, and state does not
+// survive unmount: navigating away and back threw away every row and asked
+// again, which is a full reload of the thing the reader just waited for.
+//
+// Only the first page. Later pages are cheap to re-fetch and rarely still
+// wanted, and holding all of them would keep whole result sets alive for a
+// report nobody has open.
+interface FirstPage {
+	rows: Record<string, unknown>[];
+	columns: string[];
+	hasMore: boolean;
+	at: number;
+}
+
+// Matches the lifetime the server gives a cached result, so a page held here
+// is never older than one it would hand back anyway. Without a bound, a tab
+// left open for a day would show yesterday numbers on every revisit.
+const firstPageMaxAgeMs = 5 * 60 * 1000;
+
+const firstPages = new Map<string, FirstPage>();
+
+// Bounded, and oldest first. A reader who opens forty reports should not be
+// holding forty result sets.
+const maxFirstPages = 40;
+
+function rememberFirstPage(key: string, page: FirstPage): void {
+	firstPages.delete(key);
+	firstPages.set(key, page);
+	while (firstPages.size > maxFirstPages) {
+		const oldest = firstPages.keys().next().value;
+		if (oldest === undefined) break;
+		firstPages.delete(oldest);
+	}
+}
+
 export function DataGrid({
 	sourceKey,
 	dimensions,
@@ -156,6 +195,8 @@ export function DataGrid({
 	// Guards against a second page being requested while one is in flight, and
 	// against a stale response overwriting a newer query.
 	const requestRef = useRef(0);
+	// Read inside the fetch, which resolves after the key may have moved on.
+	const queryKeyRef = useRef("");
 
 	useEffect(() => {
 		const timer = setTimeout(() => setDebouncedSearch(search), 300);
@@ -185,6 +226,13 @@ export function DataGrid({
 
 	const filterKey = JSON.stringify(activeFilters);
 	const sortKey = sort ? `${sort.field}:${sort.direction}` : "";
+
+	// Everything that shapes the query, which is exactly what makes a
+	// remembered page still the right answer.
+	const queryKey = `${sourceKey}|${dimensions.join(",")}|${measures.join(
+		",",
+	)}|${filterKey}|${sortKey}|${pageSize}`;
+	queryKeyRef.current = queryKey;
 
 	const fetchPage = useCallback(
 		async (offset: number, replace: boolean) => {
@@ -229,7 +277,17 @@ export function DataGrid({
 					replace ? data.rows : [...prev, ...data.rows],
 				);
 				// A short page means the end of the result.
-				setHasMore((data.rows?.length ?? 0) >= pageSize);
+				const more = (data.rows?.length ?? 0) >= pageSize;
+				setHasMore(more);
+
+				if (replace) {
+					rememberFirstPage(queryKeyRef.current, {
+						rows: data.rows ?? [],
+						columns: data.columns ?? [],
+						hasMore: more,
+						at: Date.now(),
+					});
+				}
 			} catch (e) {
 				if (token !== requestRef.current) return;
 				setError(e as Error & { status?: number });
@@ -248,19 +306,27 @@ export function DataGrid({
 	// the scroller to the top, so the user is not left mid-way through a
 	// result they are no longer looking at.
 	useEffect(() => {
+		scrollerRef.current?.scrollTo({ top: 0 });
+
+		// Straight back on screen if this exact query has been answered before,
+		// with no request and no placeholder. The server caches the answer too,
+		// but a round trip is still a round trip.
+		const remembered = firstPages.get(queryKey);
+		if (remembered && Date.now() - remembered.at < firstPageMaxAgeMs) {
+			setRows(remembered.rows);
+			setColumns(remembered.columns);
+			setHasMore(remembered.hasMore);
+			setLoading(false);
+			return;
+		}
+
 		setRows([]);
 		setHasMore(true);
-		scrollerRef.current?.scrollTo({ top: 0 });
 		void fetchPage(0, true);
 		// fetchPage changes with the query shape, which is exactly when a
 		// reload is wanted.
-	}, [
-		sourceKey,
-		filterKey,
-		sortKey,
-		dimensions.join(","),
-		measures.join(","),
-	]);
+		// queryKey is these five combined, so it is the whole dependency.
+	}, [queryKey]);
 
 	const virtualizer = useVirtualizer({
 		count: rows.length,
