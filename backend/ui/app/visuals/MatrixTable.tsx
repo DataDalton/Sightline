@@ -5,6 +5,7 @@ import { formatValue, type FormatHint } from "../../lib/format";
 import type { VisualStyle } from "../../lib/visuals/style";
 import { VisualError } from "./VisualFrame";
 import { VisualLoadingState } from "./LoadingState";
+import { createResultMemo, resultMaxAgeMs } from "./resultMemo";
 import type { FieldMeta } from "./types";
 import styles from "./Matrix.module.css";
 
@@ -60,6 +61,15 @@ function pathKey(path: string[]): string {
 	return path.join("||");
 }
 
+// The top level of each matrix, kept across mounts, so returning to a report
+// does not re-ask for the rows the reader just waited for.
+interface TopLevel {
+	rows: MatrixRow[];
+	columnValues: string[];
+}
+
+const topLevels = createResultMemo<TopLevel>(40, resultMaxAgeMs);
+
 export function MatrixTable({
 	sourceKey,
 	rowDimensions,
@@ -75,7 +85,9 @@ export function MatrixTable({
 	const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set());
 	const [columnValues, setColumnValues] = useState<string[]>([]);
 	const [loading, setLoading] = useState(true);
-	const [error, setError] = useState<(Error & { status?: number }) | null>(null);
+	const [error, setError] = useState<(Error & { status?: number }) | null>(
+		null,
+	);
 
 	const baseKey = JSON.stringify(baseFilters);
 
@@ -167,12 +179,31 @@ export function MatrixTable({
 		[sourceKey, rowDimensions, columnDimension, measures, baseFilters],
 	);
 
+	// Everything that shapes the top level, which is what makes a remembered
+	// one still the right answer.
+	const topKey = `${sourceKey}|${baseKey}|${rowDimensions.join(
+		",",
+	)}|${columnDimension ?? ""}|${measures.join(",")}`;
+
 	// Reload from the top whenever the query shape changes.
 	useEffect(() => {
 		let cancelled = false;
-		setLoading(true);
 		setError(null);
 		setExpanded(new Set());
+
+		// Straight back on screen if this matrix has been opened before. Only
+		// the top level: an expanded subtree is deliberately discarded on
+		// collapse so a later expansion cannot show stale figures, and holding
+		// it here would be the same staleness by another route.
+		const remembered = topLevels.get(topKey);
+		if (remembered) {
+			setRows(remembered.rows);
+			setColumnValues(remembered.columnValues);
+			setLoading(false);
+			return;
+		}
+
+		setLoading(true);
 		setColumnValues([]);
 
 		fetchLevel([])
@@ -180,6 +211,15 @@ export function MatrixTable({
 				if (cancelled) return;
 				setRows(top);
 				setLoading(false);
+				// Read back from state rather than from the closure, because
+				// fetchLevel accumulates the column groups as it goes.
+				setColumnValues((current) => {
+					topLevels.set(topKey, {
+						rows: top,
+						columnValues: current,
+					});
+					return current;
+				});
 			})
 			.catch((e) => {
 				if (cancelled) return;
@@ -190,7 +230,7 @@ export function MatrixTable({
 		return () => {
 			cancelled = true;
 		};
-	}, [sourceKey, baseKey, rowDimensions.join(","), columnDimension, measures.join(",")]);
+	}, [topKey]);
 
 	const toggle = async (row: MatrixRow) => {
 		const key = pathKey(row.path);
@@ -254,7 +294,8 @@ export function MatrixTable({
 	}, [measures, fields]);
 
 	// Column groups: one per pivoted value, or a single unnamed group.
-	const groups = columnDimension && columnValues.length > 0 ? columnValues : [null];
+	const groups =
+		columnDimension && columnValues.length > 0 ? columnValues : [null];
 
 	if (error && rows.length === 0) return <VisualError error={error} />;
 	if (loading) {
@@ -267,13 +308,21 @@ export function MatrixTable({
 		);
 	}
 	if (rows.length === 0) {
-		return <div className={styles.state}>No rows match the current filters</div>;
+		return (
+			<div className={styles.state}>
+				No rows match the current filters
+			</div>
+		);
 	}
 
 	return (
 		<div className={styles.matrix} style={{ height }}>
 			<div className={styles.toolbar}>
-				<button type="button" className={styles.toolButton} onClick={collapseAll}>
+				<button
+					type="button"
+					className={styles.toolButton}
+					onClick={collapseAll}
+				>
 					Collapse all
 				</button>
 				<div className={styles.spacer} />
@@ -304,14 +353,21 @@ export function MatrixTable({
 						)}
 						<tr className={styles.measureHeader}>
 							{!columnDimension && (
-								<th className={styles.rowHeader}>{rowDimensions[0]}</th>
+								<th className={styles.rowHeader}>
+									{rowDimensions[0]}
+								</th>
 							)}
 							{groups.map((group) =>
 								measures.map((measure, i) => (
 									<th
 										key={`${group ?? "all"}-${measure}`}
-										className={i === 0 ? styles.groupStart : ""}
-										title={fields.get(measure)?.description ?? measure}
+										className={
+											i === 0 ? styles.groupStart : ""
+										}
+										title={
+											fields.get(measure)?.description ??
+											measure
+										}
 									>
 										{measure}
 									</th>
@@ -329,25 +385,35 @@ export function MatrixTable({
 								<tr
 									key={key}
 									className={`${styles.row} ${
-										styles[`level${Math.min(row.depth, 3)}`] ?? ""
+										styles[
+											`level${Math.min(row.depth, 3)}`
+										] ?? ""
 									}`}
 								>
 									<td
 										className={styles.labelCell}
-										style={{ paddingLeft: 12 + row.depth * 18 }}
+										style={{
+											paddingLeft: 12 + row.depth * 18,
+										}}
 									>
 										{row.hasChildren ? (
 											<button
 												type="button"
 												className={`${styles.expander} ${
-													isOpen ? styles.expanderOpen : ""
+													isOpen
+														? styles.expanderOpen
+														: ""
 												}`}
 												onClick={() => void toggle(row)}
 												aria-expanded={isOpen}
 												aria-label={`${isOpen ? "Collapse" : "Expand"} ${row.label}`}
 											>
 												{isLoading ? (
-													<span className={styles.hint}>·</span>
+													<span
+														className={styles.hint}
+													>
+														·
+													</span>
 												) : (
 													<svg
 														width="11"
@@ -363,7 +429,9 @@ export function MatrixTable({
 												)}
 											</button>
 										) : (
-											<span className={styles.leafSpacer} />
+											<span
+												className={styles.leafSpacer}
+											/>
 										)}
 										{row.label}
 									</td>
@@ -373,12 +441,17 @@ export function MatrixTable({
 											<td
 												key={`${group ?? "all"}-${measure}`}
 												className={`${styles.cell} ${
-													i === 0 ? styles.groupStart : ""
+													i === 0
+														? styles.groupStart
+														: ""
 												}`}
 											>
 												{formatValue(
-													row.values[cellKey(group, measure)],
-													hints.get(measure) ?? "decimal",
+													row.values[
+														cellKey(group, measure)
+													],
+													hints.get(measure) ??
+														"decimal",
 												)}
 											</td>
 										)),

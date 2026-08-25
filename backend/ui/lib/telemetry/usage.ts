@@ -42,7 +42,7 @@ export interface UsageEvent {
 }
 
 let buffer: UsageEvent[] = [];
-let flushTimer: ReturnType<typeof setInterval> | null = null;
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let dropped = 0;
 let flushed = 0;
 let flushFailures = 0;
@@ -73,10 +73,22 @@ export async function flush(): Promise<void> {
 		// Postgres caps a statement at 65535 parameters and this keeps the
 		// count predictable at 16 per event.
 		const columns = [
-			"occurred_on", "user_email", "policy_class", "event_type",
-			"category_id", "report_id", "page_id", "visual_id", "source_key",
-			"duration_ms", "query_ms", "row_count", "cache_hit",
-			"error_message", "session_id", "client_info",
+			"occurred_on",
+			"user_email",
+			"policy_class",
+			"event_type",
+			"category_id",
+			"report_id",
+			"page_id",
+			"visual_id",
+			"source_key",
+			"duration_ms",
+			"query_ms",
+			"row_count",
+			"cache_hit",
+			"error_message",
+			"session_id",
+			"client_info",
 		];
 		const params: unknown[] = [];
 		const tuples = batch.map((event, i) => {
@@ -115,17 +127,27 @@ export async function flush(): Promise<void> {
 	}
 }
 
+// The interval is read on each tick rather than captured once, so an
+// administrator changing it takes effect at the next flush instead of at the
+// next restart. Rescheduled with a timeout chain for the same reason.
 export function startTelemetryFlushing(): void {
 	if (flushTimer) return;
-	flushTimer = setInterval(() => {
-		void flush();
-	}, settings().telemetryFlushIntervalMs);
+
+	const tick = () => {
+		void flush().finally(() => {
+			if (flushTimer === null) return;
+			flushTimer = setTimeout(tick, settings().telemetryFlushIntervalMs);
+			flushTimer.unref?.();
+		});
+	};
+
+	flushTimer = setTimeout(tick, settings().telemetryFlushIntervalMs);
 	flushTimer.unref?.();
 }
 
 export async function stopTelemetryFlushing(): Promise<void> {
 	if (flushTimer) {
-		clearInterval(flushTimer);
+		clearTimeout(flushTimer);
 		flushTimer = null;
 	}
 	// Drain what is left so a graceful shutdown does not lose the tail.

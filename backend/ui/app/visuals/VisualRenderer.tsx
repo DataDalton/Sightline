@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 
-import { Chart } from "./Chart";
+import { Chart } from "./chartEntry";
 import { DataGrid } from "./DataGrid";
 import { MatrixTable } from "./MatrixTable";
 import { TextPanel } from "./TextPanel";

@@ -5,6 +5,7 @@ import {
 	baselinePermission,
 	getGrants,
 	resolveCategoryAccess,
+	resolveReportAccess,
 } from "@/lib/platform/access";
 import { sql } from "@/lib/data/lakebase";
 import { cachedDefinition } from "@/lib/platform/definitionCache";
@@ -15,7 +16,11 @@ interface CategoryRow {
 	name: string;
 	icon: string | null;
 	sort_order: number;
-	report_count: string;
+}
+
+interface ReportRow {
+	report_id: string;
+	category_id: string | null;
 }
 
 // Categories the caller can actually open. A category they hold no grant for
@@ -40,18 +45,43 @@ export async function GET(request: NextRequest) {
 		// The same list for everybody. What differs per reader is which of
 		// these survives the filter below, so the query is shared and the
 		// decision is not.
-		const rows = await cachedDefinition("navigation:categories", () =>
-			sql<CategoryRow>(
-				`SELECT c.category_id, c.name, c.icon, c.sort_order,
-				        COUNT(r.report_id) AS report_count
-				 FROM categories c
-				 LEFT JOIN reports r
-				   ON r.category_id = c.category_id AND r.is_active = TRUE
-				 WHERE c.is_active = TRUE
-				 GROUP BY c.category_id, c.name, c.icon, c.sort_order
-				 ORDER BY c.sort_order, c.name`,
-			),
+		// Ids rather than a count, because the count is per reader and the list
+		// is not. Counting in SQL gave everybody the total, so a category read
+		// "Sales (12)" and opened on the three reports that reader holds.
+		const [rows, reportRows] = await cachedDefinition(
+			"navigation:categories",
+			async () =>
+				await Promise.all([
+					sql<CategoryRow>(
+						`SELECT category_id, name, icon, sort_order
+						 FROM categories
+						 WHERE is_active = TRUE
+						 ORDER BY sort_order, name`,
+					),
+					sql<ReportRow>(
+						`SELECT report_id, category_id
+						 FROM reports
+						 WHERE is_active = TRUE`,
+					),
+				]),
 		);
+
+		const visiblePerCategory = new Map<string, number>();
+		for (const report of reportRows) {
+			if (!report.category_id) continue;
+			const allowed = resolveReportAccess(
+				grants,
+				report.report_id,
+				report.category_id,
+				"view",
+				baseline,
+			).allowed;
+			if (!allowed) continue;
+			visiblePerCategory.set(
+				report.category_id,
+				(visiblePerCategory.get(report.category_id) ?? 0) + 1,
+			);
+		}
 
 		const categories = rows
 			.filter(
@@ -67,7 +97,7 @@ export async function GET(request: NextRequest) {
 				categoryId: row.category_id,
 				name: row.name,
 				icon: row.icon,
-				reportCount: Number(row.report_count) || 0,
+				reportCount: visiblePerCategory.get(row.category_id) ?? 0,
 			}));
 
 		const response = NextResponse.json({

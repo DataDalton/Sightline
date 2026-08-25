@@ -11,7 +11,7 @@ import { VisualRenderer, type VisualSpec } from "../visuals/VisualRenderer";
 import { PageFilterProvider } from "../visuals/PageFilters";
 import { FilterBar } from "../visuals/FilterWidgets";
 import { isPageControl, visualByType } from "../../lib/visuals/catalog";
-import { ReportEditor } from "../editor/ReportEditor";
+import { ReportEditor } from "./editorEntry";
 import type { EditableVisual } from "../editor/types";
 import { useUser } from "../context/UserContext";
 import type { SourceMeta } from "../visuals/types";

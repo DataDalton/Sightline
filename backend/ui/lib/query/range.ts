@@ -6,6 +6,7 @@ import { getSource } from "../semantic/registry";
 import { settings } from "../settings";
 import { compileQuery } from "./builder";
 import { QueryAccessError } from "./execute";
+import { isShareable } from "./cache";
 import { QuerySpecError, type QueryFilter } from "./spec";
 
 // The smallest and largest value a field actually takes.
@@ -44,6 +45,23 @@ const cache = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<FieldRange>>();
 const maxCacheEntries = 300;
 
+// Expired entries first, then oldest inserted. Dropping only the expired ones
+// leaves the map over its ceiling in the case that matters, which is a burst of
+// distinct fields arriving faster than anything ages out.
+function evictIfNeeded(): void {
+	if (cache.size <= maxCacheEntries) return;
+	const now = Date.now();
+	for (const [key, entry] of cache) {
+		if (entry.expiresAt <= now) cache.delete(key);
+	}
+	let excess = cache.size - maxCacheEntries;
+	if (excess <= 0) return;
+	for (const key of cache.keys()) {
+		cache.delete(key);
+		if (--excess <= 0) break;
+	}
+}
+
 export async function getFieldRange(
 	identity: Identity,
 	sourceKey: string,
@@ -72,15 +90,19 @@ export async function getFieldRange(
 	}
 
 	// Bounds are as identity-scoped as any other read: which values exist is
-	// itself something Unity Catalog filters.
+	// itself something Unity Catalog filters. So they are shared on the same
+	// condition a result is, which is that the walk has read every filter and
+	// the policy class therefore means what it says.
+	const shareable = isShareable(source);
+
 	const scope = source.hasRowFilter ? policy.id : "unfiltered";
 	const key = `${scope}:${sourceKey}:${field}:${bounds}:${JSON.stringify(filters)}`;
 	const now = Date.now();
 
-	const cached = cache.get(key);
+	const cached = shareable ? cache.get(key) : undefined;
 	if (cached && cached.expiresAt > now) return cached.value;
 
-	const existing = inflight.get(key);
+	const existing = shareable ? inflight.get(key) : undefined;
 	if (existing) return existing;
 
 	const pending = (async (): Promise<FieldRange> => {
@@ -97,22 +119,22 @@ export async function getFieldRange(
 					measures: isMeasure ? [field] : [],
 					// An empty value carries no information about the range and
 					// would otherwise sort to one end of it.
-					filters: [
-						...filters,
-						{ field, op: "is_not_empty" },
-					],
+					filters: [...filters, { field, op: "is_not_empty" }],
 					sort: [{ field, direction }],
 					limit: 1,
 					offset: 0,
 				});
 
 				const rows = identity.userToken
-					? await queryAsUser(identity.userToken, compiled.sql, compiled.params)
+					? await queryAsUser(
+							identity.userToken,
+							compiled.sql,
+							compiled.params,
+						)
 					: !isDatabricksApp
-						? await (await import("../data/localSession")).queryLocally(
-								compiled.sql,
-								compiled.params,
-							)
+						? await (
+								await import("../data/localSession")
+							).queryLocally(compiled.sql, compiled.params)
 						: (() => {
 								throw new QueryAccessError(
 									"A user token is required to read a field range.",
@@ -120,7 +142,9 @@ export async function getFieldRange(
 							})();
 
 				const value = rows[0]?.[field];
-				return value === null || value === undefined ? null : String(value);
+				return value === null || value === undefined
+					? null
+					: String(value);
 			};
 
 			const [min, max] = await Promise.all([
@@ -135,17 +159,15 @@ export async function getFieldRange(
 				degenerate: min !== null && min === max,
 			};
 
-			cache.set(key, {
-				value,
-				// Longer than a result cache entry: the extremes of a column
-				// move far more slowly than the figures inside it.
-				expiresAt: now + settings().resultTtlSeconds * 4 * 1000,
-			});
-
-			if (cache.size > maxCacheEntries) {
-				for (const [k, entry] of cache) {
-					if (entry.expiresAt <= now) cache.delete(k);
-				}
+			if (shareable) {
+				cache.set(key, {
+					value,
+					// Longer than a result cache entry: the extremes of a
+					// column move far more slowly than the figures inside it.
+					expiresAt:
+						Date.now() + settings().resultTtlSeconds * 4 * 1000,
+				});
+				evictIfNeeded();
 			}
 
 			return value;
@@ -154,6 +176,6 @@ export async function getFieldRange(
 		}
 	})();
 
-	inflight.set(key, pending);
+	if (shareable) inflight.set(key, pending);
 	return pending;
 }

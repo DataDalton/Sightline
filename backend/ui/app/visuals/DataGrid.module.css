@@ -640,3 +640,15 @@
 		background: var(--surface-sunken);
 	}
 }
+
+/* Said next to the export control rather than in an error slot, because the
+   file did arrive and the reader has it. What is wrong is that it is not all
+   of the data, which is a caveat and not a failure. */
+.exportNote {
+	font-size: 11px;
+	color: var(--warning-text, #92400e);
+	background: var(--warning-bg, #fef3c7);
+	border-radius: 4px;
+	padding: 2px 8px;
+	white-space: nowrap;
+}

@@ -3,6 +3,7 @@
 import { Children, useEffect, useMemo, useRef, useState } from "react";
 import { usePageFilters, type FilterClause } from "./PageFilters";
 import { RangeSlider } from "./RangeSlider";
+import { usePostResource } from "../hooks/usePostResource";
 import styles from "./Filters.module.css";
 
 // Filter widgets an editor can place on a page.
@@ -47,9 +48,6 @@ export function DropdownFilter({
 	const [open, setOpen] = useState(false);
 	const [search, setSearch] = useState("");
 	const [debounced, setDebounced] = useState("");
-	const [values, setValues] = useState<string[]>([]);
-	const [truncated, setTruncated] = useState(false);
-	const [loading, setLoading] = useState(false);
 	const wrapperRef = useRef<HTMLDivElement | null>(null);
 
 	const selected = useMemo(
@@ -65,7 +63,10 @@ export function DropdownFilter({
 	useEffect(() => {
 		if (!open) return;
 		const onClick = (e: MouseEvent) => {
-			if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+			if (
+				wrapperRef.current &&
+				!wrapperRef.current.contains(e.target as Node)
+			) {
 				setOpen(false);
 			}
 		};
@@ -83,37 +84,26 @@ export function DropdownFilter({
 	// Other widgets narrow this list; this widget does not narrow itself, or a
 	// reader could pick one value and then find no others available.
 	const others = clausesExcept(visualId);
-	const othersKey = JSON.stringify(others);
 
-	useEffect(() => {
-		if (!open) return;
-		let cancelled = false;
-		setLoading(true);
+	// Asked only while the widget is open, and remembered after it closes. A
+	// reader opening the same dropdown twice is the normal case, and it used to
+	// mean two identical warehouse queries.
+	const valuesResource = usePostResource<ValuesResponse>(
+		"/api/query/values",
+		open
+			? {
+					sourceKey,
+					field,
+					search: debounced,
+					filters: others,
+					limit: 200,
+				}
+			: null,
+	);
 
-		fetch("/api/query/values", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				sourceKey,
-				field,
-				search: debounced,
-				filters: others,
-				limit: 200,
-			}),
-		})
-			.then((r) => (r.ok ? r.json() : Promise.reject(new Error("failed"))))
-			.then((data: ValuesResponse) => {
-				if (cancelled) return;
-				setValues(data.values);
-				setTruncated(data.truncated);
-				setLoading(false);
-			})
-			.catch(() => !cancelled && setLoading(false));
-
-		return () => {
-			cancelled = true;
-		};
-	}, [open, sourceKey, field, debounced, othersKey]);
+	const values = valuesResource.data?.values ?? [];
+	const truncated = valuesResource.data?.truncated ?? false;
+	const loading = valuesResource.isLoading;
 
 	const apply = (next: string[]) => {
 		setWidgetFilter(
@@ -233,9 +223,13 @@ export function DropdownFilter({
 
 						<div className={styles.list}>
 							{loading && listed.length === 0 ? (
-								<div className={styles.state}>Loading values</div>
+								<div className={styles.state}>
+									Loading values
+								</div>
 							) : listed.length === 0 ? (
-								<div className={styles.state}>No matching values</div>
+								<div className={styles.state}>
+									No matching values
+								</div>
 							) : (
 								listed.map((value) => {
 									const isSelected = selected.includes(value);
@@ -254,7 +248,12 @@ export function DropdownFilter({
 												} ${isSelected ? styles.checked : ""}`}
 												aria-hidden="true"
 											>
-												<svg width="9" height="9" viewBox="0 0 16 16" fill="none">
+												<svg
+													width="9"
+													height="9"
+													viewBox="0 0 16 16"
+													fill="none"
+												>
 													<path
 														d="M3 8.5l3.5 3.5L13 5"
 														stroke="currentColor"
@@ -264,7 +263,11 @@ export function DropdownFilter({
 													/>
 												</svg>
 											</span>
-											<span className={styles.optionLabel}>{value}</span>
+											<span
+												className={styles.optionLabel}
+											>
+												{value}
+											</span>
 										</button>
 									);
 								})
@@ -422,28 +425,62 @@ interface Preset {
 	resolve: (now: Date) => [Date, Date];
 }
 
-const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+const startOfDay = (d: Date) =>
+	new Date(d.getFullYear(), d.getMonth(), d.getDate());
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 
 // Grouped by how people actually ask: a rolling window, a period to date, or a
 // named period. Rolling and to-date are different questions and are often
 // confused, so both are offered explicitly rather than approximated.
 const presets: Preset[] = [
-	{ label: "7d", title: "Last 7 days", resolve: (n) => [new Date(n.getTime() - 7 * 864e5), n] },
-	{ label: "30d", title: "Last 30 days", resolve: (n) => [new Date(n.getTime() - 30 * 864e5), n] },
-	{ label: "90d", title: "Last 90 days", resolve: (n) => [new Date(n.getTime() - 90 * 864e5), n] },
-	{ label: "12m", title: "Last 12 months", resolve: (n) => [new Date(n.getFullYear() - 1, n.getMonth(), n.getDate()), n] },
-	{ label: "MTD", title: "Month to date", resolve: (n) => [new Date(n.getFullYear(), n.getMonth(), 1), n] },
+	{
+		label: "7d",
+		title: "Last 7 days",
+		resolve: (n) => [new Date(n.getTime() - 7 * 864e5), n],
+	},
+	{
+		label: "30d",
+		title: "Last 30 days",
+		resolve: (n) => [new Date(n.getTime() - 30 * 864e5), n],
+	},
+	{
+		label: "90d",
+		title: "Last 90 days",
+		resolve: (n) => [new Date(n.getTime() - 90 * 864e5), n],
+	},
+	{
+		label: "12m",
+		title: "Last 12 months",
+		resolve: (n) => [
+			new Date(n.getFullYear() - 1, n.getMonth(), n.getDate()),
+			n,
+		],
+	},
+	{
+		label: "MTD",
+		title: "Month to date",
+		resolve: (n) => [new Date(n.getFullYear(), n.getMonth(), 1), n],
+	},
 	{
 		label: "QTD",
 		title: "Quarter to date",
-		resolve: (n) => [new Date(n.getFullYear(), Math.floor(n.getMonth() / 3) * 3, 1), n],
+		resolve: (n) => [
+			new Date(n.getFullYear(), Math.floor(n.getMonth() / 3) * 3, 1),
+			n,
+		],
 	},
-	{ label: "YTD", title: "Year to date", resolve: (n) => [new Date(n.getFullYear(), 0, 1), n] },
+	{
+		label: "YTD",
+		title: "Year to date",
+		resolve: (n) => [new Date(n.getFullYear(), 0, 1), n],
+	},
 	{
 		label: "Last yr",
 		title: "The whole of last calendar year",
-		resolve: (n) => [new Date(n.getFullYear() - 1, 0, 1), new Date(n.getFullYear() - 1, 11, 31)],
+		resolve: (n) => [
+			new Date(n.getFullYear() - 1, 0, 1),
+			new Date(n.getFullYear() - 1, 11, 31),
+		],
 	},
 ];
 
@@ -458,37 +495,30 @@ export function DateRangeFilter({
 	const [from, setFrom] = useState("");
 	const [to, setTo] = useState("");
 	const [activePreset, setActivePreset] = useState<string | null>(null);
-	const [bounds, setBounds] = useState<{ min: string; max: string } | null>(null);
 
 	const showPresets = mode === "presets" || mode === "combined";
 	const showCalendar = mode === "calendar" || mode === "combined";
 	const showSlider = mode === "slider";
 
 	const others = clausesExcept(visualId);
-	const othersKey = JSON.stringify(others);
 
 	// A slider needs the real extent of the column, so it is fetched rather
 	// than assumed. The other modes do not need it and do not pay for it.
-	useEffect(() => {
-		if (!showSlider) return;
-		let cancelled = false;
+	const rangeResource = usePostResource<{
+		min: string | null;
+		max: string | null;
+	}>(
+		"/api/query/range",
+		showSlider ? { sourceKey, field, filters: others } : null,
+	);
 
-		fetch("/api/query/range", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ sourceKey, field, filters: others }),
-		})
-			.then((r) => (r.ok ? r.json() : Promise.reject(new Error("failed"))))
-			.then((data: { min: string | null; max: string | null }) => {
-				if (cancelled || !data.min || !data.max) return;
-				setBounds({ min: data.min.slice(0, 10), max: data.max.slice(0, 10) });
-			})
-			.catch(() => {});
-
-		return () => {
-			cancelled = true;
-		};
-	}, [showSlider, sourceKey, field, othersKey]);
+	const bounds =
+		rangeResource.data?.min && rangeResource.data?.max
+			? {
+					min: rangeResource.data.min.slice(0, 10),
+					max: rangeResource.data.max.slice(0, 10),
+				}
+			: null;
 
 	const apply = (nextFrom: string, nextTo: string) => {
 		const clauses: FilterClause[] = [];
@@ -519,12 +549,19 @@ export function DateRangeFilter({
 		return [lo, hi];
 	}, [from, to, bounds]);
 
-    return (
-		<div className={styles.widget} style={{ minWidth: showSlider ? 300 : 260 }}>
+	return (
+		<div
+			className={styles.widget}
+			style={{ minWidth: showSlider ? 300 : 260 }}
+		>
 			<div className={styles.labelRow}>
 				<span className={styles.label}>{label ?? field}</span>
 				{(from || to) && (
-					<button type="button" className={styles.clearLink} onClick={clear}>
+					<button
+						type="button"
+						className={styles.clearLink}
+						onClick={clear}
+					>
 						Clear
 					</button>
 				)}
@@ -538,7 +575,9 @@ export function DateRangeFilter({
 							type="button"
 							title={preset.title}
 							className={`${styles.miniButton} ${
-								activePreset === preset.label ? styles.checked : ""
+								activePreset === preset.label
+									? styles.checked
+									: ""
 							}`}
 							onClick={() => applyPreset(preset)}
 						>
@@ -562,7 +601,9 @@ export function DateRangeFilter({
 							apply(e.target.value, to);
 						}}
 					/>
-					<span className={styles.rangeDash} aria-hidden="true">to</span>
+					<span className={styles.rangeDash} aria-hidden="true">
+						to
+					</span>
 					<input
 						type="date"
 						className={styles.input}
@@ -625,57 +666,42 @@ export function NumericRangeFilter({
 	const { setWidgetFilter, clausesExcept } = usePageFilters();
 	const [min, setMin] = useState("");
 	const [max, setMax] = useState("");
-	const [bounds, setBounds] = useState<{ min: number; max: number } | null>(null);
-	// A field whose bounds collapse to a single value cannot be sliced with a
-	// slider. Rather than render one that spans nothing, the control falls
-	// back to boxes and says why.
-	const [degenerate, setDegenerate] = useState(false);
-
-	const showInputs = mode === "inputs" || mode === "combined" || degenerate;
-	const showSlider = (mode === "slider" || mode === "combined") && !degenerate;
-
 	const others = clausesExcept(visualId);
-	const othersKey = JSON.stringify(others);
 
-	useEffect(() => {
-		// Requested whenever a slider was asked for, so the fallback is decided
-		// before anything renders rather than after a broken slider appears.
-		if (mode === "inputs") return;
-		let cancelled = false;
+	// Requested whenever a slider was asked for, so the fallback is decided
+	// before anything renders rather than after a broken slider appears.
+	const rangeResource = usePostResource<{
+		min: string | null;
+		max: string | null;
+		degenerate?: boolean;
+	}>(
+		"/api/query/range",
+		mode === "inputs" ? null : { sourceKey, field, filters: others },
+	);
 
-		fetch("/api/query/range", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ sourceKey, field, filters: others }),
-		})
-			.then((r) => (r.ok ? r.json() : Promise.reject(new Error("failed"))))
-			.then((data: {
-				min: string | null;
-				max: string | null;
-				degenerate?: boolean;
-			}) => {
-				if (cancelled) return;
-				const lo = Number(data.min);
-				const hi = Number(data.max);
-				if (data.degenerate || !(hi > lo)) {
-					setDegenerate(true);
-					return;
-				}
-				if (Number.isFinite(lo) && Number.isFinite(hi)) {
-					setBounds({ min: lo, max: hi });
-				}
-			})
-			.catch(() => {});
+	const lo = Number(rangeResource.data?.min);
+	const hi = Number(rangeResource.data?.max);
+	const degenerate = rangeResource.data
+		? Boolean(rangeResource.data.degenerate) || !(hi > lo)
+		: false;
+	const bounds =
+		!degenerate && Number.isFinite(lo) && Number.isFinite(hi)
+			? { min: lo, max: hi }
+			: null;
 
-		return () => {
-			cancelled = true;
-		};
-	}, [mode, sourceKey, field, othersKey]);
+	// A field whose bounds collapse to a single value cannot be sliced with a
+	// slider. Rather than render one that spans nothing, the control falls back
+	// to boxes and says why.
+	const showInputs = mode === "inputs" || mode === "combined" || degenerate;
+	const showSlider =
+		(mode === "slider" || mode === "combined") && !degenerate;
 
 	const apply = (lo: string, hi: string) => {
 		const clauses: FilterClause[] = [];
-		if (lo.trim() !== "") clauses.push({ field, op: "gte", value: lo.trim() });
-		if (hi.trim() !== "") clauses.push({ field, op: "lte", value: hi.trim() });
+		if (lo.trim() !== "")
+			clauses.push({ field, op: "gte", value: lo.trim() });
+		if (hi.trim() !== "")
+			clauses.push({ field, op: "lte", value: hi.trim() });
 		setWidgetFilter(visualId, clauses);
 	};
 
@@ -711,7 +737,10 @@ export function NumericRangeFilter({
 					: v.toFixed(Math.abs(v) < 10 ? 2 : 0);
 
 	return (
-		<div className={styles.widget} style={{ minWidth: showSlider ? 260 : 200 }}>
+		<div
+			className={styles.widget}
+			style={{ minWidth: showSlider ? 260 : 200 }}
+		>
 			<div className={styles.labelRow}>
 				<span className={styles.label}>{label ?? field}</span>
 				{(min || max) && (
@@ -765,7 +794,9 @@ export function NumericRangeFilter({
 						aria-label="Minimum"
 						onChange={(e) => setMin(e.target.value)}
 					/>
-					<span className={styles.rangeDash} aria-hidden="true">to</span>
+					<span className={styles.rangeDash} aria-hidden="true">
+						to
+					</span>
 					<input
 						type="number"
 						className={styles.input}
@@ -845,7 +876,9 @@ export function ThresholdFilter({
 				<button
 					type="button"
 					className={styles.miniButton}
-					onClick={() => setSense(sense === "above" ? "below" : "above")}
+					onClick={() =>
+						setSense(sense === "above" ? "below" : "above")
+					}
 					title="Switch which side of the cutoff is kept"
 				>
 					{sense === "above" ? "≥" : "≤"}
@@ -920,12 +953,14 @@ export function DimensionSwitch({
 	} = usePageFilters();
 
 	const selected = scope === "grain" ? selectedGrain : selectedDimension;
-	const setSelected = scope === "grain" ? setSelectedGrain : setSelectedDimension;
+	const setSelected =
+		scope === "grain" ? setSelectedGrain : setSelectedDimension;
 	const fallbackLabel = scope === "grain" ? "Grain" : "Break down by";
 
 	// The first option is the default, so a page renders something sensible
 	// before the reader touches anything.
-	const active = selected && options.includes(selected) ? selected : options[0];
+	const active =
+		selected && options.includes(selected) ? selected : options[0];
 
 	useEffect(() => {
 		if (!selected && options.length > 0) {
@@ -982,8 +1017,13 @@ export function DimensionSwitch({
 // --- The strip that holds them ---------------------------------------------
 
 export function FilterBar({ children }: { children: React.ReactNode }) {
-	const { activeClauses, clearAll, crossFilter, setCrossFilter, hasAnything } =
-		usePageFilters();
+	const {
+		activeClauses,
+		clearAll,
+		crossFilter,
+		setCrossFilter,
+		hasAnything,
+	} = usePageFilters();
 
 	// A page with no controls and nothing selected has no strip. It used to
 	// render regardless, which put an empty bar at the top of pages like the
@@ -1009,15 +1049,23 @@ export function FilterBar({ children }: { children: React.ReactNode }) {
 						onClick={() => setCrossFilter(null)}
 						title="Clear this selection"
 					>
-						<span className={styles.triggerText}>{crossFilter.label}</span>
-						<span className={styles.clear} aria-hidden="true">✕</span>
+						<span className={styles.triggerText}>
+							{crossFilter.label}
+						</span>
+						<span className={styles.clear} aria-hidden="true">
+							✕
+						</span>
 					</button>
 				</div>
 			)}
 
 			<div className={styles.barSpacer} />
 			{hasAnything && (
-				<button type="button" className={styles.clearAll} onClick={clearAll}>
+				<button
+					type="button"
+					className={styles.clearAll}
+					onClick={clearAll}
+				>
 					{activeClauses.length > 0
 						? `Clear ${activeClauses.length} ${activeClauses.length === 1 ? "filter" : "filters"}`
 						: "Reset"}
