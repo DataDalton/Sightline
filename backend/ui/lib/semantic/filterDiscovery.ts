@@ -35,8 +35,21 @@ let cached: DiscoveredGroups | null = null;
 let cachedAt = 0;
 const ttlMs = 15 * 60 * 1000;
 
-export function lastDiscovery(): { groups: DiscoveredGroups | null; at: number } {
+export function lastDiscovery(): {
+	groups: DiscoveredGroups | null;
+	at: number;
+} {
 	return { groups: cached, at: cachedAt };
+}
+
+// Whether the group list can be relied on to partition a cache.
+//
+// False until a walk has finished, and false again if any source could not be
+// opened: a source that was not read contributes no group names, which reads
+// identically to a source that has no filter. Anything that would share one
+// answer between two readers has to ask this first.
+export function filterDiscoveryComplete(): boolean {
+	return cached !== null && cached.unreadableSources.length === 0;
 }
 
 async function tablesBehind(
@@ -52,10 +65,7 @@ async function tablesBehind(
 	// reads, so the definition has to be opened to find out what that is.
 	if (kind !== "metric_view") return [self];
 
-	const rows = await runCatalogQuery(
-		identity,
-		`SHOW CREATE TABLE ${self}`,
-	);
+	const rows = await runCatalogQuery(identity, `SHOW CREATE TABLE ${self}`);
 	const statement = String(Object.values(rows[0] ?? {})[0] ?? "");
 	const referenced = parseMetricViewTables(statement);
 

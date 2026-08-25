@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { filterDiscoveryComplete } from "../semantic/filterDiscovery";
 import { sql } from "../data/lakebase";
 import { settings } from "../settings";
 import type { PolicyClass } from "../auth/policy";
@@ -40,6 +41,18 @@ export interface CacheLookup {
 //
 // This is the single most security-relevant function in the query path: get it
 // wrong and one group reads another group rows.
+// Whether an answer from this source may be reused for another reader.
+//
+// A filtered source is only shareable within a policy class, and a policy class
+// is only meaningful once every group its filters branch on is being probed.
+// Until the catalogue walk has finished cleanly the class is not known to be
+// complete, so two readers entitled to different rows could carry the same one.
+// The safe reading of an unfinished walk is that nothing filtered is shareable,
+// which costs warehouse time and never costs somebody else rows.
+export function isShareable(source: SemanticSource): boolean {
+	return !source.hasRowFilter || filterDiscoveryComplete();
+}
+
 export function buildCacheKey(
 	source: SemanticSource,
 	spec: QuerySpec,
@@ -168,7 +181,8 @@ export async function cacheGet(key: string): Promise<CacheLookup> {
 
 	const local = memoryGet(key);
 	if (local) {
-		if (local.expiresAt > now) return { entry: local, tier: "l1", stale: false };
+		if (local.expiresAt > now)
+			return { entry: local, tier: "l1", stale: false };
 		if (allowStale) return { entry: local, tier: "l1", stale: true };
 	}
 
@@ -214,7 +228,9 @@ export async function invalidateSource(sourceKey: string): Promise<void> {
 		if (key.startsWith(`${sourceKey}:`)) memory.delete(key);
 	}
 	try {
-		await sql(`DELETE FROM result_cache WHERE source_key = $1`, [sourceKey]);
+		await sql(`DELETE FROM result_cache WHERE source_key = $1`, [
+			sourceKey,
+		]);
 	} catch (error) {
 		console.warn("Shared cache invalidation failed:", error);
 	}
