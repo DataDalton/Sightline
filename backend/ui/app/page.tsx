@@ -51,6 +51,12 @@ export default function Home() {
 	// already hold.
 	const navigationDegraded = data?.degraded === true;
 
+	// Two different failures reach the same empty list and need opposite
+	// answers. An unresolved membership is a permission the reader is missing,
+	// most often the right to use the warehouse the probe runs on. Calling that
+	// a problem with the app sends them to the wrong person.
+	const membershipUnresolved = user?.policy.degraded === true;
+
 	const appName = branding?.name || fallbackName;
 	const greeting = user?.name
 		? `Welcome back, ${user.name.split(" ")[0]}`
@@ -132,14 +138,18 @@ export default function Home() {
 			) : isLoading ? null : categories.length === 0 ? (
 				<div className={styles.empty}>
 					<div className={styles.emptyTitle}>
-						{navigationDegraded
-							? "Reports are unavailable"
-							: "Nothing here yet"}
+						{membershipUnresolved
+							? "Your access could not be checked"
+							: navigationDegraded
+								? "Reports are unavailable"
+								: "Nothing here yet"}
 					</div>
 					<p className={styles.emptyBody}>
-						{navigationDegraded
-							? "The app could not load the list of reports. This is a problem with the app rather than with your access, and it retries on its own. An administrator can see the reason under Administration."
-							: "No report categories are available to you. Once datasets are registered and you are granted access, they appear here."}
+						{membershipUnresolved
+							? "Your group membership could not be resolved, so no report can be shown. This is usually a missing permission on the SQL warehouse rather than on the data: ask an administrator to grant your group CAN USE on it. It retries on its own once that is in place."
+							: navigationDegraded
+								? "The app could not load the list of reports. This is a problem with the app rather than with your access, and it retries on its own. An administrator can see the reason under Administration."
+								: "No report categories are available to you. Once datasets are registered and you are granted access, they appear here."}
 					</p>
 				</div>
 			) : (
