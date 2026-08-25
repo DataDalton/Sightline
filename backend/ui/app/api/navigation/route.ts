@@ -7,6 +7,7 @@ import {
 	resolveCategoryAccess,
 } from "@/lib/platform/access";
 import { sql } from "@/lib/data/lakebase";
+import { cachedDefinition } from "@/lib/platform/definitionCache";
 import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
 
 interface CategoryRow {
@@ -36,15 +37,20 @@ export async function GET(request: NextRequest) {
 		const grants = await getGrants(policy, identity);
 		const baseline = baselinePermission(policy);
 
-		const rows = await sql<CategoryRow>(
-			`SELECT c.category_id, c.name, c.icon, c.sort_order,
-			        COUNT(r.report_id) AS report_count
-			 FROM categories c
-			 LEFT JOIN reports r
-			   ON r.category_id = c.category_id AND r.is_active = TRUE
-			 WHERE c.is_active = TRUE
-			 GROUP BY c.category_id, c.name, c.icon, c.sort_order
-			 ORDER BY c.sort_order, c.name`,
+		// The same list for everybody. What differs per reader is which of
+		// these survives the filter below, so the query is shared and the
+		// decision is not.
+		const rows = await cachedDefinition("navigation:categories", () =>
+			sql<CategoryRow>(
+				`SELECT c.category_id, c.name, c.icon, c.sort_order,
+				        COUNT(r.report_id) AS report_count
+				 FROM categories c
+				 LEFT JOIN reports r
+				   ON r.category_id = c.category_id AND r.is_active = TRUE
+				 WHERE c.is_active = TRUE
+				 GROUP BY c.category_id, c.name, c.icon, c.sort_order
+				 ORDER BY c.sort_order, c.name`,
+			),
 		);
 
 		const categories = rows

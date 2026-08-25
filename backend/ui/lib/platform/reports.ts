@@ -1,4 +1,5 @@
 import { sql } from "../data/lakebase";
+import { cachedDefinition } from "./definitionCache";
 import type { Identity } from "../auth/identity";
 import type { PolicyClass } from "../auth/policy";
 import {
@@ -174,14 +175,19 @@ export async function getReport(
 ): Promise<ReportDetail | null> {
 	const grants = await getGrants(policy, identity);
 
-	const rows = await sql<ReportRow>(
-		`SELECT report_id, category_id, slug, title, description,
-		        source_key, visibility, version, modified_on
-		 FROM reports
-		 WHERE slug = $1 AND is_active = TRUE`,
-		[slug],
-	);
-	const report = rows[0];
+	// Fetched before the access check because the check needs the report id,
+	// and cached because the answer does not vary by reader. The check itself
+	// still runs per request, against this reader grants.
+	const report = await cachedDefinition(`report:${slug}`, async () => {
+		const rows = await sql<ReportRow>(
+			`SELECT report_id, category_id, slug, title, description,
+			        source_key, visibility, version, modified_on
+			 FROM reports
+			 WHERE slug = $1 AND is_active = TRUE`,
+			[slug],
+		);
+		return rows[0] ?? null;
+	});
 	if (!report) return null;
 
 	const access = resolveReportAccess(
@@ -193,45 +199,51 @@ export async function getReport(
 	);
 	if (!access.allowed || !access.permission) return null;
 
-	const [pageRows, visualRows] = await Promise.all([
-		sql<{
-			page_id: string;
-			slug: string;
-			title: string;
-			template: string | null;
-			source_key: string | null;
-			config: PageDefinition["config"] | null;
-			sort_order: number;
-		}>(
-			`SELECT page_id, slug, title, template, source_key, config, sort_order
-			 FROM report_pages
-			 WHERE report_id = $1 AND is_active = TRUE
-			 ORDER BY sort_order, title`,
-			[report.report_id],
-		),
-		sql<{
-			visual_id: string;
-			page_id: string;
-			visual_type: string;
-			title: string | null;
-			source_key: string | null;
-			config: VisualDefinition["config"];
-			layout_x: number;
-			layout_y: number;
-			layout_w: number;
-			layout_h: number;
-			sort_order: number;
-		}>(
-			`SELECT v.visual_id, v.page_id, v.visual_type, v.title, v.source_key,
-			        v.config, v.layout_x, v.layout_y, v.layout_w, v.layout_h,
-			        v.sort_order
-			 FROM report_visuals v
-			 JOIN report_pages p ON p.page_id = v.page_id
-			 WHERE p.report_id = $1 AND v.is_active = TRUE
-			 ORDER BY v.sort_order`,
-			[report.report_id],
-		),
-	]);
+	// Two more round trips, and the same for every reader. Cached against the
+	// report id rather than the slug, so a rename does not orphan the entry.
+	const [pageRows, visualRows] = await cachedDefinition(
+		`report-body:${report.report_id}`,
+		async () =>
+			await Promise.all([
+				sql<{
+					page_id: string;
+					slug: string;
+					title: string;
+					template: string | null;
+					source_key: string | null;
+					config: PageDefinition["config"] | null;
+					sort_order: number;
+				}>(
+					`SELECT page_id, slug, title, template, source_key, config, sort_order
+					 FROM report_pages
+					 WHERE report_id = $1 AND is_active = TRUE
+					 ORDER BY sort_order, title`,
+					[report.report_id],
+				),
+				sql<{
+					visual_id: string;
+					page_id: string;
+					visual_type: string;
+					title: string | null;
+					source_key: string | null;
+					config: VisualDefinition["config"];
+					layout_x: number;
+					layout_y: number;
+					layout_w: number;
+					layout_h: number;
+					sort_order: number;
+				}>(
+					`SELECT v.visual_id, v.page_id, v.visual_type, v.title, v.source_key,
+					        v.config, v.layout_x, v.layout_y, v.layout_w, v.layout_h,
+					        v.sort_order
+					 FROM report_visuals v
+					 JOIN report_pages p ON p.page_id = v.page_id
+					 WHERE p.report_id = $1 AND v.is_active = TRUE
+					 ORDER BY v.sort_order`,
+					[report.report_id],
+				),
+			]),
+	);
 
 	const visualsByPage = new Map<string, VisualDefinition[]>();
 	for (const v of visualRows) {

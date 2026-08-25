@@ -1,6 +1,7 @@
 import { sql, transaction } from "../data/lakebase";
 import type { PolicyClass } from "../auth/policy";
 import { insertLog } from "../activityLog";
+import { invalidateDefinitions } from "./definitionCache";
 import { record } from "../telemetry/usage";
 import {
 	baselinePermission,
@@ -343,6 +344,13 @@ export async function applyEdits(
 			 WHERE report_id = $1`,
 			[request.reportId, nextVersion, email],
 		);
+
+		// This replica drops what it was holding immediately, so an editor
+		// never watches their own change wait out a cache. Another replica
+		// serves the previous definition until its entry lapses, which is the
+		// price of not asking the database whether it is still current.
+		invalidateDefinitions(`report-body:${request.reportId}`);
+		invalidateDefinitions("report:");
 
 		// The op log is what other sessions replay. It is written inside the
 		// same transaction as the change itself, so a session can never see an

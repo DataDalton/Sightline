@@ -609,25 +609,28 @@
 	border-right: 1px solid var(--border-subtle);
 }
 
+/* Grid shaped, so the columns are already in place when the rows land.
+   The gradient and timing match components/shared/Skeleton, so a table loading
+   beside a card pulses with it rather than against it. */
 .skeletonBar {
 	height: 9px;
 	border-radius: var(--radius-full);
 	background: linear-gradient(
 		90deg,
-		var(--surface-sunken) 25%,
-		var(--surface-hover) 37%,
-		var(--surface-sunken) 63%
+		var(--surface-hover) 25%,
+		var(--surface-active) 50%,
+		var(--surface-hover) 75%
 	);
-	background-size: 400% 100%;
-	animation: gridShimmer 1.4s ease infinite;
+	background-size: 200% 100%;
+	animation: gridShimmer 1.4s ease-in-out infinite;
 }
 
 @keyframes gridShimmer {
 	0% {
-		background-position: 100% 50%;
+		background-position: 200% 0;
 	}
 	100% {
-		background-position: 0 50%;
+		background-position: -200% 0;
 	}
 }
 

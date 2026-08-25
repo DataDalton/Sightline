@@ -116,7 +116,8 @@ export function setTrackedGroups(
 
 	// Order matters: the first mention of a name decides what it is recorded
 	// as, and a filter is the reason worth surfacing when a group is both.
-	for (const raw of filterGroups.accountGroups) add(raw, "account", "row-filter");
+	for (const raw of filterGroups.accountGroups)
+		add(raw, "account", "row-filter");
 	for (const raw of filterGroups.workspaceGroups) {
 		add(raw, "workspace", "row-filter");
 	}
@@ -239,10 +240,9 @@ async function probeGrants(identity: Identity): Promise<string[]> {
 	// whoever those credentials belong to rather than for the caller.
 	const rows = identity.userToken
 		? await queryAsUser(identity.userToken, `SELECT ${selects}`, params)
-		: await (await import("../data/localSession")).queryLocally(
-				`SELECT ${selects}`,
-				params,
-			);
+		: await (
+				await import("../data/localSession")
+			).queryLocally(`SELECT ${selects}`, params);
 	const row = rows[0] ?? {};
 
 	// The two query paths disagree on type. The SQL driver returns a real
@@ -255,6 +255,66 @@ async function probeGrants(identity: Identity): Promise<string[]> {
 	return trackedGroups
 		.filter((_, i) => isTrue(row[`m${i}`]))
 		.map((group) => group.name);
+}
+
+// The set of groups an answer was computed against. A stored answer is only
+// usable while this matches, because a group added to the tracked list is a
+// question that was never asked.
+function groupSetKey(): string {
+	return trackedGroups
+		.map((g) => `${g.scope}:${g.name}`)
+		.sort()
+		.join("|");
+}
+
+async function readStoredPolicy(
+	email: string,
+	now: number,
+): Promise<string[] | null> {
+	try {
+		const { sql } = await import("../data/lakebase");
+		const rows = await sql<{ grants: string[] }>(
+			`SELECT grants FROM reader_policy
+			 WHERE user_email = $1 AND group_set = $2 AND expires_on > now()`,
+			[email, groupSetKey()],
+		);
+		void now;
+		return rows[0]?.grants ?? null;
+	} catch (error) {
+		// A miss, never an error the caller sees: the probe still runs.
+		console.warn("Stored policy read failed:", error);
+		return null;
+	}
+}
+
+async function writeStoredPolicy(
+	email: string,
+	grants: string[],
+	now: number,
+): Promise<void> {
+	try {
+		const { sql } = await import("../data/lakebase");
+		await sql(
+			`INSERT INTO reader_policy
+			   (user_email, group_set, grants, computed_on, expires_on)
+			 VALUES ($1, $2, $3::jsonb, now(),
+			         now() + make_interval(secs => $4))
+			 ON CONFLICT (user_email, group_set) DO UPDATE SET
+			   grants = EXCLUDED.grants,
+			   computed_on = EXCLUDED.computed_on,
+			   expires_on = EXCLUDED.expires_on`,
+			[
+				email,
+				groupSetKey(),
+				JSON.stringify(grants),
+				settings().groupCacheTtlSeconds,
+			],
+		);
+		void now;
+	} catch (error) {
+		// Costs the next replica a probe, never correctness.
+		console.warn("Stored policy write failed:", error);
+	}
 }
 
 export async function resolvePolicyClass(
@@ -273,7 +333,14 @@ export async function resolvePolicyClass(
 
 	const pending = (async (): Promise<PolicyClass> => {
 		try {
-			const grants = await probeGrants(identity);
+			// Read back before it is asked for again. The stored answer carries
+			// the same lifetime the memory one does, so this shares an existing
+			// window between replicas rather than widening it: a membership
+			// change still takes effect within groupCacheTtlSeconds, and the
+			// grace window still covers a lookup outage.
+			const stored = await readStoredPolicy(key, now);
+			const grants = stored ?? (await probeGrants(identity));
+			if (!stored) void writeStoredPolicy(key, grants, now);
 			const value: PolicyClass = {
 				id: policyIdFor(grants),
 				grants,

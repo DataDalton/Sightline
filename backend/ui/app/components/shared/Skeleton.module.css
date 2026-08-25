@@ -1,0 +1,147 @@
+/* One skeleton treatment for the whole app.
+
+   Before this each surface defined its own, which meant two animations at two
+   speeds appearing side by side on the same page, and several places that
+   showed a word or nothing at all while they waited.
+
+   Only the bars shimmer. A card or a row draws its real border and background
+   and stays still, so a loading page reads as the page it is about to be rather
+   than as a screen of pulsing rectangles. */
+
+.block {
+	background: linear-gradient(
+		90deg,
+		var(--surface-hover) 25%,
+		var(--surface-active) 50%,
+		var(--surface-hover) 75%
+	);
+	background-size: 200% 100%;
+	animation: skeletonShimmer 1.4s ease-in-out infinite;
+	border-radius: var(--radius-sm);
+	pointer-events: none;
+}
+
+/* On the chrome rather than on a surface, where the sunken tokens do not read. */
+.onChrome {
+	background: linear-gradient(
+		90deg,
+		var(--chrome-hover) 25%,
+		var(--chrome-active, var(--chrome-hover)) 50%,
+		var(--chrome-hover) 75%
+	);
+	background-size: 200% 100%;
+}
+
+.rounded {
+	border-radius: var(--radius-lg);
+}
+
+.circle {
+	border-radius: 50%;
+}
+
+@keyframes skeletonShimmer {
+	0% {
+		background-position: 200% 0;
+	}
+	100% {
+		background-position: -200% 0;
+	}
+}
+
+/* Still a placeholder, just not a moving one. */
+@media (prefers-reduced-motion: reduce) {
+	.block {
+		animation: none;
+		background: var(--surface-hover);
+	}
+
+	.onChrome {
+		background: var(--chrome-hover);
+	}
+}
+
+.stack {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+
+/* Ragged rather than uniform, because a paragraph of equal-length bars reads as
+   a chart rather than as text. */
+.line:last-child {
+	width: 60%;
+}
+
+.cards {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+	gap: var(--space-4);
+}
+
+/* The real card, with its contents standing in. Same border, padding and
+   radius as the thing that replaces it, so nothing moves when it does. */
+.card {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+	padding: var(--space-4);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-lg);
+	background: var(--surface-raised);
+}
+
+.cardBody {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+
+.tableShell {
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-lg);
+	overflow: hidden;
+	background: var(--surface-raised);
+}
+
+.tableRow {
+	display: grid;
+	gap: var(--space-4);
+	align-items: center;
+	padding: var(--space-3) var(--space-4);
+	border-bottom: 1px solid var(--border-subtle);
+}
+
+.tableRow:last-child {
+	border-bottom: none;
+}
+
+.tableHead {
+	background: var(--surface-sunken);
+}
+
+.report {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-5);
+}
+
+.reportHeader {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+
+.kpis {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+	gap: var(--space-4);
+}
+
+.chart {
+	display: flex;
+	align-items: flex-end;
+	gap: var(--space-2);
+	height: 200px;
+	margin-top: var(--space-3);
+}

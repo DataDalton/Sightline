@@ -3,6 +3,12 @@
 import { useEffect, useState, type ReactNode } from "react";
 import useSWR from "swr";
 import { formatCompact } from "../../lib/format";
+import {
+	Skeleton,
+	SkeletonTable,
+	SkeletonText,
+} from "../components/shared/Skeleton";
+import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { usePageTitle } from "../hooks/usePageTitle";
 import styles from "./Admin.module.css";
 
@@ -112,6 +118,9 @@ export default function AdminView() {
 				? `/api/admin?days=${days}`
 				: `/api/admin?section=${section}`;
 	const { data, error, isLoading } = useSWR(key);
+	// Both admin sections answer from cache, so a placeholder shown on every
+	// tab change would blink rather than inform.
+	const showSkeleton = useDeferredLoading(isLoading);
 
 	if (error) {
 		return (
@@ -158,8 +167,18 @@ export default function AdminView() {
 			    usage query that the other sections share. */}
 			{section === "configuration" && <ConfigurationSection />}
 
-			{isLoading && section !== "configuration" && (
-				<div className={styles.state}>Loading</div>
+			{showSkeleton && section !== "configuration" && (
+				<div className={styles.config}>
+					<nav className={styles.configNav} aria-hidden="true">
+						{Array.from({ length: 4 }, (_, i) => (
+							<Skeleton key={i} height={28} />
+						))}
+					</nav>
+					<div className={styles.configPane}>
+						<SkeletonText lines={2} />
+						<SkeletonTable rows={5} columns={4} />
+					</div>
+				</div>
 			)}
 
 			{!isLoading && section === "usage" && data && (
@@ -659,6 +678,7 @@ function DrillDrawer({
 		viewers?: ViewerRow[];
 		activity?: ActivityRow[];
 	}>(query);
+	const showSkeleton = useDeferredLoading(isLoading);
 
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
@@ -702,7 +722,7 @@ function DrillDrawer({
 					</button>
 				</div>
 
-				{isLoading && <div className={styles.sectionNote}>Loading</div>}
+				{showSkeleton && <SkeletonTable rows={5} columns={4} />}
 
 				{!isLoading && drill.kind === "report" && (
 					<div className={styles.tableWrap}>
@@ -922,6 +942,8 @@ function ConfigurationSection() {
 		maxLogoBytes: number;
 	}>("/api/admin/settings");
 
+	const showSkeleton = useDeferredLoading(isLoading);
+
 	const [group, setGroup] = useState<ConfigGroup>("branding");
 	const [draft, setDraft] = useState<ConfigValues | null>(null);
 	const [saving, setSaving] = useState(false);
@@ -988,7 +1010,7 @@ function ConfigurationSection() {
 	};
 
 	if (isLoading || !values) {
-		return <div className={styles.sectionNote}>Loading</div>;
+		return showSkeleton ? <SkeletonText lines={6} /> : null;
 	}
 
 	const logoKb = Math.round(new Blob([values.appLogo ?? ""]).size / 1024);
@@ -1681,6 +1703,8 @@ function AccessGrants() {
 	const { data, isLoading, mutate } =
 		useSWR<AccessResponse>("/api/admin/access");
 
+	const showSkeleton = useDeferredLoading(isLoading);
+
 	const [subjectType, setSubjectType] = useState<"group" | "user">("group");
 	const [subjectId, setSubjectId] = useState("");
 	const [resourceType, setResourceType] = useState<"category" | "report">(
@@ -1916,11 +1940,16 @@ function AccessGrants() {
 								</td>
 							</tr>
 						)}
-						{isLoading && (
-							<tr>
-								<td colSpan={6}>Loading</td>
-							</tr>
-						)}
+						{showSkeleton &&
+							Array.from({ length: 4 }, (_, row) => (
+								<tr key={`loading-${row}`}>
+									{Array.from({ length: 6 }, (_, col) => (
+										<td key={col}>
+											<Skeleton height={12} />
+										</td>
+									))}
+								</tr>
+							))}
 					</tbody>
 				</table>
 			</div>

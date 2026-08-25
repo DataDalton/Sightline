@@ -49,7 +49,10 @@ interface DataGridProps {
 	// reload.
 	columnOrder?: string[];
 	pinnedColumns?: string[];
-	onColumnLayout?: (next: { columnOrder: string[]; pinnedColumns: string[] }) => void;
+	onColumnLayout?: (next: {
+		columnOrder: string[];
+		pinnedColumns: string[];
+	}) => void;
 }
 
 interface SortState {
@@ -94,15 +97,27 @@ export function DataGrid({
 	onColumnLayout,
 }: DataGridProps) {
 	const [rows, setRows] = useState<Record<string, unknown>[]>([]);
-	const [columns, setColumns] = useState<string[]>([]);
+	// Seeded from the fields the visual is defined with, not left empty until
+	// the first response. The placeholder is drawn from these, so an empty list
+	// means a skeleton of no columns inside a container of no width, which is
+	// invisible and lets the table appear all at once instead. The server
+	// replaces it with what it actually returned.
+	const [columns, setColumns] = useState<string[]>(() => [
+		...dimensions,
+		...measures,
+	]);
 	const [sort, setSort] = useState<SortState | null>(null);
-	const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
+	const [columnFilters, setColumnFilters] = useState<
+		Record<string, string[]>
+	>({});
 	const [search, setSearch] = useState("");
 	const [debouncedSearch, setDebouncedSearch] = useState("");
 	const [loading, setLoading] = useState(true);
 	const [loadingMore, setLoadingMore] = useState(false);
 	const [hasMore, setHasMore] = useState(true);
-	const [error, setError] = useState<(Error & { status?: number }) | null>(null);
+	const [error, setError] = useState<(Error & { status?: number }) | null>(
+		null,
+	);
 	const [exporting, setExporting] = useState(false);
 	const [openFilter, setOpenFilter] = useState<{
 		field: string;
@@ -187,7 +202,9 @@ export function DataGrid({
 						dimensions,
 						measures,
 						filters: activeFilters,
-						sort: sort ? [{ field: sort.field, direction: sort.direction }] : [],
+						sort: sort
+							? [{ field: sort.field, direction: sort.direction }]
+							: [],
 						limit: pageSize,
 						offset,
 					}),
@@ -237,7 +254,13 @@ export function DataGrid({
 		void fetchPage(0, true);
 		// fetchPage changes with the query shape, which is exactly when a
 		// reload is wanted.
-	}, [sourceKey, filterKey, sortKey, dimensions.join(","), measures.join(",")]);
+	}, [
+		sourceKey,
+		filterKey,
+		sortKey,
+		dimensions.join(","),
+		measures.join(","),
+	]);
 
 	const virtualizer = useVirtualizer({
 		count: rows.length,
@@ -473,7 +496,9 @@ export function DataGrid({
 		const scrollLeft = isPinned ? 0 : scroller.scrollLeft;
 		const pointer = clientX - rect.left + scrollLeft;
 
-		const group = orderedColumns.filter((c) => pinned.includes(c) === isPinned);
+		const group = orderedColumns.filter(
+			(c) => pinned.includes(c) === isPinned,
+		);
 		const withoutDragged = group.filter((c) => c !== column);
 
 		let index = withoutDragged.length;
@@ -505,7 +530,8 @@ export function DataGrid({
 		const groupStart = columnOffsets.get(group[0]) ?? 0;
 		const last = group[group.length - 1];
 		const groupEnd =
-			(columnOffsets.get(last) ?? 0) + (widths.get(last) ?? minColumnWidth);
+			(columnOffsets.get(last) ?? 0) +
+			(widths.get(last) ?? minColumnWidth);
 		const bandWidth = widths.get(column) ?? minColumnWidth;
 		const ghostLeft = Math.min(
 			Math.max(pointer - grabOffset, groupStart),
@@ -530,7 +556,9 @@ export function DataGrid({
 		// A press that starts on a control is that control's, not a drag.
 		if ((event.target as HTMLElement).closest("button")) return;
 		const isPinned = pinned.includes(column);
-		const cell = (event.currentTarget as HTMLElement).getBoundingClientRect();
+		const cell = (
+			event.currentTarget as HTMLElement
+		).getBoundingClientRect();
 		dragStateRef.current = {
 			column,
 			isPinned,
@@ -616,7 +644,8 @@ export function DataGrid({
 			return;
 		}
 		setSort((prev) => {
-			if (!prev || prev.field !== field) return { field, direction: "asc" };
+			if (!prev || prev.field !== field)
+				return { field, direction: "asc" };
 			if (prev.direction === "asc") return { field, direction: "desc" };
 			return null;
 		});
@@ -651,7 +680,8 @@ export function DataGrid({
 			}
 
 			const blob = await response.blob();
-			const disposition = response.headers.get("Content-Disposition") ?? "";
+			const disposition =
+				response.headers.get("Content-Disposition") ?? "";
 			const match = /filename="([^"]+)"/.exec(disposition);
 			const url = URL.createObjectURL(blob);
 			const link = document.createElement("a");
@@ -705,18 +735,26 @@ export function DataGrid({
 		if (match) {
 			if (match.background) {
 				result.background = withAlpha(
-					themeColors.resolve(match.background, themeColors.series[0]),
+					themeColors.resolve(
+						match.background,
+						themeColors.series[0],
+					),
 					0.18,
 				);
 			}
 			if (match.textColor) {
-				result.color = themeColors.resolve(match.textColor, themeColors.text);
+				result.color = themeColors.resolve(
+					match.textColor,
+					themeColors.text,
+				);
 			}
 			result.bold = match.bold;
 			result.marker = match.marker;
 		}
 
-		const scale = (style?.colorScales ?? []).find((s) => s.field === column);
+		const scale = (style?.colorScales ?? []).find(
+			(s) => s.field === column,
+		);
 		if (scale) {
 			const stats = columnStats.get(column);
 			const value = toNumber(row[column]);
@@ -725,13 +763,21 @@ export function DataGrid({
 					value,
 					stats.min,
 					stats.max,
-					scale.kind === "diverging" ? (scale.midpoint ?? 0) : undefined,
+					scale.kind === "diverging"
+						? (scale.midpoint ?? 0)
+						: undefined,
 				);
 				if (position) {
 					const endpoint =
 						position.side === "low"
-							? themeColors.resolve(scale.low, themeColors.negative)
-							: themeColors.resolve(scale.high, themeColors.positive);
+							? themeColors.resolve(
+									scale.low,
+									themeColors.negative,
+								)
+							: themeColors.resolve(
+									scale.high,
+									themeColors.positive,
+								);
 
 					if (scale.asDataBar) {
 						// A bar compares more precisely than a colour wash and
@@ -741,8 +787,15 @@ export function DataGrid({
 							color: withAlpha(endpoint, 0.25),
 						};
 					} else {
-						const base = themeColors.resolve(scale.mid, themeColors.surface);
-						result.background = mix(base, endpoint, position.ratio * 0.7);
+						const base = themeColors.resolve(
+							scale.mid,
+							themeColors.surface,
+						);
+						result.background = mix(
+							base,
+							endpoint,
+							position.ratio * 0.7,
+						);
 					}
 				}
 			}
@@ -870,7 +923,9 @@ export function DataGrid({
 							}}
 							aria-hidden="true"
 						>
-							<span className={styles.columnGhostLabel}>{drag.column}</span>
+							<span className={styles.columnGhostLabel}>
+								{drag.column}
+							</span>
 						</div>
 
 						{/* Where it will land. Hidden once the band is on its
@@ -890,7 +945,8 @@ export function DataGrid({
 					{orderedColumns.map((column) => {
 						const hint = hints.get(column) ?? "text";
 						const isSorted = sort?.field === column;
-						const hasFilter = (columnFilters[column]?.length ?? 0) > 0;
+						const hasFilter =
+							(columnFilters[column]?.length ?? 0) > 0;
 						const isDimension = dimensions.includes(column);
 						const isPinned = pinned.includes(column);
 						const isLastPin = isPinned && column === lastPinned;
@@ -902,20 +958,30 @@ export function DataGrid({
 									isPinned ? styles.pinned : ""
 								} ${isLastPin ? styles.pinEdge : ""} ${
 									drag?.column === column ? styles.lifted : ""
-								} ${
-									drag ? styles.dragInProgress : ""
-								}`}
+								} ${drag ? styles.dragInProgress : ""}`}
 								style={{
 									width: widths.get(column),
-									left: isPinned ? pinOffsets.get(column) : undefined,
+									left: isPinned
+										? pinOffsets.get(column)
+										: undefined,
 								}}
-								onPointerDown={(e) => onHeaderPointerDown(e, column)}
+								onPointerDown={(e) =>
+									onHeaderPointerDown(e, column)
+								}
 								onPointerMove={onHeaderPointerMove}
 								onPointerUp={endHeaderDrag}
 								onPointerCancel={cancelHeaderDrag}
 							>
-								<span className={styles.gripDots} aria-hidden="true">
-									<svg width="8" height="14" viewBox="0 0 8 14" fill="currentColor">
+								<span
+									className={styles.gripDots}
+									aria-hidden="true"
+								>
+									<svg
+										width="8"
+										height="14"
+										viewBox="0 0 8 14"
+										fill="currentColor"
+									>
 										<circle cx="2" cy="3" r="1" />
 										<circle cx="6" cy="3" r="1" />
 										<circle cx="2" cy="7" r="1" />
@@ -928,12 +994,14 @@ export function DataGrid({
 									className={styles.headerLabel}
 									onClick={() => toggleSort(column)}
 									title={
-										fields.get(column)?.description ?? column
+										fields.get(column)?.description ??
+										column
 									}
 									role="button"
 									tabIndex={0}
 									onKeyDown={(e) => {
-										if (e.key === "Enter") toggleSort(column);
+										if (e.key === "Enter")
+											toggleSort(column);
 									}}
 								>
 									{column}
@@ -978,7 +1046,9 @@ export function DataGrid({
 										width="11"
 										height="11"
 										viewBox="0 0 24 24"
-										fill={isPinned ? "currentColor" : "none"}
+										fill={
+											isPinned ? "currentColor" : "none"
+										}
 										stroke="currentColor"
 										strokeWidth="2"
 										strokeLinecap="round"
@@ -1076,7 +1146,9 @@ export function DataGrid({
 								<div
 									key={item.key}
 									className={`${styles.row} ${
-										striped && item.index % 2 === 1 ? styles.rowAlt : ""
+										striped && item.index % 2 === 1
+											? styles.rowAlt
+											: ""
 									}`}
 									style={{
 										height: item.size,
@@ -1084,13 +1156,15 @@ export function DataGrid({
 									}}
 								>
 									{orderedColumns.map((column) => {
-										const hint = hints.get(column) ?? "text";
+										const hint =
+											hints.get(column) ?? "text";
 										const cell = cellAppearance(
 											row,
 											column,
 											item.index,
 										);
-										const isPinned = pinned.includes(column);
+										const isPinned =
+											pinned.includes(column);
 										const isLastPin =
 											isPinned && column === lastPinned;
 										return (
@@ -1101,9 +1175,12 @@ export function DataGrid({
 														? styles.numeric
 														: ""
 												} ${isPinned ? styles.pinned : ""} ${
-													isLastPin ? styles.pinEdge : ""
+													isLastPin
+														? styles.pinEdge
+														: ""
 												} ${
-													drag?.column === column && !drag.settling
+													drag?.column === column &&
+													!drag.settling
 														? styles.lifted
 														: ""
 												}`}
@@ -1122,32 +1199,51 @@ export function DataGrid({
 													background:
 														cell.background ??
 														(isPinned
-															? striped && item.index % 2 === 1
+															? striped &&
+																item.index %
+																	2 ===
+																	1
 																? "var(--pin-surface-alt)"
 																: "var(--pin-surface)"
 															: undefined),
 													color: cell.color,
-													fontWeight: cell.bold ? 600 : undefined,
+													fontWeight: cell.bold
+														? 600
+														: undefined,
 												}}
-												title={String(row[column] ?? "")}
+												title={String(
+													row[column] ?? "",
+												)}
 											>
 												{cell.bar && (
 													<span
-														className={styles.dataBar}
+														className={
+															styles.dataBar
+														}
 														style={{
 															width: `${cell.bar.width}%`,
-															background: cell.bar.color,
+															background:
+																cell.bar.color,
 														}}
 														aria-hidden="true"
 													/>
 												)}
-												<span className={styles.cellText}>
+												<span
+													className={styles.cellText}
+												>
 													{cell.marker && (
-														<span className={styles.marker}>
+														<span
+															className={
+																styles.marker
+															}
+														>
 															{cell.marker}
 														</span>
 													)}
-													{formatValue(row[column], hint)}
+													{formatValue(
+														row[column],
+														hint,
+													)}
 												</span>
 											</div>
 										);
@@ -1163,7 +1259,11 @@ export function DataGrid({
 				    as a strip of empty card below the placeholder. */}
 				{rows.length > 0 && (
 					<div ref={sentinelRef} className={styles.sentinel}>
-						{loadingMore ? "Loading more" : hasMore ? "" : "End of results"}
+						{loadingMore
+							? "Loading more"
+							: hasMore
+								? ""
+								: "End of results"}
 					</div>
 				)}
 			</div>
@@ -1173,7 +1273,8 @@ export function DataGrid({
 					field={openFilter.field}
 					sourceKey={sourceKey}
 					otherFilters={activeFilters.filter(
-						(f) => (f as QueryFilterShape).field !== openFilter.field,
+						(f) =>
+							(f as QueryFilterShape).field !== openFilter.field,
 					)}
 					selected={columnFilters[openFilter.field] ?? []}
 					sortDirection={

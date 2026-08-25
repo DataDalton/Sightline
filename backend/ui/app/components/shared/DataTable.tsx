@@ -2,6 +2,7 @@
 
 import { Fragment, useCallback, useMemo, memo } from "react";
 import { ColumnFilter, type ColumnFilterOption } from "./ColumnFilter";
+import { Skeleton } from "./Skeleton";
 import styles from "./DataTable.module.css";
 
 interface Column<T> {
@@ -278,7 +279,7 @@ function DataTableInner<T extends Record<string, any>>({
 								>
 									{columns.map((col) => (
 										<td key={col.key} className={styles.td}>
-											<div className={styles.skeleton} />
+											<Skeleton height={12} />
 										</td>
 									))}
 								</tr>

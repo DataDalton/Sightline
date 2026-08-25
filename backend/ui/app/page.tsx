@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import useSWR from "swr";
+import { SkeletonCards } from "./components/shared/Skeleton";
+import { useDeferredLoading } from "./hooks/useDeferredLoading";
 import { usePageTitle } from "./hooks/usePageTitle";
 import { useUser } from "./context/UserContext";
 import styles from "./page.module.css";
@@ -34,6 +36,11 @@ export default function Home() {
 	const { data: branding } = useSWR<{ name?: string; description?: string }>(
 		"/api/info",
 	);
+
+	// Navigation answers from cache in single digit milliseconds, so a
+	// placeholder shown the moment the request starts would only ever
+	// blink. This shows one when the wait is real.
+	const showSkeleton = useDeferredLoading(isLoading);
 
 	const categories = data?.categories ?? [];
 
@@ -120,7 +127,9 @@ export default function Home() {
 				</div>
 			)}
 
-			{isLoading ? null : categories.length === 0 ? (
+			{showSkeleton ? (
+				<SkeletonCards count={6} />
+			) : isLoading ? null : categories.length === 0 ? (
 				<div className={styles.empty}>
 					<div className={styles.emptyTitle}>
 						{navigationDegraded
