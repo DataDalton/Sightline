@@ -294,6 +294,26 @@ const statements: string[] = [
 	`CREATE INDEX IF NOT EXISTS reader_policy_expiry_idx
 		ON reader_policy (expires_on)`,
 
+	// What the catalogue sync is doing, and what the last one did.
+	//
+	// The work runs on the server and takes tens of seconds. Holding its state
+	// only in the request that started it means an administrator who navigates
+	// away, or arrives while somebody else is syncing, has no way to see
+	// whether anything is happening. Written here so any page load can ask.
+	`CREATE TABLE IF NOT EXISTS sync_runs (
+		run_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		started_by  TEXT NOT NULL,
+		started_on  TIMESTAMPTZ NOT NULL DEFAULT now(),
+		finished_on TIMESTAMPTZ,
+		total       INTEGER NOT NULL DEFAULT 0,
+		completed   INTEGER NOT NULL DEFAULT 0,
+		current     TEXT,
+		error       TEXT
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS sync_runs_started_idx
+		ON sync_runs (started_on DESC)`,
+
 	// --- Operations --------------------------------------------------------
 
 	`CREATE TABLE IF NOT EXISTS platform_settings (
@@ -375,6 +395,7 @@ const migrations: string[] = [
 	// it. The walk then reads this column instead of re-parsing megabytes every
 	// hour, and the application never needs SELECT on anything.
 	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS base_tables JSONB`,
+
 	`ALTER TABLE source_fields ALTER COLUMN sql_expr DROP NOT NULL`,
 	`ALTER TABLE source_fields ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '{}'::jsonb`,
 	`ALTER TABLE source_fields ADD COLUMN IF NOT EXISTS display_name TEXT`,

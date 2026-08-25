@@ -258,6 +258,7 @@ export async function syncSourceMetadata(
 
 export async function syncAllSources(
 	identity: Identity | null,
+	onProgress?: (completed: number, current: string) => void,
 ): Promise<SyncResult[]> {
 	const sources = await sql<{ source_key: string }>(
 		`SELECT source_key FROM data_sources WHERE is_active = TRUE ORDER BY source_key`,
@@ -266,9 +267,19 @@ export async function syncAllSources(
 	const results: SyncResult[] = [];
 	// Sequential rather than parallel: this is an admin action that runs
 	// rarely, and a burst of information_schema queries would compete with
-	// the reader-facing traffic for warehouse slots.
+	// the reader-facing traffic for warehouse slots. It also means progress is
+	// a real count rather than an estimate.
 	for (const source of sources) {
+		onProgress?.(results.length, source.source_key);
 		results.push(await syncSourceMetadata(identity, source.source_key));
 	}
+	onProgress?.(results.length, "");
 	return results;
+}
+
+export async function countActiveSources(): Promise<number> {
+	const rows = await sql<{ n: string }>(
+		`SELECT count(*)::text AS n FROM data_sources WHERE is_active = TRUE`,
+	);
+	return Number(rows[0]?.n ?? 0);
 }

@@ -3,12 +3,22 @@ import { getIdentity } from "@/lib/auth/identity";
 import { resolvePolicyClass } from "@/lib/auth/policy";
 import { isAdmin } from "@/lib/platform/access";
 import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
-import { syncAllSources, syncSourceMetadata } from "@/lib/semantic/ucMetadata";
+import {
+	countActiveSources,
+	syncAllSources,
+	syncSourceMetadata,
+} from "@/lib/semantic/ucMetadata";
 import {
 	syncAllSourceFields,
 	syncSourceFields,
 } from "@/lib/semantic/fieldSync";
 import { loadRegistry } from "@/lib/semantic/registry";
+import {
+	finishSyncRun,
+	latestSyncRun,
+	noteSyncProgress,
+	startSyncRun,
+} from "@/lib/semantic/syncRun";
 import { insertLog } from "@/lib/activityLog";
 import { checkWriteRateLimit } from "@/lib/rateLimit";
 
@@ -41,17 +51,24 @@ export async function POST(request: NextRequest) {
 		return NextResponse.json({ error: "Not found" }, { status: 404 });
 	}
 
-	try {
-		const body = await request.json().catch(() => ({}));
-		const sourceKey = body?.sourceKey ? String(body.sourceKey) : null;
+	const body = await request.json().catch(() => ({}));
+	const sourceKey = body?.sourceKey ? String(body.sourceKey) : null;
 
+	// Recorded before the work starts, so a page opened a second later can see
+	// that a sync is under way rather than an idle button.
+	const total = sourceKey ? 1 : await countActiveSources();
+	const runId = await startSyncRun(identity.email, total);
+
+	try {
 		const fieldResults = sourceKey
 			? [await syncSourceFields(identity, sourceKey)]
 			: await syncAllSourceFields(identity);
 
 		const results = sourceKey
 			? [await syncSourceMetadata(identity, sourceKey)]
-			: await syncAllSources(identity);
+			: await syncAllSources(identity, (completed, current) => {
+					void noteSyncProgress(runId, completed, current || null);
+				});
 
 		// The in-memory registry is rebuilt so the change is visible without
 		// waiting out the poll interval, and the row filter walk is redone
@@ -93,6 +110,8 @@ export async function POST(request: NextRequest) {
 			newValue: JSON.stringify({ ...totals, ...fieldTotals }),
 		});
 
+		await finishSyncRun(runId);
+
 		return NextResponse.json({
 			results,
 			totals: { ...totals, ...fieldTotals },
@@ -106,6 +125,34 @@ export async function POST(request: NextRequest) {
 		});
 	} catch (error) {
 		console.error("Catalog metadata sync failed:", error);
+		await finishSyncRun(
+			runId,
+			error instanceof Error
+				? error.message.slice(0, 400)
+				: "Sync failed",
+		);
 		return NextResponse.json({ error: "Sync failed" }, { status: 500 });
 	}
+}
+
+// What the last sync did, so a page that did not start one can still show it.
+export async function GET(request: NextRequest) {
+	await ensureReadyOrDegrade();
+
+	const identity = getIdentity(request);
+	if (!identity) {
+		return NextResponse.json(
+			{ error: "Not authenticated" },
+			{ status: 401 },
+		);
+	}
+
+	const policy = await resolvePolicyClass(identity);
+	if (!isAdmin(policy)) {
+		return NextResponse.json({ error: "Not found" }, { status: 404 });
+	}
+
+	const response = NextResponse.json({ run: await latestSyncRun() });
+	response.headers.set("Cache-Control", "no-store");
+	return response;
 }
