@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
+import { titleSeparator, usePageTitle } from "../hooks/usePageTitle";
 import { DataFreshness } from "../visuals/DataFreshness";
 import { VisualRenderer, type VisualSpec } from "../visuals/VisualRenderer";
 import { PageFilterProvider } from "../visuals/PageFilters";
@@ -68,6 +69,23 @@ export default function ReportView({ slug }: { slug: string }) {
 	// Held by id rather than by index, because a report with subpages has two
 	// rows of tabs and an index into a flat list cannot say which one is on.
 	const [activePageId, setActivePageId] = useState<string | null>(null);
+
+	// A report with one page is named by the report. With several, the page is
+	// what distinguishes two tabs open on the same report, so it is named too.
+	// Composed here rather than below because a hook cannot be called after the
+	// loading return.
+	const titled = data?.report;
+	const titledPage = titled
+		? (titled.pages.find((p) => p.pageId === activePageId) ??
+			titled.pages[0])
+		: undefined;
+	usePageTitle(
+		titled
+			? titled.pages.length > 1 && titledPage
+				? `${titled.title} ${titleSeparator} ${titledPage.title}`
+				: titled.title
+			: null,
+	);
 	// Column choices the reader has made, and which saved view they came from.
 	// Null means the page is showing what the report defines.
 	const [custom, setCustom] = useState<{
@@ -83,7 +101,9 @@ export default function ReportView({ slug }: { slug: string }) {
 		pinnedColumns: string[];
 	}>({ columnOrder: [], pinnedColumns: [] });
 	// Sizes the reader has dragged visuals to, in grid columns and rows.
-	const [visualSizes, setVisualSizes] = useState<Record<string, VisualSize>>({});
+	const [visualSizes, setVisualSizes] = useState<Record<string, VisualSize>>(
+		{},
+	);
 
 	if (error) {
 		return (
@@ -181,7 +201,9 @@ export default function ReportView({ slug }: { slug: string }) {
 				...visual,
 				layout: visual.layout ?? {
 					x: (index * fallbackWidth) % 12,
-					y: Math.floor((index * fallbackWidth) / 12) * fallbackHeight,
+					y:
+						Math.floor((index * fallbackWidth) / 12) *
+						fallbackHeight,
 					w: fallbackWidth,
 					h: fallbackHeight,
 				},
@@ -222,188 +244,201 @@ export default function ReportView({ slug }: { slug: string }) {
 
 	return (
 		<PageFilterProvider>
-		<ViewScaleProvider
-			sizes={visualSizes}
-			onSizesChange={(next) => {
-				setVisualSizes(next);
-				// The arrangement no longer matches the saved view it started
-				// from.
-				setActiveViewId(null);
-			}}
-		>
-		<div className={styles.page}>
-			<div className={styles.header}>
-				<div className={styles.headerMain}>
-					<div className={styles.breadcrumb}>
-						<Link href="/">Home</Link>
-						<span aria-hidden="true">/</span>
-						{report.categoryId && (
-							<>
-								<Link href={`/c/${report.categoryId}`}>
-									{report.categoryId}
-								</Link>
+			<ViewScaleProvider
+				sizes={visualSizes}
+				onSizesChange={(next) => {
+					setVisualSizes(next);
+					// The arrangement no longer matches the saved view it started
+					// from.
+					setActiveViewId(null);
+				}}
+			>
+				<div className={styles.page}>
+					<div className={styles.header}>
+						<div className={styles.headerMain}>
+							<div className={styles.breadcrumb}>
+								<Link href="/">Home</Link>
 								<span aria-hidden="true">/</span>
-							</>
-						)}
-						<span>{report.title}</span>
-					</div>
-					<h1 className={styles.title}>{report.title}</h1>
-					{report.description && (
-						<p className={styles.description}>{report.description}</p>
-					)}
-				</div>
+								{report.categoryId && (
+									<>
+										<Link href={`/c/${report.categoryId}`}>
+											{report.categoryId}
+										</Link>
+										<span aria-hidden="true">/</span>
+									</>
+								)}
+								<span>{report.title}</span>
+							</div>
+							<h1 className={styles.title}>{report.title}</h1>
+							{report.description && (
+								<p className={styles.description}>
+									{report.description}
+								</p>
+							)}
+						</div>
 
-				<div className={styles.actions}>
-					<ZoomControl />
+						<div className={styles.actions}>
+							<ZoomControl />
 
-					{freshnessSourceKey && freshnessField && (
-						<DataFreshness
-							sourceKey={freshnessSourceKey}
-							field={freshnessField}
-							label={configuredFreshness?.label}
-							dataType={
-								freshnessSource?.dimensions.find(
-									(f) => f.name === freshnessField,
-								)?.dataType
-							}
-						/>
-					)}
+							{freshnessSourceKey && freshnessField && (
+								<DataFreshness
+									sourceKey={freshnessSourceKey}
+									field={freshnessField}
+									label={configuredFreshness?.label}
+									dataType={
+										freshnessSource?.dimensions.find(
+											(f) => f.name === freshnessField,
+										)?.dataType
+									}
+								/>
+							)}
 
-					{/* Editing publishes to everyone, so the button only
+							{/* Editing publishes to everyone, so the button only
 					    appears for someone who actually holds that right. */}
-					{(user?.canEdit || report.permission !== "view") && (
-						<button
-							type="button"
-							className={styles.button}
-							onClick={() => setEditing(true)}
-						>
-							<svg
-								width="13"
-								height="13"
-								viewBox="0 0 24 24"
-								fill="none"
-								stroke="currentColor"
-								strokeWidth="2"
-								strokeLinecap="round"
-								strokeLinejoin="round"
-							>
-								<path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z" />
-							</svg>
-							Edit
-						</button>
-					)}
-					{tableVisual && (
-						<FieldPicker
-							source={pickerSource}
-							selectedDimensions={currentDimensions}
-							selectedMeasures={currentMeasures}
-							onChange={(dimensions, measures) => {
-								setCustom({ dimensions, measures });
-								// The arrangement no longer matches the saved
-								// view it started from.
-								setActiveViewId(null);
-							}}
-						/>
-					)}
-					{page && (
-						<SavedViews
-							reportId={report.reportId}
-							pageId={page.pageId}
-							current={{
-								dimensions: currentDimensions,
-								measures: currentMeasures,
-								columnOrder: columnLayout.columnOrder,
-								pinnedColumns: columnLayout.pinnedColumns,
-								visualSizes,
-							}}
-							activeViewId={activeViewId}
-							onApply={(view: SavedView | null) => {
-								if (!view) {
-									setCustom(null);
-									setColumnLayout({
-										columnOrder: [],
-										pinnedColumns: [],
-									});
-									setVisualSizes({});
-									setActiveViewId(null);
-									return;
-								}
-								setCustom({
-									dimensions: view.config.dimensions ?? [],
-									measures: view.config.measures ?? [],
-								});
-								setColumnLayout({
-									columnOrder: view.config.columnOrder ?? [],
-									pinnedColumns: view.config.pinnedColumns ?? [],
-								});
-								setVisualSizes(view.config.visualSizes ?? {});
-								setActiveViewId(view.viewId);
-							}}
-						/>
-					)}
-				</div>
-			</div>
+							{(user?.canEdit ||
+								report.permission !== "view") && (
+								<button
+									type="button"
+									className={styles.button}
+									onClick={() => setEditing(true)}
+								>
+									<svg
+										width="13"
+										height="13"
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										strokeWidth="2"
+										strokeLinecap="round"
+										strokeLinejoin="round"
+									>
+										<path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z" />
+									</svg>
+									Edit
+								</button>
+							)}
+							{tableVisual && (
+								<FieldPicker
+									source={pickerSource}
+									selectedDimensions={currentDimensions}
+									selectedMeasures={currentMeasures}
+									onChange={(dimensions, measures) => {
+										setCustom({ dimensions, measures });
+										// The arrangement no longer matches the saved
+										// view it started from.
+										setActiveViewId(null);
+									}}
+								/>
+							)}
+							{page && (
+								<SavedViews
+									reportId={report.reportId}
+									pageId={page.pageId}
+									current={{
+										dimensions: currentDimensions,
+										measures: currentMeasures,
+										columnOrder: columnLayout.columnOrder,
+										pinnedColumns:
+											columnLayout.pinnedColumns,
+										visualSizes,
+									}}
+									activeViewId={activeViewId}
+									onApply={(view: SavedView | null) => {
+										if (!view) {
+											setCustom(null);
+											setColumnLayout({
+												columnOrder: [],
+												pinnedColumns: [],
+											});
+											setVisualSizes({});
+											setActiveViewId(null);
+											return;
+										}
+										setCustom({
+											dimensions:
+												view.config.dimensions ?? [],
+											measures:
+												view.config.measures ?? [],
+										});
+										setColumnLayout({
+											columnOrder:
+												view.config.columnOrder ?? [],
+											pinnedColumns:
+												view.config.pinnedColumns ?? [],
+										});
+										setVisualSizes(
+											view.config.visualSizes ?? {},
+										);
+										setActiveViewId(view.viewId);
+									}}
+								/>
+							)}
+						</div>
+					</div>
 
-			<ScaledArea>
-			{report.pages.length > 1 && (
-				<div className={styles.tabs} role="tablist">
-					{report.pages.map((p) => (
-						<button
-							key={p.pageId}
-							type="button"
-							role="tab"
-							aria-selected={page?.pageId === p.pageId}
-							className={`${styles.tab} ${
-								page?.pageId === p.pageId ? styles.tabActive : ""
-							}`}
-							onClick={() => openPage(p.pageId)}
-						>
-							{p.title}
-						</button>
-					))}
-				</div>
-			)}
+					<ScaledArea>
+						{report.pages.length > 1 && (
+							<div className={styles.tabs} role="tablist">
+								{report.pages.map((p) => (
+									<button
+										key={p.pageId}
+										type="button"
+										role="tab"
+										aria-selected={
+											page?.pageId === p.pageId
+										}
+										className={`${styles.tab} ${
+											page?.pageId === p.pageId
+												? styles.tabActive
+												: ""
+										}`}
+										onClick={() => openPage(p.pageId)}
+									>
+										{p.title}
+									</button>
+								))}
+							</div>
+						)}
 
-			{(filterWidgets.length > 0 || visuals.length > 0) && (
-				<div className={styles.filterStrip}>
-					<FilterBar>
-						{filterWidgets.map((visual) => (
-							<VisualRenderer
-								key={visual.visualId}
-								visual={visual}
+						{(filterWidgets.length > 0 || visuals.length > 0) && (
+							<div className={styles.filterStrip}>
+								<FilterBar>
+									{filterWidgets.map((visual) => (
+										<VisualRenderer
+											key={visual.visualId}
+											visual={visual}
+											sources={sources}
+											reportId={report.reportId}
+											pageId={page?.pageId}
+										/>
+									))}
+								</FilterBar>
+							</div>
+						)}
+
+						{visuals.length === 0 ? (
+							<div className={styles.state}>
+								This page has no visuals configured yet.
+							</div>
+						) : (
+							<ReportGrid
+								visuals={visuals}
 								sources={sources}
 								reportId={report.reportId}
 								pageId={page?.pageId}
+								columnOrder={columnLayout.columnOrder}
+								pinnedColumns={columnLayout.pinnedColumns}
+								onColumnLayout={(next) => {
+									setColumnLayout(next);
+									// The arrangement no longer matches the saved view it
+									// started from.
+									setActiveViewId(null);
+								}}
 							/>
-						))}
-					</FilterBar>
+						)}
+					</ScaledArea>
 				</div>
-			)}
-
-			{visuals.length === 0 ? (
-				<div className={styles.state}>
-					This page has no visuals configured yet.
-				</div>
-			) : (
-				<ReportGrid
-					visuals={visuals}
-					sources={sources}
-					reportId={report.reportId}
-					pageId={page?.pageId}
-					columnOrder={columnLayout.columnOrder}
-					pinnedColumns={columnLayout.pinnedColumns}
-					onColumnLayout={(next) => {
-						setColumnLayout(next);
-						// The arrangement no longer matches the saved view it
-						// started from.
-						setActiveViewId(null);
-					}}
-				/>
-			)}
-
-			</ScaledArea>
-		</div>
-		</ViewScaleProvider>
+			</ViewScaleProvider>
 		</PageFilterProvider>
 	);
 }

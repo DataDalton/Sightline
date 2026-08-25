@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import useSWR from "swr";
+import { usePageTitle } from "./hooks/usePageTitle";
 import { useUser } from "./context/UserContext";
 import styles from "./page.module.css";
 
@@ -17,6 +18,9 @@ const fallbackName = "Sightline";
 const fallbackDescription = "Reporting and analytics";
 
 export default function Home() {
+	// The landing page is the application, so its name stands alone.
+	usePageTitle(null);
+
 	const { user } = useUser();
 	const { data, isLoading } = useSWR<{
 		categories: NavCategory[];
