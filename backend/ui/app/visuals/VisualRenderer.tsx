@@ -125,7 +125,6 @@ const gridTypes = new Set(["table"]);
 // single customer.
 const recordTypes = new Set(["definitionList", "entityHeader"]);
 
-
 export function VisualRenderer({
 	visual,
 	sources,
@@ -157,11 +156,11 @@ export function VisualRenderer({
 	// rebuilding the canvas on every keystroke anywhere on the page.
 	const fields = useMemo(() => fieldMap(source), [source]);
 
-	// "<selected>" is a placeholder the planning documents used to mean
-	// "whatever the page's dimension switcher is set to". It is resolved here,
-	// before any query is built, so the query layer only ever sees real field
-	// names. A page with no switcher drops it rather than asking the warehouse
-	// for a field that does not exist.
+	// "<selected>" means "whatever the page's breakdown switcher is set to",
+	// and "<grain>" means the same for its time grain. Both resolve here,
+	// before a query is built, so the query layer only ever sees real field
+	// names. A page with no switcher drops the placeholder rather than asking
+	// the warehouse for a field that does not exist.
 	const rawDimensions = visual.config.dimensions ?? [];
 	const resolvedDimensions = rawDimensions
 		.map((d) =>
@@ -181,7 +180,9 @@ export function VisualRenderer({
 	// measure, or a report is authored against a name that was never built.
 	// Failing the whole visual on one stale field would take down a page over
 	// a column nobody was reading, so the rest renders and the gap is stated.
-	const knownDimensions = new Set(source?.dimensions.map((f) => f.name) ?? []);
+	const knownDimensions = new Set(
+		source?.dimensions.map((f) => f.name) ?? [],
+	);
 	const knownMeasures = new Set(source?.measures.map((f) => f.name) ?? []);
 
 	const dimensionList = source
@@ -235,7 +236,10 @@ export function VisualRenderer({
 		? (visual.config.options.drillFields as string[])
 		: [];
 	const drillPath = drillByVisual[visual.visualId] ?? [];
-	const drillDepth = Math.min(drillPath.length, Math.max(drillFields.length - 1, 0));
+	const drillDepth = Math.min(
+		drillPath.length,
+		Math.max(drillFields.length - 1, 0),
+	);
 	const canDrill = drillFields.length > 1;
 
 	if (visual.visualType === "textPanel") {
@@ -263,18 +267,22 @@ export function VisualRenderer({
 		);
 	}
 
-	if (visual.visualType === "dimensionSwitch" || visual.visualType === "periodSwitch") {
+	if (
+		visual.visualType === "dimensionSwitch" ||
+		visual.visualType === "periodSwitch"
+	) {
 		return (
 			<DimensionSwitch
 				visualId={visual.visualId}
 				sourceKey={sourceKey ?? ""}
 				options={rawDimensions}
 				label={displayTitle(visual)}
-				scope={visual.visualType === "periodSwitch" ? "grain" : "breakdown"}
+				scope={
+					visual.visualType === "periodSwitch" ? "grain" : "breakdown"
+				}
 			/>
 		);
 	}
-
 
 	if (!sourceKey || !source) {
 		return (
@@ -316,7 +324,8 @@ export function VisualRenderer({
 						fields={dimensions}
 						label={visual.title}
 						placeholder={
-							typeof visual.config.options?.placeholder === "string"
+							typeof visual.config.options?.placeholder ===
+							"string"
 								? visual.config.options.placeholder
 								: undefined
 						}
@@ -380,10 +389,13 @@ export function VisualRenderer({
 						field={measures[0] ?? field}
 						label={visual.title}
 						direction={
-							visual.config.options?.direction === "below" ? "below" : "above"
+							visual.config.options?.direction === "below"
+								? "below"
+								: "above"
 						}
 						defaultValue={
-							typeof visual.config.options?.defaultValue === "number"
+							typeof visual.config.options?.defaultValue ===
+							"number"
 								? visual.config.options.defaultValue
 								: null
 						}
@@ -418,11 +430,7 @@ export function VisualRenderer({
 			: dimensions;
 
 		return (
-			<VisualFrame
-				title={displayTitle(visual)}
-				flush
-				notice={driftNote}
-			>
+			<VisualFrame title={displayTitle(visual)} flush notice={driftNote}>
 				{note && <VisualNotice>{note}</VisualNotice>}
 				<MatrixTable
 					sourceKey={sourceKey}
@@ -457,7 +465,11 @@ export function VisualRenderer({
 			setCrossFilter({
 				sourceVisualId: visual.visualId,
 				clauses: [
-					{ field: selection.field, op: "eq", values: [selection.value] },
+					{
+						field: selection.field,
+						op: "eq",
+						values: [selection.value],
+					},
 				],
 				label: `${selection.field}: ${selection.value}`,
 			});
@@ -559,11 +571,7 @@ export function VisualRenderer({
 		const compact = visual.visualType !== "table";
 		const gridHeight = frameHeight ?? (compact ? 220 : 520);
 		return (
-			<VisualFrame
-				title={displayTitle(visual)}
-				flush
-				notice={driftNote}
-			>
+			<VisualFrame title={displayTitle(visual)} flush notice={driftNote}>
 				{note && <VisualNotice>{note}</VisualNotice>}
 				<DataGrid
 					sourceKey={sourceKey}

@@ -104,7 +104,11 @@ function validate(manifest) {
 		if (report.categoryId && !categoryIds.has(report.categoryId)) {
 			at(path, `categoryId "${report.categoryId}" is not in categories`);
 		}
-		if (report.sourceKey && sourceKeys.size > 0 && !sourceKeys.has(report.sourceKey)) {
+		if (
+			report.sourceKey &&
+			sourceKeys.size > 0 &&
+			!sourceKeys.has(report.sourceKey)
+		) {
 			at(path, `sourceKey "${report.sourceKey}" is not in sources`);
 		}
 
@@ -142,10 +146,9 @@ function validate(manifest) {
 // A position for every visual that did not state one.
 //
 // Footprints come from the visual catalogue rather than from a copy kept here,
-// which is what stopped the previous importer from drifting: its private table
-// still listed two types that no longer exist. Visuals flow left to right and
-// wrap, so a manifest that says nothing about layout still opens as a page
-// somebody arranged rather than a pile at the origin.
+// so a type added or removed there needs no change in this file. Visuals flow
+// left to right and wrap, so a manifest that says nothing about layout still
+// opens as a page somebody arranged rather than a pile at the origin.
 function layoutFor(visuals) {
 	let x = 0;
 	let y = 0;
@@ -194,7 +197,10 @@ function formatHintFor(name, kind) {
 	if (n.includes("count") || n.includes("units") || n.includes("quantity")) {
 		return "integer";
 	}
-	if (kind === "dimension" && /(date|month|year|quarter|day|start|end)/.test(n)) {
+	if (
+		kind === "dimension" &&
+		/(date|month|year|quarter|day|start|end)/.test(n)
+	) {
 		return "date";
 	}
 	return kind === "measure" ? "decimal" : "text";
@@ -203,8 +209,12 @@ function formatHintFor(name, kind) {
 // --- Import -----------------------------------------------------------------
 
 export async function importManifest(manifest, options = {}) {
-	const { dryRun = false, replace = false, owner = null, log = console.log } =
-		options;
+	const {
+		dryRun = false,
+		replace = false,
+		owner = null,
+		log = console.log,
+	} = options;
 
 	const errors = validate(manifest);
 	if (errors.length > 0) {
@@ -297,10 +307,13 @@ export async function importManifest(manifest, options = {}) {
 							field.displayName ?? null,
 							kindName,
 							// A metric view resolves its own expressions.
-							kind === "metric_view" ? null : (field.sqlExpr ?? null),
+							kind === "metric_view"
+								? null
+								: (field.sqlExpr ?? null),
 							field.dataType ?? null,
 							field.description ?? null,
-							field.formatHint ?? formatHintFor(field.name, kindName),
+							field.formatHint ??
+								formatHintFor(field.name, kindName),
 							order++,
 						],
 					);
@@ -376,7 +389,9 @@ export async function importManifest(manifest, options = {}) {
 
 			const keptPages = [];
 			(report.pages ?? []).forEach((page, pageIndex) => {
-				keptPages.push(stableId(report.slug, page.slug ?? String(pageIndex)));
+				keptPages.push(
+					stableId(report.slug, page.slug ?? String(pageIndex)),
+				);
 			});
 
 			for (const [pageIndex, page] of (report.pages ?? []).entries()) {
@@ -440,14 +455,19 @@ export async function importManifest(manifest, options = {}) {
 							pageId,
 							visual.type,
 							visual.title ?? null,
-							visual.sourceKey ?? page.sourceKey ?? report.sourceKey ?? null,
+							visual.sourceKey ??
+								page.sourceKey ??
+								report.sourceKey ??
+								null,
 							JSON.stringify({
 								dimensions: visual.dimensions ?? [],
 								measures: visual.measures ?? [],
 								filters: visual.filters ?? [],
 								sort: visual.sort ?? [],
 								options: visual.options ?? {},
-								...(visual.style ? { style: visual.style } : {}),
+								...(visual.style
+									? { style: visual.style }
+									: {}),
 							}),
 							rects[i].x,
 							rects[i].y,
@@ -508,7 +528,8 @@ export async function importManifest(manifest, options = {}) {
 // Only when run directly, so the local converters can import the function
 // without triggering a second import of their own.
 const invokedDirectly =
-	process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, "/"));
+	process.argv[1] &&
+	import.meta.url.endsWith(process.argv[1].replace(/\\/g, "/"));
 
 if (invokedDirectly) {
 	const args = process.argv.slice(2);

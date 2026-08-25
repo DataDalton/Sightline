@@ -1,10 +1,8 @@
 // Closes empty rows left in a page's arrangement.
 //
-// Page controls used to be placed on the grid like any other visual. They are
-// not any more: a reader sees them in a strip above the content, so the editor
-// shows them the same way. What they left behind is a band of empty rows at the
-// top of every page that had one, which is the gap between the control and the
-// first visual that has no reason to be there.
+// A page whose visuals start below row zero opens on a band of nothing. That
+// happens when something that occupied the top of the grid stops being placed
+// there, such as a filter that now renders in the strip above the content.
 //
 // Only whole empty rows are closed. Nothing moves sideways, and two visuals
 // that share a row keep sharing it, because that is an arrangement somebody
@@ -46,12 +44,15 @@ try {
 			[page.page_id],
 		);
 
-		const placed = visuals.rows.filter((v) => !controlTypes.has(v.visual_type));
+		const placed = visuals.rows.filter(
+			(v) => !controlTypes.has(v.visual_type),
+		);
 		if (placed.length === 0) continue;
 
 		const occupied = new Set();
 		for (const v of placed) {
-			for (let y = v.layout_y; y < v.layout_y + v.layout_h; y++) occupied.add(y);
+			for (let y = v.layout_y; y < v.layout_y + v.layout_h; y++)
+				occupied.add(y);
 		}
 
 		const maxRow = Math.max(...placed.map((v) => v.layout_y + v.layout_h));
@@ -89,4 +90,3 @@ try {
 } finally {
 	await client.end();
 }
-
