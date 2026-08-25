@@ -41,6 +41,12 @@ export interface PlatformSettings {
 	// Query result cache
 	resultTtlSeconds: number;
 	resultMaxEntries: number;
+	// The memory the result cache may hold, in megabytes.
+	//
+	// The real bound. Results differ in size by orders of magnitude, so a limit
+	// counting entries prices a one row scorecard the same as a fifty thousand
+	// row extract and is reached either far too early or never.
+	resultMaxBytes: number;
 	// Serve an expired entry immediately and refresh behind the request, so a
 	// cold policy class costs one slow request rather than many.
 	staleWhileRevalidate: boolean;
@@ -108,6 +114,7 @@ export const defaultSettings: PlatformSettings = {
 
 	resultTtlSeconds: 300,
 	resultMaxEntries: 2000,
+	resultMaxBytes: 256,
 	staleWhileRevalidate: true,
 
 	refreshIntervalSeconds: 3600,
@@ -270,6 +277,7 @@ export const writableSettings = [
 	"warehouseId",
 	"resultTtlSeconds",
 	"resultMaxEntries",
+	"resultMaxBytes",
 	"staleWhileRevalidate",
 	"refreshIntervalSeconds",
 	"groupCacheTtlSeconds",

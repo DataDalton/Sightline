@@ -10,10 +10,10 @@ import type { QueryParams, Row } from "./types";
 // column masks apply: the warehouse evaluates them for the real user, not for
 // the app service principal.
 //
-// The service principal deliberately has no path to user-facing data. It
-// reaches platform metadata only (reports, saved views, telemetry). That
-// removes the entire class of bugs where application code forgets to apply a
-// predicate, because there is no unfiltered result for it to forget about.
+// Nothing else queries user-facing data. The service principal holds SELECT on
+// the catalogue so the row filter walk can read it, so the separation is a
+// property of which code runs where rather than of what that principal may
+// reach. See lib/data/appSession.
 
 // Sessions are pooled per token so a burst of queries from one user reuses a
 // single warehouse connection instead of reconnecting each time. Tokens are
@@ -51,6 +51,13 @@ async function closeEntry(key: string, entry: PooledSession): Promise<void> {
 	}
 }
 
+// How often idle sessions are looked for. On a timer rather than on the query
+// path: sweeping there walked the whole pool once per statement, and sorted it
+// whenever the pool was full, to find entries whose staleness is a function of
+// elapsed time and not of anything the query did.
+const sweepIntervalMs = 30 * 1000;
+let sweepTimer: ReturnType<typeof setInterval> | null = null;
+
 function sweepIdle(): void {
 	const now = Date.now();
 	for (const [key, entry] of pool) {
@@ -71,6 +78,34 @@ function sweepIdle(): void {
 			void closeEntry(key, entry);
 		}
 	}
+}
+
+// Started on first use rather than at import, so a module instance that never
+// queries never holds a timer.
+function ensureSweeping(): void {
+	if (sweepTimer) return;
+	sweepTimer = setInterval(sweepIdle, sweepIntervalMs);
+	sweepTimer.unref?.();
+}
+
+// The ceiling is the one thing that cannot wait for the timer: past it the pool
+// is holding more warehouse connections than it is allowed to.
+function enforceCeiling(): void {
+	if (pool.size <= maxPooledSessions) return;
+	sweepIdle();
+}
+
+function acquire(token: string): PooledSession {
+	ensureSweeping();
+
+	let entry = pool.get(token);
+	if (!entry) {
+		entry = openSession(token);
+		pool.set(token, entry);
+		enforceCeiling();
+	}
+	entry.lastUsed = Date.now();
+	return entry;
 }
 
 function openSession(token: string): PooledSession {
@@ -112,15 +147,8 @@ export async function queryAsUser(
 		throw new Error("A user token is required to query user-facing data.");
 	}
 
-	sweepIdle();
-
 	const key = userToken;
-	let entry = pool.get(key);
-	if (!entry) {
-		entry = openSession(userToken);
-		pool.set(key, entry);
-	}
-	entry.lastUsed = Date.now();
+	const entry = acquire(userToken);
 
 	const namedParameters = params as
 		| Record<string, DBSQLParameterValue>
@@ -138,6 +166,63 @@ export async function queryAsUser(
 		// Drop the pooled session so the next call reconnects with a fresh
 		// token. An expired token surfaces here and must not be retried
 		// against the same dead session.
+		void closeEntry(key, entry);
+		throw error;
+	} finally {
+		if (operation) {
+			await operation.close().catch(() => {});
+		}
+	}
+}
+
+// Runs a query and hands back its rows in batches.
+//
+// fetchAll materializes the whole result before the caller sees any of it,
+// which is right for a visual and wrong for an export: fifty thousand rows is
+// tens of megabytes resident, and the caller only ever needs the batch it is
+// writing. onBatch is awaited, so a slow consumer applies backpressure rather
+// than letting batches pile up behind it.
+export async function queryAsUserBatches(
+	userToken: string,
+	sql: string,
+	params: QueryParams | undefined,
+	batchSize: number,
+	onBatch: (rows: Row[]) => Promise<void>,
+): Promise<number> {
+	if (!userToken) {
+		throw new Error("A user token is required to query user-facing data.");
+	}
+
+	const key = userToken;
+	const entry = acquire(userToken);
+
+	const namedParameters = params as
+		| Record<string, DBSQLParameterValue>
+		| undefined;
+
+	let operation: IOperation | null = null;
+	let total = 0;
+	try {
+		const session = await entry.session;
+		operation = await session.executeStatement(
+			sql,
+			namedParameters ? { namedParameters } : undefined,
+		);
+
+		// hasMoreRows is only meaningful after a fetch, so this is a do-while
+		// rather than a while: asking first would skip a single-batch result.
+		do {
+			const rows = (await operation.fetchChunk({
+				maxRows: batchSize,
+			})) as Row[];
+			if (rows.length > 0) {
+				total += rows.length;
+				await onBatch(rows);
+			}
+		} while (await operation.hasMoreRows());
+
+		return total;
+	} catch (error) {
 		void closeEntry(key, entry);
 		throw error;
 	} finally {

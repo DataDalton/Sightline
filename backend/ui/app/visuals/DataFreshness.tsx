@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { formatValue } from "../../lib/format";
+import { usePostResource } from "../hooks/usePostResource";
 import styles from "./Filters.module.css";
 
 // How current the data on a page is.
@@ -29,36 +29,17 @@ export function DataFreshness({
 	label,
 	dataType,
 }: DataFreshnessProps) {
-	const [value, setValue] = useState<string | null>(null);
-	const [state, setState] = useState<"loading" | "ready" | "failed">("loading");
+	// Every page on a report carries this, and they mostly ask about the same
+	// source, so one request answers all of them.
+	const { data, error, isLoading } = usePostResource<{
+		value: string | null;
+	}>("/api/query/freshness", { sourceKey, field });
 
-	useEffect(() => {
-		let cancelled = false;
-		setState("loading");
-
-		fetch("/api/query/freshness", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ sourceKey, field }),
-		})
-			.then((r) => (r.ok ? r.json() : Promise.reject(new Error("failed"))))
-			.then((data: { value: string | null }) => {
-				if (cancelled) return;
-				setValue(data.value);
-				setState("ready");
-			})
-			.catch(() => {
-				if (!cancelled) setState("failed");
-			});
-
-		return () => {
-			cancelled = true;
-		};
-	}, [sourceKey, field]);
+	const value = data?.value ?? null;
 
 	// A stamp that cannot be read is worse than none: it invites a reader to
 	// treat a stale figure as current. Nothing is shown instead.
-	if (state === "failed" || (state === "ready" && !value)) return null;
+	if (error || (!isLoading && !value)) return null;
 
 	const looksLikeDate =
 		(dataType ?? "").startsWith("date") ||
@@ -83,9 +64,11 @@ export function DataFreshness({
 				<circle cx="12" cy="12" r="9" />
 				<path d="M12 7v5l3 2" />
 			</svg>
-			<span className={styles.freshnessLabel}>{label ?? "Data through"}</span>
+			<span className={styles.freshnessLabel}>
+				{label ?? "Data through"}
+			</span>
 			<span className={styles.freshnessValue}>
-				{state === "loading"
+				{isLoading
 					? "…"
 					: looksLikeDate
 						? formatValue(value, "date")

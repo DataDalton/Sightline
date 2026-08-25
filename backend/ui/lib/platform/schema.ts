@@ -314,6 +314,63 @@ const statements: string[] = [
 	`CREATE INDEX IF NOT EXISTS sync_runs_started_idx
 		ON sync_runs (started_on DESC)`,
 
+	// An export in progress, and the file it produced.
+	//
+	// Export used to run inside the request that asked for it: the whole result
+	// was fetched, turned into one CSV string, and written to the response. A
+	// large one held the rows, the encoded lines and the joined document in
+	// memory at once, and the reader watched a spinner with no way to know
+	// whether it was working, no way to leave the page, and nothing to show for
+	// it if the container recycled.
+	//
+	// So the request records what was asked for and returns. The work runs
+	// behind it and writes here, which is also what lets the answer be
+	// collected from a replica that did not do the work.
+	`CREATE TABLE IF NOT EXISTS export_jobs (
+		job_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		requested_by TEXT NOT NULL,
+		policy_class TEXT NOT NULL,
+		source_key   TEXT NOT NULL,
+		report_id    TEXT,
+		page_id      TEXT,
+		visual_id    TEXT,
+		spec         JSONB NOT NULL,
+		filename     TEXT NOT NULL,
+		status       TEXT NOT NULL DEFAULT 'queued',
+		row_count    INTEGER NOT NULL DEFAULT 0,
+		byte_count   BIGINT NOT NULL DEFAULT 0,
+		truncated    BOOLEAN NOT NULL DEFAULT FALSE,
+		error        TEXT,
+		requested_on TIMESTAMPTZ NOT NULL DEFAULT now(),
+		started_on   TIMESTAMPTZ,
+		-- Touched as each batch lands. A job is judged dead by how long it has
+		-- been silent, not by how long it has been running: a large export on a
+		-- busy warehouse is slow and alive, and the two are only distinguishable
+		-- by whether it is still making progress.
+		progress_on  TIMESTAMPTZ,
+		finished_on  TIMESTAMPTZ,
+		expires_on   TIMESTAMPTZ NOT NULL
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS export_jobs_owner_idx
+		ON export_jobs (requested_by, requested_on DESC)`,
+
+	`CREATE INDEX IF NOT EXISTS export_jobs_expiry_idx
+		ON export_jobs (expires_on)`,
+
+	// The file itself, in pieces.
+	//
+	// One row per batch, written as the warehouse hands them over and read back
+	// in order. Holding the document in a single column would mean building it
+	// whole on the way in and again on the way out, which is the memory this
+	// exists to bound.
+	`CREATE TABLE IF NOT EXISTS export_chunks (
+		job_id UUID NOT NULL REFERENCES export_jobs (job_id) ON DELETE CASCADE,
+		seq    INTEGER NOT NULL,
+		body   TEXT NOT NULL,
+		PRIMARY KEY (job_id, seq)
+	)`,
+
 	// --- Operations --------------------------------------------------------
 
 	`CREATE TABLE IF NOT EXISTS platform_settings (
@@ -468,4 +525,23 @@ export async function sweepExpired(): Promise<void> {
 	await sql(`DELETE FROM result_cache WHERE expires_on < now()`);
 	await sql(`DELETE FROM reader_access WHERE expires_on < now()`);
 	await sql(`DELETE FROM reader_policy WHERE expires_on < now()`);
+
+	// The chunks go with the job, by the foreign key.
+	await sql(`DELETE FROM export_jobs WHERE expires_on < now()`);
+
+	// A job whose replica went away mid-run is otherwise "running" for ever,
+	// and the page waiting on it never stops waiting.
+	//
+	// Silence is the signal, not elapsed time. A job that has written a batch
+	// recently is working however long it has been going, and one that has
+	// written nothing for ten minutes is not coming back.
+	await sql(
+		`UPDATE export_jobs
+		 SET status = 'failed',
+		     error = 'The export stopped before it finished.',
+		     finished_on = now()
+		 WHERE status IN ('queued', 'running')
+		   AND coalesce(progress_on, started_on, requested_on)
+		       < now() - interval '10 minutes'`,
+	);
 }

@@ -43,6 +43,9 @@ let cached: DiscoveredGroups | null = null;
 let cachedAt = 0;
 const ttlMs = 15 * 60 * 1000;
 
+// The walk in progress, shared by everyone who asks while it runs.
+let walking: Promise<DiscoveredGroups> | null = null;
+
 export function lastDiscovery(): {
 	groups: DiscoveredGroups | null;
 	at: number;
@@ -178,6 +181,27 @@ export async function discoverFilterGroups(
 ): Promise<DiscoveredGroups> {
 	if (!force && cached && Date.now() - cachedAt < ttlMs) return cached;
 
+	// One walk at a time, however many callers ask.
+	//
+	// The memo is only written when the walk finishes, and the walk takes tens
+	// of seconds: it opens every filtered source in turn and a metric view
+	// definition alone costs a few hundred milliseconds. The registry poll runs
+	// every sixty seconds and does not await this, so without a shared promise
+	// every poll that lands mid-walk starts another one, on every replica, each
+	// issuing the same statements against the same warehouse.
+	//
+	// A forced walk joins an in-flight one rather than starting a second. The
+	// running walk is already reading the catalogue as it stands now, which is
+	// what the caller asked for.
+	if (walking) return walking;
+
+	walking = runWalk(identity).finally(() => {
+		walking = null;
+	});
+	return walking;
+}
+
+async function runWalk(identity: Identity | null): Promise<DiscoveredGroups> {
 	const sources = await sql<{
 		source_key: string;
 		catalog_name: string;
@@ -247,4 +271,10 @@ export async function discoverFilterGroups(
 	}
 
 	return cached;
+}
+
+// Whether a walk is running now, for the administration page. A walk that is
+// under way is why the group list is briefly the previous one.
+export function filterDiscoveryRunning(): boolean {
+	return walking !== null;
 }
