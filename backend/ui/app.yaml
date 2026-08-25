@@ -1,110 +1,76 @@
 # Databricks Apps deployment manifest.
 #
-# This is where a deployment declares itself. A .env file is local development
-# only and is never read by a deployed app, so anything the platform needs to
-# start has to be here or bound as a resource.
+# Declares no values. Everything a deployment needs is set in the app's own
+# configuration, next to the resource bindings, where it stays private to that
+# deployment and can change without a commit.
 #
-# The split is deliberate:
-#
-#   Here        Connection targets and the one group that bootstraps access.
-#               These have to be known before the platform can read its own
-#               settings table, so they cannot live in it.
-#
-#   In the app  Everything else. Branding, cache budgets, editor and admin
-#               groups, the warehouse and catalogue the reports read: all in
-#               Administration -> Configuration, changeable without a redeploy.
-#
-# Databricks injects DATABRICKS_HOST, DATABRICKS_CLIENT_ID,
-# DATABRICKS_CLIENT_SECRET, DATABRICKS_APP_NAME and DATABRICKS_WORKSPACE_ID by
-# itself. Nothing below repeats those.
+# A value here would override the configured one, so a placeholder in this file
+# is applied rather than ignored, and a `valueFrom` naming a resource that does
+# not exist resolves to nothing.
 
 command: ["npm", "run", "start"]
 
-env:
-    - name: NODE_ENV
-      value: production
-
-    # --- The SQL warehouse ---------------------------------------------------
-    # Exposed from the resource binding below. runtime.ts turns the id into an
-    # HTTP path.
-    - name: DATABRICKS_SQL_WAREHOUSE_ID
-      valueFrom: sql-warehouse
-
-    # --- Lakebase, which holds the platform's own tables ---------------------
-    # Reports, pages, visuals, saved views, access policy, settings and the
-    # usage log. Container storage is ephemeral and Delta cannot serve the write
-    # rate, so this is not optional.
-    #
-    # Taken from the database resource binding. The instance name is what
-    # credentials are minted against and is not derivable from the host.
-    - name: PGHOST
-      valueFrom: platform-database
-    - name: PGDATABASE
-      value: REPLACE_WITH_DATABASE_NAME
-    - name: PGUSER
-      value: REPLACE_WITH_SERVICE_PRINCIPAL_ID
-    - name: LAKEBASE_INSTANCE
-      value: REPLACE_WITH_INSTANCE_NAME
-
-    # Schema inside that database. Dedicated rather than public, so the platform
-    # tables are isolated and can be dropped as a unit.
-    - name: PGSCHEMA
-      value: REPLACE_WITH_SCHEMA_NAME  # sightline for a fresh install
-
-    # --- The data the reports read -------------------------------------------
-    # A starting value only. Once an administrator sets the catalogue in
-    # Administration -> Configuration, the stored setting wins and this is
-    # ignored, so a change of environment needs no redeploy.
-    - name: SOURCE_CATALOG
-      value: REPLACE_WITH_SOURCE_CATALOG
-
-    # --- Bootstrapping access ------------------------------------------------
-    # The group that administers a fresh install.
-    #
-    # Without it an empty settings table means nobody is an administrator, and
-    # the page that appoints administrators is administrator-only, so a new
-    # deployment could never be configured. Once the table names a group this is
-    # ignored and can be removed.
-    #
-    # Case sensitive: is_account_group_member matches the name exactly as the
-    # account spells it, and a wrong case fails silently as a non-member.
-    - name: BOOTSTRAP_ADMIN_GROUPS
-      value: REPLACE_WITH_ADMIN_GROUP
-
-# --- On behalf of the user --------------------------------------------------
+# --- What this app needs ------------------------------------------------------
 #
-# This is not optional for this app. Every data query runs under the caller's
-# own token so Unity Catalog applies that person's row filters and column
-# masks, and the app's service principal is deliberately given no access to the
-# analytical views at all. Without user authorization there is no identity to
-# query as, and every report returns an access error rather than somebody
-# else's rows.
+# Set these in the app's configuration, and bind the two resources.
+#
+# Injected by Databricks, nothing to do:
+#   DATABRICKS_HOST, DATABRICKS_CLIENT_ID, DATABRICKS_CLIENT_SECRET,
+#   DATABRICKS_APP_NAME, DATABRICKS_WORKSPACE_ID
+#
+# From a SQL warehouse resource binding:
+#   DATABRICKS_SQL_WAREHOUSE_ID   the warehouse that answers every data query
+#
+# From a database resource binding, plus a few the binding does not supply:
+#   PGHOST                        supplied by the binding
+#   PGDATABASE                    the database holding the platform tables
+#   LAKEBASE_INSTANCE             the database instance name. Not derivable
+#                                 from the host: it is what OAuth credentials
+#                                 are minted against, which is a different
+#                                 thing from the address you connect to
+#   PGSCHEMA                      schema for the platform tables. Dedicated
+#                                 rather than public, so they are isolated and
+#                                 can be dropped as a unit
+#   PGUSER                        optional; falls back to the injected
+#                                 service principal client id
+#
+# For the first administrator:
+#   BOOTSTRAP_ADMIN_GROUPS        one group, comma separated for more.
+#
+#                                 Without it an empty settings table means
+#                                 nobody is an administrator, and the page that
+#                                 appoints administrators is administrator
+#                                 only, so a new deployment could never be
+#                                 configured. Once the table names a group this
+#                                 is ignored and can be removed.
+#
+#                                 Case sensitive: membership is matched exactly
+#                                 as the account spells it, and the wrong case
+#                                 fails silently as a non-member rather than as
+#                                 an error.
+#
+# Optional starting point, overridden by the setting once one is saved:
+#   SOURCE_CATALOG                the catalogue the reports read from
+#
+# Everything else is operational configuration and lives in the platform
+# settings table: branding, cache budgets, editor and admin groups, the
+# warehouse. All of it is changed under Administration -> Configuration and
+# reaches every replica within a refresh interval, with no redeploy.
+
+# --- On behalf of the user ----------------------------------------------------
+#
+# Not optional for this app. Every data query runs under the caller's own token
+# so Unity Catalog applies that person's row filters and column masks, and the
+# service principal is deliberately given no access to the analytical views at
+# all. Without user authorization there is no identity to query as, and every
+# report returns an access error rather than somebody else's rows.
 #
 # Databricks forwards the token as X-Forwarded-Access-Token once this is
-# declared. The sql scope is what the platform needs: it covers both the data
-# queries and the is_account_group_member() probe that resolves a caller's
-# groups.
+# declared. The sql scope covers both the data queries and the group membership
+# probe that resolves a caller's policy class.
 #
 # Confirm the key and scope names against the Databricks Apps documentation for
-# your workspace version before deploying. This block is what makes the
-# difference between a working install and one where every page says data
-# access is unavailable.
+# your workspace version.
 user_authorization:
-  scopes:
-    - sql
-
-resources:
-    - name: sql-warehouse
-      description: Warehouse serving both user queries and platform metadata.
-      sql_warehouse:
-          id: REPLACE_WITH_WAREHOUSE_ID
-          permission: CAN_USE
-
-    - name: platform-database
-      description: >-
-          Lakebase instance holding the platform tables. The app authenticates with
-          an OAuth token minted against the instance and rotated hourly, so no
-          password is stored anywhere.
-      database:
-          instance_name: REPLACE_WITH_INSTANCE_NAME
-          permission: CAN_CONNECT_AND_CREATE
+    scopes:
+        - sql

@@ -21,11 +21,8 @@ let readyAt = 0;
 async function initialize(): Promise<void> {
 	// A deployment missing its connection targets fails here, naming them,
 	// rather than further in with something that reads as a network fault.
-	//
-	// Checked here rather than at module scope: `next build` imports every
-	// route to collect page data, and a build container has the app
-	// environment without the resource bindings, so a module-level check
-	// failed the build over a database the builder was never going to use.
+	// Here rather than at module scope, so a build that imports every route
+	// does not trip a check about resources it never uses.
 	assertDeploymentConfigured();
 
 	// Settings first: the registry and the pollers read their intervals from

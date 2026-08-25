@@ -1,21 +1,20 @@
 // Finding the groups that decide what rows somebody sees.
 //
 // The platform caches answers and shares an entry between two people only when
-// they provably see the same rows. "Provably" means the policy class has to be
-// built from every group that changes row visibility, and until now that list
-// came from the platform's own access rules, which know nothing about the row
-// filters Unity Catalog applies underneath.
+// they provably see the same rows. "Provably" means the policy class is built
+// from every group that changes row visibility, which includes the groups the
+// row filters branch on and not only the ones the platform's own access rules
+// name.
 //
-// The consequence was quiet and serious: two readers restricted to different
-// divisions resolved to the same class, so the second could be served the
-// first's cached rows without a query ever running. On-behalf-of protects a
-// query; it cannot protect a cache hit, because a cache hit is the absence of
-// a query.
+// A group missing from that set is not a coarser cache. Two readers restricted
+// to different divisions resolve to the same class, and the second is served
+// the first's rows without a query running. On-behalf-of protects a query; it
+// cannot protect a cache hit, because a cache hit is the absence of a query.
 //
-// So the groups are discovered from the catalogue rather than configured. A
+// So the groups come from the catalogue rather than from configuration. A
 // filter names the groups it branches on, and those names are exactly the ones
-// the class has to distinguish. Nobody has to remember to keep a list in step
-// with a filter somebody else edits.
+// the class has to tell apart, without anybody keeping a list in step with a
+// filter somebody else edits.
 
 export interface FilterGroups {
 	// Named in is_account_group_member(), which resolves against the account.

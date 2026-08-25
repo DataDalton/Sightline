@@ -85,7 +85,10 @@ export function pixelsToSpan(
 			minWidth,
 			Math.round((width + gridGap) / (metrics.columnWidth + gridGap)),
 		),
-		h: Math.max(minHeight, Math.round((height + gridGap) / (rowHeight + gridGap))),
+		h: Math.max(
+			minHeight,
+			Math.round((height + gridGap) / (rowHeight + gridGap)),
+		),
 	};
 }
 
@@ -104,7 +107,10 @@ export function findFreeSlot(existing: Rect[], w: number, h: number): Rect {
 	const occupied = (x: number, y: number): boolean =>
 		existing.some(
 			(r) =>
-				x < r.x + r.w && x + width > r.x && y < r.y + r.h && y + h > r.y,
+				x < r.x + r.w &&
+				x + width > r.x &&
+				y < r.y + r.h &&
+				y + h > r.y,
 		);
 
 	const maxRow = canvasRows(existing, 0);
@@ -120,10 +126,7 @@ export function findFreeSlot(existing: Rect[], w: number, h: number): Rect {
 // prevent the placement, since deliberate overlap is sometimes what is wanted.
 export function overlaps(a: Rect, b: Rect): boolean {
 	return (
-		a.x < b.x + b.w &&
-		a.x + a.w > b.x &&
-		a.y < b.y + b.h &&
-		a.y + a.h > b.y
+		a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y
 	);
 }
 
@@ -148,11 +151,10 @@ export function stackForNarrow(
 
 // Removes empty rows the arrangement does not need.
 //
-// Page controls used to occupy rows on the grid before they were lifted into
-// their own strip, which left the pages that had one opening on a band of
-// nothing. The same happens whenever an author deletes the top visual. Leading
-// and interior gaps are closed while the relative order and the gaps an author
-// deliberately left within a row are kept.
+// A page opens on whatever its first visual is, not on a band of empty rows.
+// Gaps appear when a visual is deleted, or when something that was on the grid
+// moves off it. Leading and interior gaps close; relative order and the gaps an
+// author left within a row are kept.
 //
 // Only whole empty rows are closed. A visual is never moved sideways and two
 // visuals that share a row stay sharing it, because that is an arrangement
@@ -214,7 +216,10 @@ export function resolveVerticalOverlaps<T extends { rect: Rect }>(
 					item.rect.x < other.rect.x + other.rect.w &&
 					item.rect.x + item.rect.w > other.rect.x;
 				if (!sharesColumns) continue;
-				if (y < other.rect.y + other.rect.h && y + item.rect.h > other.rect.y) {
+				if (
+					y < other.rect.y + other.rect.h &&
+					y + item.rect.h > other.rect.y
+				) {
 					y = other.rect.y + other.rect.h;
 					settled = false;
 				}
@@ -233,7 +238,10 @@ export function heightForRows(rows: number): number {
 }
 
 export function rowsForHeight(pixels: number): number {
-	return Math.max(minHeight, Math.round((pixels + gridGap) / (rowHeight + gridGap)));
+	return Math.max(
+		minHeight,
+		Math.round((pixels + gridGap) / (rowHeight + gridGap)),
+	);
 }
 
 // Grows the visuals on the bottom row to reach the foot of the viewport.
