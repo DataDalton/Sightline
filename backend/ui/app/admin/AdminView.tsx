@@ -64,7 +64,11 @@ interface SecurityResponse {
 	editorGroups: string[];
 	adminGroups: string[];
 	policyGroups: { name: string; scope: string; origin: string }[];
-	filterDiscovery: { at: number | null; unreadableSources: string[] };
+	filterDiscovery: {
+		at: number | null;
+		unreadableSources: string[];
+		failureReason: string | null;
+	};
 	filteredSources: number;
 	exports: {
 		logId: string;
@@ -1555,6 +1559,12 @@ function SecuritySection({ data }: { data: SecurityResponse }) {
 										: "no group was found in any filter"
 								}, so two readers entitled to different rows resolve to the same class and one may be served an answer computed for the other.`}
 					</p>
+
+					{data.filterDiscovery.failureReason && (
+						<p className={styles.paneNote}>
+							First failure: {data.filterDiscovery.failureReason}
+						</p>
+					)}
 
 					{unreadable.length > 0 && (
 						<details className={styles.details}>

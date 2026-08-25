@@ -28,6 +28,14 @@ export interface DiscoveredGroups extends FilterGroups {
 	// Sources that could not be inspected, so an operator can see that the
 	// discovery is incomplete rather than assume it found everything.
 	unreadableSources: string[];
+	// Why the first one failed.
+	//
+	// The walk carries on past a source it cannot open, which is right: one
+	// unreadable table should not cost the groups every other filter names. But
+	// swallowing the reason as well leaves a list of names and no way to tell a
+	// missing privilege from an unreachable warehouse, and those need different
+	// people to fix them.
+	failureReason: string | null;
 }
 
 // Cached because it walks the catalogue, which is slow and changes rarely.
@@ -95,6 +103,13 @@ export async function discoverFilterGroups(
 	const parts: FilterGroups[] = [];
 	const unreadable: string[] = [];
 	const seenTables = new Set<string>();
+	let failureReason: string | null = null;
+
+	const noteFailure = (error: unknown) => {
+		if (failureReason) return;
+		const message = error instanceof Error ? error.message : String(error);
+		failureReason = message.slice(0, 400);
+	};
 
 	for (const source of sources) {
 		let tables: string[];
@@ -106,7 +121,8 @@ export async function discoverFilterGroups(
 				source.object_name,
 				source.kind,
 			);
-		} catch {
+		} catch (error) {
+			noteFailure(error);
 			unreadable.push(source.source_key);
 			continue;
 		}
@@ -153,16 +169,28 @@ export async function discoverFilterGroups(
 						);
 					}
 				}
-			} catch {
+			} catch (error) {
 				// A catalogue this identity cannot read is reported rather
 				// than treated as having no filters, which would be the
 				// dangerous reading.
+				noteFailure(error);
 				unreadable.push(table);
 			}
 		}
 	}
 
-	cached = { ...mergeFilterGroups(parts), unreadableSources: unreadable };
+	cached = {
+		...mergeFilterGroups(parts),
+		unreadableSources: unreadable,
+		failureReason,
+	};
+
+	if (failureReason) {
+		console.warn(
+			`Row filter discovery could not read ${unreadable.length} source(s). ` +
+				`First failure: ${failureReason}`,
+		);
+	}
 	cachedAt = Date.now();
 	return cached;
 }

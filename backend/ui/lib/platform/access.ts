@@ -215,16 +215,28 @@ export async function getGrants(
 			// it is stronger: catalogue access implies view, and somebody
 			// given edit keeps edit.
 			if (catalogAccessEnabled()) {
-				for (const [resource, permission] of await catalogGrants(
-					identity,
-				)) {
-					const held = grants.get(resource);
-					if (
-						!held ||
-						permissionRank[permission] > permissionRank[held]
-					) {
-						grants.set(resource, permission);
+				// A catalogue that cannot be reached costs the reader what it
+				// would have added, not what they were already given. Letting
+				// this throw would empty the whole map, so a warehouse hiccup
+				// would blank the home page of somebody holding an explicit
+				// grant that has nothing to do with the catalogue.
+				try {
+					for (const [resource, permission] of await catalogGrants(
+						identity,
+					)) {
+						const held = grants.get(resource);
+						if (
+							!held ||
+							permissionRank[permission] > permissionRank[held]
+						) {
+							grants.set(resource, permission);
+						}
 					}
+				} catch (error) {
+					console.error(
+						"Catalogue reachability unavailable, serving explicit grants only:",
+						error,
+					);
 				}
 			}
 

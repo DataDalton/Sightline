@@ -105,6 +105,7 @@ export async function GET(request: NextRequest) {
 					return {
 						at: at || null,
 						unreadableSources: groups?.unreadableSources ?? [],
+						failureReason: groups?.failureReason ?? null,
 					};
 				})(),
 				// Only the count is needed here: the verdict is about how many

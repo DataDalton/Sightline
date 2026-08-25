@@ -44,39 +44,56 @@ const memory = new Map<string, Entry>();
 const inflight = new Map<string, Promise<Set<string>>>();
 const refreshing = new Set<string>();
 
-// Unity Catalog reports a missing privilege in the message rather than in a
-// code the driver surfaces separately. Matching on it is what separates "this
-// reader may not see this" from "the warehouse is down", and the two must not
-// be treated alike: the first is an answer, the second is a failure that should
-// reach the caller rather than quietly emptying somebody home page.
-const denialPattern =
-	/permission|privilege|not authorized|unauthorized|access denied|insufficient/i;
-
-async function canRead(token: string, ref: string): Promise<boolean> {
-	try {
-		// Plans and returns nothing. The privilege is checked during analysis,
-		// so the answer arrives without scanning a row.
-		await queryAsUser(token, `SELECT 1 FROM ${ref} LIMIT 0`);
-		return true;
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		if (denialPattern.test(message)) return false;
-		throw error;
-	}
-}
-
-// Asked of the warehouse. Every source at once: they are independent questions
-// and the driver runs them on one session, so the whole set costs about what
-// the slowest single one does.
+// Asked as one statement.
+//
+// This used to test each source with its own SELECT, nineteen of them at once.
+// That is the exact question worth asking and it does not survive contact with
+// the driver: the statements share one Thrift session per token, and running
+// them together returned a Spark error rather than an answer, which propagated
+// out and left the reader with no grants at all.
+//
+// information_schema is filtered to what the caller may see, so one query
+// answers for every source. The difference is that it reports visibility rather
+// than SELECT specifically, so somebody holding BROWSE alone would reach a
+// report and then be refused its rows. That is a worse answer for an unusual
+// grant, in exchange for an answer at all for everybody else, and the refusal
+// still happens where it must: on the real query, under their own token.
 async function probe(identity: Identity): Promise<Set<string>> {
 	const token = identity.userToken as string;
-	const answers = await Promise.all(
-		listSources().map(async (source) => ({
-			key: source.sourceKey,
-			readable: await canRead(token, sourceRef(source)),
-		})),
+	const sources = listSources();
+	if (sources.length === 0) return new Set();
+
+	// Only the schemas something is actually registered in.
+	const scopes = new Map<string, Set<string>>();
+	for (const source of sources) {
+		const schemas = scopes.get(source.catalog) ?? new Set<string>();
+		schemas.add(source.schema);
+		scopes.set(source.catalog, schemas);
+	}
+
+	const visible = new Set<string>();
+	for (const [catalog, schemas] of scopes) {
+		const list = Array.from(schemas)
+			.map((s) => `'${s.replace(/'/g, "''")}'`)
+			.join(", ");
+		const rows = await queryAsUser(
+			token,
+			`SELECT table_schema, table_name
+			 FROM ${catalog}.information_schema.tables
+			 WHERE table_schema IN (${list})`,
+		);
+		for (const row of rows) {
+			visible.add(
+				`${catalog}.${String(row.table_schema)}.${String(row.table_name)}`.toLowerCase(),
+			);
+		}
+	}
+
+	return new Set(
+		sources
+			.filter((s) => visible.has(sourceRef(s).toLowerCase()))
+			.map((s) => s.sourceKey),
 	);
-	return new Set(answers.filter((a) => a.readable).map((a) => a.key));
 }
 
 async function readStored(email: string): Promise<Entry | null> {
