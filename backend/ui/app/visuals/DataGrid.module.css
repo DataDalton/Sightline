@@ -1,0 +1,639 @@
+.grid {
+	/* Ground for a frozen cell. A pinned cell scrolls over the ones behind it,
+	   so it has to paint its own background rather than letting the row show
+	   through. Plain surfaces: a frozen column is still an ordinary column and
+	   should read as one. What marks the frozen region is the edge, not a wash
+	   over every cell in it. */
+	--pin-surface: var(--surface-raised);
+	--pin-surface-alt: var(--surface-sunken);
+
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	height: 100%;
+}
+
+.toolbar {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	padding: var(--space-2) var(--space-3);
+	border-bottom: 1px solid var(--border-subtle);
+	background: var(--surface-raised);
+	flex-shrink: 0;
+}
+
+.search {
+	position: relative;
+	flex: 1;
+	max-width: 340px;
+}
+
+.searchInput {
+	width: 100%;
+	padding: var(--space-2) var(--space-3) var(--space-2) 30px;
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-base);
+	font-size: var(--text-sm);
+}
+
+.searchInput:focus {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: -1px;
+	border-color: transparent;
+}
+
+.searchIcon {
+	position: absolute;
+	left: 9px;
+	top: 50%;
+	transform: translateY(-50%);
+	color: var(--text-muted);
+	pointer-events: none;
+}
+
+.spacer {
+	flex: 1;
+}
+
+.toolButton {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	font-size: var(--text-sm);
+	white-space: nowrap;
+}
+
+.toolButton:hover:not(:disabled) {
+	background: var(--surface-hover);
+	border-color: var(--border-strong);
+}
+
+.toolButton:disabled {
+	opacity: 0.55;
+	cursor: not-allowed;
+}
+
+.rowCount {
+	font-size: var(--text-sm);
+	color: var(--text-muted);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.chips {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-2);
+	padding: var(--space-2) var(--space-3);
+	border-bottom: 1px solid var(--border-subtle);
+	background: var(--surface-sunken);
+}
+
+.chip {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	padding: 2px var(--space-2);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-full);
+	background: var(--surface-raised);
+	font-size: var(--text-xs);
+}
+
+.chipField {
+	font-weight: 600;
+}
+
+.chipRemove {
+	display: flex;
+	color: var(--text-muted);
+	padding: 0 2px;
+}
+
+.chipRemove:hover {
+	color: var(--danger);
+}
+
+.clearAll {
+	font-size: var(--text-xs);
+	color: var(--text-link);
+	text-decoration: underline;
+}
+
+/* The scroll container owns the height so virtualization has a viewport to
+   measure against. */
+.scroller {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	position: relative;
+	contain: strict;
+}
+
+.headerRow {
+	position: sticky;
+	top: 0;
+	z-index: 3;
+	display: flex;
+	background: var(--surface-sunken);
+	border-bottom: 1px solid var(--border-default);
+}
+
+.headerCell {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: var(--space-1);
+	padding: var(--space-2) var(--space-3);
+	font-size: var(--text-sm);
+	font-weight: 600;
+	color: var(--text-secondary);
+	border-right: 1px solid var(--border-subtle);
+	flex-shrink: 0;
+	overflow: hidden;
+}
+
+/* A pinned column stays put while the rest scrolls under it. The header row is
+   already sticky vertically, so a pinned header sticks in both directions and
+   needs the higher layer to stay above its own row. */
+.headerCell.pinned {
+	position: sticky;
+	z-index: 2;
+	background: var(--surface-sunken);
+	border-right: 1px solid var(--border-subtle);
+}
+
+.cell.pinned {
+	position: sticky;
+	z-index: 1;
+	border-right: 1px solid var(--border-subtle);
+}
+
+/* The frozen region is marked by its edge and nothing else.
+
+   One line rather than a treatment on every pinned column: what a reader needs
+   to know is where the columns that stay put end and the ones that slide
+   underneath begin, and that is a single boundary however many columns are
+   pinned. So only the outermost pinned column carries it.
+
+   Blue rather than the brand gold, because this is structural, telling the
+   reader how the grid is behaving. Gold is reserved for the things that say
+   something about the data. */
+.headerCell.pinEdge,
+.cell.pinEdge {
+	border-right: 2px solid var(--info);
+}
+
+/* Reordering.
+   The column being moved stays in place but recedes, so the reader can still
+   see where it came from, and a copy of its header follows the cursor. The
+   line is what they aim at. */
+.lifted {
+	opacity: 0.35;
+}
+
+.dragInProgress {
+	/* No text selection and no hover states while a drag is running. */
+	user-select: none;
+	cursor: grabbing;
+}
+
+.dragInProgress .pinButton,
+.dragInProgress .filterButton {
+	opacity: 0;
+}
+
+.dropLine {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 2px;
+	margin-left: -1px;
+	z-index: 4;
+	background: var(--brand);
+	pointer-events: none;
+}
+
+/* A cap at the top so the line reads as an insertion point rather than as a
+   column border. */
+.dropLine::before {
+	content: "";
+	position: absolute;
+	top: 0;
+	left: -3px;
+	width: 8px;
+	height: 8px;
+	border-radius: var(--radius-full);
+	background: var(--brand);
+}
+
+/* The column being moved, drawn over the grid at full height. Horizontal only:
+   a column can only change its place in a row, and letting the band follow the
+   cursor vertically would offer a move that does not exist. */
+.columnGhost {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	z-index: 5;
+	border-left: 2px solid var(--brand);
+	border-right: 2px solid var(--brand);
+	border-radius: var(--radius-sm);
+	background: color-mix(in srgb, var(--brand) 16%, transparent);
+	box-shadow: var(--shadow-lg);
+	pointer-events: none;
+}
+
+/* Released. The columns have already moved, so the band travels the last short
+   distance onto the place the column now occupies. */
+.columnGhostSettling {
+	transition: left 150ms cubic-bezier(0.2, 0, 0.2, 1);
+}
+
+.columnGhostLabel {
+	position: sticky;
+	top: 0;
+	display: block;
+	padding: var(--space-2) var(--space-3);
+	background: var(--brand);
+	color: var(--text-inverse);
+	font-size: var(--text-sm);
+	font-weight: 600;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* The grab affordance. Hidden until the header is hovered, like the pin, so a
+   wide grid is column names rather than a row of controls. */
+.gripDots {
+	display: flex;
+	align-items: center;
+	flex-shrink: 0;
+	margin-left: -4px;
+	color: var(--text-muted);
+	cursor: grab;
+	opacity: 0;
+	transition: opacity var(--transition-fast);
+}
+
+.headerCell:hover .gripDots {
+	opacity: 1;
+}
+
+.dragInProgress .gripDots {
+	opacity: 1;
+}
+
+.pinButton {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	width: 18px;
+	height: 18px;
+	padding: 0;
+	border: none;
+	border-radius: var(--radius-sm);
+	background: none;
+	color: var(--text-muted);
+	cursor: pointer;
+	/* Out of the way until the header is hovered, so a wide grid is not a row
+	   of icons competing with the column names. */
+	opacity: 0;
+	transition: opacity 0.12s ease;
+}
+
+.headerCell:hover .pinButton {
+	opacity: 1;
+}
+
+.pinButton:hover {
+	background: var(--surface-active);
+	color: var(--text-primary);
+}
+
+.pinButton.pinActive {
+	opacity: 1;
+	color: var(--info);
+}
+
+.headerLabel {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	cursor: pointer;
+	flex: 1;
+}
+
+.headerLabel:hover {
+	color: var(--text-primary);
+}
+
+.sortIcon {
+	flex-shrink: 0;
+	color: var(--brand-strong);
+}
+
+.filterButton {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	border-radius: var(--radius-sm);
+	color: var(--text-muted);
+	flex-shrink: 0;
+}
+
+.filterButton:hover {
+	background: var(--surface-active);
+	color: var(--text-primary);
+}
+
+.filterActive {
+	color: var(--brand-strong);
+}
+
+.rows {
+	position: relative;
+	width: 100%;
+}
+
+.row {
+	position: absolute;
+	top: 0;
+	left: 0;
+	display: flex;
+	width: 100%;
+	border-bottom: 1px solid var(--border-subtle);
+}
+
+/* Sits under the hover state and under any conditional colour a cell carries,
+   both of which are deliberate signals and should win. */
+.rowAlt {
+	background: var(--surface-sunken);
+}
+
+.row:hover {
+	background: var(--surface-hover);
+}
+
+.cell {
+	position: relative;
+	padding: var(--space-2) var(--space-3);
+	font-size: var(--text-sm);
+	border-right: 1px solid var(--border-subtle);
+	flex-shrink: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	display: flex;
+	align-items: center;
+}
+
+.numeric {
+	justify-content: flex-end;
+	font-variant-numeric: tabular-nums;
+}
+
+.sentinel {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: var(--space-4);
+	font-size: var(--text-sm);
+	color: var(--text-muted);
+}
+
+.state {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: var(--space-2);
+	padding: var(--space-6);
+	color: var(--text-muted);
+	font-size: var(--text-sm);
+	min-height: 160px;
+}
+
+.stateError {
+	color: var(--danger);
+}
+
+/* --- column filter popover --- */
+
+.popover {
+	position: fixed;
+	z-index: 60;
+	width: 280px;
+	max-height: 380px;
+	display: flex;
+	flex-direction: column;
+	background: var(--surface-overlay);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-lg);
+	box-shadow: var(--shadow-lg);
+	overflow: hidden;
+}
+
+.popoverSort {
+	display: flex;
+	gap: var(--space-1);
+	padding: var(--space-2);
+	border-bottom: 1px solid var(--border-subtle);
+}
+
+.sortButton {
+	flex: 1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: var(--space-1);
+	padding: var(--space-2);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	font-size: var(--text-xs);
+	background: var(--surface-raised);
+}
+
+.sortButton:hover {
+	background: var(--surface-hover);
+}
+
+.sortActive {
+	background: var(--brand);
+	border-color: var(--brand);
+	color: var(--brand-contrast);
+	font-weight: 600;
+}
+
+.popoverSearch {
+	padding: var(--space-2);
+	border-bottom: 1px solid var(--border-subtle);
+}
+
+.popoverList {
+	flex: 1;
+	overflow-y: auto;
+	padding: var(--space-1);
+}
+
+.valueItem {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	width: 100%;
+	padding: var(--space-2);
+	border-radius: var(--radius-sm);
+	font-size: var(--text-sm);
+	text-align: left;
+}
+
+.valueItem:hover {
+	background: var(--surface-hover);
+}
+
+.valueLabel {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.checkbox {
+	width: 14px;
+	height: 14px;
+	flex-shrink: 0;
+	border: 1.5px solid var(--border-strong);
+	border-radius: 3px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: transparent;
+}
+
+.checked {
+	background: var(--brand);
+	border-color: var(--brand);
+	color: var(--brand-contrast);
+}
+
+.popoverFooter {
+	display: flex;
+	gap: var(--space-2);
+	padding: var(--space-2);
+	border-top: 1px solid var(--border-subtle);
+	background: var(--surface-sunken);
+}
+
+.popoverButton {
+	flex: 1;
+	padding: var(--space-2);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	font-size: var(--text-sm);
+}
+
+.popoverButton:hover {
+	background: var(--surface-hover);
+}
+
+.popoverPrimary {
+	background: var(--brand);
+	border-color: var(--brand);
+	color: var(--brand-contrast);
+	font-weight: 600;
+}
+
+.truncatedNote {
+	padding: var(--space-2);
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+	text-align: center;
+	border-top: 1px solid var(--border-subtle);
+}
+
+/* A data bar sits behind the value rather than replacing it, so the exact
+   figure stays readable. */
+.dataBar {
+	position: absolute;
+	left: 0;
+	top: 3px;
+	bottom: 3px;
+	border-radius: 2px;
+	pointer-events: none;
+}
+
+.cellText {
+	position: relative;
+	z-index: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* Carries the same meaning as the colour, for greyscale output and for readers
+   who cannot distinguish the hue. */
+.marker {
+	margin-right: 4px;
+	font-weight: 700;
+}
+
+/* First load. The same shape as the table that is coming, so the card does not
+   change size when the rows land and the reader is not looking at a word in
+   the middle of an empty panel. */
+.skeletonRows {
+	display: flex;
+	flex-direction: column;
+}
+
+.skeletonRow {
+	display: flex;
+	height: 34px;
+	border-bottom: 1px solid var(--border-subtle);
+}
+
+.skeletonCell {
+	display: flex;
+	align-items: center;
+	flex-shrink: 0;
+	padding: 0 var(--space-3);
+	border-right: 1px solid var(--border-subtle);
+}
+
+.skeletonBar {
+	height: 9px;
+	border-radius: var(--radius-full);
+	background: linear-gradient(
+		90deg,
+		var(--surface-sunken) 25%,
+		var(--surface-hover) 37%,
+		var(--surface-sunken) 63%
+	);
+	background-size: 400% 100%;
+	animation: gridShimmer 1.4s ease infinite;
+}
+
+@keyframes gridShimmer {
+	0% {
+		background-position: 100% 50%;
+	}
+	100% {
+		background-position: 0 50%;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.skeletonBar {
+		animation: none;
+		background: var(--surface-sunken);
+	}
+}

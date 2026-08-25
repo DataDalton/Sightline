@@ -1,0 +1,133 @@
+.page {
+	width: 100%;
+	padding: var(--space-6) var(--space-5);
+}
+
+@media (max-width: 720px) {
+	.page {
+		padding: var(--space-4) var(--space-3);
+	}
+}
+
+.header {
+	margin-bottom: var(--space-6);
+}
+
+.title {
+	font-size: var(--text-3xl);
+	font-weight: 600;
+	letter-spacing: -0.02em;
+	margin-bottom: var(--space-2);
+}
+
+.subtitle {
+	font-size: var(--text-lg);
+	color: var(--text-secondary);
+}
+
+.notice {
+	display: flex;
+	gap: var(--space-3);
+	padding: var(--space-4);
+	margin-bottom: var(--space-5);
+	border: 1px solid var(--border-default);
+	border-left: 3px solid var(--warning);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+}
+
+.noticeIcon {
+	color: var(--warning);
+	flex-shrink: 0;
+	margin-top: 1px;
+}
+
+.noticeTitle {
+	font-weight: 600;
+	margin-bottom: var(--space-1);
+}
+
+.noticeBody {
+	font-size: var(--text-md);
+	color: var(--text-secondary);
+	line-height: 1.6;
+}
+
+.grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+	gap: var(--space-4);
+}
+
+.card {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	padding: var(--space-4);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-lg);
+	background: var(--surface-raised);
+	box-shadow: var(--shadow-sm);
+	transition:
+		border-color var(--transition-fast),
+		box-shadow var(--transition-fast),
+		transform var(--transition-fast);
+}
+
+.card:hover {
+	border-color: var(--border-strong);
+	box-shadow: var(--shadow-md);
+	transform: translateY(-1px);
+}
+
+.cardIcon {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 32px;
+	height: 32px;
+	border-radius: var(--radius-md);
+	background: var(--brand-subtle);
+	color: var(--brand-strong);
+	margin-bottom: var(--space-1);
+}
+
+.cardTitle {
+	font-size: var(--text-lg);
+	font-weight: 600;
+}
+
+.cardBody {
+	font-size: var(--text-md);
+	color: var(--text-secondary);
+	line-height: 1.5;
+}
+
+.cardMeta {
+	margin-top: auto;
+	padding-top: var(--space-3);
+	font-size: var(--text-sm);
+	color: var(--text-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.empty {
+	padding: var(--space-7) var(--space-5);
+	text-align: center;
+	border: 1px dashed var(--border-default);
+	border-radius: var(--radius-lg);
+	background: var(--surface-raised);
+}
+
+.emptyTitle {
+	font-size: var(--text-xl);
+	font-weight: 600;
+	margin-bottom: var(--space-2);
+}
+
+.emptyBody {
+	color: var(--text-secondary);
+	max-width: 460px;
+	margin: 0 auto;
+	line-height: 1.6;
+}
