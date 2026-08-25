@@ -20,6 +20,12 @@ command: ["npm", "run", "start"]
 
 # --- What this app needs ------------------------------------------------------
 #
+# A database resource bound to the Lakebase instance, whatever it is named. It
+# supplies no variable here and is bound for a different reason: binding is what
+# provisions a Postgres role for the app's service principal inside the
+# instance. Without that role the app mints a valid token and the database
+# still refuses it, because there is no role of that name to log in as.
+#
 # Injected by Databricks, nothing to bind:
 #   DATABRICKS_HOST, DATABRICKS_CLIENT_ID, DATABRICKS_CLIENT_SECRET,
 #   DATABRICKS_APP_NAME, DATABRICKS_WORKSPACE_ID, DATABRICKS_APP_PORT

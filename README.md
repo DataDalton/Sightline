@@ -104,11 +104,44 @@ Configuration lives in three places, and they hold different things:
 | --- | --- |
 | `app.yaml` | Which bound resources become which environment variables |
 | The app's configuration in Databricks | The resource bindings themselves, the user authorization scope, the bootstrap admin group |
+| The Lakebase instance | A login role for the service principal, and ownership of the platform schema |
 | **Administration -> Configuration** in the app | Name, description, logo, SQL warehouse, cache budgets, editor and admin groups, extra policy groups |
 
 Connection targets have to be known **before** the platform can read its own
 settings table, so they cannot live in it. A field for the database connection
 would be a way to lock the platform out of the database holding the field.
+
+The app runs `CREATE TABLE IF NOT EXISTS` and `ALTER TABLE ... ADD COLUMN IF NOT
+EXISTS` on every start, so it owns its schema rather than borrowing it. Postgres
+checks ownership before it reads an `ALTER TABLE` subcommand, and it skips any
+`search_path` entry the role cannot access, so a role without `USAGE` sees the
+platform tables as nonexistent rather than as forbidden. Give the schema to a
+role both a human and the service principal belong to:
+
+```sql
+CREATE ROLE sightline_owner;
+GRANT sightline_owner TO "you@example.com";
+GRANT sightline_owner TO "<app service principal client id>";
+
+ALTER SCHEMA sightline OWNER TO sightline_owner;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'sightline' LOOP
+    EXECUTE format('ALTER TABLE sightline.%I OWNER TO sightline_owner', r.tablename);
+  END LOOP;
+END $$;
+```
+
+Ownership through a group role rather than an individual means adding another
+principal later is a `GRANT` rather than an ownership migration.
+
+Bind the Lakebase instance as a database resource on the app even though
+nothing in `app.yaml` reads from it. Binding is what provisions the Postgres
+role for the service principal, and without that role the app mints a valid
+token that the database refuses with `28P01`, because there is no role of that
+name to log in as.
 
 The user authorization scope is granted on the app record rather than in
 `app.yaml`, and reads back as `user_api_scopes`. Without `sql` in that list the

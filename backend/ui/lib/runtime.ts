@@ -99,12 +99,10 @@ export const lakebase = {
 	// Databricks database instance name. Credentials are minted against this,
 	// not against the host.
 	instanceName: env("LAKEBASE_INSTANCE"),
-	// Group role owning the schema and every table in it. Both human admins
-	// and the app service principal are granted membership, so ownership never
-	// belongs to an individual and adding the principal is a GRANT rather than
-	// an ownership migration.
-	ownerRole: env("PGOWNER_ROLE", "sightline_owner"),
-	// Service principal client id in a deployed app; a user email locally.
+	// Service principal client id in a deployed app, a user email locally.
+	// The instance needs a Postgres role of this name with LOGIN, which is what
+	// binding the instance as an app resource provisions. Without that role a
+	// valid token is still refused, because there is nothing to log in as.
 	user: env("PGUSER", appIdentity.clientId),
 	sslMode: env("PGSSLMODE", "require"),
 	// Local development escape hatch: a plain connection string bypasses the
