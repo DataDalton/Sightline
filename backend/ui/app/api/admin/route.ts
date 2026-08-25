@@ -4,7 +4,6 @@ import { resolvePolicyClass } from "@/lib/auth/policy";
 import { isAdmin } from "@/lib/platform/access";
 import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
 import {
-	getAccessPolicies,
 	getDailyActivity,
 	getExportAudit,
 	getReportUsage,
@@ -20,7 +19,11 @@ import { telemetryStats } from "@/lib/telemetry/usage";
 import { userSessionStats } from "@/lib/data/userSession";
 import { listSources, registryLoadedAt } from "@/lib/semantic/registry";
 import { lastDiscovery } from "@/lib/semantic/filterDiscovery";
-import { effectiveAdminGroups, settings, settingsLoadedAt } from "@/lib/settings";
+import {
+	effectiveAdminGroups,
+	settings,
+	settingsLoadedAt,
+} from "@/lib/settings";
 import { isDatabricksApp, lakebase } from "@/lib/runtime";
 
 // Admin data, gated on group membership rather than on a per-resource grant.
@@ -31,7 +34,10 @@ export async function GET(request: NextRequest) {
 
 	const identity = getIdentity(request);
 	if (!identity) {
-		return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+		return NextResponse.json(
+			{ error: "Not authenticated" },
+			{ status: 401 },
+		);
 	}
 
 	const policy = await resolvePolicyClass(identity);
@@ -53,7 +59,10 @@ export async function GET(request: NextRequest) {
 		if (section === "report") {
 			const reportId = request.nextUrl.searchParams.get("reportId") ?? "";
 			if (!/^[0-9a-f-]{36}$/i.test(reportId)) {
-				return NextResponse.json({ error: "Unknown report" }, { status: 400 });
+				return NextResponse.json(
+					{ error: "Unknown report" },
+					{ status: 400 },
+				);
 			}
 			return NextResponse.json({
 				viewers: await getReportViewers(reportId, days),
@@ -65,7 +74,10 @@ export async function GET(request: NextRequest) {
 				request.nextUrl.searchParams.get("userEmail") ?? ""
 			).trim();
 			if (!userEmail) {
-				return NextResponse.json({ error: "Unknown user" }, { status: 400 });
+				return NextResponse.json(
+					{ error: "Unknown user" },
+					{ status: 400 },
+				);
 			}
 			return NextResponse.json({
 				activity: await getUserActivity(userEmail, days),
@@ -75,7 +87,6 @@ export async function GET(request: NextRequest) {
 		if (section === "security") {
 			const current = settings();
 			return NextResponse.json({
-				policies: await getAccessPolicies(),
 				editorGroups: current.editorGroups,
 				adminGroups: effectiveAdminGroups(),
 				exports: await getExportAudit(100),

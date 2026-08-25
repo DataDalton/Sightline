@@ -141,10 +141,7 @@ export async function getReportUsage(
 	}));
 }
 
-export async function getUserUsage(
-	days = 7,
-	limit = 25,
-): Promise<UserUsage[]> {
+export async function getUserUsage(days = 7, limit = 25): Promise<UserUsage[]> {
 	const rows = await sql<{
 		user_email: string;
 		events: string;
@@ -240,47 +237,6 @@ export async function getExportAudit(limit = 100): Promise<ExportRecord[]> {
 		changedOn: row.changed_on,
 		detail: row.new_value,
 		notes: row.notes,
-	}));
-}
-
-export interface AccessPolicyRow {
-	policyId: string;
-	subjectType: string;
-	subjectId: string;
-	resourceType: string;
-	resourceId: string;
-	permission: string;
-	grantedBy: string | null;
-	grantedOn: string;
-}
-
-export async function getAccessPolicies(): Promise<AccessPolicyRow[]> {
-	const rows = await sql<{
-		policy_id: string;
-		subject_type: string;
-		subject_id: string;
-		resource_type: string;
-		resource_id: string;
-		permission: string;
-		granted_by: string | null;
-		granted_on: string;
-	}>(
-		`SELECT policy_id, subject_type, subject_id, resource_type,
-		        resource_id, permission, granted_by, granted_on
-		 FROM access_policies
-		 WHERE is_active = TRUE
-		 ORDER BY resource_type, resource_id, subject_id`,
-	);
-
-	return rows.map((row) => ({
-		policyId: row.policy_id,
-		subjectType: row.subject_type,
-		subjectId: row.subject_id,
-		resourceType: row.resource_type,
-		resourceId: row.resource_id,
-		permission: row.permission,
-		grantedBy: row.granted_by,
-		grantedOn: row.granted_on,
 	}));
 }
 

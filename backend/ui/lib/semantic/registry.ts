@@ -162,7 +162,7 @@ async function previousFilterGroups(): Promise<{
 	};
 }
 
-async function refreshTrackedGroups(): Promise<void> {
+export async function refreshTrackedGroups(): Promise<void> {
 	const rows = await sql<{ subject_id: string }>(
 		`SELECT DISTINCT subject_id
 		 FROM access_policies

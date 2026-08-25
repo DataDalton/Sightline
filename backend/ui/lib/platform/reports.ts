@@ -1,4 +1,5 @@
 import { sql } from "../data/lakebase";
+import type { Identity } from "../auth/identity";
 import type { PolicyClass } from "../auth/policy";
 import {
 	baselinePermission,
@@ -78,10 +79,10 @@ interface ReportRow {
 
 export async function listReports(
 	policy: PolicyClass,
-	email: string,
+	identity: Identity,
 	categoryId?: string,
 ): Promise<ReportSummary[]> {
-	const grants = await getGrants(policy, email);
+	const grants = await getGrants(policy, identity);
 	// A central editor holds edit everywhere, so their baseline stands in when
 	// no explicit grant names them.
 	const baseline = baselinePermission(policy);
@@ -137,10 +138,10 @@ export interface CategoryDetail {
 
 export async function getCategory(
 	policy: PolicyClass,
-	email: string,
+	identity: Identity,
 	categoryId: string,
 ): Promise<CategoryDetail | null> {
-	const grants = await getGrants(policy, email);
+	const grants = await getGrants(policy, identity);
 	const baseline = baselinePermission(policy);
 	if (!resolveCategoryAccess(grants, categoryId, "view", baseline).allowed) {
 		return null;
@@ -162,16 +163,16 @@ export async function getCategory(
 		categoryId: category.category_id,
 		name: category.name,
 		description: category.description,
-		reports: await listReports(policy, email, categoryId),
+		reports: await listReports(policy, identity, categoryId),
 	};
 }
 
 export async function getReport(
 	policy: PolicyClass,
-	email: string,
+	identity: Identity,
 	slug: string,
 ): Promise<ReportDetail | null> {
-	const grants = await getGrants(policy, email);
+	const grants = await getGrants(policy, identity);
 
 	const rows = await sql<ReportRow>(
 		`SELECT report_id, category_id, slug, title, description,
@@ -241,7 +242,12 @@ export async function getReport(
 			title: v.title,
 			sourceKey: v.source_key,
 			config: v.config ?? {},
-			layout: { x: v.layout_x, y: v.layout_y, w: v.layout_w, h: v.layout_h },
+			layout: {
+				x: v.layout_x,
+				y: v.layout_y,
+				w: v.layout_w,
+				h: v.layout_h,
+			},
 			sortOrder: v.sort_order,
 		});
 		visualsByPage.set(v.page_id, list);
