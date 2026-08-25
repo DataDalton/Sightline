@@ -38,9 +38,9 @@ export interface SyncResult {
 // of the catalogue rather than of any reader, and asking under whoever happened
 // to be browsing would make the answer depend on them.
 //
-// The application path reads metadata only. The service principal holds BROWSE
-// and no SELECT, so it can see that an object exists and read the body of a
-// filter, and it cannot read a row.
+// The application path reads metadata only. That is a property of what calls it
+// rather than of what the principal may reach: the walk needs SELECT on the
+// catalogue, so the same session could read rows if something asked it to.
 export async function runCatalogQuery(
 	identity: Identity | null,
 	statement: string,
