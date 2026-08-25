@@ -30,8 +30,17 @@ export interface SyncResult {
 	error?: string;
 }
 
-// Reads information_schema for one object. Runs under whichever identity is
-// available: a caller's token in a deployed app, local credentials otherwise.
+// Reads information_schema for one object.
+//
+// Under a caller token when there is one, so a sync somebody runs sees what
+// that person can see. Under the application itself when there is not, which is
+// how the row filter walk runs: which groups a filter branches on is a property
+// of the catalogue rather than of any reader, and asking under whoever happened
+// to be browsing would make the answer depend on them.
+//
+// The application path reads metadata only. The service principal holds BROWSE
+// and no SELECT, so it can see that an object exists and read the body of a
+// filter, and it cannot read a row.
 export async function runCatalogQuery(
 	identity: Identity | null,
 	statement: string,
@@ -45,7 +54,8 @@ export async function runCatalogQuery(
 		const { queryLocally } = await import("../data/localSession");
 		return queryLocally(statement, params);
 	}
-	throw new Error("A user token is required to read catalog metadata");
+	const { queryAsApp } = await import("../data/appSession");
+	return queryAsApp(statement, params);
 }
 
 export async function readColumns(
@@ -137,7 +147,8 @@ export async function syncSourceMetadata(
 			descriptionsUpdated: 0,
 			typesUpdated: 0,
 			tagsUpdated: 0,
-			error: error instanceof Error ? error.message : "Metadata read failed",
+			error:
+				error instanceof Error ? error.message : "Metadata read failed",
 		};
 	}
 
