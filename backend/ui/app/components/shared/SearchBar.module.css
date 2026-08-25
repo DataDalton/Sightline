@@ -1,0 +1,75 @@
+.searchBar {
+	position: relative;
+	display: flex;
+	align-items: center;
+	flex: 1;
+	max-width: 480px;
+}
+
+.searchIcon {
+	position: absolute;
+	left: 12px;
+	color: var(--text-muted);
+	pointer-events: none;
+}
+
+.input {
+	width: 100%;
+	padding: 8px 36px 8px 36px;
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border-color);
+	border-radius: 6px;
+	color: var(--text-primary);
+	font-size: 0.9rem;
+	font-family: inherit;
+	outline: none;
+	transition: border-color 0.15s ease;
+}
+
+.input:focus {
+	border-color: var(--accent);
+}
+
+.input::placeholder {
+	color: var(--text-muted);
+}
+
+.clearButton {
+	position: absolute;
+	right: 8px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	background: none;
+	border: none;
+	color: var(--text-muted);
+	cursor: pointer;
+	border-radius: 4px;
+	transition:
+		color 0.15s ease,
+		background 0.15s ease;
+}
+
+.clearButton:hover {
+	color: var(--text-primary);
+	background: var(--bg-hover);
+}
+
+.spinner {
+	position: absolute;
+	right: 10px;
+	width: 16px;
+	height: 16px;
+	border: 2px solid var(--border-color);
+	border-top-color: var(--accent);
+	border-radius: 50%;
+	animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+	to {
+		transform: rotate(360deg);
+	}
+}

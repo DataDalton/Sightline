@@ -1,0 +1,21 @@
+# Line endings are normalised on the way in, so the repository holds LF
+# whatever anyone's editor writes locally. Without this the first commit from a
+# Windows machine stores CRLF, and every later diff from a Linux or macOS
+# contributor rewrites whole files for no reason.
+* text=auto eol=lf
+
+# Binary, so git does not try to translate anything inside them.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+
+# Generated from the TypeScript sources by "npm run build:scripts". Marked so a
+# diff on them is collapsed by default and they do not count as authored code.
+backend/ui/scripts/catalog.mjs linguist-generated=true
+backend/ui/scripts/svgSanitize.mjs linguist-generated=true
+package-lock.json linguist-generated=true

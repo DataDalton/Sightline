@@ -1,0 +1,32 @@
+{
+	"name": "sightline",
+	"version": "1.0.0",
+	"private": true,
+	"scripts": {
+		"dev": "next dev -p 3000",
+		"build": "next build",
+		"start": "next start",
+		"lint": "next lint",
+		"test": "tsc -p tsconfig.test.json && node --test ../../.test-build/**/*.test.js",
+		"typecheck": "tsc --noEmit -p tsconfig.json",
+		"build:scripts": "tsc lib/visuals/svgSanitize.ts lib/visuals/catalog.ts --ignoreConfig --outDir .script-build --module esnext --target es2022 --skipLibCheck && node scripts/emit.mjs"
+	},
+	"dependencies": {
+		"@databricks/sdk-experimental": "^0.17.0",
+		"@databricks/sql": "^2.0.0",
+		"@tanstack/react-virtual": "^3.14.9",
+		"echarts": "^6.1.0",
+		"next": "^16.3.0",
+		"pg": "^8.23.0",
+		"react": "^19.2.8",
+		"react-dom": "^19.2.8",
+		"swr": "^2.5.0"
+	},
+	"devDependencies": {
+		"@types/node": "^26.1.2",
+		"@types/pg": "^8.23.1",
+		"@types/react": "^19.2.18",
+		"@types/react-dom": "^19.2.4",
+		"typescript": "^7.0.2"
+	}
+}

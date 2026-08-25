@@ -1,0 +1,209 @@
+.sidebar {
+	display: flex;
+	flex-direction: column;
+	width: var(--sidebar-width);
+	flex-shrink: 0;
+	background: var(--chrome-bg);
+	border-right: 1px solid var(--chrome-border);
+	overflow-y: auto;
+	overflow-x: hidden;
+}
+
+.section {
+	padding: var(--space-3) var(--space-2) var(--space-1);
+}
+
+.sectionTitle {
+	padding: 0 var(--space-2) var(--space-2);
+	font-size: var(--text-xs);
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--chrome-text-muted);
+}
+
+.nav {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	padding: 0 var(--space-2);
+}
+
+.navItem {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	padding: var(--space-2) var(--space-3);
+	border-radius: var(--radius-md);
+	color: var(--chrome-text-muted);
+	font-size: var(--text-md);
+	transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.navItem:hover {
+	background: var(--chrome-hover);
+	color: var(--chrome-text);
+}
+
+.navItem svg {
+	flex-shrink: 0;
+}
+
+.label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* Active state carries the gold, paired with a weight change so it does not
+   rely on colour alone. */
+.active {
+	background: var(--chrome-active);
+	color: var(--chrome-text);
+	font-weight: 600;
+}
+
+.active::before {
+	content: "";
+	position: absolute;
+	left: 0;
+	top: 50%;
+	transform: translateY(-50%);
+	width: 3px;
+	height: 16px;
+	background: var(--brand);
+	border-radius: var(--radius-full);
+}
+
+.count {
+	margin-left: auto;
+	font-size: var(--text-xs);
+	color: var(--chrome-text-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.empty {
+	padding: var(--space-3);
+	font-size: var(--text-sm);
+	color: var(--chrome-text-muted);
+	line-height: 1.5;
+}
+
+.skeleton {
+	height: 30px;
+	margin: 1px var(--space-2);
+	border-radius: var(--radius-md);
+	background: var(--chrome-hover);
+	animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+	0%, 100% { opacity: 0.5; }
+	50% { opacity: 0.9; }
+}
+
+.footer {
+	margin-top: auto;
+	padding: var(--space-3);
+	border-top: 1px solid var(--chrome-border);
+}
+
+.retryButton {
+	width: 100%;
+	padding: var(--space-2);
+	border-radius: var(--radius-md);
+	background: var(--chrome-hover);
+	color: var(--chrome-text);
+	font-size: var(--text-sm);
+	text-align: left;
+}
+
+.retryButton:hover {
+	background: var(--chrome-active);
+}
+
+@media (max-width: 900px) {
+	.sidebar {
+		position: fixed;
+		inset: var(--header-height) auto 0 0;
+		z-index: 90;
+		transform: translateX(-100%);
+		transition: transform var(--transition-base);
+	}
+
+	.open {
+		transform: translateX(0);
+	}
+}
+
+/* A category row is a link plus a disclosure. The link fills the row so the
+   whole width still navigates, and the disclosure is its own control so
+   expanding does not force a page load. */
+.navLink {
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	flex: 1;
+	min-width: 0;
+	color: inherit;
+	overflow: hidden;
+}
+
+.disclosure {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	border: none;
+	border-radius: var(--radius-sm);
+	background: none;
+	color: var(--chrome-text-muted);
+	cursor: pointer;
+}
+
+.disclosure:hover {
+	background: var(--chrome-hover);
+	color: var(--chrome-text);
+}
+
+.subNav {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	/* Indented to the icon column above, so the list reads as belonging to the
+	   category rather than as a second level of navigation. */
+	margin: 2px 0 var(--space-2) calc(var(--space-3) + 8px);
+	padding-left: var(--space-3);
+	border-left: 1px solid var(--chrome-border);
+}
+
+.subItem {
+	padding: var(--space-1) var(--space-2);
+	border-radius: var(--radius-sm);
+	color: var(--chrome-text-muted);
+	font-size: var(--text-sm);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.subItem:hover {
+	background: var(--chrome-hover);
+	color: var(--chrome-text);
+}
+
+.subItemActive {
+	color: var(--chrome-text);
+	font-weight: 600;
+	background: var(--chrome-hover);
+}
+
+.subEmpty {
+	padding: var(--space-1) var(--space-2);
+	font-size: var(--text-sm);
+	color: var(--chrome-text-muted);
+}

@@ -1,0 +1,41 @@
+.container {
+	display: flex;
+	flex-direction: column;
+}
+
+.sentinel {
+	height: 1px;
+	width: 100%;
+}
+
+.loader {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	padding: 16px;
+	color: var(--text-secondary);
+	font-size: 0.85rem;
+}
+
+.spinner {
+	width: 16px;
+	height: 16px;
+	border: 2px solid var(--border-color);
+	border-top-color: var(--accent);
+	border-radius: 50%;
+	animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+.endMessage {
+	text-align: center;
+	padding: 16px;
+	color: var(--text-muted);
+	font-size: 0.85rem;
+}
