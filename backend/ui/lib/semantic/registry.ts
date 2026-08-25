@@ -129,6 +129,7 @@ export async function loadRegistry(force = false): Promise<void> {
 			// Only groups that actually appear in an access rule are probed
 			// when resolving a policy class, so membership stays one small
 			// query no matter how many groups exist in the account.
+			//
 			await refreshTrackedGroups(force);
 		} catch (error) {
 			// Keep serving the previous registry. An empty one would make
@@ -167,29 +168,52 @@ async function previousFilterGroups(): Promise<{
 	};
 }
 
-export async function refreshTrackedGroups(force = false): Promise<void> {
+async function accessRuleGroups(): Promise<string[]> {
 	const rows = await sql<{ subject_id: string }>(
 		`SELECT DISTINCT subject_id
 		 FROM access_policies
 		 WHERE subject_type = 'group' AND is_active = TRUE`,
 	);
+	return rows.map((r) => r.subject_id);
+}
 
-	// Groups named by the row filters on every source, read from the
-	// catalogue. Without them two readers restricted to different rows resolve
-	// to the same policy class, and the cache hands one of them the other's
-	// answer without a query ever running. See lib/semantic/filterDiscovery.
-	//
-	// A failure here leaves the previous list in place rather than narrowing
-	// it: a temporary catalogue outage must not quietly widen who shares a
-	// cache entry.
-	let filterGroups = {
-		accountGroups: [] as string[],
-		workspaceGroups: [] as string[],
-	};
+// The groups a policy class is built from, in two stages.
+//
+// Stage one is one small query and is awaited: the editor and admin groups are
+// what decide whether the caller can reach the administration pages at all, and
+// deferring them means an administrator is not one for the first few seconds
+// after a start.
+//
+// Stage two walks the catalogue for the groups the row filters branch on. That
+// opens every source in turn and takes tens of seconds, so it runs behind the
+// request rather than in front of it. Until it lands, nothing filtered is
+// served from a shared cache, which is what makes deferring it safe. See
+// isShareable in lib/query/cache.
+export async function refreshTrackedGroups(force = false): Promise<void> {
+	const rules = await accessRuleGroups();
+
+	// Whatever the last walk found stands until this one finishes, so the list
+	// is never briefly narrower than it was a moment ago.
+	setTrackedGroups(rules, await previousFilterGroups());
+
+	void discoverAndApply(rules, force);
+}
+
+async function discoverAndApply(
+	rules: string[],
+	force: boolean,
+): Promise<void> {
+	// Groups named by the row filters on every source, read from the catalogue.
+	// Without them two readers restricted to different rows resolve to the same
+	// policy class. See lib/semantic/filterDiscovery.
 	try {
 		const { discoverFilterGroups } = await import("./filterDiscovery");
 		const discovered = await discoverFilterGroups(null, force);
-		filterGroups = discovered;
+
+		let filterGroups: {
+			accountGroups: string[];
+			workspaceGroups: string[];
+		} = discovered;
 
 		// A source the walk could not open contributes no group names, which
 		// reads identically to a source that has no filter. Taking the second
@@ -214,18 +238,16 @@ export async function refreshTrackedGroups(force = false): Promise<void> {
 					"keeping the groups already tracked.",
 			);
 		}
+
+		setTrackedGroups(rules, filterGroups);
 	} catch (error) {
+		// The list set before this ran stays in place. A catalogue outage must
+		// not quietly widen who shares a cache entry.
 		console.warn(
 			"Row filter discovery failed; keeping the previous group list:",
 			error,
 		);
-		filterGroups = await previousFilterGroups();
 	}
-
-	setTrackedGroups(
-		rows.map((r) => r.subject_id),
-		filterGroups,
-	);
 }
 
 export function getSource(sourceKey: string): SemanticSource | null {

@@ -90,6 +90,25 @@ export async function GET(request: NextRequest) {
 				editorGroups: current.editorGroups,
 				adminGroups: effectiveAdminGroups(),
 				exports: await getExportAudit(100),
+				// What is actually being probed, which is not the same as the
+				// stored setting: most of these are discovered from the row
+				// filters on each source rather than configured, so showing the
+				// setting alone would show an empty list while ten groups were
+				// in use. The origin says which, so a group the platform found
+				// is distinguishable from one somebody named.
+				policyGroups: getTrackedGroupDetail(),
+				filterDiscovery: (() => {
+					const { groups, at } = lastDiscovery();
+					return {
+						at: at || null,
+						unreadableSources: groups?.unreadableSources ?? [],
+					};
+				})(),
+				// Only the count is needed here: the verdict is about how many
+				// sources carry a filter, and the sources themselves are listed
+				// under Platform.
+				filteredSources: listSources().filter((s) => s.hasRowFilter)
+					.length,
 			});
 		}
 
@@ -113,20 +132,6 @@ export async function GET(request: NextRequest) {
 					registryLoadedAt: registryLoadedAt() || null,
 				},
 				settings: current,
-				// What is actually being probed, which is not the same as the
-				// setting: most of these are discovered from the row filters on
-				// each source rather than configured. Showing only the stored
-				// list would show an empty array while ten groups were in use.
-				// Where each came from, so an operator can tell a group the
-				// platform found from one they named themselves.
-				policyGroups: getTrackedGroupDetail(),
-				filterDiscovery: (() => {
-					const { groups, at } = lastDiscovery();
-					return {
-						at: at || null,
-						unreadableSources: groups?.unreadableSources ?? [],
-					};
-				})(),
 				sources: listSources().map((s) => ({
 					sourceKey: s.sourceKey,
 					title: s.title,

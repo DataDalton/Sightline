@@ -36,7 +36,9 @@
 	margin-bottom: -1px;
 }
 
-.tab:hover { color: var(--text-primary); }
+.tab:hover {
+	color: var(--text-primary);
+}
 
 .tabActive {
 	color: var(--text-primary);
@@ -93,18 +95,14 @@
 	letter-spacing: -0.02em;
 }
 
-.tileGood { color: var(--success); }
-.tileWarn { color: var(--warning); }
-.tileBad { color: var(--danger); }
-
-.section {
-	margin-bottom: var(--space-6);
+.tileGood {
+	color: var(--success);
 }
-
-.sectionTitle {
-	font-size: var(--text-lg);
-	font-weight: 600;
-	margin-bottom: var(--space-1);
+.tileWarn {
+	color: var(--warning);
+}
+.tileBad {
+	color: var(--danger);
 }
 
 .sectionNote {
@@ -115,11 +113,13 @@
 	line-height: 1.5;
 }
 
+/* Scrolls sideways when a table is genuinely wider than the pane. No height
+   cap: a table inside its own scrolling box hides how much there is, and the
+   page already scrolls. */
 .tableWrap {
 	border: 1px solid var(--border-subtle);
 	border-radius: var(--radius-lg);
-	overflow: auto;
-	max-height: 460px;
+	overflow-x: auto;
 	background: var(--surface-raised);
 }
 
@@ -152,7 +152,9 @@
 	text-overflow: ellipsis;
 }
 
-.table tbody tr:hover td { background: var(--surface-hover); }
+.table tbody tr:hover td {
+	background: var(--surface-hover);
+}
 
 .numeric {
 	text-align: right;
@@ -220,7 +222,9 @@
 	transition: background var(--transition-fast);
 }
 
-.sparkBar:hover { background: var(--brand); }
+.sparkBar:hover {
+	background: var(--brand);
+}
 
 .definition {
 	display: grid;
@@ -461,12 +465,21 @@
 	font-weight: 600;
 }
 
+/* Capped, because these are mostly labelled inputs and a text field the width
+   of a monitor is harder to read, not easier. */
 .configPane {
 	display: flex;
 	flex-direction: column;
 	gap: var(--space-4);
 	min-width: 0;
 	max-width: 780px;
+}
+
+/* Uncapped, for panes that are mostly tables. A row of eight columns squeezed
+   into a reading measure scrolls sideways while the rest of the page sits
+   empty, which is the worst of both. */
+.configPaneWide {
+	max-width: none;
 }
 
 .paneHeader {
@@ -695,4 +708,31 @@
 
 .paneDetails p:first-of-type {
 	padding-top: 0;
+}
+
+/* A note that carries a verdict rather than an explanation. The colour is on
+   the rule alone: a tinted block reads as an alert and these appear on every
+   load, including when everything is fine. */
+.paneNoteOk {
+	border-left-color: var(--success);
+}
+
+.paneNoteBad {
+	border-left-color: var(--danger);
+}
+
+/* Long lists that would otherwise push the thing they describe off screen. */
+.details {
+	font-size: var(--text-sm);
+	color: var(--text-secondary);
+}
+
+.details summary {
+	cursor: pointer;
+	color: var(--text-primary);
+}
+
+.details > div {
+	padding-top: var(--space-2);
+	line-height: 1.6;
 }
