@@ -12,6 +12,8 @@
 // Everything else is operational configuration and lives in the settings
 // table, editable in-app without a redeploy. See lib/settings.ts.
 
+import { bareHostname } from "./hostname";
+
 function env(name: string, fallback = ""): string {
 	return process.env[name]?.trim() || fallback;
 }
@@ -46,7 +48,7 @@ export const appIdentity = {
 };
 
 // Hostname without scheme, which is the form the SQL driver expects.
-export const serverHostname = workspaceHost.replace(/^https?:\/\//, "");
+export const serverHostname = bareHostname(workspaceHost);
 
 // SQL warehouse HTTP path as the deployment declares it. In Databricks Apps
 // this comes from a warehouse resource binding: declare the resource in
@@ -85,7 +87,7 @@ export const analyticsCachePath = ":memory:";
 export const lakebase = {
 	// No default. A connection target is a fact about a deployment, and a
 	// guess here would be one installation's address shipped to every other.
-	host: env("PGHOST"),
+	host: bareHostname(env("PGHOST")),
 	port: parseInt(env("PGPORT", "5432"), 10),
 	// The postgres database is owned by cloud_admin and grants no CREATE, so
 	// the platform lives in a database the workspace owns.
