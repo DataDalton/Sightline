@@ -6,8 +6,6 @@
 // Defaults below are what a fresh install runs on, so the platform starts
 // correctly against an empty settings table.
 
-
-
 export interface PlatformSettings {
 	// Branding
 	appName: string;
@@ -82,6 +80,18 @@ export interface PlatformSettings {
 	// Groups whose members administer the platform: access policy, settings,
 	// and the semantic layer.
 	adminGroups: string[];
+
+	// Where reachability comes from.
+	//
+	// "catalog": a reader reaches a report when Unity Catalog lets them read
+	// the source it is built on. A SELECT grant on the data is already the
+	// statement that somebody should see what is built from it, so the platform
+	// reads that statement rather than keeping a second copy of it. Explicit
+	// grants still apply and can raise a permission above view.
+	//
+	// "grants": only what the access grants name is reachable. For a deployment
+	// where reaching a report is a narrower decision than reading its data.
+	accessModel: "catalog" | "grants";
 }
 
 export const defaultSettings: PlatformSettings = {
@@ -110,6 +120,8 @@ export const defaultSettings: PlatformSettings = {
 	telemetryFlushIntervalMs: 15000,
 	telemetryMaxBatch: 500,
 	telemetryMaxBuffer: 10000,
+
+	accessModel: "catalog",
 
 	trackedGroups: [],
 	// Databricks account group names. is_account_group_member is
@@ -179,13 +191,21 @@ function coerce(key: keyof PlatformSettings, raw: string): unknown {
 	}
 	if (typeof fallback === "boolean") {
 		const normalized = raw.trim().toLowerCase();
-		return normalized === "1" || normalized === "true" || normalized === "yes";
+		return (
+			normalized === "1" || normalized === "true" || normalized === "yes"
+		);
 	}
 	if (Array.isArray(fallback)) {
 		return raw
 			.split(",")
 			.map((v) => v.trim())
 			.filter((v) => v.length > 0);
+	}
+	// A value outside the set would leave reachability in a third state that
+	// nothing implements, and the visible result would be an empty home page
+	// for everyone.
+	if (key === "accessModel") {
+		return raw === "catalog" || raw === "grants" ? raw : fallback;
 	}
 	return raw;
 }
@@ -220,7 +240,10 @@ export async function loadSettings(): Promise<PlatformSettings> {
 	} catch (error) {
 		// A settings table that cannot be read must not stop the app. Running
 		// on defaults is a degraded but safe state, and the poll retries.
-		console.warn("Settings load failed, continuing on current values:", error);
+		console.warn(
+			"Settings load failed, continuing on current values:",
+			error,
+		);
 	}
 
 	return current;
@@ -254,6 +277,7 @@ export const writableSettings = [
 	"telemetryEnabled",
 	"editorGroups",
 	"adminGroups",
+	"accessModel",
 ] as const satisfies readonly (keyof PlatformSettings)[];
 
 export type WritableSetting = (typeof writableSettings)[number];

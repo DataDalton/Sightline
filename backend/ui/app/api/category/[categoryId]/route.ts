@@ -12,14 +12,17 @@ export async function GET(
 
 	const identity = getIdentity(request);
 	if (!identity) {
-		return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+		return NextResponse.json(
+			{ error: "Not authenticated" },
+			{ status: 401 },
+		);
 	}
 
 	const { categoryId } = await params;
 
 	try {
 		const policy = await resolvePolicyClass(identity);
-		const category = await getCategory(policy, identity.email, categoryId);
+		const category = await getCategory(policy, identity, categoryId);
 
 		// A category the caller cannot open is reported as missing rather than
 		// forbidden, so the response does not confirm it exists.

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getIdentity } from "@/lib/auth/identity";
 import { resolvePolicyClass } from "@/lib/auth/policy";
-import { isAdmin } from "@/lib/platform/access";
+import { invalidateAccessCache, isAdmin } from "@/lib/platform/access";
+import { invalidateSourceAccess } from "@/lib/auth/sourceAccess";
 import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
 import { insertLog } from "@/lib/activityLog";
 import { checkWriteRateLimit } from "@/lib/rateLimit";
@@ -24,7 +25,10 @@ export async function GET(request: NextRequest) {
 
 	const identity = getIdentity(request);
 	if (!identity) {
-		return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+		return NextResponse.json(
+			{ error: "Not authenticated" },
+			{ status: 401 },
+		);
 	}
 
 	const policy = await resolvePolicyClass(identity);
@@ -47,7 +51,10 @@ export async function POST(request: NextRequest) {
 
 	const identity = getIdentity(request);
 	if (!identity) {
-		return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+		return NextResponse.json(
+			{ error: "Not authenticated" },
+			{ status: 401 },
+		);
 	}
 
 	const policy = await resolvePolicyClass(identity);
@@ -65,7 +72,10 @@ export async function POST(request: NextRequest) {
 		}
 
 		if (Object.keys(changes).length === 0) {
-			return NextResponse.json({ error: "Nothing to change" }, { status: 400 });
+			return NextResponse.json(
+				{ error: "Nothing to change" },
+				{ status: 400 },
+			);
 		}
 
 		const logo = changes.appLogo;
@@ -97,8 +107,7 @@ export async function POST(request: NextRequest) {
 			if (!cleaned) {
 				return NextResponse.json(
 					{
-						error:
-							"That file is not an SVG. Marks are SVG so they stay sharp at any size and can follow the light and dark themes.",
+						error: "That file is not an SVG. Marks are SVG so they stay sharp at any size and can follow the light and dark themes.",
 					},
 					{ status: 400 },
 				);
@@ -108,6 +117,14 @@ export async function POST(request: NextRequest) {
 		}
 
 		const next = await saveSettings(changes, identity.email);
+
+		// Reachability is memoised per reader, so a change to where it comes
+		// from would otherwise take a cache lifetime to appear and read as the
+		// setting not working.
+		if ("accessModel" in changes) {
+			invalidateAccessCache();
+			invalidateSourceAccess();
+		}
 
 		// Recorded field by field, because "who changed the admin groups and
 		// when" is exactly the question an access review asks.

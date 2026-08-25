@@ -14,14 +14,17 @@ export async function GET(
 
 	const identity = getIdentity(request);
 	if (!identity) {
-		return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+		return NextResponse.json(
+			{ error: "Not authenticated" },
+			{ status: 401 },
+		);
 	}
 
 	const { slug } = await params;
 
 	try {
 		const policy = await resolvePolicyClass(identity);
-		const report = await getReport(policy, identity.email, slug);
+		const report = await getReport(policy, identity, slug);
 
 		if (!report) {
 			return NextResponse.json({ error: "Not found" }, { status: 404 });

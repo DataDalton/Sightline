@@ -20,14 +20,17 @@ export async function GET(
 
 	const identity = getIdentity(request);
 	if (!identity) {
-		return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+		return NextResponse.json(
+			{ error: "Not authenticated" },
+			{ status: 401 },
+		);
 	}
 
 	const { slug } = await params;
 
 	try {
 		const policy = await resolvePolicyClass(identity);
-		const report = await getReport(policy, identity.email, slug);
+		const report = await getReport(policy, identity, slug);
 		if (!report) {
 			return NextResponse.json({ error: "Not found" }, { status: 404 });
 		}
@@ -57,14 +60,17 @@ export async function POST(
 
 	const identity = getIdentity(request);
 	if (!identity) {
-		return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+		return NextResponse.json(
+			{ error: "Not authenticated" },
+			{ status: 401 },
+		);
 	}
 
 	const { slug } = await params;
 
 	try {
 		const policy = await resolvePolicyClass(identity);
-		const report = await getReport(policy, identity.email, slug);
+		const report = await getReport(policy, identity, slug);
 		if (!report) {
 			return NextResponse.json({ error: "Not found" }, { status: 404 });
 		}
@@ -72,7 +78,10 @@ export async function POST(
 		const body = await request.json();
 		const version = Number(body?.version);
 		if (!Number.isFinite(version) || version < 1) {
-			return NextResponse.json({ error: "Unknown version" }, { status: 400 });
+			return NextResponse.json(
+				{ error: "Unknown version" },
+				{ status: 400 },
+			);
 		}
 
 		const result = await restoreVersion(
@@ -88,7 +97,10 @@ export async function POST(
 		}
 		console.error("Restore failed:", error);
 		return NextResponse.json(
-			{ error: error instanceof Error ? error.message : "Restore failed" },
+			{
+				error:
+					error instanceof Error ? error.message : "Restore failed",
+			},
 			{ status: 500 },
 		);
 	}
