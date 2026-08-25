@@ -1,3 +1,4 @@
+import { assertDeploymentConfigured } from "../runtime";
 import { loadSettings, startSettingsPolling } from "../settings";
 import { loadRegistry, startRegistryPolling } from "../semantic/registry";
 import { startTelemetryFlushing } from "../telemetry/usage";
@@ -18,6 +19,15 @@ let readyPromise: Promise<void> | null = null;
 let readyAt = 0;
 
 async function initialize(): Promise<void> {
+	// A deployment missing its connection targets fails here, naming them,
+	// rather than further in with something that reads as a network fault.
+	//
+	// Checked here rather than at module scope: `next build` imports every
+	// route to collect page data, and a build container has the app
+	// environment without the resource bindings, so a module-level check
+	// failed the build over a database the builder was never going to use.
+	assertDeploymentConfigured();
+
 	// Settings first: the registry and the pollers read their intervals from
 	// it, so loading in the other order would use defaults for one cycle.
 	await loadSettings();

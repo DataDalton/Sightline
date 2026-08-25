@@ -23,9 +23,7 @@ function env(name: string, fallback = ""): string {
 // service principal sets it too, which would make a developer machine claim to
 // be a deployment, disable the local identity fallback and trip the startup
 // guards below.
-export const isDatabricksApp = Boolean(
-	process.env.DATABRICKS_APP_PORT?.trim(),
-);
+export const isDatabricksApp = Boolean(process.env.DATABRICKS_APP_PORT?.trim());
 
 // --- Injected by Databricks Apps -------------------------------------------
 
@@ -114,38 +112,39 @@ export const lakebase = {
 
 export const hasLakebase = Boolean(lakebase.host || lakebase.localUrl);
 
-// A deployed app with no transactional store has nowhere to put a saved
-// report. Fail at startup rather than at the first write.
-if (isDatabricksApp && !hasLakebase) {
-	throw new Error(
-		"No Lakebase resource bound. Add a database resource in app.yaml: " +
-			"container storage is ephemeral and Delta cannot serve OLTP writes.",
-	);
-}
-
-// A deployed app that is missing a connection target fails here, naming what
-// is absent, rather than starting and failing on the first query with
-// something that reads as a network problem.
+// What a deployment is missing, or null when it has everything.
 //
-// Local development is exempt: a developer with a partial .env gets whatever
-// works and a clear error from the part that does not.
-if (isDatabricksApp) {
-	const missing = [
+// Checked when the platform starts serving, not while this module is being
+// evaluated. Throwing at module scope broke the build: `next build` imports
+// every route to collect page data, and a build container has the app
+// environment set but none of the resource bindings, which arrive at run time.
+// So the deployment failed during the build with an error about a missing
+// database, which was true of the builder and irrelevant to it.
+//
+// A container that starts without these cannot serve anything, so the first
+// request still fails loudly. It just fails where a request can see it.
+export function missingDeploymentConfig(): string[] {
+	if (!isDatabricksApp) return [];
+
+	return [
 		["PGHOST", lakebase.host],
 		["PGDATABASE", lakebase.database],
 		["LAKEBASE_INSTANCE", lakebase.instanceName],
 	]
 		.filter(([, value]) => !value)
 		.map(([name]) => name);
+}
 
-	if (missing.length > 0) {
-		throw new Error(
-			`Missing deployment configuration: ${missing.join(", ")}. ` +
-				"Declare these in app.yaml: a Databricks App does not read .env, " +
-				"and the platform tables live in Lakebase because container " +
-				"storage does not survive a restart.",
-		);
-	}
+export function assertDeploymentConfigured(): void {
+	const missing = missingDeploymentConfig();
+	if (missing.length === 0) return;
+
+	throw new Error(
+		`Missing deployment configuration: ${missing.join(", ")}. ` +
+			"Declare these in app.yaml and bind a database resource: a Databricks " +
+			"App does not read .env, container storage does not survive a restart, " +
+			"and Delta cannot serve the write rate the platform tables need.",
+	);
 }
 
 // --- Observability ---------------------------------------------------------
@@ -188,7 +187,8 @@ export const localIdentityEmail = env(
 export function resolveWarehousePath(): string {
 	let configured = "";
 	try {
-		const { settings } = require("./settings") as typeof import("./settings");
+		const { settings } =
+			require("./settings") as typeof import("./settings");
 		configured = settings().warehouseId;
 	} catch {
 		// Asked before settings are available. The deployment's value stands.
