@@ -6,9 +6,7 @@
 		"moduleResolution": "nodenext",
 		"rootDir": "lib",
 		"outDir": "../../.test-build",
-		"types": [
-			"node"
-		],
+		"types": ["node"],
 		"verbatimModuleSyntax": false,
 		"plugins": []
 	},
@@ -31,6 +29,8 @@
 		"lib/platform/versionDiff.test.ts",
 		"lib/platform/overlay.test.ts",
 		"lib/format.ts",
+		"lib/hostname.ts",
+		"lib/hostname.test.ts",
 		"lib/visuals/style.ts",
 		"lib/visuals/style.test.ts",
 		"lib/visuals/brush.ts",
