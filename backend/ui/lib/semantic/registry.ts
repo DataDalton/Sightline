@@ -137,6 +137,31 @@ export async function loadRegistry(): Promise<void> {
 	return loading;
 }
 
+function union(a: string[], b: string[]): string[] {
+	return Array.from(new Set([...a, ...b]));
+}
+
+// Groups the current tracked list credits to a row filter. Only that origin,
+// because editor, admin and configured groups reach setTrackedGroups by their
+// own routes and folding them in here would relabel where they came from.
+async function previousFilterGroups(): Promise<{
+	accountGroups: string[];
+	workspaceGroups: string[];
+}> {
+	const { getTrackedGroupDetail } = await import("../auth/policy");
+	const existing = getTrackedGroupDetail().filter(
+		(g) => g.origin === "row-filter",
+	);
+	return {
+		accountGroups: existing
+			.filter((g) => g.scope === "account")
+			.map((g) => g.name),
+		workspaceGroups: existing
+			.filter((g) => g.scope === "workspace")
+			.map((g) => g.name),
+	};
+}
+
 async function refreshTrackedGroups(): Promise<void> {
 	const rows = await sql<{ subject_id: string }>(
 		`SELECT DISTINCT subject_id
@@ -152,25 +177,44 @@ async function refreshTrackedGroups(): Promise<void> {
 	// A failure here leaves the previous list in place rather than narrowing
 	// it: a temporary catalogue outage must not quietly widen who shares a
 	// cache entry.
-	let filterGroups = { accountGroups: [] as string[], workspaceGroups: [] as string[] };
+	let filterGroups = {
+		accountGroups: [] as string[],
+		workspaceGroups: [] as string[],
+	};
 	try {
 		const { discoverFilterGroups } = await import("./filterDiscovery");
-		filterGroups = await discoverFilterGroups(null);
+		const discovered = await discoverFilterGroups(null);
+		filterGroups = discovered;
+
+		// A source the walk could not open contributes no group names, which
+		// reads identically to a source that has no filter. Taking the second
+		// reading is what widens who shares a cache entry, and the walk reports
+		// a source it could not open rather than raising, so a partial failure
+		// arrives here as a successful call with a short list.
+		if (discovered.unreadableSources.length > 0) {
+			const previous = await previousFilterGroups();
+			filterGroups = {
+				accountGroups: union(
+					discovered.accountGroups,
+					previous.accountGroups,
+				),
+				workspaceGroups: union(
+					discovered.workspaceGroups,
+					previous.workspaceGroups,
+				),
+			};
+			console.warn(
+				"Row filter discovery could not read " +
+					`${discovered.unreadableSources.length} source(s); ` +
+					"keeping the groups already tracked.",
+			);
+		}
 	} catch (error) {
 		console.warn(
 			"Row filter discovery failed; keeping the previous group list:",
 			error,
 		);
-		const { getTrackedGroupDetail } = await import("../auth/policy");
-		const existing = getTrackedGroupDetail();
-		filterGroups = {
-			accountGroups: existing
-				.filter((g) => g.scope === "account")
-				.map((g) => g.name),
-			workspaceGroups: existing
-				.filter((g) => g.scope === "workspace")
-				.map((g) => g.name),
-		};
+		filterGroups = await previousFilterGroups();
 	}
 
 	setTrackedGroups(
