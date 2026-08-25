@@ -2154,6 +2154,8 @@ function PlatformSection({ data }: { data: PlatformResponse }) {
 
 			{pane === "sources" && (
 				<>
+					<SyncSources />
+
 					<div className={styles.tableWrap}>
 						<table className={styles.table}>
 							<thead>
@@ -2202,8 +2204,6 @@ function PlatformSection({ data }: { data: PlatformResponse }) {
 						and never restated here. A filtered source has its
 						results cached per policy class rather than shared.
 					</p>
-
-					<SyncSources />
 				</>
 			)}
 

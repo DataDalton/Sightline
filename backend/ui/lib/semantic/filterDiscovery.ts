@@ -89,6 +89,89 @@ async function tablesBehind(
 	return [self, ...referenced];
 }
 
+// Walks one source and returns the groups its filters name.
+//
+// Called by a sync, under the identity of whoever asked for it. That identity
+// can see information_schema rows the application cannot, which is the whole
+// reason this happens at sync time rather than on a timer.
+// The groups the filters on one source name.
+//
+// Runs under whatever identity is given. The walk passes none, which means the
+// application itself: this list decides how cached answers are partitioned, so
+// it has to be the same whoever is browsing, and it has to be maintained
+// without anybody remembering to ask for it.
+export async function discoverSourceGroups(
+	identity: Identity | null,
+	source: {
+		catalog_name: string;
+		schema_name: string;
+		object_name: string;
+		kind: string;
+		base_tables: string[] | null;
+	},
+): Promise<{ groups: FilterGroups; tables: string[] }> {
+	const tables = await tablesBehind(
+		identity,
+		source.catalog_name,
+		source.schema_name,
+		source.object_name,
+		source.kind,
+		source.base_tables,
+	);
+
+	const parts: FilterGroups[] = [];
+	for (const table of tables) {
+		const [catalog, schema, name] = table.split(".");
+		if (!catalog || !schema || !name) continue;
+
+		const filters = await runCatalogQuery(
+			identity,
+			`SELECT filter_name
+			 FROM ${catalog}.information_schema.row_filters
+			 WHERE table_schema = :schema AND table_name = :name`,
+			{ schema, name },
+		);
+
+		for (const row of filters) {
+			const qualified = String(row.filter_name ?? "");
+			const segments = qualified.split(".");
+			const routineSchema = segments[segments.length - 2];
+			const routineName = segments[segments.length - 1];
+			if (!routineSchema || !routineName) continue;
+
+			const definitions = await runCatalogQuery(
+				identity,
+				`SELECT routine_definition
+				 FROM ${catalog}.information_schema.routines
+				 WHERE routine_schema = :schema AND routine_name = :name`,
+				{ schema: routineSchema, name: routineName },
+			);
+
+			for (const definition of definitions) {
+				parts.push(
+					extractFilterGroups(
+						String(definition.routine_definition ?? ""),
+					),
+				);
+			}
+		}
+	}
+
+	return { groups: mergeFilterGroups(parts), tables };
+}
+
+// Which groups the row filters across every source branch on.
+//
+// Walked by the application, on its own schedule, under its own identity. This
+// decides how cached answers are partitioned, so it cannot depend on somebody
+// remembering to refresh it: a filter that gains a group between one person
+// clicking sync and the next is a filter the cache is no longer honouring.
+//
+// What is cached is the expensive half. Opening a metric view definition costs
+// a few hundred milliseconds and up to 110KB of YAML to yield a handful of
+// table names that change when the view changes, so those are written down and
+// reused. The filters on those tables are re-read every walk, because that is
+// the part that has to stay current.
 export async function discoverFilterGroups(
 	identity: Identity | null,
 	force = false,
@@ -111,81 +194,41 @@ export async function discoverFilterGroups(
 
 	const parts: FilterGroups[] = [];
 	const unreadable: string[] = [];
-	const seenTables = new Set<string>();
 	let failureReason: string | null = null;
 
-	const noteFailure = (error: unknown) => {
-		if (failureReason) return;
-		const message = error instanceof Error ? error.message : String(error);
-		failureReason = message.slice(0, 400);
-	};
-
 	for (const source of sources) {
-		let tables: string[];
 		try {
-			tables = await tablesBehind(
+			const { groups, tables } = await discoverSourceGroups(
 				identity,
-				source.catalog_name,
-				source.schema_name,
-				source.object_name,
-				source.kind,
-				source.base_tables,
+				source,
 			);
-		} catch (error) {
-			noteFailure(error);
-			unreadable.push(source.source_key);
-			continue;
-		}
+			parts.push(groups);
 
-		for (const table of tables) {
-			if (seenTables.has(table)) continue;
-			seenTables.add(table);
-
-			const [catalog, schema, name] = table.split(".");
-			if (!catalog || !schema || !name) continue;
-
-			try {
-				// The filter attached to the table, and the body of the
-				// function it names. Two lookups because information_schema
-				// records the attachment and the definition separately.
-				const filters = await runCatalogQuery(
-					identity,
-					`SELECT filter_name
-					 FROM ${catalog}.information_schema.row_filters
-					 WHERE table_schema = :schema AND table_name = :name`,
-					{ schema, name },
+			// Derived rather than read, so keep it for next time.
+			if (!source.base_tables && source.kind === "metric_view") {
+				const derived = tables.filter(
+					(t) =>
+						t !==
+						`${source.catalog_name}.${source.schema_name}.${source.object_name}`,
 				);
-
-				for (const row of filters) {
-					const qualified = String(row.filter_name ?? "");
-					const parts_ = qualified.split(".");
-					const routineSchema = parts_[parts_.length - 2];
-					const routineName = parts_[parts_.length - 1];
-					if (!routineSchema || !routineName) continue;
-
-					const definitions = await runCatalogQuery(
-						identity,
-						`SELECT routine_definition
-						 FROM ${catalog}.information_schema.routines
-						 WHERE routine_schema = :schema AND routine_name = :name`,
-						{ schema: routineSchema, name: routineName },
-					);
-
-					for (const definition of definitions) {
-						parts.push(
-							extractFilterGroups(
-								String(definition.routine_definition ?? ""),
-							),
-						);
-					}
+				if (derived.length > 0) {
+					await sql(
+						`UPDATE data_sources SET base_tables = $2::jsonb
+						 WHERE source_key = $1`,
+						[source.source_key, JSON.stringify(derived)],
+					).catch(() => {});
 				}
-			} catch (error) {
-				// A catalogue this identity cannot read is reported rather
-				// than treated as having no filters, which would be the
-				// dangerous reading.
-				noteFailure(error);
-				unreadable.push(table);
 			}
+		} catch (error) {
+			// Reported rather than read as having no filters, which would be
+			// the dangerous reading: it would let two readers entitled to
+			// different rows share one cached answer.
+			if (!failureReason) {
+				const message =
+					error instanceof Error ? error.message : String(error);
+				failureReason = message.slice(0, 400);
+			}
+			unreadable.push(source.source_key);
 		}
 	}
 
@@ -194,6 +237,7 @@ export async function discoverFilterGroups(
 		unreadableSources: unreadable,
 		failureReason,
 	};
+	cachedAt = Date.now();
 
 	if (failureReason) {
 		console.warn(
@@ -201,6 +245,6 @@ export async function discoverFilterGroups(
 				`First failure: ${failureReason}`,
 		);
 	}
-	cachedAt = Date.now();
+
 	return cached;
 }
