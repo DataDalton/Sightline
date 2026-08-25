@@ -1,5 +1,7 @@
 import { sql } from "../data/lakebase";
+import type { Identity } from "../auth/identity";
 import type { PolicyClass } from "../auth/policy";
+import { catalogAccessEnabled, readableSources } from "../auth/sourceAccess";
 import { effectiveAdminGroups, settings } from "../settings";
 
 // Decides what a caller may open: which categories appear in navigation, which
@@ -100,24 +102,55 @@ async function loadGrants(
 	for (const row of rows) {
 		const key = grantKey(row.resource_type, row.resource_id);
 		const existing = grants.get(key);
-		if (!existing || permissionRank[row.permission] > permissionRank[existing]) {
+		if (
+			!existing ||
+			permissionRank[row.permission] > permissionRank[existing]
+		) {
 			grants.set(key, row.permission);
 		}
 	}
 	return grants;
 }
 
-export async function getGrants(
-	policy: PolicyClass,
-	email: string,
+// Reachability implied by Unity Catalog.
+//
+// A reader holding SELECT on a source is taken to be entitled to the reports
+// built on it, and to the categories those reports sit in. This is the grant
+// somebody already made, read back rather than transcribed into a second list
+// that has to be kept in step by hand.
+//
+// View only. Editing and administering are decisions about this platform rather
+// than about the data, so they stay with an explicit grant.
+async function catalogGrants(
+	identity: Identity,
 ): Promise<Map<string, Permission>> {
-	// A degraded class has unknown membership, so it gets no grants at all.
-	// Navigation renders empty rather than guessing.
-	if (policy.degraded) return new Map();
+	const derived = new Map<string, Permission>();
+	const readable = await readableSources(identity);
+	if (readable.size === 0) return derived;
 
-	// Personal grants make the cache key per user; group grants alone make it
-	// per class. Including the email keeps both correct.
-	const key = `${policy.id}|${email.toLowerCase()}`;
+	const rows = await sql<{ report_id: string; category_id: string | null }>(
+		`SELECT report_id::text AS report_id, category_id
+		 FROM reports
+		 WHERE is_active = TRUE AND source_key = ANY($1)`,
+		[Array.from(readable)],
+	);
+
+	for (const row of rows) {
+		derived.set(grantKey("report", row.report_id), "view");
+		if (row.category_id) {
+			derived.set(grantKey("category", row.category_id), "view");
+		}
+	}
+	return derived;
+}
+
+// One memo, shared by both lookups. A failure yields no grants rather than all
+// grants: an access lookup that fails must not open reports the caller has
+// never been given.
+async function cachedGrants(
+	key: string,
+	load: () => Promise<Map<string, Permission>>,
+): Promise<Map<string, Permission>> {
 	const now = Date.now();
 
 	const cached = cache.get(key);
@@ -128,13 +161,11 @@ export async function getGrants(
 
 	const pending = (async () => {
 		try {
-			const grants = await loadGrants(policy, email);
+			const grants = await load();
 			cache.set(key, { grants, expiresAt: now + ttlMs });
 			return grants;
 		} catch (error) {
 			console.error("Access grant lookup failed:", error);
-			// No grants rather than all grants. An access lookup failure must
-			// not open reports the caller has never been given.
 			return new Map<string, Permission>();
 		} finally {
 			inflight.delete(key);
@@ -143,6 +174,63 @@ export async function getGrants(
 
 	inflight.set(key, pending);
 	return pending;
+}
+
+// Only what an access grant names.
+//
+// Editing and administering are decisions about this platform rather than about
+// the data, so they never follow from a catalogue privilege. The edit path asks
+// this rather than the effective set, which keeps a reader who can read a table
+// from being able to rewrite the report built on it.
+export async function getExplicitGrants(
+	policy: PolicyClass,
+	email: string,
+): Promise<Map<string, Permission>> {
+	if (policy.degraded) return new Map();
+	return cachedGrants(`explicit|${policy.id}|${email.toLowerCase()}`, () =>
+		loadGrants(policy, email),
+	);
+}
+
+// Everything the caller can reach: what a grant names, plus what Unity Catalog
+// already lets them read.
+export async function getGrants(
+	policy: PolicyClass,
+	identity: Identity,
+): Promise<Map<string, Permission>> {
+	// A degraded class has unknown membership, so it gets no grants at all.
+	// Navigation renders empty rather than guessing.
+	if (policy.degraded) return new Map();
+
+	// Personal grants make the cache key per user; group grants alone make it
+	// per class. Including the email keeps both correct.
+	const email = identity.email;
+
+	return cachedGrants(
+		`effective|${policy.id}|${email.toLowerCase()}`,
+		async () => {
+			const grants = await loadGrants(policy, email);
+
+			// Merged rather than substituted, and an explicit grant wins when
+			// it is stronger: catalogue access implies view, and somebody
+			// given edit keeps edit.
+			if (catalogAccessEnabled()) {
+				for (const [resource, permission] of await catalogGrants(
+					identity,
+				)) {
+					const held = grants.get(resource);
+					if (
+						!held ||
+						permissionRank[permission] > permissionRank[held]
+					) {
+						grants.set(resource, permission);
+					}
+				}
+			}
+
+			return grants;
+		},
+	);
 }
 
 export interface AccessCheck {
@@ -203,7 +291,8 @@ export function resolvePageAccess(
 	required: Permission = "view",
 ): AccessCheck {
 	const direct = grants.get(grantKey("page", pageId));
-	if (direct) return { allowed: atLeast(direct, required), permission: direct };
+	if (direct)
+		return { allowed: atLeast(direct, required), permission: direct };
 	return reportAccess;
 }
 

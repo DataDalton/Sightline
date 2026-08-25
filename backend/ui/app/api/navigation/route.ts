@@ -25,12 +25,15 @@ export async function GET(request: NextRequest) {
 
 	const identity = getIdentity(request);
 	if (!identity) {
-		return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+		return NextResponse.json(
+			{ error: "Not authenticated" },
+			{ status: 401 },
+		);
 	}
 
 	try {
 		const policy = await resolvePolicyClass(identity);
-		const grants = await getGrants(policy, identity.email);
+		const grants = await getGrants(policy, identity);
 		const baseline = baselinePermission(policy);
 
 		const rows = await sql<CategoryRow>(
@@ -47,8 +50,12 @@ export async function GET(request: NextRequest) {
 		const categories = rows
 			.filter(
 				(row) =>
-					resolveCategoryAccess(grants, row.category_id, "view", baseline)
-						.allowed,
+					resolveCategoryAccess(
+						grants,
+						row.category_id,
+						"view",
+						baseline,
+					).allowed,
 			)
 			.map((row) => ({
 				categoryId: row.category_id,

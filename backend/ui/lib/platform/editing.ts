@@ -4,7 +4,7 @@ import { insertLog } from "../activityLog";
 import { record } from "../telemetry/usage";
 import {
 	baselinePermission,
-	getGrants,
+	getExplicitGrants,
 	resolveReportAccess,
 } from "./access";
 
@@ -126,7 +126,7 @@ export async function assertCanEdit(
 	const report = rows[0];
 	if (!report) throw new EditForbiddenError("Report not found");
 
-	const grants = await getGrants(policy, email);
+	const grants = await getExplicitGrants(policy, email);
 	const access = resolveReportAccess(
 		grants,
 		reportId,
@@ -191,7 +191,10 @@ export async function applyEdits(
 						 FROM report_visuals WHERE page_id = $1`,
 						[op.pageId],
 					);
-					const { config, layout } = splitLayout(op.config, op.layout);
+					const { config, layout } = splitLayout(
+						op.config,
+						op.layout,
+					);
 					await client.query(
 						`INSERT INTO report_visuals
 						   (visual_id, page_id, visual_type, title, source_key, config,
@@ -220,7 +223,10 @@ export async function applyEdits(
 					// Only the supplied fields change, so a client editing one
 					// property does not have to send the whole visual back and
 					// risk clobbering a property it never showed.
-					const { config, layout } = splitLayout(op.config, op.layout);
+					const { config, layout } = splitLayout(
+						op.config,
+						op.layout,
+					);
 					await client.query(
 						`UPDATE report_visuals SET
 						   title = COALESCE($2, title),
@@ -272,7 +278,11 @@ export async function applyEdits(
 						   title = COALESCE($2, title),
 						   description = COALESCE($3, description)
 						 WHERE report_id = $1`,
-						[request.reportId, op.title ?? null, op.description ?? null],
+						[
+							request.reportId,
+							op.title ?? null,
+							op.description ?? null,
+						],
 					);
 					break;
 

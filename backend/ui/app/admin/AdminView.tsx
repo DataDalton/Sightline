@@ -54,16 +54,6 @@ interface UsageResponse {
 }
 
 interface SecurityResponse {
-	policies: {
-		policyId: string;
-		subjectType: string;
-		subjectId: string;
-		resourceType: string;
-		resourceId: string;
-		permission: string;
-		grantedBy: string | null;
-		grantedOn: string;
-	}[];
 	editorGroups: string[];
 	adminGroups: string[];
 	exports: {
@@ -169,7 +159,11 @@ export default function AdminView() {
 			)}
 
 			{!isLoading && section === "usage" && data && (
-				<UsageSection data={data as UsageResponse} days={days} onDays={setDays} />
+				<UsageSection
+					data={data as UsageResponse}
+					days={days}
+					onDays={setDays}
+				/>
 			)}
 			{!isLoading && section === "security" && data && (
 				<SecuritySection data={data as SecurityResponse} />
@@ -215,10 +209,22 @@ function UsageSection({
 			</div>
 
 			<div className={styles.tiles}>
-				<Tile label="Active users" value={summary.activeUsers.toLocaleString()} />
-				<Tile label="Page views" value={formatCompact(summary.pageViews, "integer")} />
-				<Tile label="Queries" value={formatCompact(summary.queries, "integer")} />
-				<Tile label="Exports" value={summary.exports.toLocaleString()} />
+				<Tile
+					label="Active users"
+					value={summary.activeUsers.toLocaleString()}
+				/>
+				<Tile
+					label="Page views"
+					value={formatCompact(summary.pageViews, "integer")}
+				/>
+				<Tile
+					label="Queries"
+					value={formatCompact(summary.queries, "integer")}
+				/>
+				<Tile
+					label="Exports"
+					value={summary.exports.toLocaleString()}
+				/>
 				<Tile
 					label="Errors"
 					value={summary.errors.toLocaleString()}
@@ -229,13 +235,28 @@ function UsageSection({
 					value={`${summary.cacheHitRate.toFixed(1)}%`}
 					// Below half means most interactions still reach the
 					// warehouse, which is the cost driver worth watching.
-					tone={summary.cacheHitRate >= 70 ? "good" : summary.cacheHitRate >= 40 ? "warn" : "bad"}
+					tone={
+						summary.cacheHitRate >= 70
+							? "good"
+							: summary.cacheHitRate >= 40
+								? "warn"
+								: "bad"
+					}
 				/>
-				<Tile label="Median query" value={`${summary.medianQueryMs}ms`} />
+				<Tile
+					label="Median query"
+					value={`${summary.medianQueryMs}ms`}
+				/>
 				<Tile
 					label="p95 query"
 					value={`${summary.p95QueryMs}ms`}
-					tone={summary.p95QueryMs > 10000 ? "bad" : summary.p95QueryMs > 5000 ? "warn" : "good"}
+					tone={
+						summary.p95QueryMs > 10000
+							? "bad"
+							: summary.p95QueryMs > 5000
+								? "warn"
+								: "good"
+					}
 				/>
 			</div>
 
@@ -245,7 +266,9 @@ function UsageSection({
 						<div
 							key={d.day}
 							className={styles.sparkBar}
-							style={{ height: `${Math.max(3, (d.events / peak) * 100)}%` }}
+							style={{
+								height: `${Math.max(3, (d.events / peak) * 100)}%`,
+							}}
 							title={`${d.day}: ${d.events} events, ${d.users} users`}
 						/>
 					))}
@@ -286,15 +309,23 @@ function UsageSection({
 								>
 									<td>{r.title}</td>
 									<td>{r.categoryId ?? "-"}</td>
-									<td className={styles.numeric}>{r.views.toLocaleString()}</td>
-									<td className={styles.numeric}>{r.distinctUsers}</td>
-									<td className={styles.numeric}>{r.avgDurationMs}ms</td>
+									<td className={styles.numeric}>
+										{r.views.toLocaleString()}
+									</td>
+									<td className={styles.numeric}>
+										{r.distinctUsers}
+									</td>
+									<td className={styles.numeric}>
+										{r.avgDurationMs}ms
+									</td>
 									<td>{timeAgo(r.lastViewed)}</td>
 								</tr>
 							))}
 							{data.reports.length === 0 && (
 								<tr>
-									<td colSpan={6}>No activity in this window</td>
+									<td colSpan={6}>
+										No activity in this window
+									</td>
 								</tr>
 							)}
 						</tbody>
@@ -323,10 +354,18 @@ function UsageSection({
 						<tbody>
 							{data.slow.map((s) => (
 								<tr key={s.sourceKey ?? "unknown"}>
-									<td className={styles.mono}>{s.sourceKey ?? "-"}</td>
-									<td className={styles.numeric}>{s.queries.toLocaleString()}</td>
-									<td className={styles.numeric}>{s.avgQueryMs}ms</td>
-									<td className={styles.numeric}>{s.maxQueryMs}ms</td>
+									<td className={styles.mono}>
+										{s.sourceKey ?? "-"}
+									</td>
+									<td className={styles.numeric}>
+										{s.queries.toLocaleString()}
+									</td>
+									<td className={styles.numeric}>
+										{s.avgQueryMs}ms
+									</td>
+									<td className={styles.numeric}>
+										{s.maxQueryMs}ms
+									</td>
 									<td className={styles.numeric}>
 										{s.cacheHitRate.toFixed(0)}%
 									</td>
@@ -334,7 +373,9 @@ function UsageSection({
 							))}
 							{data.slow.length === 0 && (
 								<tr>
-									<td colSpan={5}>No queries in this window</td>
+									<td colSpan={5}>
+										No queries in this window
+									</td>
 								</tr>
 							)}
 						</tbody>
@@ -370,15 +411,23 @@ function UsageSection({
 									title="See everything this person has done"
 								>
 									<td>{u.userEmail}</td>
-									<td className={styles.numeric}>{u.events.toLocaleString()}</td>
-									<td className={styles.numeric}>{u.reports}</td>
-									<td className={styles.numeric}>{u.exports}</td>
+									<td className={styles.numeric}>
+										{u.events.toLocaleString()}
+									</td>
+									<td className={styles.numeric}>
+										{u.reports}
+									</td>
+									<td className={styles.numeric}>
+										{u.exports}
+									</td>
 									<td>{timeAgo(u.lastSeen)}</td>
 								</tr>
 							))}
 							{data.users.length === 0 && (
 								<tr>
-									<td colSpan={5}>No activity in this window</td>
+									<td colSpan={5}>
+										No activity in this window
+									</td>
 								</tr>
 							)}
 						</tbody>
@@ -392,7 +441,11 @@ function UsageSection({
 					days={days}
 					onClose={() => setDrill(null)}
 					onOpenUser={(userEmail) =>
-						setDrill({ kind: "user", id: userEmail, label: userEmail })
+						setDrill({
+							kind: "user",
+							id: userEmail,
+							label: userEmail,
+						})
 					}
 				/>
 			)}
@@ -528,16 +581,24 @@ function DrillDrawer({
 										<td className={styles.numeric}>
 											{v.views.toLocaleString()}
 										</td>
-										<td className={styles.numeric}>{v.exports}</td>
-										<td className={styles.numeric}>{v.errors}</td>
-										<td className={styles.numeric}>{v.avgDurationMs}ms</td>
+										<td className={styles.numeric}>
+											{v.exports}
+										</td>
+										<td className={styles.numeric}>
+											{v.errors}
+										</td>
+										<td className={styles.numeric}>
+											{v.avgDurationMs}ms
+										</td>
 										<td>{timeAgo(v.firstViewed)}</td>
 										<td>{timeAgo(v.lastViewed)}</td>
 									</tr>
 								))}
 								{(data?.viewers ?? []).length === 0 && (
 									<tr>
-										<td colSpan={7}>Nobody has opened this in the window</td>
+										<td colSpan={7}>
+											Nobody has opened this in the window
+										</td>
 									</tr>
 								)}
 							</tbody>
@@ -573,11 +634,14 @@ function DrillDrawer({
 														: ""
 												}`}
 											>
-												{eventLabels[event.eventType] ?? event.eventType}
+												{eventLabels[event.eventType] ??
+													event.eventType}
 											</span>
 										</td>
 										<td>{event.reportTitle ?? "-"}</td>
-										<td className={styles.mono}>{event.sourceKey ?? "-"}</td>
+										<td className={styles.mono}>
+											{event.sourceKey ?? "-"}
+										</td>
 										<td className={styles.numeric}>
 											{event.durationMs === null
 												? "-"
@@ -586,7 +650,10 @@ function DrillDrawer({
 										<td className={styles.numeric}>
 											{event.rowCount === null
 												? "-"
-												: formatCompact(event.rowCount, "integer")}
+												: formatCompact(
+														event.rowCount,
+														"integer",
+													)}
 										</td>
 										<td>
 											{event.errorMessage
@@ -601,7 +668,9 @@ function DrillDrawer({
 								))}
 								{(data?.activity ?? []).length === 0 && (
 									<tr>
-										<td colSpan={7}>Nothing recorded in the window</td>
+										<td colSpan={7}>
+											Nothing recorded in the window
+										</td>
 									</tr>
 								)}
 							</tbody>
@@ -633,6 +702,7 @@ interface ConfigValues {
 	groupCacheTtlSeconds: number;
 	editorGroups: string[];
 	adminGroups: string[];
+	accessModel: "catalog" | "grants";
 }
 
 // What an admin can change without a redeploy.
@@ -760,7 +830,9 @@ function ConfigurationSection() {
 			// left showing the old name until the next navigation.
 			window.dispatchEvent(new Event("sightline:settings-changed"));
 		} catch (error) {
-			setFailure(error instanceof Error ? error.message : "Could not save");
+			setFailure(
+				error instanceof Error ? error.message : "Could not save",
+			);
 		} finally {
 			setSaving(false);
 		}
@@ -821,10 +893,15 @@ function ConfigurationSection() {
 								<input
 									className={styles.input}
 									value={values.appName}
-									onChange={(e) => set({ appName: e.target.value })}
+									onChange={(e) =>
+										set({ appName: e.target.value })
+									}
 								/>
 							</Field>
-							<Field label="Description" hint="Shown on the home page.">
+							<Field
+								label="Description"
+								hint="Shown on the home page."
+							>
 								<input
 									className={styles.input}
 									value={values.appDescription}
@@ -842,25 +919,34 @@ function ConfigurationSection() {
 						    is why neither preview is on white. */}
 						<div className={styles.brandPreviews}>
 							{(["light", "dark"] as const).map((theme) => (
-								<div key={theme} className={styles.brandPreviewWrap}>
+								<div
+									key={theme}
+									className={styles.brandPreviewWrap}
+								>
 									<span className={styles.brandPreviewLabel}>
 										{theme} theme
 									</span>
 									<div
 										className={`${styles.brandPreview} ${
-											theme === "dark" ? styles.brandPreviewDark : ""
+											theme === "dark"
+												? styles.brandPreviewDark
+												: ""
 										}`}
 									>
 										{values.appLogo ? (
 											<span
-												className={styles.brandPreviewMark}
+												className={
+													styles.brandPreviewMark
+												}
 												dangerouslySetInnerHTML={{
 													__html: values.appLogo,
 												}}
 											/>
 										) : (
 											<svg
-												className={styles.brandPreviewMark}
+												className={
+													styles.brandPreviewMark
+												}
 												viewBox="0 0 32 32"
 												fill="none"
 												stroke="var(--brand)"
@@ -878,7 +964,9 @@ function ConfigurationSection() {
 											className={styles.brandPreviewRule}
 											aria-hidden="true"
 										/>
-										<span className={styles.brandPreviewName}>
+										<span
+											className={styles.brandPreviewName}
+										>
 											{values.appName || "Untitled"}
 										</span>
 									</div>
@@ -890,14 +978,18 @@ function ConfigurationSection() {
 							<Field
 								label="Mark"
 								hint={`SVG only, under ${limitKb}KB.${
-									values.appLogo ? ` Currently ${logoKb}KB.` : ""
+									values.appLogo
+										? ` Currently ${logoKb}KB.`
+										: ""
 								}`}
 							>
 								<input
 									type="file"
 									className={styles.input}
 									accept=".svg,image/svg+xml"
-									onChange={(e) => onLogoFile(e.target.files?.[0])}
+									onChange={(e) =>
+										onLogoFile(e.target.files?.[0])
+									}
 								/>
 							</Field>
 
@@ -920,8 +1012,12 @@ function ConfigurationSection() {
 													? styles.choiceActive
 													: ""
 											}`}
-											onClick={() => set({ appLogoAdaptive: value })}
-											aria-pressed={values.appLogoAdaptive === value}
+											onClick={() =>
+												set({ appLogoAdaptive: value })
+											}
+											aria-pressed={
+												values.appLogoAdaptive === value
+											}
 										>
 											{label}
 										</button>
@@ -941,10 +1037,11 @@ function ConfigurationSection() {
 						)}
 
 						<p className={styles.paneNote}>
-							Uploads are rebuilt from an allow-list before being stored,
-							so anything scriptable in the file is dropped. The mark is
-							kept in the settings table rather than on disk, because a
-							Databricks App has no disk that survives a restart.
+							Uploads are rebuilt from an allow-list before being
+							stored, so anything scriptable in the file is
+							dropped. The mark is kept in the settings table
+							rather than on disk, because a Databricks App has no
+							disk that survives a restart.
 						</p>
 					</>
 				)}
@@ -960,16 +1057,19 @@ function ConfigurationSection() {
 									className={`${styles.input} ${styles.mono}`}
 									placeholder="From the deployment"
 									value={values.warehouseId}
-									onChange={(e) => set({ warehouseId: e.target.value })}
+									onChange={(e) =>
+										set({ warehouseId: e.target.value })
+									}
 								/>
 							</Field>
 						</div>
 
 						<p className={styles.paneNote}>
-							Applies to the next connection each reader opens, so moving to
-							a different warehouse needs no redeploy. Catalogue and schema
-							are not here: they belong to each source rather than to the
-							platform, and are set per source in the semantic layer.
+							Applies to the next connection each reader opens, so
+							moving to a different warehouse needs no redeploy.
+							Catalogue and schema are not here: they belong to
+							each source rather than to the platform, and are set
+							per source in the semantic layer.
 						</p>
 
 						<details className={styles.paneDetails}>
@@ -977,32 +1077,36 @@ function ConfigurationSection() {
 								Why the database connection is not on this page
 							</summary>
 							<p>
-								The platform keeps its own records in Postgres: reports,
-								pages, visuals, saved views, access policy, and the values
-								on this form. The two fields above are stored there too,
-								which is why they can be edited here.
+								The platform keeps its own records in Postgres:
+								reports, pages, visuals, saved views, access
+								policy, and the values on this form. The two
+								fields above are stored there too, which is why
+								they can be edited here.
 							</p>
 							<p>
-								The connection to that database cannot be, because it is
-								what makes reading any of this possible. By the time this
-								form has values in it, the platform is already connected.
-								Storing the connection in the database it connects to
-								would mean needing the answer before you could ask the
-								question.
+								The connection to that database cannot be,
+								because it is what makes reading any of this
+								possible. By the time this form has values in
+								it, the platform is already connected. Storing
+								the connection in the database it connects to
+								would mean needing the answer before you could
+								ask the question.
 							</p>
 							<p>
-								It would also be a way to lock the platform out of itself.
-								Save a wrong host and the next start cannot reach the
-								database, and the only form that could correct it lives
-								inside that database.
+								It would also be a way to lock the platform out
+								of itself. Save a wrong host and the next start
+								cannot reach the database, and the only form
+								that could correct it lives inside that
+								database.
 							</p>
 							<p>
-								So the connection is declared where the deployment is
-								declared: app.yaml for a Databricks App, or .env when
-								running locally. The warehouse and catalogue above are
-								different because they are read after the platform has
-								connected, so a wrong value stops reports returning data
-								and leaves this page working.
+								So the connection is declared where the
+								deployment is declared: app.yaml for a
+								Databricks App, or .env when running locally.
+								The warehouse and catalogue above are different
+								because they are read after the platform has
+								connected, so a wrong value stops reports
+								returning data and leaves this page working.
 							</p>
 						</details>
 					</>
@@ -1022,7 +1126,9 @@ function ConfigurationSection() {
 										value={values.resultTtlSeconds}
 										onChange={(e) =>
 											set({
-												resultTtlSeconds: Number(e.target.value),
+												resultTtlSeconds: Number(
+													e.target.value,
+												),
 											})
 										}
 									/>
@@ -1041,7 +1147,9 @@ function ConfigurationSection() {
 										value={values.groupCacheTtlSeconds}
 										onChange={(e) =>
 											set({
-												groupCacheTtlSeconds: Number(e.target.value),
+												groupCacheTtlSeconds: Number(
+													e.target.value,
+												),
 											})
 										}
 									/>
@@ -1051,15 +1159,52 @@ function ConfigurationSection() {
 						</div>
 
 						<p className={styles.paneNote}>
-							An answer is only ever reused for someone whose group
-							membership is identical, so a longer cache trades freshness
-							for cost, never for correctness.
+							An answer is only ever reused for someone whose
+							group membership is identical, so a longer cache
+							trades freshness for cost, never for correctness.
 						</p>
 					</>
 				)}
 
 				{group === "access" && (
 					<>
+						<div className={styles.fieldRow}>
+							<Field
+								label="Reachability"
+								hint="Where the list of reports a person can open comes from."
+							>
+								<select
+									className={styles.input}
+									value={values.accessModel ?? "catalog"}
+									onChange={(e) =>
+										set({
+											accessModel: e.target.value as
+												| "catalog"
+												| "grants",
+										})
+									}
+								>
+									<option value="catalog">
+										Follows Unity Catalog
+									</option>
+									<option value="grants">
+										Access grants only
+									</option>
+								</select>
+							</Field>
+						</div>
+
+						<p className={styles.paneNote}>
+							Following the catalogue means a reader sees the
+							reports built on data they already hold SELECT on,
+							so the grant made once in Unity Catalog is the whole
+							statement and there is no second list to keep in
+							step. Access grants still apply on top and can raise
+							somebody above view. Choosing grants only is for a
+							deployment where reaching a report is a narrower
+							decision than reading its data.
+						</p>
+
 						<div className={styles.fieldRow}>
 							<Field
 								label="Editor groups"
@@ -1077,10 +1222,11 @@ function ConfigurationSection() {
 						</div>
 
 						<p className={styles.paneNote}>
-							Comma separated, and matched against the account exactly as
-							written. Case matters: a group spelled differently here never
-							matches and the failure is silent, so nobody is denied with
-							an error, they simply have no permissions.
+							Comma separated, and matched against the account
+							exactly as written. Case matters: a group spelled
+							differently here never matches and the failure is
+							silent, so nobody is denied with an error, they
+							simply have no permissions.
 						</p>
 					</>
 				)}
@@ -1151,60 +1297,7 @@ function SecuritySection({ data }: { data: SecurityResponse }) {
 				</div>
 			</div>
 
-			<div className={styles.section}>
-				<h2 className={styles.sectionTitle}>Access grants</h2>
-				<p className={styles.sectionNote}>
-					Who can open what. This governs reachability only. Which
-					rows a person sees inside a report is decided by Unity
-					Catalog when the query runs under their own identity, and is
-					not configurable here.
-				</p>
-				<div className={styles.tableWrap}>
-					<table className={styles.table}>
-						<thead>
-							<tr>
-								<th>Subject</th>
-								<th>Type</th>
-								<th>Resource</th>
-								<th>Permission</th>
-								<th>Granted by</th>
-							</tr>
-						</thead>
-						<tbody>
-							{data.policies.map((p) => (
-								<tr key={p.policyId}>
-									<td>{p.subjectId}</td>
-									<td>
-										<span className={styles.badge}>
-											{p.subjectType}
-										</span>
-									</td>
-									<td className={styles.mono}>
-										{p.resourceType}:{p.resourceId}
-									</td>
-									<td>
-										<span
-											className={`${styles.badge} ${
-												p.permission === "admin"
-													? styles.badgeAdmin
-													: ""
-											}`}
-										>
-											{p.permission}
-										</span>
-									</td>
-									<td>{p.grantedBy ?? "-"}</td>
-								</tr>
-							))}
-							{data.policies.length === 0 && (
-								<tr>
-									<td colSpan={5}>No grants configured</td>
-								</tr>
-							)}
-						</tbody>
-					</table>
-				</div>
-			</div>
+			<AccessGrants />
 
 			<div className={styles.section}>
 				<h2 className={styles.sectionTitle}>Export audit</h2>
@@ -1242,7 +1335,10 @@ function SecuritySection({ data }: { data: SecurityResponse }) {
 											{e.action}
 										</span>
 									</td>
-									<td className={styles.mono} title={e.detail ?? ""}>
+									<td
+										className={styles.mono}
+										title={e.detail ?? ""}
+									>
 										{e.notes ?? e.detail ?? "-"}
 									</td>
 								</tr>
@@ -1257,6 +1353,292 @@ function SecuritySection({ data }: { data: SecurityResponse }) {
 				</div>
 			</div>
 		</>
+	);
+}
+
+interface AccessGrantRow {
+	policy_id: string;
+	subject_type: string;
+	subject_id: string;
+	resource_type: string;
+	resource_id: string;
+	permission: string;
+	granted_by: string | null;
+	granted_on: string;
+	resource_name: string | null;
+}
+
+interface AccessResponse {
+	grants: AccessGrantRow[];
+	categories: { id: string; name: string }[];
+	reports: { id: string; name: string }[];
+}
+
+function AccessGrants() {
+	const { data, isLoading, mutate } =
+		useSWR<AccessResponse>("/api/admin/access");
+
+	const [subjectType, setSubjectType] = useState<"group" | "user">("group");
+	const [subjectId, setSubjectId] = useState("");
+	const [resourceType, setResourceType] = useState<"category" | "report">(
+		"category",
+	);
+	const [resourceId, setResourceId] = useState("");
+	const [permission, setPermission] = useState<"view" | "edit" | "admin">(
+		"view",
+	);
+	const [busy, setBusy] = useState(false);
+	const [failure, setFailure] = useState<string | null>(null);
+
+	const choices =
+		resourceType === "category"
+			? (data?.categories ?? [])
+			: (data?.reports ?? []);
+
+	const pickResourceType = (next: "category" | "report") => {
+		setResourceType(next);
+		// The previous id belongs to the other kind of thing, and sending it
+		// would be rejected as a resource that does not exist.
+		setResourceId("");
+	};
+
+	const grant = async () => {
+		setBusy(true);
+		setFailure(null);
+		try {
+			const response = await fetch("/api/admin/access", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					subjectType,
+					subjectId,
+					resourceType,
+					resourceId,
+					permission,
+				}),
+			});
+			if (!response.ok) {
+				const detail = await response.json().catch(() => null);
+				setFailure(detail?.error ?? "Could not grant access");
+				return;
+			}
+			setSubjectId("");
+			setResourceId("");
+			await mutate();
+		} catch (error) {
+			setFailure(
+				error instanceof Error
+					? error.message
+					: "Could not grant access",
+			);
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	const revoke = async (policyId: string) => {
+		setBusy(true);
+		setFailure(null);
+		try {
+			const response = await fetch(
+				`/api/admin/access?policyId=${encodeURIComponent(policyId)}`,
+				{ method: "DELETE" },
+			);
+			if (!response.ok) {
+				const detail = await response.json().catch(() => null);
+				setFailure(detail?.error ?? "Could not revoke");
+				return;
+			}
+			await mutate();
+		} catch (error) {
+			setFailure(
+				error instanceof Error ? error.message : "Could not revoke",
+			);
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	const grants = data?.grants ?? [];
+	const ready = subjectId.trim() !== "" && resourceId !== "";
+
+	return (
+		<div className={styles.section}>
+			<h2 className={styles.sectionTitle}>Access grants</h2>
+			<p className={styles.sectionNote}>
+				Exceptions. While reachability follows Unity Catalog, a reader
+				already sees the reports built on data they hold SELECT on, and
+				nothing has to be listed here for that to work. These entries
+				add reach somebody would not otherwise have, or raise a
+				permission above view.
+			</p>
+			<p className={styles.sectionNote}>
+				Reachability only. Which rows a person sees inside a report is
+				decided by Unity Catalog when the query runs under their own
+				identity, and is not configurable here. Granting to a group also
+				puts that group on the membership probe list, so no separate
+				step is needed, and group names are matched against the account
+				directory exactly as spelled, including case.
+			</p>
+
+			<div className={styles.fieldRow}>
+				<label className={styles.field}>
+					<span className={styles.fieldLabel}>Subject</span>
+					<select
+						className={styles.input}
+						value={subjectType}
+						onChange={(e) =>
+							setSubjectType(e.target.value as "group" | "user")
+						}
+					>
+						<option value="group">Group</option>
+						<option value="user">User</option>
+					</select>
+				</label>
+				<label className={styles.field}>
+					<span className={styles.fieldLabel}>
+						{subjectType === "group" ? "Group name" : "Email"}
+					</span>
+					<input
+						className={styles.input}
+						value={subjectId}
+						placeholder={
+							subjectType === "group"
+								? "Exact account group name"
+								: "person@example.com"
+						}
+						onChange={(e) => setSubjectId(e.target.value)}
+					/>
+				</label>
+				<label className={styles.field}>
+					<span className={styles.fieldLabel}>Applies to</span>
+					<select
+						className={styles.input}
+						value={resourceType}
+						onChange={(e) =>
+							pickResourceType(
+								e.target.value as "category" | "report",
+							)
+						}
+					>
+						<option value="category">Category</option>
+						<option value="report">Report</option>
+					</select>
+				</label>
+				<label className={styles.field}>
+					<span className={styles.fieldLabel}>
+						{resourceType === "category" ? "Category" : "Report"}
+					</span>
+					<select
+						className={styles.input}
+						value={resourceId}
+						onChange={(e) => setResourceId(e.target.value)}
+					>
+						<option value="">Choose one</option>
+						{choices.map((c) => (
+							<option key={c.id} value={c.id}>
+								{c.name}
+							</option>
+						))}
+					</select>
+				</label>
+				<label className={styles.field}>
+					<span className={styles.fieldLabel}>Permission</span>
+					<select
+						className={styles.input}
+						value={permission}
+						onChange={(e) =>
+							setPermission(
+								e.target.value as "view" | "edit" | "admin",
+							)
+						}
+					>
+						<option value="view">View</option>
+						<option value="edit">Edit</option>
+						<option value="admin">Admin</option>
+					</select>
+				</label>
+				<button
+					type="button"
+					className={styles.saveButton}
+					disabled={busy || !ready}
+					onClick={grant}
+				>
+					{busy ? "Working" : "Grant"}
+				</button>
+			</div>
+
+			{failure && <div className={styles.saveError}>{failure}</div>}
+
+			<div className={styles.tableWrap}>
+				<table className={styles.table}>
+					<thead>
+						<tr>
+							<th>Subject</th>
+							<th>Type</th>
+							<th>Resource</th>
+							<th>Permission</th>
+							<th>Granted by</th>
+							<th></th>
+						</tr>
+					</thead>
+					<tbody>
+						{grants.map((g) => (
+							<tr key={g.policy_id}>
+								<td>{g.subject_id}</td>
+								<td>
+									<span className={styles.badge}>
+										{g.subject_type}
+									</span>
+								</td>
+								<td>
+									{g.resource_name ?? (
+										<span className={styles.mono}>
+											{g.resource_type}:{g.resource_id}
+										</span>
+									)}
+								</td>
+								<td>
+									<span
+										className={`${styles.badge} ${
+											g.permission === "admin"
+												? styles.badgeAdmin
+												: ""
+										}`}
+									>
+										{g.permission}
+									</span>
+								</td>
+								<td>{g.granted_by ?? "-"}</td>
+								<td>
+									<button
+										type="button"
+										className={styles.linkButton}
+										disabled={busy}
+										onClick={() => revoke(g.policy_id)}
+									>
+										Revoke
+									</button>
+								</td>
+							</tr>
+						))}
+						{!isLoading && grants.length === 0 && (
+							<tr>
+								<td colSpan={6}>
+									No exceptions. Reachability comes from Unity
+									Catalog alone.
+								</td>
+							</tr>
+						)}
+						{isLoading && (
+							<tr>
+								<td colSpan={6}>Loading</td>
+							</tr>
+						)}
+					</tbody>
+				</table>
+			</div>
+		</div>
 	);
 }
 
@@ -1297,11 +1679,17 @@ function PlatformSection({ data }: { data: PlatformResponse }) {
 								<tr key={s.sourceKey}>
 									<td>{s.title}</td>
 									<td>
-										<span className={styles.badge}>{s.kind}</span>
+										<span className={styles.badge}>
+											{s.kind}
+										</span>
 									</td>
 									<td className={styles.mono}>{s.object}</td>
-									<td className={styles.numeric}>{s.dimensions}</td>
-									<td className={styles.numeric}>{s.measures}</td>
+									<td className={styles.numeric}>
+										{s.dimensions}
+									</td>
+									<td className={styles.numeric}>
+										{s.measures}
+									</td>
 									<td>{s.hasRowFilter ? "yes" : "no"}</td>
 								</tr>
 							))}
@@ -1313,25 +1701,27 @@ function PlatformSection({ data }: { data: PlatformResponse }) {
 			<div className={styles.section}>
 				<h2 className={styles.sectionTitle}>Policy groups</h2>
 				<p className={styles.sectionNote}>
-					Membership in these decides which cached answers a reader may
-					be served. Two people share a cached result only when every
-					one of these agrees for both, which is what stops a filtered
-					source handing one reader another reader&apos;s rows.
+					Membership in these decides which cached answers a reader
+					may be served. Two people share a cached result only when
+					every one of these agrees for both, which is what stops a
+					filtered source handing one reader another reader&apos;s
+					rows.
 				</p>
 				<p className={styles.sectionNote}>
-					Most are found rather than configured: the platform reads the
-					row filters on each source and probes whatever groups they
-					branch on, so this list follows a filter someone edits without
-					anybody maintaining it. The scope is the directory each is
-					asked about, matching the function the filter used.
+					Most are found rather than configured: the platform reads
+					the row filters on each source and probes whatever groups
+					they branch on, so this list follows a filter someone edits
+					without anybody maintaining it. The scope is the directory
+					each is asked about, matching the function the filter used.
 				</p>
 
 				{data.filterDiscovery.unreadableSources.length > 0 && (
 					<p className={styles.sectionNote}>
 						Could not read the filters on{" "}
-						{data.filterDiscovery.unreadableSources.join(", ")}. Groups
-						named only there are not being probed, so add them below in
-						Configuration until the catalogue is readable.
+						{data.filterDiscovery.unreadableSources.join(", ")}.
+						Groups named only there are not being probed, so add
+						them below in Configuration until the catalogue is
+						readable.
 					</p>
 				)}
 
@@ -1349,18 +1739,22 @@ function PlatformSection({ data }: { data: PlatformResponse }) {
 								<tr key={`${g.scope}:${g.name}`}>
 									<td>{g.name}</td>
 									<td>
-										<span className={styles.badge}>{g.scope}</span>
+										<span className={styles.badge}>
+											{g.scope}
+										</span>
 									</td>
-									<td>{groupOrigins[g.origin] ?? g.origin}</td>
+									<td>
+										{groupOrigins[g.origin] ?? g.origin}
+									</td>
 								</tr>
 							))}
 							{data.policyGroups.length === 0 && (
 								<tr>
 									<td colSpan={3}>
-										No groups are being probed. Every reader resolves
-										to one policy class, so a filtered source would
-										share results between people who see different
-										rows.
+										No groups are being probed. Every reader
+										resolves to one policy class, so a
+										filtered source would share results
+										between people who see different rows.
 									</td>
 								</tr>
 							)}
@@ -1414,7 +1808,8 @@ function PlatformSection({ data }: { data: PlatformResponse }) {
 								value.length === 0
 									? "none set, see Policy groups above"
 									: key === "appLogo"
-										? typeof value === "string" && value.length > 0
+										? typeof value === "string" &&
+											value.length > 0
 											? `${Math.round(value.length / 1024)}KB of SVG, see Configuration`
 											: "none set"
 										: value
