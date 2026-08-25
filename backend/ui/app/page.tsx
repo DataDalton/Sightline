@@ -32,8 +32,18 @@ export default function Home() {
 	);
 
 	const categories = data?.categories ?? [];
+
+	// An empty list means one of two unrelated things, and they call for
+	// opposite responses. Navigation answers with an empty list when it cannot
+	// reach the platform store or resolve the caller, so treating every empty
+	// list as an access decision would tell somebody to go ask for a grant they
+	// already hold.
+	const navigationDegraded = data?.degraded === true;
+
 	const appName = branding?.name || fallbackName;
-	const greeting = user?.name ? `Welcome back, ${user.name.split(" ")[0]}` : appName;
+	const greeting = user?.name
+		? `Welcome back, ${user.name.split(" ")[0]}`
+		: appName;
 
 	// Without a forwarded token no query can run at all, because every data
 	// read goes through the caller own Unity Catalog session. Saying so is
@@ -108,11 +118,15 @@ export default function Home() {
 
 			{isLoading ? null : categories.length === 0 ? (
 				<div className={styles.empty}>
-					<div className={styles.emptyTitle}>Nothing here yet</div>
+					<div className={styles.emptyTitle}>
+						{navigationDegraded
+							? "Reports are unavailable"
+							: "Nothing here yet"}
+					</div>
 					<p className={styles.emptyBody}>
-						No report categories are available to you. Once datasets
-						are registered and you are granted access, they appear
-						here.
+						{navigationDegraded
+							? "The app could not load the list of reports. This is a problem with the app rather than with your access, and it retries on its own. An administrator can see the reason under Administration."
+							: "No report categories are available to you. Once datasets are registered and you are granted access, they appear here."}
 					</p>
 				</div>
 			) : (

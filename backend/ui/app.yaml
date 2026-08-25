@@ -1,61 +1,70 @@
 # Databricks Apps deployment manifest.
 #
-# Declares no values. Everything a deployment needs is set in the app's own
-# configuration, next to the resource bindings, where it stays private to that
-# deployment and can change without a commit.
+# Holds names, never values. Each entry below points at a resource bound to the
+# app, and the value lives in that resource: a secret, a warehouse, a database
+# instance. The binding is per deployment and private to it, so this file is the
+# same for every installation.
 #
-# A value here would override the configured one, so a placeholder in this file
-# is applied rather than ignored, and a `valueFrom` naming a resource that does
-# not exist resolves to nothing.
+# A resource bound to an app is not an environment variable by itself. Nothing
+# reaches the container until an entry here names it, so a resource that is
+# bound but not listed is invisible to the app.
+#
+# Each entry is named after the variable it supplies, so binding a resource
+# means giving it the name of the variable it fills.
 
 command: ["npm", "run", "start"]
 
 # --- What this app needs ------------------------------------------------------
 #
-# Set these in the app's configuration, and bind the two resources.
-#
-# Injected by Databricks, nothing to do:
+# Injected by Databricks, nothing to bind:
 #   DATABRICKS_HOST, DATABRICKS_CLIENT_ID, DATABRICKS_CLIENT_SECRET,
-#   DATABRICKS_APP_NAME, DATABRICKS_WORKSPACE_ID
+#   DATABRICKS_APP_NAME, DATABRICKS_WORKSPACE_ID, DATABRICKS_APP_PORT
 #
-# From a SQL warehouse resource binding:
-#   DATABRICKS_SQL_WAREHOUSE_ID   the warehouse that answers every data query
-#
-# From a database resource binding, plus a few the binding does not supply:
-#   PGHOST                        supplied by the binding
-#   PGDATABASE                    the database holding the platform tables
-#   LAKEBASE_INSTANCE             the database instance name. Not derivable
-#                                 from the host: it is what OAuth credentials
-#                                 are minted against, which is a different
-#                                 thing from the address you connect to
-#   PGSCHEMA                      schema for the platform tables. Dedicated
-#                                 rather than public, so they are isolated and
-#                                 can be dropped as a unit
-#   PGUSER                        optional; falls back to the injected
-#                                 service principal client id
-#
-# For the first administrator:
-#   BOOTSTRAP_ADMIN_GROUPS        one group, comma separated for more.
-#
-#                                 Without it an empty settings table means
-#                                 nobody is an administrator, and the page that
-#                                 appoints administrators is administrator
-#                                 only, so a new deployment could never be
-#                                 configured. Once the table names a group this
-#                                 is ignored and can be removed.
-#
-#                                 Case sensitive: membership is matched exactly
-#                                 as the account spells it, and the wrong case
-#                                 fails silently as a non-member rather than as
-#                                 an error.
-#
-# Optional starting point, overridden by the setting once one is saved:
-#   SOURCE_CATALOG                the catalogue the reports read from
+# Optional, and set directly in the app's configuration rather than bound:
+#   PGUSER                  falls back to the injected service principal
+#                           client id
+#   PGPORT, PGSSLMODE       default to 5432 and require
+#   SOURCE_CATALOG          starting point for the catalogue the reports read,
+#                           overridden by the setting once one is saved
+#   BOOTSTRAP_ADMIN_GROUPS  one group, comma separated for more. An empty
+#                           settings table names no administrator, and the page
+#                           that appoints one is administrator only, so a fresh
+#                           deployment needs this to become configurable. Once
+#                           the table names a group it is ignored. Case
+#                           sensitive: membership is matched exactly as the
+#                           account spells it, and the wrong case reads as a
+#                           non-member rather than as an error.
 #
 # Everything else is operational configuration and lives in the platform
 # settings table: branding, cache budgets, editor and admin groups, the
 # warehouse. All of it is changed under Administration -> Configuration and
 # reaches every replica within a refresh interval, with no redeploy.
+
+env:
+    # The warehouse that answers every data query. Bind a SQL warehouse
+    # resource under this name and the id arrives here.
+    - name: DATABRICKS_SQL_WAREHOUSE_ID
+      valueFrom: DATABRICKS_SQL_WAREHOUSE_ID
+
+    # Address of the Lakebase instance holding the platform tables.
+    - name: PGHOST
+      valueFrom: PGHOST
+
+    # Database within that instance. The postgres database is owned by
+    # cloud_admin and grants no CREATE, so the platform needs one the workspace
+    # owns.
+    - name: PGDATABASE
+      valueFrom: PGDATABASE
+
+    # Instance name, which is what OAuth credentials are minted against. A
+    # different thing from the address, and not derivable from it.
+    - name: LAKEBASE_INSTANCE
+      valueFrom: LAKEBASE_INSTANCE
+
+    # Schema for the platform tables. Dedicated rather than public, so they are
+    # isolated from anything else in the database and can be dropped as a unit.
+    - name: PGSCHEMA
+      valueFrom: PGSCHEMA
 
 # --- On behalf of the user ----------------------------------------------------
 #
