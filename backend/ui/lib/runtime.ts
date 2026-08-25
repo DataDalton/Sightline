@@ -114,15 +114,14 @@ export const hasLakebase = Boolean(lakebase.host || lakebase.localUrl);
 
 // What a deployment is missing, or null when it has everything.
 //
-// Checked when the platform starts serving, not while this module is being
-// evaluated. Throwing at module scope broke the build: `next build` imports
-// every route to collect page data, and a build container has the app
-// environment set but none of the resource bindings, which arrive at run time.
-// So the deployment failed during the build with an error about a missing
-// database, which was true of the builder and irrelevant to it.
+// Checked when the platform starts serving, not while this module is evaluated.
+// `next build` imports every route to collect page data, and a build container
+// has the app environment without the resource bindings, which arrive at run
+// time: a check at module scope fails the build over a database the builder
+// never uses.
 //
 // A container that starts without these cannot serve anything, so the first
-// request still fails loudly. It just fails where a request can see it.
+// request still fails loudly, where a request can see it.
 export function missingDeploymentConfig(): string[] {
 	if (!isDatabricksApp) return [];
 

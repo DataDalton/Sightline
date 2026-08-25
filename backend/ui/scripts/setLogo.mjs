@@ -1,13 +1,12 @@
 // Stores a logo in the settings table.
 //
-// The mark compiled into the header used to be one company's wordmark. It is
-// a generic glyph now, because a trademark has no business in a repository
-// other people read and because a deployment should be able to look like
-// itself without editing source.
+// The mark is data, not source: the header compiles in a generic glyph, and a
+// deployment supplies its own. That keeps a trademark out of a repository other
+// people read and lets an installation look like itself without an edit.
 //
-// So the mark is data. This puts a file into the settings row the header
-// reads, which is the same thing the administration page does with an upload;
-// this exists so an install can be scripted rather than clicked.
+// This writes a file into the settings row the header reads, which is what the
+// administration page does with an upload. It exists so an install can be
+// scripted rather than clicked.
 //
 // Usage:  node scripts/setLogo.mjs path/to/logo.svg
 //         node scripts/setLogo.mjs path/to/logo.svg --keep-colours
@@ -66,10 +65,14 @@ if (!args.includes("--clear")) {
 
 	markup = cleaned.markup;
 	if (cleaned.removedElements.length > 0) {
-		console.log(`  dropped elements: ${cleaned.removedElements.join(", ")}`);
+		console.log(
+			`  dropped elements: ${cleaned.removedElements.join(", ")}`,
+		);
 	}
 	if (cleaned.removedAttributes.length > 0) {
-		console.log(`  dropped attributes: ${cleaned.removedAttributes.join(", ")}`);
+		console.log(
+			`  dropped attributes: ${cleaned.removedAttributes.join(", ")}`,
+		);
 	}
 }
 
