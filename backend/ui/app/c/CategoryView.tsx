@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import useSWR from "swr";
+import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { usePageTitle } from "../hooks/usePageTitle";
+import { SkeletonCards } from "../components/shared/Skeleton";
 import styles from "./CategoryView.module.css";
 
 interface ReportSummary {
@@ -25,6 +27,10 @@ export default function CategoryView({ categoryId }: { categoryId: string }) {
 	const { data, error, isLoading } = useSWR<CategoryDetail>(
 		`/api/category/${encodeURIComponent(categoryId)}`,
 	);
+
+	// Shown only when the wait is long enough to notice. Most loads answer from
+	// cache, where a placeholder would appear and vanish inside two frames.
+	const showSkeleton = useDeferredLoading(isLoading);
 
 	// Set before the loading and error returns below, because a hook cannot be
 	// called conditionally. An unnamed category leaves the application name on
@@ -54,13 +60,9 @@ export default function CategoryView({ categoryId }: { categoryId: string }) {
 				<p className={styles.description}>{data.description}</p>
 			)}
 
-			{isLoading ? (
-				<div className={styles.grid}>
-					{Array.from({ length: 4 }, (_, i) => (
-						<div key={i} className={styles.skeleton} />
-					))}
-				</div>
-			) : data && data.reports.length === 0 ? (
+			{showSkeleton ? (
+				<SkeletonCards count={4} />
+			) : isLoading ? null : data && data.reports.length === 0 ? (
 				<div className={styles.state}>
 					No reports in this category yet.
 				</div>

@@ -114,15 +114,3 @@
 	border: 1px dashed var(--border-default);
 	border-radius: var(--radius-lg);
 }
-
-.skeleton {
-	height: 128px;
-	border-radius: var(--radius-lg);
-	background: var(--surface-hover);
-	animation: pulse 1.4s ease-in-out infinite;
-}
-
-@keyframes pulse {
-	0%, 100% { opacity: 0.6; }
-	50% { opacity: 1; }
-}

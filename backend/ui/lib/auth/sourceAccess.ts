@@ -1,11 +1,11 @@
+import { sql } from "../data/lakebase";
 import { queryAsUser } from "../data/userSession";
 import { listSources } from "../semantic/registry";
 import { sourceRef } from "../semantic/types";
 import { settings } from "../settings";
 import type { Identity } from "./identity";
 
-// Which sources a reader can actually read, asked of Unity Catalog rather than
-// recorded here.
+// Which sources a reader can read, as Unity Catalog answers it.
 //
 // A SELECT grant on the data a report is built from is already a statement that
 // the grantee should see that report. Keeping a second list in this platform
@@ -14,26 +14,41 @@ import type { Identity } from "./identity";
 //
 // This decides reachability only. Which rows come back is still decided by
 // Unity Catalog on the real query, under the same token.
+//
+// Held in three tiers, because asking costs a warehouse round trip and reading
+// the answer back costs a Postgres one, and those differ by a factor of a
+// hundred:
+//
+//   memory    per replica, nanoseconds, lost on restart
+//   Lakebase  shared by every replica, milliseconds, survives a restart
+//   warehouse the actual question, seconds
+//
+// A reader waits for the warehouse once, ever. After that the answer is read
+// back and refreshed behind whatever request happened to need it.
 
-// Long, because this is the expensive one. Resolving it costs a round trip per
-// source, and a catalogue privilege changes far less often than a report does.
-// A reader granted access mid-session waits this out, which is the right side
-// of the trade: the alternative is paying for the probe on every page.
-const ttlMs = 30 * 60 * 1000;
+// How long an answer is served before it is refreshed behind the request. A
+// catalogue privilege changes rarely, and the refresh is invisible.
+const softTtlMs = 30 * 60 * 1000;
 
-interface CacheEntry {
+// How long an answer may still be served while a refresh runs. Past this a
+// reader waits, which should only happen to somebody who has not visited in a
+// day.
+const hardTtlMs = 24 * 60 * 60 * 1000;
+
+interface Entry {
 	readable: Set<string>;
-	expiresAt: number;
+	computedAt: number;
 }
 
-const cache = new Map<string, CacheEntry>();
+const memory = new Map<string, Entry>();
 const inflight = new Map<string, Promise<Set<string>>>();
+const refreshing = new Set<string>();
 
 // Unity Catalog reports a missing privilege in the message rather than in a
 // code the driver surfaces separately. Matching on it is what separates "this
 // reader may not see this" from "the warehouse is down", and the two must not
-// be treated alike: the first is an answer and the second is a failure that
-// should reach the caller rather than quietly emptying somebody's home page.
+// be treated alike: the first is an answer, the second is a failure that should
+// reach the caller rather than quietly emptying somebody home page.
 const denialPattern =
 	/permission|privilege|not authorized|unauthorized|access denied|insufficient/i;
 
@@ -50,8 +65,86 @@ async function canRead(token: string, ref: string): Promise<boolean> {
 	}
 }
 
-// Sources this reader holds SELECT on. Throws if the catalogue could not be
-// asked, so an outage reads as an outage.
+// Asked of the warehouse. Every source at once: they are independent questions
+// and the driver runs them on one session, so the whole set costs about what
+// the slowest single one does.
+async function probe(identity: Identity): Promise<Set<string>> {
+	const token = identity.userToken as string;
+	const answers = await Promise.all(
+		listSources().map(async (source) => ({
+			key: source.sourceKey,
+			readable: await canRead(token, sourceRef(source)),
+		})),
+	);
+	return new Set(answers.filter((a) => a.readable).map((a) => a.key));
+}
+
+async function readStored(email: string): Promise<Entry | null> {
+	try {
+		const rows = await sql<{ source_keys: string[]; computed_on: string }>(
+			`SELECT source_keys, computed_on FROM reader_access
+			 WHERE user_email = $1 AND expires_on > now()`,
+			[email],
+		);
+		const row = rows[0];
+		if (!row) return null;
+		return {
+			readable: new Set(row.source_keys ?? []),
+			computedAt: new Date(row.computed_on).getTime(),
+		};
+	} catch (error) {
+		// A cache read that fails is a miss, never an error the reader sees.
+		console.warn("Reader access read failed:", error);
+		return null;
+	}
+}
+
+async function writeStored(
+	email: string,
+	readable: Set<string>,
+): Promise<void> {
+	try {
+		await sql(
+			`INSERT INTO reader_access
+			   (user_email, source_keys, computed_on, expires_on)
+			 VALUES ($1, $2::jsonb, now(), now() + make_interval(secs => $3))
+			 ON CONFLICT (user_email) DO UPDATE SET
+			   source_keys = EXCLUDED.source_keys,
+			   computed_on = EXCLUDED.computed_on,
+			   expires_on = EXCLUDED.expires_on`,
+			[email, JSON.stringify(Array.from(readable)), hardTtlMs / 1000],
+		);
+	} catch (error) {
+		// Costs the next request a round trip, never correctness.
+		console.warn("Reader access write failed:", error);
+	}
+}
+
+async function resolve(
+	email: string,
+	identity: Identity,
+): Promise<Set<string>> {
+	const readable = await probe(identity);
+	memory.set(email, { readable, computedAt: Date.now() });
+	await writeStored(email, readable);
+	return readable;
+}
+
+// Refreshes behind whatever request noticed the entry was getting old. Not
+// awaited by that request: the point is that nobody waits for it.
+function refreshBehind(email: string, identity: Identity): void {
+	if (refreshing.has(email)) return;
+	refreshing.add(email);
+	void resolve(email, identity)
+		.catch((error) => {
+			console.warn(`Reader access refresh failed for ${email}:`, error);
+		})
+		.finally(() => refreshing.delete(email));
+}
+
+// Sources this reader holds SELECT on. Throws only when there is no stored
+// answer and the catalogue cannot be asked, so an outage reads as an outage
+// rather than as an empty home page.
 export async function readableSources(
 	identity: Identity,
 ): Promise<Set<string>> {
@@ -61,41 +154,37 @@ export async function readableSources(
 	// Keyed by reader, not by policy class. A policy class is built from group
 	// membership, and a Unity Catalog grant can name one person, so two members
 	// of the same class do not necessarily read the same sources.
-	const key = identity.email.toLowerCase();
+	const email = identity.email.toLowerCase();
 	const now = Date.now();
 
-	const cached = cache.get(key);
-	if (cached && cached.expiresAt > now) return cached.readable;
+	const held = memory.get(email);
+	if (held && now - held.computedAt < softTtlMs) return held.readable;
+	if (held) {
+		refreshBehind(email, identity);
+		return held.readable;
+	}
 
-	const existing = inflight.get(key);
+	// One resolution per reader, however many requests arrive at once.
+	const existing = inflight.get(email);
 	if (existing) return existing;
 
 	const pending = (async () => {
 		try {
-			const sources = listSources();
-			const token = identity.userToken as string;
-
-			// Probed together rather than in sequence: this runs before the
-			// first page a reader sees, and one round trip per source in
-			// series is the difference between a pause and a wait.
-			const answers = await Promise.all(
-				sources.map(async (source) => ({
-					key: source.sourceKey,
-					readable: await canRead(token, sourceRef(source)),
-				})),
-			);
-
-			const readable = new Set(
-				answers.filter((a) => a.readable).map((a) => a.key),
-			);
-			cache.set(key, { readable, expiresAt: now + ttlMs });
-			return readable;
+			const stored = await readStored(email);
+			if (stored) {
+				memory.set(email, stored);
+				if (now - stored.computedAt >= softTtlMs) {
+					refreshBehind(email, identity);
+				}
+				return stored.readable;
+			}
+			return await resolve(email, identity);
 		} finally {
-			inflight.delete(key);
+			inflight.delete(email);
 		}
 	})();
 
-	inflight.set(key, pending);
+	inflight.set(email, pending);
 	return pending;
 }
 
@@ -113,6 +202,11 @@ export function warmSourceAccess(identity: Identity): void {
 	void readableSources(identity).catch(() => {});
 }
 
+export function sourceAccessStats(): { readers: number; refreshing: number } {
+	return { readers: memory.size, refreshing: refreshing.size };
+}
+
 export function invalidateSourceAccess(): void {
-	cache.clear();
+	memory.clear();
+	void sql(`DELETE FROM reader_access`).catch(() => {});
 }

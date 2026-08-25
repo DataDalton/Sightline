@@ -38,7 +38,9 @@
 	border-radius: var(--radius-md);
 	color: var(--chrome-text-muted);
 	font-size: var(--text-md);
-	transition: background var(--transition-fast), color var(--transition-fast);
+	transition:
+		background var(--transition-fast),
+		color var(--transition-fast);
 }
 
 .navItem:hover {
@@ -88,19 +90,6 @@
 	font-size: var(--text-sm);
 	color: var(--chrome-text-muted);
 	line-height: 1.5;
-}
-
-.skeleton {
-	height: 30px;
-	margin: 1px var(--space-2);
-	border-radius: var(--radius-md);
-	background: var(--chrome-hover);
-	animation: pulse 1.4s ease-in-out infinite;
-}
-
-@keyframes pulse {
-	0%, 100% { opacity: 0.5; }
-	50% { opacity: 0.9; }
 }
 
 .footer {

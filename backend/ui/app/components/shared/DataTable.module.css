@@ -170,16 +170,9 @@
 	background: var(--accent-hover);
 }
 
-/* Skeleton loading rows */
+/* A loading row. The bars inside carry the shimmer, from
+   components/shared/Skeleton, so this only holds the row height. */
 .skeletonRow {
-	animation: pulse 1.5s ease-in-out infinite;
-}
-
-.skeleton {
-	height: 14px;
-	background: var(--bg-tertiary);
-	border-radius: 4px;
-	width: 70%;
 }
 
 .skeletonRow:nth-child(odd) .skeleton {

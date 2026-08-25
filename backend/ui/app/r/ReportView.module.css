@@ -77,7 +77,9 @@
 	background: var(--surface-raised);
 	font-size: var(--text-sm);
 	font-weight: 500;
-	transition: background var(--transition-fast), border-color var(--transition-fast);
+	transition:
+		background var(--transition-fast),
+		border-color var(--transition-fast);
 }
 
 .button:hover {
@@ -169,19 +171,6 @@
 	color: var(--text-muted);
 	border: 1px dashed var(--border-default);
 	border-radius: var(--radius-lg);
-}
-
-.skeleton {
-	height: 96px;
-	border-radius: var(--radius-lg);
-	background: var(--surface-hover);
-	animation: pulse 1.4s ease-in-out infinite;
-	margin-bottom: var(--space-4);
-}
-
-@keyframes pulse {
-	0%, 100% { opacity: 0.6; }
-	50% { opacity: 1; }
 }
 
 /* Reader zoom. */
