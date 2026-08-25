@@ -362,6 +362,19 @@ const statements: string[] = [
 // idempotent statement.
 const migrations: string[] = [
 	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'table'`,
+
+	// The tables a metric view reads, recorded when the view is synced.
+	//
+	// Deriving them means opening the view definition, which Unity Catalog gates
+	// behind SELECT on the view rather than behind BROWSE, and which returns the
+	// whole semantic layer: tens to hundreds of kilobytes of YAML per view. The
+	// row filter walk needs only the handful of table names inside it, and the
+	// answer changes when somebody edits the view rather than on a timer.
+	//
+	// So it is derived once, by a sync, under the identity of whoever asked for
+	// it. The walk then reads this column instead of re-parsing megabytes every
+	// hour, and the application never needs SELECT on anything.
+	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS base_tables JSONB`,
 	`ALTER TABLE source_fields ALTER COLUMN sql_expr DROP NOT NULL`,
 	`ALTER TABLE source_fields ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '{}'::jsonb`,
 	`ALTER TABLE source_fields ADD COLUMN IF NOT EXISTS display_name TEXT`,
