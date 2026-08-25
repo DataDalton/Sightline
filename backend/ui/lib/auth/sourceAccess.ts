@@ -15,7 +15,11 @@ import type { Identity } from "./identity";
 // This decides reachability only. Which rows come back is still decided by
 // Unity Catalog on the real query, under the same token.
 
-const ttlMs = 5 * 60 * 1000;
+// Long, because this is the expensive one. Resolving it costs a round trip per
+// source, and a catalogue privilege changes far less often than a report does.
+// A reader granted access mid-session waits this out, which is the right side
+// of the trade: the alternative is paying for the probe on every page.
+const ttlMs = 30 * 60 * 1000;
 
 interface CacheEntry {
 	readable: Set<string>;
@@ -97,6 +101,16 @@ export async function readableSources(
 
 export function catalogAccessEnabled(): boolean {
 	return settings().accessModel === "catalog";
+}
+
+// Resolves the answer without waiting for it, so the cost is paid while the
+// shell is still rendering rather than in front of the first navigation.
+//
+// Errors are swallowed on purpose: this is an optimisation, and the request
+// that actually needs the answer is the one that should report a failure.
+export function warmSourceAccess(identity: Identity): void {
+	if (!identity.userToken) return;
+	void readableSources(identity).catch(() => {});
 }
 
 export function invalidateSourceAccess(): void {

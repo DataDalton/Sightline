@@ -4,7 +4,10 @@ import { resolvePolicyClass } from "@/lib/auth/policy";
 import { isAdmin } from "@/lib/platform/access";
 import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
 import { syncAllSources, syncSourceMetadata } from "@/lib/semantic/ucMetadata";
-import { syncAllSourceFields, syncSourceFields } from "@/lib/semantic/fieldSync";
+import {
+	syncAllSourceFields,
+	syncSourceFields,
+} from "@/lib/semantic/fieldSync";
 import { loadRegistry } from "@/lib/semantic/registry";
 import { insertLog } from "@/lib/activityLog";
 import { checkWriteRateLimit } from "@/lib/rateLimit";
@@ -27,7 +30,10 @@ export async function POST(request: NextRequest) {
 
 	const identity = getIdentity(request);
 	if (!identity) {
-		return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+		return NextResponse.json(
+			{ error: "Not authenticated" },
+			{ status: 401 },
+		);
 	}
 
 	const policy = await resolvePolicyClass(identity);
@@ -48,23 +54,32 @@ export async function POST(request: NextRequest) {
 			: await syncAllSources(identity);
 
 		// The in-memory registry is rebuilt so the change is visible without
-		// waiting out the poll interval.
-		await loadRegistry();
+		// waiting out the poll interval, and the row filter walk is redone
+		// rather than reused: a sync is what an admin runs after granting the
+		// catalogue access that walk needs.
+		await loadRegistry(true);
 
 		const totals = results.reduce(
 			(acc, r) => ({
 				columnsSeen: acc.columnsSeen + r.columnsSeen,
-				descriptionsUpdated: acc.descriptionsUpdated + r.descriptionsUpdated,
+				descriptionsUpdated:
+					acc.descriptionsUpdated + r.descriptionsUpdated,
 				typesUpdated: acc.typesUpdated + r.typesUpdated,
 				tagsUpdated: acc.tagsUpdated + r.tagsUpdated,
 			}),
-			{ columnsSeen: 0, descriptionsUpdated: 0, typesUpdated: 0, tagsUpdated: 0 },
+			{
+				columnsSeen: 0,
+				descriptionsUpdated: 0,
+				typesUpdated: 0,
+				tagsUpdated: 0,
+			},
 		);
 
 		const fieldTotals = fieldResults.reduce(
 			(acc, r) => ({
 				fieldsAdded: acc.fieldsAdded + r.added.length,
-				fieldsReclassified: acc.fieldsReclassified + r.reclassified.length,
+				fieldsReclassified:
+					acc.fieldsReclassified + r.reclassified.length,
 				fieldsMissing: acc.fieldsMissing + r.missing.length,
 			}),
 			{ fieldsAdded: 0, fieldsReclassified: 0, fieldsMissing: 0 },

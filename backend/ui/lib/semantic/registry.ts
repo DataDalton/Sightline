@@ -67,7 +67,12 @@ function toField(row: FieldRow): SemanticField {
 	};
 }
 
-export async function loadRegistry(): Promise<void> {
+// force re-walks the catalogue for row filters instead of reusing the memo.
+// A poll leaves it alone, because the walk is slow and filters change rarely.
+// An explicit sync passes true: it is what an admin runs after fixing the
+// privilege that made the walk fail, and reusing the failed answer would report
+// the fix as having changed nothing.
+export async function loadRegistry(force = false): Promise<void> {
 	// Share one in-flight load between concurrent callers.
 	if (loading) return loading;
 
@@ -124,7 +129,7 @@ export async function loadRegistry(): Promise<void> {
 			// Only groups that actually appear in an access rule are probed
 			// when resolving a policy class, so membership stays one small
 			// query no matter how many groups exist in the account.
-			await refreshTrackedGroups();
+			await refreshTrackedGroups(force);
 		} catch (error) {
 			// Keep serving the previous registry. An empty one would make
 			// every query fail rather than degrade.
@@ -162,7 +167,7 @@ async function previousFilterGroups(): Promise<{
 	};
 }
 
-export async function refreshTrackedGroups(): Promise<void> {
+export async function refreshTrackedGroups(force = false): Promise<void> {
 	const rows = await sql<{ subject_id: string }>(
 		`SELECT DISTINCT subject_id
 		 FROM access_policies
@@ -183,7 +188,7 @@ export async function refreshTrackedGroups(): Promise<void> {
 	};
 	try {
 		const { discoverFilterGroups } = await import("./filterDiscovery");
-		const discovered = await discoverFilterGroups(null);
+		const discovered = await discoverFilterGroups(null, force);
 		filterGroups = discovered;
 
 		// A source the walk could not open contributes no group names, which
