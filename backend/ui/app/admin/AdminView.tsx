@@ -1990,6 +1990,66 @@ const groupOrigins: Record<string, string> = {
 	configured: "added in Configuration",
 };
 
+// Re-reads every source from the catalogue.
+//
+// Fields it publishes, and for a metric view the tables underneath it. That
+// second one is what the row filter walk needs and cannot fetch itself: opening
+// a view definition takes SELECT on the view, which the application does not
+// hold and a person running a sync does. So the walk stays blocked until
+// somebody runs this once, and again whenever a view is re-pointed.
+function SyncSources() {
+	const [running, setRunning] = useState(false);
+	const [result, setResult] = useState<string | null>(null);
+	const [failure, setFailure] = useState<string | null>(null);
+
+	const run = async () => {
+		setRunning(true);
+		setResult(null);
+		setFailure(null);
+		try {
+			const response = await fetch("/api/admin/sync", { method: "POST" });
+			const detail = await response.json().catch(() => null);
+			if (!response.ok) {
+				setFailure(detail?.error ?? `Sync failed (${response.status})`);
+				return;
+			}
+			const totals = detail?.totals ?? {};
+			const parts = Object.entries(totals)
+				.filter(([, value]) => typeof value === "number" && value > 0)
+				.map(
+					([key, value]) =>
+						`${value} ${key.replace(/([A-Z])/g, " $1").toLowerCase()}`,
+				);
+			setResult(
+				parts.length > 0
+					? `Synced. ${parts.join(", ")}.`
+					: "Synced. Nothing had changed.",
+			);
+		} catch (error) {
+			setFailure(error instanceof Error ? error.message : "Sync failed");
+		} finally {
+			setRunning(false);
+		}
+	};
+
+	return (
+		<>
+			<div className={styles.fieldRow}>
+				<button
+					type="button"
+					className={styles.saveButton}
+					disabled={running}
+					onClick={run}
+				>
+					{running ? "Syncing" : "Sync from catalogue"}
+				</button>
+			</div>
+			{result && <p className={styles.paneNote}>{result}</p>}
+			{failure && <div className={styles.saveError}>{failure}</div>}
+		</>
+	);
+}
+
 const platformPanes = [
 	{
 		id: "health",
@@ -2142,6 +2202,8 @@ function PlatformSection({ data }: { data: PlatformResponse }) {
 						and never restated here. A filtered source has its
 						results cached per policy class rather than shared.
 					</p>
+
+					<SyncSources />
 				</>
 			)}
 
