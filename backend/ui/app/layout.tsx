@@ -9,15 +9,13 @@ import { ShellProvider } from "./context/ShellContext";
 import NavScrim from "./components/NavScrim";
 import styles from "./layout.module.css";
 
-// The document title before the settings table has been read. What an
-// installation calls itself is set in the app, not at build time.
-const appName = "Sightline";
-const appDescription =
-	process.env.NEXT_PUBLIC_APP_DESCRIPTION || "Analytics and reporting platform";
-
+// The document title before the settings table has been read, and while a
+// deployment is still unnamed. What an installation calls itself is set in the
+// app rather than at build time, so usePageTitle replaces both of these as soon
+// as the branding arrives, and adds where the reader is.
 export const metadata: Metadata = {
-	title: appName,
-	description: appDescription,
+	title: "Sightline",
+	description: "Analytics and reporting platform",
 };
 
 export default function RootLayout({
@@ -43,7 +41,9 @@ export default function RootLayout({
 								<div className={styles.container}>
 									<Sidebar />
 									<NavScrim />
-									<main className={styles.main}>{children}</main>
+									<main className={styles.main}>
+										{children}
+									</main>
 								</div>
 							</ShellProvider>
 						</UserProvider>

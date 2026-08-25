@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import useSWR from "swr";
+import { usePageTitle } from "../hooks/usePageTitle";
 import styles from "./CategoryView.module.css";
 
 interface ReportSummary {
@@ -24,6 +25,11 @@ export default function CategoryView({ categoryId }: { categoryId: string }) {
 	const { data, error, isLoading } = useSWR<CategoryDetail>(
 		`/api/category/${encodeURIComponent(categoryId)}`,
 	);
+
+	// Set before the loading and error returns below, because a hook cannot be
+	// called conditionally. An unnamed category leaves the application name on
+	// its own rather than showing a placeholder in the tab.
+	usePageTitle(data?.name ?? null);
 
 	if (error) {
 		return (
@@ -81,7 +87,9 @@ export default function CategoryView({ categoryId }: { categoryId: string }) {
 									</span>
 								)}
 								{report.permission !== "view" && (
-									<span className={`${styles.tag} ${styles.tagFixed}`}>
+									<span
+										className={`${styles.tag} ${styles.tagFixed}`}
+									>
 										{report.permission}
 									</span>
 								)}
