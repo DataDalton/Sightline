@@ -74,12 +74,15 @@ env:
 # all. Without user authorization there is no identity to query as, and every
 # report returns an access error rather than somebody else's rows.
 #
-# Databricks forwards the token as X-Forwarded-Access-Token once this is
-# declared. The sql scope covers both the data queries and the group membership
+# Databricks forwards the token as X-Forwarded-Access-Token once the scope is
+# granted. The sql scope covers both the data queries and the group membership
 # probe that resolves a caller's policy class.
 #
-# Confirm the key and scope names against the Databricks Apps documentation for
-# your workspace version.
+# The grant lives on the app record, under user authorization in the app's own
+# configuration, and reads back as user_api_scopes. This block does not populate
+# that field, so an app whose configuration omits sql forwards no usable token
+# however this file reads. The home page says so directly when no token arrives,
+# and `databricks apps get <name>` reports the effective list.
 user_authorization:
     scopes:
         - sql
