@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getIdentity } from "@/lib/auth/identity";
 import { resolvePolicyClass } from "@/lib/auth/policy";
 import { isAdmin, isEditor } from "@/lib/platform/access";
+import { warmSourceAccess } from "@/lib/auth/sourceAccess";
 import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
 
 // Returns the caller identity and resolved policy class for the app shell.
@@ -20,6 +21,12 @@ export async function GET(request: NextRequest) {
 	}
 
 	const policy = await resolvePolicyClass(identity);
+
+	// The shell asks for this first and navigation asks a moment later, so
+	// the reachability probe is started here and awaited there. Not awaited:
+	// the shell does not need the answer, and holding it up would move the
+	// cost rather than hide it.
+	warmSourceAccess(identity);
 
 	const response = NextResponse.json({
 		email: identity.email,
