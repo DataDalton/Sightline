@@ -1,0 +1,104 @@
+{
+  "_comment": "A worked example of the import manifest. Run it with: node backend/ui/scripts/import.mjs examples/manifest.example.json --dry-run",
+
+  "sources": [
+    {
+      "key": "orders",
+      "title": "Orders",
+      "description": "One row per order line, with revenue and volume.",
+      "catalog": "main",
+      "schema": "analytics",
+      "object": "orders",
+      "kind": "metric_view",
+      "hasRowFilter": true,
+      "defaultTimeField": "Order Date",
+      "dimensions": [
+        { "name": "Order Date", "dataType": "date" },
+        { "name": "Region" },
+        { "name": "Category" }
+      ],
+      "measures": [
+        { "name": "Revenue", "formatHint": "currency" },
+        { "name": "Units", "formatHint": "integer" },
+        { "name": "Margin Pct", "formatHint": "percent" }
+      ]
+    },
+
+    {
+      "key": "customer_directory",
+      "title": "Customer Directory",
+      "catalog": "main",
+      "schema": "analytics",
+      "object": "customer_directory",
+      "kind": "table",
+      "hasRowFilter": false,
+      "dimensions": [
+        { "name": "Customer", "sqlExpr": "customer_name" },
+        { "name": "Region", "sqlExpr": "region" }
+      ],
+      "measures": [
+        { "name": "Accounts", "sqlExpr": "COUNT(DISTINCT customer_id)" }
+      ]
+    }
+  ],
+
+  "categories": [
+    {
+      "id": "sales",
+      "name": "Sales",
+      "description": "Revenue and volume across regions and categories.",
+      "sortOrder": 0
+    }
+  ],
+
+  "reports": [
+    {
+      "slug": "sales-overview",
+      "title": "Sales Overview",
+      "description": "Where revenue is coming from and how it is moving.",
+      "categoryId": "sales",
+      "sourceKey": "orders",
+      "visibility": "published",
+      "pages": [
+        {
+          "slug": "overview",
+          "title": "Overview",
+          "config": {
+            "freshness": { "field": "Order Date", "label": "Data through" }
+          },
+          "visuals": [
+            {
+              "type": "kpiRow",
+              "title": "Summary",
+              "measures": ["Revenue", "Units", "Margin Pct"]
+            },
+            {
+              "type": "dropdownFilter",
+              "title": "Region",
+              "dimensions": ["Region"]
+            },
+            {
+              "type": "lineChart",
+              "title": "Revenue over time",
+              "dimensions": ["Order Date"],
+              "measures": ["Revenue"]
+            },
+            {
+              "type": "barChart",
+              "title": "Revenue by category",
+              "dimensions": ["Category"],
+              "measures": ["Revenue"]
+            },
+            {
+              "type": "table",
+              "title": "Detail",
+              "dimensions": ["Region", "Category"],
+              "measures": ["Revenue", "Units", "Margin Pct"],
+              "options": { "fillHeight": true }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

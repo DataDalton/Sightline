@@ -1,0 +1,354 @@
+/*
+ * Design tokens.
+ *
+ * Light and dark are peers: every colour is defined once per theme and nothing
+ * downstream hardcodes a literal. Charts read from the same tokens as the
+ * chrome, so a visual stays legible in either theme without a second palette.
+ *
+ * Theme resolution has three states. An explicit choice sets data-theme on the
+ * root; with no choice, prefers-color-scheme decides. The light block is the
+ * bare :root default so a page with no media support still renders correctly.
+ */
+
+:root {
+	/* Surfaces, from furthest back to closest to the reader. */
+	--surface-sunken: #f1f2f4;
+	--surface-base: #f7f8fa;
+	--surface-raised: #ffffff;
+	--surface-overlay: #ffffff;
+	--surface-hover: #eceef1;
+	--surface-active: #e3e6ea;
+
+	/* Chrome is deliberately dark in both themes: it frames the content
+	   rather than competing with it, and keeps the product recognisable. */
+	--chrome-bg: #16181d;
+	--chrome-border: #262a31;
+	--chrome-text: #e8eaed;
+	--chrome-text-muted: #9aa0aa;
+	--chrome-hover: #21252c;
+	--chrome-active: #2b3038;
+
+	--text-primary: #16181d;
+	--text-secondary: #4a5059;
+	--text-muted: #767d87;
+	--text-inverse: #ffffff;
+	--text-link: #0b5cd5;
+
+	--border-subtle: #e5e8ec;
+	--border-default: #d3d8de;
+	--border-strong: #b3bac3;
+
+	/* Brand. Gold is an accent, not a field: it marks the active item and the
+	   primary action. Large gold areas fight with chart colour, so there are
+	   no gold surfaces. */
+	--brand: #ffb500;
+	--brand-strong: #d99a00;
+	--brand-subtle: #fff4d6;
+	--brand-contrast: #16181d;
+
+	/* Focus ring uses a blue rather than the brand gold: gold on a light
+	   surface does not reach 3:1 against the background. */
+	--focus-ring: #0b5cd5;
+
+	--success: #1a7f45;
+	--success-subtle: #e3f5eb;
+	--warning: #a76500;
+	--warning-subtle: #fdf1dd;
+	--danger: #c22b2b;
+	--danger-subtle: #fdeaea;
+	--info: #0b5cd5;
+	--info-subtle: #e6f0fd;
+
+	/* Categorical chart palette. Ordered so adjacent series stay
+	   distinguishable, and chosen to hold up against the gold accent without
+	   being confused for it. */
+	--chart-1: #2563eb;
+	--chart-2: #0d9488;
+	--chart-3: #d97706;
+	--chart-4: #7c3aed;
+	--chart-5: #db2777;
+	--chart-6: #0891b2;
+	--chart-7: #65a30d;
+	--chart-8: #dc2626;
+
+	--chart-grid: #e5e8ec;
+	--chart-axis: #767d87;
+	--chart-tooltip-bg: #16181d;
+	--chart-tooltip-text: #ffffff;
+
+	/* Positive and negative for financial deltas. Never encoded by colour
+	   alone: the sign is always present in the label too. */
+	--delta-positive: #1a7f45;
+	--delta-negative: #c22b2b;
+
+	--shadow-sm: 0 1px 2px rgba(16, 18, 22, 0.06);
+	--shadow-md: 0 2px 8px rgba(16, 18, 22, 0.08);
+	--shadow-lg: 0 8px 24px rgba(16, 18, 22, 0.12);
+
+	--radius-sm: 4px;
+	--radius-md: 6px;
+	--radius-lg: 10px;
+	--radius-full: 999px;
+
+	--space-1: 4px;
+	--space-2: 8px;
+	--space-3: 13px;
+	--space-4: 18px;
+	--space-5: 26px;
+	--space-6: 34px;
+	--space-7: 50px;
+
+	--font-sans:
+		system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+		"Helvetica Neue", sans-serif;
+	/* Tabular figures matter in a reporting tool: numbers in a column must
+	   align on the decimal. */
+	--font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
+
+	/* One step up from where this started. The original scale bottomed out at
+	   11px, which reads as dense on a large monitor and as unreadable on a
+	   laptop, and a reporting tool is looked at for hours at a time. A reader
+	   who still wants it smaller has the page zoom. */
+	--text-xs: 12px;
+	--text-sm: 13px;
+	--text-md: 15px;
+	--text-lg: 17px;
+	--text-xl: 21px;
+	--text-2xl: 28px;
+	--text-3xl: 38px;
+
+	--header-height: 58px;
+	--sidebar-width: 264px;
+	--sidebar-collapsed: 62px;
+
+	--transition-fast: 120ms cubic-bezier(0.2, 0, 0.2, 1);
+	--transition-base: 200ms cubic-bezier(0.2, 0, 0.2, 1);
+
+	color-scheme: light;
+}
+
+/* Dark by system preference, unless the user explicitly chose light. */
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme="light"]) {
+		--surface-sunken: #0d0f12;
+		--surface-base: #131519;
+		--surface-raised: #1a1d22;
+		--surface-overlay: #21252c;
+		--surface-hover: #21252c;
+		--surface-active: #2b3038;
+
+		--chrome-bg: #0d0f12;
+		--chrome-border: #23272e;
+		--chrome-text: #e8eaed;
+		--chrome-text-muted: #8b929c;
+		--chrome-hover: #1a1d22;
+		--chrome-active: #262b33;
+
+		--text-primary: #e8eaed;
+		--text-secondary: #a8afb9;
+		--text-muted: #767d87;
+		--text-inverse: #16181d;
+		--text-link: #6ba3f5;
+
+		--border-subtle: #23272e;
+		--border-default: #2f343c;
+		--border-strong: #434a54;
+
+		--brand: #ffb500;
+		--brand-strong: #ffc633;
+		--brand-subtle: #3d2f0a;
+		--brand-contrast: #16181d;
+
+		--focus-ring: #6ba3f5;
+
+		--success: #3ecf7f;
+		--success-subtle: #10301f;
+		--warning: #f0a935;
+		--warning-subtle: #35270d;
+		--danger: #f26a6a;
+		--danger-subtle: #3a1717;
+		--info: #6ba3f5;
+		--info-subtle: #14243c;
+
+		/* Lightened so each series holds contrast against a dark surface. */
+		--chart-1: #60a5fa;
+		--chart-2: #2dd4bf;
+		--chart-3: #fbbf24;
+		--chart-4: #a78bfa;
+		--chart-5: #f472b6;
+		--chart-6: #22d3ee;
+		--chart-7: #a3e635;
+		--chart-8: #f87171;
+
+		--chart-grid: #23272e;
+		--chart-axis: #767d87;
+		--chart-tooltip-bg: #2b3038;
+		--chart-tooltip-text: #e8eaed;
+
+		--delta-positive: #3ecf7f;
+		--delta-negative: #f26a6a;
+
+		--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+		--shadow-md: 0 2px 8px rgba(0, 0, 0, 0.4);
+		--shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+
+		color-scheme: dark;
+	}
+}
+
+/* Explicit dark choice wins over a light system preference. */
+:root[data-theme="dark"] {
+	--surface-sunken: #0d0f12;
+	--surface-base: #131519;
+	--surface-raised: #1a1d22;
+	--surface-overlay: #21252c;
+	--surface-hover: #21252c;
+	--surface-active: #2b3038;
+
+	--chrome-bg: #0d0f12;
+	--chrome-border: #23272e;
+	--chrome-text: #e8eaed;
+	--chrome-text-muted: #8b929c;
+	--chrome-hover: #1a1d22;
+	--chrome-active: #262b33;
+
+	--text-primary: #e8eaed;
+	--text-secondary: #a8afb9;
+	--text-muted: #767d87;
+	--text-inverse: #16181d;
+	--text-link: #6ba3f5;
+
+	--border-subtle: #23272e;
+	--border-default: #2f343c;
+	--border-strong: #434a54;
+
+	--brand: #ffb500;
+	--brand-strong: #ffc633;
+	--brand-subtle: #3d2f0a;
+	--brand-contrast: #16181d;
+
+	--focus-ring: #6ba3f5;
+
+	--success: #3ecf7f;
+	--success-subtle: #10301f;
+	--warning: #f0a935;
+	--warning-subtle: #35270d;
+	--danger: #f26a6a;
+	--danger-subtle: #3a1717;
+	--info: #6ba3f5;
+	--info-subtle: #14243c;
+
+	--chart-1: #60a5fa;
+	--chart-2: #2dd4bf;
+	--chart-3: #fbbf24;
+	--chart-4: #a78bfa;
+	--chart-5: #f472b6;
+	--chart-6: #22d3ee;
+	--chart-7: #a3e635;
+	--chart-8: #f87171;
+
+	--chart-grid: #23272e;
+	--chart-axis: #767d87;
+	--chart-tooltip-bg: #2b3038;
+	--chart-tooltip-text: #e8eaed;
+
+	--delta-positive: #3ecf7f;
+	--delta-negative: #f26a6a;
+
+	--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+	--shadow-md: 0 2px 8px rgba(0, 0, 0, 0.4);
+	--shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+
+	color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
+}
+
+html,
+body {
+	max-width: 100vw;
+	min-height: 100vh;
+	overflow-x: hidden;
+}
+
+body {
+	background: var(--surface-base);
+	color: var(--text-primary);
+	font-family: var(--font-sans);
+	font-size: var(--text-md);
+	line-height: 1.5;
+	-webkit-font-smoothing: antialiased;
+}
+
+a {
+	color: inherit;
+	text-decoration: none;
+}
+
+button {
+	font-family: inherit;
+	font-size: inherit;
+	color: inherit;
+	background: none;
+	border: none;
+	cursor: pointer;
+}
+
+input,
+select,
+textarea {
+	font-family: inherit;
+	font-size: inherit;
+	color: inherit;
+}
+
+/* A single visible focus treatment everywhere, only for keyboard users. */
+:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: 2px;
+	border-radius: var(--radius-sm);
+}
+
+:focus:not(:focus-visible) {
+	outline: none;
+}
+
+/* Numbers in tables and KPI tiles align on the decimal. */
+.tabular {
+	font-variant-numeric: tabular-nums;
+}
+
+::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+
+::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+	background: var(--border-default);
+	border-radius: var(--radius-full);
+	border: 2px solid var(--surface-base);
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background: var(--border-strong);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+	}
+}

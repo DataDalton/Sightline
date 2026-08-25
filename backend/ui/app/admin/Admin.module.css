@@ -1,0 +1,698 @@
+.page {
+	width: 100%;
+	padding: var(--space-6) var(--space-5);
+}
+
+@media (max-width: 720px) {
+	.page {
+		padding: var(--space-4) var(--space-3);
+	}
+}
+
+.title {
+	font-size: var(--text-2xl);
+	font-weight: 600;
+	letter-spacing: -0.02em;
+	margin-bottom: var(--space-1);
+}
+
+.subtitle {
+	color: var(--text-secondary);
+	margin-bottom: var(--space-5);
+}
+
+.tabs {
+	display: flex;
+	gap: var(--space-1);
+	border-bottom: 1px solid var(--border-subtle);
+	margin-bottom: var(--space-5);
+}
+
+.tab {
+	padding: var(--space-2) var(--space-4);
+	font-size: var(--text-md);
+	color: var(--text-secondary);
+	border-bottom: 2px solid transparent;
+	margin-bottom: -1px;
+}
+
+.tab:hover { color: var(--text-primary); }
+
+.tabActive {
+	color: var(--text-primary);
+	font-weight: 600;
+	border-bottom-color: var(--brand);
+}
+
+.controls {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	margin-bottom: var(--space-4);
+}
+
+.rangeButton {
+	padding: var(--space-1) var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-full);
+	background: var(--surface-raised);
+	font-size: var(--text-sm);
+}
+
+.rangeActive {
+	background: var(--brand);
+	border-color: var(--brand);
+	color: var(--brand-contrast);
+	font-weight: 600;
+}
+
+.tiles {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+	gap: var(--space-3);
+	margin-bottom: var(--space-5);
+}
+
+.tile {
+	padding: var(--space-4);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-lg);
+	background: var(--surface-raised);
+}
+
+.tileLabel {
+	font-size: var(--text-sm);
+	color: var(--text-secondary);
+	margin-bottom: var(--space-1);
+}
+
+.tileValue {
+	font-size: var(--text-2xl);
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	letter-spacing: -0.02em;
+}
+
+.tileGood { color: var(--success); }
+.tileWarn { color: var(--warning); }
+.tileBad { color: var(--danger); }
+
+.section {
+	margin-bottom: var(--space-6);
+}
+
+.sectionTitle {
+	font-size: var(--text-lg);
+	font-weight: 600;
+	margin-bottom: var(--space-1);
+}
+
+.sectionNote {
+	font-size: var(--text-sm);
+	color: var(--text-secondary);
+	margin-bottom: var(--space-3);
+	max-width: 70ch;
+	line-height: 1.5;
+}
+
+.tableWrap {
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-lg);
+	overflow: auto;
+	max-height: 460px;
+	background: var(--surface-raised);
+}
+
+.table {
+	width: 100%;
+	border-collapse: separate;
+	border-spacing: 0;
+	font-size: var(--text-sm);
+}
+
+.table th {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	background: var(--surface-sunken);
+	padding: var(--space-2) var(--space-3);
+	text-align: left;
+	font-weight: 600;
+	color: var(--text-secondary);
+	white-space: nowrap;
+	border-bottom: 1px solid var(--border-default);
+}
+
+.table td {
+	padding: var(--space-2) var(--space-3);
+	border-bottom: 1px solid var(--border-subtle);
+	white-space: nowrap;
+	max-width: 380px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.table tbody tr:hover td { background: var(--surface-hover); }
+
+.numeric {
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+
+.mono {
+	font-family: var(--font-mono);
+	font-size: var(--text-xs);
+}
+
+.badge {
+	display: inline-block;
+	padding: 1px var(--space-2);
+	border-radius: var(--radius-full);
+	font-size: var(--text-xs);
+	font-weight: 600;
+	background: var(--surface-sunken);
+	border: 1px solid var(--border-subtle);
+}
+
+.badgeAdmin {
+	background: var(--brand-subtle);
+	color: var(--brand-strong);
+	border-color: var(--brand);
+}
+
+.badgeFail {
+	background: var(--danger-subtle);
+	color: var(--danger);
+	border-color: var(--danger);
+}
+
+.badgeOk {
+	background: var(--success-subtle);
+	color: var(--success);
+	border-color: var(--success);
+}
+
+.state {
+	padding: var(--space-7);
+	text-align: center;
+	color: var(--text-muted);
+	border: 1px dashed var(--border-default);
+	border-radius: var(--radius-lg);
+}
+
+.sparkRow {
+	display: flex;
+	align-items: flex-end;
+	gap: 2px;
+	height: 72px;
+	padding: var(--space-3);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-lg);
+	background: var(--surface-raised);
+	margin-bottom: var(--space-5);
+}
+
+.sparkBar {
+	flex: 1;
+	min-width: 3px;
+	background: var(--chart-1);
+	border-radius: 2px 2px 0 0;
+	transition: background var(--transition-fast);
+}
+
+.sparkBar:hover { background: var(--brand); }
+
+.definition {
+	display: grid;
+	grid-template-columns: 200px 1fr;
+	gap: var(--space-2) var(--space-4);
+	padding: var(--space-4);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-lg);
+	background: var(--surface-raised);
+	font-size: var(--text-sm);
+}
+
+.definitionKey {
+	color: var(--text-secondary);
+}
+
+.definitionValue {
+	font-family: var(--font-mono);
+	font-size: var(--text-xs);
+	overflow-wrap: anywhere;
+}
+
+/* A row that opens a drill-in. */
+.rowClickable {
+	cursor: pointer;
+}
+
+.rowClickable:hover {
+	background: var(--surface-hover);
+}
+
+/* The drill-in itself. A drawer over the table rather than a separate page,
+   so the row that raised the question stays visible behind it. */
+.drawerScrim {
+	position: fixed;
+	inset: 0;
+	/* Above the header, which sits at 100. A drawer that opens under the app
+	   chrome loses its own heading to it. */
+	z-index: 200;
+	display: flex;
+	justify-content: flex-end;
+	background: rgba(0, 0, 0, 0.35);
+}
+
+.drawer {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-4);
+	width: min(920px, 92vw);
+	height: 100%;
+	padding: var(--space-5);
+	overflow-y: auto;
+	background: var(--surface-base);
+	border-left: 1px solid var(--border-default);
+	box-shadow: var(--shadow-lg);
+}
+
+.drawerHeader {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: var(--space-4);
+}
+
+.drawerKind {
+	font-size: var(--text-xs);
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--text-muted);
+}
+
+.drawerTitle {
+	margin: 2px 0 var(--space-1);
+	font-size: var(--text-xl);
+	font-weight: 600;
+	color: var(--text-primary);
+}
+
+.drawerClose {
+	flex-shrink: 0;
+	width: 32px;
+	height: 32px;
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	color: var(--text-secondary);
+	font-size: var(--text-lg);
+	line-height: 1;
+	cursor: pointer;
+}
+
+.drawerClose:hover {
+	background: var(--surface-hover);
+	color: var(--text-primary);
+}
+
+.eventChip {
+	display: inline-block;
+	padding: 1px var(--space-2);
+	border-radius: var(--radius-full);
+	background: var(--surface-sunken);
+	font-size: var(--text-xs);
+	white-space: nowrap;
+}
+
+.eventError {
+	background: var(--danger-soft, var(--surface-sunken));
+	color: var(--danger, var(--text-primary));
+}
+
+/* The header as it will render, in both themes.
+
+   The values below are the chrome tokens spelled out rather than referenced,
+   because the point is to show the theme the admin is not currently in. The
+   bar is dark in both, which is why there is no preview on white: a mark only
+   ever has to read against these two. */
+.brandPreviews {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-3);
+	margin-top: var(--space-4);
+}
+
+.brandPreviewWrap {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	min-width: 0;
+}
+
+.brandPreviewLabel {
+	font-size: var(--text-xs);
+	text-transform: capitalize;
+	color: var(--text-muted);
+}
+
+.brandPreview {
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	min-width: 260px;
+	height: 58px;
+	padding: 0 var(--space-4);
+	border: 1px solid #262a31;
+	border-radius: var(--radius-md);
+	background: #16181d;
+	color: #e8eaed;
+	overflow: hidden;
+}
+
+.brandPreviewDark {
+	background: #0d0f12;
+	border-color: #23272e;
+	color: #e8eaed;
+}
+
+.brandPreviewMark {
+	display: inline-flex;
+	align-items: center;
+	flex-shrink: 0;
+	height: 22px;
+	max-width: 160px;
+	/* An adaptive mark is drawn in currentColor, so it takes the chrome text
+	   colour here exactly as it will in the header. */
+	color: inherit;
+}
+
+.brandPreviewMark svg,
+.brandPreviewMark > svg {
+	height: 100%;
+	width: auto;
+	max-width: 160px;
+}
+
+/* The accent, as a rule rather than a filled bar. */
+.brandPreviewRule {
+	flex-shrink: 0;
+	width: 2px;
+	height: 20px;
+	border-radius: var(--radius-full);
+	background: var(--brand);
+}
+
+.brandPreviewName {
+	font-size: var(--text-lg);
+	font-weight: 600;
+	letter-spacing: -0.01em;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* Configuration.
+
+   A rail of groups beside one pane, rather than every setting on one page. A
+   page that lists everything is read as a wall and skimmed, which is how a
+   cache budget gets changed by somebody who came looking for the app name. */
+.config {
+	position: relative;
+	display: grid;
+	grid-template-columns: 180px minmax(0, 1fr);
+	gap: var(--space-5);
+	align-items: start;
+	padding-bottom: var(--space-7);
+}
+
+.configNav {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	position: sticky;
+	top: var(--space-4);
+}
+
+.configNavItem {
+	padding: var(--space-2) var(--space-3);
+	border: none;
+	border-left: 2px solid transparent;
+	border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+	background: none;
+	color: var(--text-secondary);
+	font-size: var(--text-md);
+	font-family: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.configNavItem:hover {
+	background: var(--surface-hover);
+	color: var(--text-primary);
+}
+
+.configNavActive {
+	border-left-color: var(--brand);
+	background: var(--surface-sunken);
+	color: var(--text-primary);
+	font-weight: 600;
+}
+
+.configPane {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-4);
+	min-width: 0;
+	max-width: 780px;
+}
+
+.paneHeader {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.paneTitle {
+	font-size: var(--text-xl);
+	font-weight: 600;
+	color: var(--text-primary);
+}
+
+.paneBlurb {
+	font-size: var(--text-md);
+	color: var(--text-secondary);
+}
+
+/* Two fields to a row where there is room, one where there is not. Most of
+   these are short values, and a single column of full-width inputs reads as a
+   form to be filled in rather than settings to be looked at. */
+.fieldRow {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+	gap: var(--space-4);
+}
+
+.field {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	min-width: 0;
+}
+
+.fieldLabel {
+	font-size: var(--text-sm);
+	font-weight: 600;
+	color: var(--text-primary);
+}
+
+/* A line, not a paragraph. An explanation long enough to need reading twice
+   is documentation and belongs somewhere documentation goes. */
+.fieldHint {
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+}
+
+.input {
+	width: 100%;
+	padding: var(--space-2);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-sm);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font-size: var(--text-sm);
+	font-family: inherit;
+}
+
+.input:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: 1px;
+}
+
+.withUnit {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+}
+
+.unit {
+	flex-shrink: 0;
+	font-size: var(--text-sm);
+	color: var(--text-muted);
+}
+
+/* Two named choices rather than a checkbox, so both outcomes are stated and
+   neither has to be inferred from the absence of a tick. */
+.choiceRow {
+	display: flex;
+	gap: var(--space-2);
+	flex-wrap: wrap;
+}
+
+.choice {
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	color: var(--text-secondary);
+	font-size: var(--text-sm);
+	font-family: inherit;
+	cursor: pointer;
+}
+
+.choice:hover {
+	color: var(--text-primary);
+}
+
+.choiceActive {
+	border-color: var(--brand);
+	background: var(--surface-sunken);
+	color: var(--text-primary);
+	font-weight: 600;
+}
+
+/* Reserved for the thing an administrator would otherwise have to learn by
+   getting it wrong. */
+.paneNote {
+	padding: var(--space-3);
+	border-left: 2px solid var(--border-strong);
+	background: var(--surface-sunken);
+	border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+	font-size: var(--text-sm);
+	color: var(--text-secondary);
+	line-height: 1.5;
+}
+
+.linkButton {
+	align-self: flex-start;
+	padding: 0;
+	border: none;
+	background: none;
+	color: var(--text-link);
+	font-size: var(--text-sm);
+	font-family: inherit;
+	cursor: pointer;
+}
+
+.linkButton:hover {
+	text-decoration: underline;
+}
+
+/* Appears only when there is something to save, so the page is not carrying a
+   permanently disabled button. */
+.saveBar {
+	position: sticky;
+	bottom: 0;
+	grid-column: 1 / -1;
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: var(--space-3);
+	padding: var(--space-3) var(--space-4);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-overlay);
+	box-shadow: var(--shadow-lg);
+}
+
+.saveNote {
+	margin-right: auto;
+	font-size: var(--text-sm);
+	color: var(--text-muted);
+}
+
+.saveError {
+	margin-right: auto;
+	font-size: var(--text-sm);
+	color: var(--danger);
+}
+
+.saveButton {
+	padding: var(--space-2) var(--space-4);
+	border: 1px solid var(--brand);
+	border-radius: var(--radius-md);
+	background: var(--brand);
+	color: var(--text-inverse);
+	font-size: var(--text-sm);
+	font-weight: 600;
+	font-family: inherit;
+	cursor: pointer;
+}
+
+.saveButton:disabled {
+	opacity: 0.6;
+	cursor: default;
+}
+
+@media (max-width: 720px) {
+	.config {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.configNav {
+		position: static;
+		flex-direction: row;
+		flex-wrap: wrap;
+		border-bottom: 1px solid var(--border-subtle);
+		padding-bottom: var(--space-2);
+	}
+
+	.configNavItem {
+		border-left: none;
+		border-bottom: 2px solid transparent;
+		border-radius: var(--radius-sm);
+	}
+
+	.configNavActive {
+		border-left-color: transparent;
+		border-bottom-color: var(--brand);
+	}
+}
+
+/* An explanation somebody may want once and never again. Collapsed, so the
+   pane stays short for everyone who already knows. */
+.paneDetails {
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-md);
+	background: var(--surface-sunken);
+	font-size: var(--text-sm);
+	color: var(--text-secondary);
+}
+
+.paneDetails summary {
+	padding: var(--space-3);
+	color: var(--text-primary);
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.paneDetails p {
+	padding: 0 var(--space-3) var(--space-3);
+	line-height: 1.55;
+}
+
+.paneDetails p:first-of-type {
+	padding-top: 0;
+}

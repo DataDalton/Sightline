@@ -1,0 +1,130 @@
+.wrap {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: var(--space-3);
+	width: 100%;
+	color: var(--text-muted);
+	font-size: var(--text-sm);
+}
+
+.label {
+	font-size: var(--text-xs);
+}
+
+/* Skeleton: shapes that stand in for the layout that is coming, so the page
+   does not jump when the data lands. */
+.skeleton {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	width: 100%;
+	padding: var(--space-4);
+}
+
+.bar {
+	height: 12px;
+	border-radius: var(--radius-sm);
+	background: linear-gradient(
+		90deg,
+		var(--surface-hover) 25%,
+		var(--surface-active) 50%,
+		var(--surface-hover) 75%
+	);
+	background-size: 200% 100%;
+	animation: shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+	0% { background-position: 200% 0; }
+	100% { background-position: -200% 0; }
+}
+
+/* Bars: a chart-shaped placeholder, which reads as "a chart is loading"
+   rather than as generic waiting. */
+.bars {
+	display: flex;
+	align-items: flex-end;
+	justify-content: center;
+	gap: var(--space-2);
+	height: 60%;
+	min-height: 80px;
+	width: 60%;
+}
+
+.barCol {
+	flex: 1;
+	max-width: 28px;
+	border-radius: 3px 3px 0 0;
+	background: var(--surface-active);
+	animation: rise 1.2s ease-in-out infinite;
+}
+
+@keyframes rise {
+	0%, 100% { opacity: 0.45; transform: scaleY(0.6); }
+	50% { opacity: 0.9; transform: scaleY(1); }
+}
+
+.barCol:nth-child(1) { animation-delay: 0s; }
+.barCol:nth-child(2) { animation-delay: 0.12s; }
+.barCol:nth-child(3) { animation-delay: 0.24s; }
+.barCol:nth-child(4) { animation-delay: 0.36s; }
+.barCol:nth-child(5) { animation-delay: 0.48s; }
+
+/* Spinner: the smallest option, for tight spaces like a KPI tile. */
+.spinner {
+	width: 22px;
+	height: 22px;
+	border: 2px solid var(--border-default);
+	border-top-color: var(--brand);
+	border-radius: var(--radius-full);
+	animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+	to { transform: rotate(360deg); }
+}
+
+/* Pulse: a quiet option for a refresh behind already-visible content. */
+.pulse {
+	width: 100%;
+	height: 100%;
+	min-height: 60px;
+	border-radius: var(--radius-md);
+	background: var(--surface-hover);
+	animation: breathe 1.6s ease-in-out infinite;
+}
+
+@keyframes breathe {
+	0%, 100% { opacity: 0.5; }
+	50% { opacity: 0.85; }
+}
+
+/* An overlay used when data is refreshing behind content that is already on
+   screen, so the reader keeps their place rather than watching it disappear. */
+.overlay {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: color-mix(in srgb, var(--surface-raised) 55%, transparent);
+	backdrop-filter: blur(1px);
+	z-index: 5;
+	border-radius: inherit;
+}
+
+/* Motion is a preference, not a requirement. Reduced motion gets a static
+   placeholder rather than nothing at all. */
+@media (prefers-reduced-motion: reduce) {
+	.bar,
+	.barCol,
+	.spinner,
+	.pulse {
+		animation: none;
+	}
+	.spinner {
+		border-top-color: var(--border-strong);
+	}
+}

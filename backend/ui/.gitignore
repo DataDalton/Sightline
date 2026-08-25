@@ -1,0 +1,7 @@
+# The root .gitignore has a Python-packaging "lib/" rule that also matches
+# this Next.js app's source lib directory and drops its TypeScript modules
+# from deployment builds. Re-include the directory and its contents here.
+# The directory itself must be re-included before the files inside it.
+!lib/
+!lib/**
+.script-build/

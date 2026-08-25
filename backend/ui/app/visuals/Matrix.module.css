@@ -1,0 +1,192 @@
+.matrix {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	height: 100%;
+}
+
+.scroller {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	position: relative;
+}
+
+.table {
+	border-collapse: separate;
+	border-spacing: 0;
+	font-size: var(--text-sm);
+	width: max-content;
+	min-width: 100%;
+}
+
+/* Two header rows: the pivoted dimension across the top, then the measures
+   beneath each of its values. */
+.groupHeader th {
+	position: sticky;
+	top: 0;
+	z-index: 3;
+	background: var(--surface-sunken);
+	padding: var(--space-2) var(--space-3);
+	font-weight: 600;
+	color: var(--text-secondary);
+	white-space: nowrap;
+	text-align: center;
+	border-bottom: 1px solid var(--border-subtle);
+}
+
+.measureHeader th {
+	position: sticky;
+	top: 33px;
+	z-index: 3;
+	background: var(--surface-sunken);
+	padding: var(--space-2) var(--space-3);
+	font-weight: 600;
+	color: var(--text-secondary);
+	white-space: nowrap;
+	text-align: right;
+	border-bottom: 1px solid var(--border-default);
+}
+
+/* A rule between column groups, so one period reads as separate from the
+   next rather than as one continuous band of numbers. */
+.groupStart {
+	border-left: 2px solid var(--border-default);
+}
+
+.rowHeader {
+	position: sticky;
+	left: 0;
+	z-index: 2;
+	background: var(--surface-raised);
+	text-align: left !important;
+	border-right: 2px solid var(--border-default);
+	min-width: 240px;
+	max-width: 380px;
+}
+
+.groupHeader .rowHeader,
+.measureHeader .rowHeader {
+	z-index: 4;
+	background: var(--surface-sunken);
+}
+
+.cell {
+	padding: var(--space-2) var(--space-3);
+	border-bottom: 1px solid var(--border-subtle);
+	white-space: nowrap;
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+
+.labelCell {
+	position: sticky;
+	left: 0;
+	z-index: 1;
+	background: var(--surface-raised);
+	padding: var(--space-2) var(--space-3);
+	border-bottom: 1px solid var(--border-subtle);
+	border-right: 2px solid var(--border-default);
+	white-space: nowrap;
+	text-align: left;
+}
+
+.row:hover .cell,
+.row:hover .labelCell {
+	background: var(--surface-hover);
+}
+
+/* Depth is carried by indentation and by weight, so the hierarchy is readable
+   without relying on colour. */
+.level0 .labelCell {
+	font-weight: 600;
+}
+
+.level1 .labelCell {
+	font-weight: 500;
+	color: var(--text-secondary);
+}
+
+.level2 .labelCell,
+.level3 .labelCell {
+	color: var(--text-secondary);
+}
+
+.subtotal .cell,
+.subtotal .labelCell {
+	font-weight: 600;
+	background: var(--surface-sunken);
+}
+
+.expander {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	margin-right: var(--space-2);
+	border-radius: var(--radius-sm);
+	color: var(--text-muted);
+	vertical-align: middle;
+	flex-shrink: 0;
+}
+
+.expander:hover {
+	background: var(--surface-active);
+	color: var(--text-primary);
+}
+
+.expanderOpen svg {
+	transform: rotate(90deg);
+}
+
+.expander svg {
+	transition: transform var(--transition-fast);
+}
+
+.leafSpacer {
+	display: inline-block;
+	width: 16px;
+	margin-right: var(--space-2);
+}
+
+.loadingRow td {
+	padding: var(--space-2) var(--space-3);
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+}
+
+.toolbar {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	padding: var(--space-2) var(--space-3);
+	border-bottom: 1px solid var(--border-subtle);
+	flex-shrink: 0;
+}
+
+.toolButton {
+	padding: var(--space-1) var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	font-size: var(--text-sm);
+}
+
+.toolButton:hover {
+	background: var(--surface-hover);
+}
+
+.spacer { flex: 1; }
+
+.hint {
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+}
+
+.state {
+	padding: var(--space-6);
+	text-align: center;
+	color: var(--text-muted);
+	font-size: var(--text-sm);
+}

@@ -1,0 +1,45 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"noEmit": false,
+		"module": "nodenext",
+		"moduleResolution": "nodenext",
+		"rootDir": "lib",
+		"outDir": "../../.test-build",
+		"types": [
+			"node"
+		],
+		"verbatimModuleSyntax": false,
+		"plugins": []
+	},
+	"//": "Only pure modules. Anything with a lazy relative import needs .js extensions under nodenext, which the app build does not want.",
+	"include": [],
+	"files": [
+		"lib/query/builder.ts",
+		"lib/query/builder.test.ts",
+		"lib/query/spec.ts",
+		"lib/query/limits.test.ts",
+		"lib/visuals/catalog.ts",
+		"lib/search/types.ts",
+		"lib/semantic/types.ts",
+		"lib/semantic/metricViewDefinition.ts",
+		"lib/semantic/rowFilterGroups.ts",
+		"lib/semantic/rowFilterGroups.test.ts",
+		"lib/semantic/metricViewDefinition.test.ts",
+		"lib/platform/overlay.ts",
+		"lib/platform/versionDiff.ts",
+		"lib/platform/versionDiff.test.ts",
+		"lib/platform/overlay.test.ts",
+		"lib/format.ts",
+		"lib/visuals/style.ts",
+		"lib/visuals/style.test.ts",
+		"lib/visuals/brush.ts",
+		"lib/visuals/svgSanitize.ts",
+		"lib/visuals/svgSanitize.test.ts",
+		"lib/visuals/brush.test.ts",
+		"lib/visuals/layout.ts",
+		"lib/visuals/layout.test.ts",
+		"lib/visuals/applyOps.ts",
+		"lib/visuals/applyOps.test.ts"
+	]
+}

@@ -1,0 +1,174 @@
+.header {
+	position: sticky;
+	top: 0;
+	z-index: 100;
+	display: flex;
+	align-items: center;
+	gap: var(--space-4);
+	height: var(--header-height);
+	padding: 0 var(--space-4);
+	background: var(--chrome-bg);
+	border-bottom: 1px solid var(--chrome-border);
+	color: var(--chrome-text);
+}
+
+.brand {
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	flex-shrink: 0;
+	min-width: 0;
+}
+
+/* Only shown once the sidebar has collapsed into a drawer. */
+.menuButton {
+	display: none;
+	align-items: center;
+	justify-content: center;
+	width: 32px;
+	height: 32px;
+	border-radius: var(--radius-md);
+	color: var(--chrome-text-muted);
+}
+
+.menuButton:hover {
+	background: var(--chrome-hover);
+	color: var(--chrome-text);
+}
+
+@media (max-width: 900px) {
+	.menuButton {
+		display: flex;
+	}
+}
+
+.logoMark {
+	height: 22px;
+	width: auto;
+	color: var(--brand);
+}
+
+/* The gold appears here as a thin rule rather than a filled bar, so it marks
+   the brand without setting the tone of every page beneath it. */
+.divider {
+	width: 2px;
+	height: 20px;
+	background: var(--brand);
+	border-radius: var(--radius-full);
+}
+
+.appName {
+	font-size: var(--text-lg);
+	font-weight: 600;
+	letter-spacing: -0.01em;
+}
+
+.spacer {
+	flex: 1;
+}
+
+.actions {
+	display: flex;
+	align-items: center;
+	gap: var(--space-1);
+}
+
+.iconButton {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 32px;
+	height: 32px;
+	border-radius: var(--radius-md);
+	color: var(--chrome-text-muted);
+	transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.iconButton:hover {
+	background: var(--chrome-hover);
+	color: var(--chrome-text);
+}
+
+.user {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	padding: var(--space-1) var(--space-2) var(--space-1) var(--space-1);
+	border-radius: var(--radius-full);
+	transition: background var(--transition-fast);
+}
+
+.user:hover {
+	background: var(--chrome-hover);
+}
+
+.avatar {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 26px;
+	height: 26px;
+	border-radius: var(--radius-full);
+	background: var(--brand);
+	color: var(--brand-contrast);
+	font-size: var(--text-xs);
+	font-weight: 700;
+	letter-spacing: 0.02em;
+}
+
+.userName {
+	font-size: var(--text-sm);
+	color: var(--chrome-text);
+	max-width: 160px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.badge {
+	padding: 1px var(--space-2);
+	border-radius: var(--radius-full);
+	background: var(--chrome-active);
+	color: var(--chrome-text-muted);
+	font-size: var(--text-xs);
+	font-weight: 500;
+}
+
+.warning {
+	color: var(--warning);
+}
+
+@media (max-width: 860px) {
+	.userName {
+		display: none;
+	}
+}
+
+@media (max-width: 480px) {
+	.appName {
+		font-size: var(--text-md);
+	}
+
+	.logoMark {
+		height: 18px;
+	}
+}
+
+/* A mark an admin uploaded, in the slot the built-in one occupies. Contained
+   rather than stretched, so a logo of any proportion keeps its shape. */
+/* The slot an uploaded mark occupies. The SVG inside is sized by the slot
+   rather than by whatever dimensions its file declared, and takes its colour
+   from here when it was stored as adaptive. */
+.logoImage {
+	display: inline-flex;
+	align-items: center;
+	height: 22px;
+	max-width: 160px;
+	color: var(--chrome-text);
+}
+
+.logoImage svg {
+	height: 100%;
+	width: auto;
+	max-width: 160px;
+}

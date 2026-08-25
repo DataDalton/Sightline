@@ -1,0 +1,235 @@
+.overlay {
+	position: fixed;
+	inset: 0;
+	z-index: 200;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: var(--space-5);
+	background: rgba(0, 0, 0, 0.45);
+	backdrop-filter: blur(2px);
+}
+
+.dialog {
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	max-width: 900px;
+	max-height: 82vh;
+	background: var(--surface-raised);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-lg);
+	box-shadow: var(--shadow-lg);
+	overflow: hidden;
+}
+
+.header {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	padding: var(--space-3);
+	border-bottom: 1px solid var(--border-subtle);
+}
+
+.searchWrap {
+	position: relative;
+	flex: 1;
+}
+
+.searchIcon {
+	position: absolute;
+	left: 10px;
+	top: 50%;
+	transform: translateY(-50%);
+	color: var(--text-muted);
+	pointer-events: none;
+}
+
+.search {
+	width: 100%;
+	padding: var(--space-2) var(--space-3) var(--space-2) 32px;
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-base);
+	font-size: var(--text-md);
+}
+
+.search:focus {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: -1px;
+	border-color: transparent;
+}
+
+.close {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 32px;
+	height: 32px;
+	border-radius: var(--radius-md);
+	color: var(--text-muted);
+	flex-shrink: 0;
+}
+
+.close:hover {
+	background: var(--surface-hover);
+	color: var(--text-primary);
+}
+
+.filters {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-1);
+	padding: var(--space-2) var(--space-3);
+	border-bottom: 1px solid var(--border-subtle);
+	background: var(--surface-sunken);
+}
+
+.filterChip {
+	padding: var(--space-1) var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-full);
+	background: var(--surface-raised);
+	font-size: var(--text-sm);
+	white-space: nowrap;
+}
+
+.filterChip:hover {
+	border-color: var(--border-strong);
+}
+
+.filterActive {
+	background: var(--brand);
+	border-color: var(--brand);
+	color: var(--brand-contrast);
+	font-weight: 600;
+}
+
+.body {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	padding: var(--space-4);
+}
+
+.group {
+	margin-bottom: var(--space-5);
+}
+
+.group:last-child {
+	margin-bottom: 0;
+}
+
+.groupTitle {
+	font-size: var(--text-xs);
+	font-weight: 600;
+	letter-spacing: 0.05em;
+	text-transform: uppercase;
+	color: var(--text-muted);
+	margin-bottom: var(--space-3);
+}
+
+.grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+	gap: var(--space-3);
+}
+
+.card {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	padding: var(--space-3);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-lg);
+	background: var(--surface-base);
+	text-align: left;
+	transition:
+		border-color var(--transition-fast),
+		box-shadow var(--transition-fast),
+		transform var(--transition-fast);
+}
+
+.card:hover,
+.card:focus-visible {
+	border-color: var(--brand);
+	box-shadow: var(--shadow-md);
+	transform: translateY(-1px);
+}
+
+/* The preview sits on its own surface so the marks read against a consistent
+   ground rather than against whatever the card hover state is doing. */
+.preview {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: var(--space-2);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	border: 1px solid var(--border-subtle);
+}
+
+.cardLabel {
+	font-size: var(--text-md);
+	font-weight: 600;
+}
+
+.cardMeta {
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+}
+
+.empty {
+	padding: var(--space-7);
+	text-align: center;
+	color: var(--text-muted);
+}
+
+.footer {
+	display: flex;
+	align-items: baseline;
+	gap: var(--space-2);
+	padding: var(--space-3) var(--space-4);
+	border-top: 1px solid var(--border-subtle);
+	background: var(--surface-sunken);
+	/* Fixed height so the dialog does not resize as the pointer moves between
+	   cards with different amounts of guidance. */
+	min-height: 58px;
+}
+
+.footerTitle {
+	font-size: var(--text-sm);
+	flex-shrink: 0;
+}
+
+.footerText {
+	font-size: var(--text-sm);
+	color: var(--text-secondary);
+	line-height: 1.5;
+}
+
+.footerHint {
+	font-size: var(--text-sm);
+	color: var(--text-muted);
+	font-style: italic;
+}
+
+@media (max-width: 720px) {
+	.overlay {
+		padding: var(--space-2);
+	}
+
+	.dialog {
+		max-height: 92vh;
+	}
+
+	.grid {
+		grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+	}
+
+	/* The guidance strip is a hover affordance, and there is no hover on a
+	   touch screen. */
+	.footer {
+		display: none;
+	}
+}

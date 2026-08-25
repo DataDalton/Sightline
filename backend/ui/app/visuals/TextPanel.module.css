@@ -1,0 +1,219 @@
+.panel {
+	width: 100%;
+	height: 100%;
+	overflow: auto;
+	font-size: var(--text-md);
+	line-height: 1.6;
+	color: var(--text-primary);
+}
+
+/* Rendered rich text. Styles are scoped here rather than global so a text
+   panel cannot restyle the rest of the page. */
+.content h1 { font-size: var(--text-2xl); font-weight: 600; margin: 0 0 var(--space-3); letter-spacing: -0.02em; }
+.content h2 { font-size: var(--text-xl); font-weight: 600; margin: var(--space-4) 0 var(--space-2); }
+.content h3 { font-size: var(--text-lg); font-weight: 600; margin: var(--space-3) 0 var(--space-2); }
+.content p { margin: 0 0 var(--space-3); }
+.content p:last-child { margin-bottom: 0; }
+.content ul, .content ol { margin: 0 0 var(--space-3) var(--space-5); }
+.content li { margin-bottom: var(--space-1); }
+.content strong { font-weight: 600; }
+.content em { font-style: italic; }
+.content u { text-decoration: underline; }
+.content s { text-decoration: line-through; }
+.content a { color: var(--text-link); text-decoration: underline; }
+.content code {
+	font-family: var(--font-mono);
+	font-size: 0.92em;
+	padding: 1px 4px;
+	border-radius: var(--radius-sm);
+	background: var(--surface-sunken);
+	border: 1px solid var(--border-subtle);
+}
+.content blockquote {
+	margin: 0 0 var(--space-3);
+	padding-left: var(--space-4);
+	border-left: 3px solid var(--brand);
+	color: var(--text-secondary);
+}
+.content hr {
+	border: none;
+	border-top: 1px solid var(--border-subtle);
+	margin: var(--space-4) 0;
+}
+.content table { border-collapse: collapse; margin-bottom: var(--space-3); }
+.content th, .content td {
+	border: 1px solid var(--border-subtle);
+	padding: var(--space-1) var(--space-2);
+	text-align: left;
+}
+
+/* --- editor --- */
+
+.editor {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	min-height: 160px;
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	overflow: hidden;
+	background: var(--surface-raised);
+}
+
+.toolbar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 2px;
+	padding: var(--space-1);
+	border-bottom: 1px solid var(--border-subtle);
+	background: var(--surface-sunken);
+}
+
+.group {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	padding: 0 var(--space-1);
+	border-right: 1px solid var(--border-subtle);
+}
+
+.group:last-child { border-right: none; }
+
+.tool {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 26px;
+	height: 26px;
+	padding: 0 var(--space-1);
+	border-radius: var(--radius-sm);
+	color: var(--text-secondary);
+	font-size: var(--text-sm);
+}
+
+.tool:hover {
+	background: var(--surface-active);
+	color: var(--text-primary);
+}
+
+.toolActive {
+	background: var(--brand);
+	color: var(--brand-contrast);
+}
+
+.select {
+	height: 26px;
+	padding: 0 var(--space-1);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-sm);
+	background: var(--surface-raised);
+	font-size: var(--text-xs);
+}
+
+.swatches {
+	display: flex;
+	align-items: center;
+	gap: 3px;
+}
+
+.swatch {
+	width: 16px;
+	height: 16px;
+	border-radius: var(--radius-sm);
+	border: 1px solid var(--border-default);
+}
+
+.swatch:hover {
+	transform: scale(1.15);
+}
+
+.surface {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	padding: var(--space-3);
+	outline: none;
+}
+
+.surface:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: -2px;
+}
+
+.empty {
+	color: var(--text-muted);
+	font-style: italic;
+}
+
+/* Link entry. Inline beside the button rather than a browser prompt, which
+   cannot be styled, cannot show the current link, and stops the page. */
+.linkWrap {
+	position: relative;
+	display: flex;
+}
+
+.linkPopover {
+	position: absolute;
+	top: calc(100% + 6px);
+	left: 0;
+	z-index: 30;
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	width: 280px;
+	padding: var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-overlay);
+	box-shadow: var(--shadow-lg);
+}
+
+.linkInput {
+	width: 100%;
+	padding: var(--space-2);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-sm);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font-size: var(--text-sm);
+	font-family: inherit;
+}
+
+.linkInput:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: 1px;
+}
+
+.linkActions {
+	display: flex;
+	gap: var(--space-2);
+}
+
+.linkApply,
+.linkRemove {
+	flex: 1;
+	padding: var(--space-2);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-sm);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font-size: var(--text-sm);
+	cursor: pointer;
+}
+
+.linkApply {
+	border-color: var(--brand);
+	background: var(--brand);
+	color: var(--text-inverse);
+	font-weight: 600;
+}
+
+.linkApply:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.linkRemove:hover {
+	background: var(--surface-hover);
+}
