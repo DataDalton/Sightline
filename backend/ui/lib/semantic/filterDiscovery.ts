@@ -66,12 +66,19 @@ async function tablesBehind(
 	schema: string,
 	object: string,
 	kind: string,
+	recorded: string[] | null,
 ): Promise<string[]> {
 	const self = `${catalog}.${schema}.${object}`;
 
 	// A plain table is its own base. A view is not: the filter is on what it
 	// reads, so the definition has to be opened to find out what that is.
 	if (kind !== "metric_view") return [self];
+
+	// Written down by the last sync, which ran under somebody holding SELECT on
+	// the view. Reading it back costs nothing, where opening the definition
+	// again costs a few hundred milliseconds and up to 110KB of YAML for a list
+	// that only changes when the view does.
+	if (recorded && recorded.length > 0) return [self, ...recorded];
 
 	const rows = await runCatalogQuery(identity, `SHOW CREATE TABLE ${self}`);
 	const statement = String(Object.values(rows[0] ?? {})[0] ?? "");
@@ -94,8 +101,10 @@ export async function discoverFilterGroups(
 		schema_name: string;
 		object_name: string;
 		kind: string;
+		base_tables: string[] | null;
 	}>(
-		`SELECT source_key, catalog_name, schema_name, object_name, kind
+		`SELECT source_key, catalog_name, schema_name, object_name, kind,
+		        base_tables
 		 FROM data_sources
 		 WHERE is_active = TRUE AND has_row_filter = TRUE`,
 	);
@@ -120,6 +129,7 @@ export async function discoverFilterGroups(
 				source.schema_name,
 				source.object_name,
 				source.kind,
+				source.base_tables,
 			);
 		} catch (error) {
 			noteFailure(error);
