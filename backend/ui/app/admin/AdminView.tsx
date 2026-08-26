@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import useSWR from "swr";
 import { formatCompact } from "../../lib/format";
 import { usePageTitle } from "../hooks/usePageTitle";
@@ -57,6 +57,9 @@ interface UsageResponse {
 interface SecurityResponse {
 	editorGroups: string[];
 	adminGroups: string[];
+	policyGroups: { name: string; scope: string; origin: string }[];
+	filterDiscovery: { at: number | null; unreadableSources: string[] };
+	filteredSources: number;
 	exports: {
 		logId: string;
 		recordId: string;
@@ -72,8 +75,6 @@ interface PlatformResponse {
 	runtime: Record<string, unknown>;
 	replica: Record<string, unknown>;
 	settings: Record<string, unknown>;
-	policyGroups: { name: string; scope: string; origin: string }[];
-	filterDiscovery: { at: number | null; unreadableSources: string[] };
 	sources: {
 		sourceKey: string;
 		title: string;
@@ -178,6 +179,88 @@ export default function AdminView() {
 	);
 }
 
+// A tab split into panes, with a list of them down the side.
+//
+// A page that stacks every section reads as a wall and gets skimmed, and the
+// thing somebody came for is found by scrolling rather than by looking. One
+// pane at a time means each is short enough to read, and the blurb says what
+// the pane answers so the choice can be made without opening it.
+function Panes<T extends string>({
+	panes,
+	active,
+	onSelect,
+	label,
+	wide,
+	children,
+}: {
+	panes: readonly { id: T; label: string; blurb: string }[];
+	active: T;
+	onSelect: (id: T) => void;
+	label: string;
+	// Set where the pane is mostly tables rather than fields.
+	wide?: boolean;
+	children: ReactNode;
+}) {
+	const current = panes.find((p) => p.id === active);
+
+	return (
+		<div className={styles.config}>
+			<nav className={styles.configNav} aria-label={label}>
+				{panes.map((p) => (
+					<button
+						key={p.id}
+						type="button"
+						className={`${styles.configNavItem} ${
+							active === p.id ? styles.configNavActive : ""
+						}`}
+						onClick={() => onSelect(p.id)}
+						aria-current={active === p.id}
+					>
+						{p.label}
+					</button>
+				))}
+			</nav>
+
+			<div
+				className={`${styles.configPane} ${
+					wide ? styles.configPaneWide : ""
+				}`}
+			>
+				<header className={styles.paneHeader}>
+					<h2 className={styles.paneTitle}>{current?.label}</h2>
+					<p className={styles.paneBlurb}>{current?.blurb}</p>
+				</header>
+				{children}
+			</div>
+		</div>
+	);
+}
+
+const usagePanes = [
+	{
+		id: "overview",
+		label: "Overview",
+		blurb: "Adoption, cost and failures across the window.",
+	},
+	{
+		id: "reports",
+		label: "Reports",
+		blurb: "What is being used, and by how many different people.",
+	},
+	{
+		id: "people",
+		label: "People",
+		blurb: "Who is using it, and what they have been doing.",
+	},
+	{
+		id: "performance",
+		label: "Performance",
+		blurb: "Where warehouse time and cost accumulate.",
+	},
+] as const;
+
+type UsagePane = (typeof usagePanes)[number]["id"];
+
 function UsageSection({
 	data,
 	days,
@@ -188,14 +271,17 @@ function UsageSection({
 	onDays: (d: number) => void;
 }) {
 	const { summary, daily } = data;
+	const [pane, setPane] = useState<UsagePane>("overview");
 	// Which row an admin has opened. A drawer rather than a separate page: the
-	// question is always "why does that row look like that", so the row it
-	// came from should stay on screen behind it.
+	// question is always why that row looks like that, so the row it came from
+	// should stay on screen behind it.
 	const [drill, setDrill] = useState<Drill | null>(null);
 	const peak = Math.max(1, ...daily.map((d) => d.events));
 
 	return (
 		<>
+			{/* Above the panes, because it applies to all of them. Inside one it
+			    would read as a filter on that pane alone. */}
 			<div className={styles.controls}>
 				{[1, 7, 30, 90].map((d) => (
 					<button
@@ -211,232 +297,292 @@ function UsageSection({
 				))}
 			</div>
 
-			<div className={styles.tiles}>
-				<Tile
-					label="Active users"
-					value={summary.activeUsers.toLocaleString()}
-				/>
-				<Tile
-					label="Page views"
-					value={formatCompact(summary.pageViews, "integer")}
-				/>
-				<Tile
-					label="Queries"
-					value={formatCompact(summary.queries, "integer")}
-				/>
-				<Tile
-					label="Exports"
-					value={summary.exports.toLocaleString()}
-				/>
-				<Tile
-					label="Errors"
-					value={summary.errors.toLocaleString()}
-					tone={summary.errors > 0 ? "bad" : "good"}
-				/>
-				<Tile
-					label="Cache hit rate"
-					value={`${summary.cacheHitRate.toFixed(1)}%`}
-					// Below half means most interactions still reach the
-					// warehouse, which is the cost driver worth watching.
-					tone={
-						summary.cacheHitRate >= 70
-							? "good"
-							: summary.cacheHitRate >= 40
-								? "warn"
-								: "bad"
-					}
-				/>
-				<Tile
-					label="Median query"
-					value={`${summary.medianQueryMs}ms`}
-				/>
-				<Tile
-					label="p95 query"
-					value={`${summary.p95QueryMs}ms`}
-					tone={
-						summary.p95QueryMs > 10000
-							? "bad"
-							: summary.p95QueryMs > 5000
-								? "warn"
-								: "good"
-					}
-				/>
-			</div>
+			<Panes
+				panes={usagePanes}
+				active={pane}
+				onSelect={setPane}
+				label="Usage and observability"
+				wide
+			>
+				{pane === "overview" && (
+					<>
+						<div className={styles.tiles}>
+							<Tile
+								label="Active users"
+								value={summary.activeUsers.toLocaleString()}
+							/>
+							<Tile
+								label="Page views"
+								value={formatCompact(
+									summary.pageViews,
+									"integer",
+								)}
+							/>
+							<Tile
+								label="Queries"
+								value={formatCompact(
+									summary.queries,
+									"integer",
+								)}
+							/>
+							<Tile
+								label="Exports"
+								value={summary.exports.toLocaleString()}
+							/>
+							<Tile
+								label="Errors"
+								value={summary.errors.toLocaleString()}
+								tone={summary.errors > 0 ? "bad" : "good"}
+							/>
+							<Tile
+								label="Cache hit rate"
+								value={`${summary.cacheHitRate.toFixed(1)}%`}
+								// Below half means most interactions still
+								// reach the warehouse, which is the cost driver
+								// worth watching.
+								tone={
+									summary.cacheHitRate >= 70
+										? "good"
+										: summary.cacheHitRate >= 40
+											? "warn"
+											: "bad"
+								}
+							/>
+							<Tile
+								label="Median query"
+								value={`${summary.medianQueryMs}ms`}
+							/>
+							<Tile
+								label="p95 query"
+								value={`${summary.p95QueryMs}ms`}
+								tone={
+									summary.p95QueryMs > 10000
+										? "bad"
+										: summary.p95QueryMs > 5000
+											? "warn"
+											: "good"
+								}
+							/>
+						</div>
 
-			{daily.length > 0 && (
-				<div className={styles.sparkRow} title="Events per day">
-					{daily.map((d) => (
-						<div
-							key={d.day}
-							className={styles.sparkBar}
-							style={{
-								height: `${Math.max(3, (d.events / peak) * 100)}%`,
-							}}
-							title={`${d.day}: ${d.events} events, ${d.users} users`}
-						/>
-					))}
-				</div>
-			)}
+						{daily.length > 0 && (
+							<div
+								className={styles.sparkRow}
+								title="Events per day"
+							>
+								{daily.map((d) => (
+									<div
+										key={d.day}
+										className={styles.sparkBar}
+										style={{
+											height: `${Math.max(
+												3,
+												(d.events / peak) * 100,
+											)}%`,
+										}}
+										title={`${d.day}: ${d.events} events, ${d.users} users`}
+									/>
+								))}
+							</div>
+						)}
 
-			<div className={styles.section}>
-				<h2 className={styles.sectionTitle}>Most used reports</h2>
-				<p className={styles.sectionNote}>
-					A report with few distinct users but many views is usually
-					one person&apos;s workflow, not a shared asset.
-				</p>
-				<div className={styles.tableWrap}>
-					<table className={styles.table}>
-						<thead>
-							<tr>
-								<th>Report</th>
-								<th>Category</th>
-								<th className={styles.numeric}>Views</th>
-								<th className={styles.numeric}>Users</th>
-								<th className={styles.numeric}>Avg load</th>
-								<th>Last viewed</th>
-							</tr>
-						</thead>
-						<tbody>
-							{data.reports.map((r) => (
-								<tr
-									key={r.reportId}
-									className={styles.rowClickable}
-									onClick={() =>
-										setDrill({
-											kind: "report",
-											id: r.reportId,
-											label: r.title,
-										})
-									}
-									title="See who viewed this and when"
-								>
-									<td>{r.title}</td>
-									<td>{r.categoryId ?? "-"}</td>
-									<td className={styles.numeric}>
-										{r.views.toLocaleString()}
-									</td>
-									<td className={styles.numeric}>
-										{r.distinctUsers}
-									</td>
-									<td className={styles.numeric}>
-										{r.avgDurationMs}ms
-									</td>
-									<td>{timeAgo(r.lastViewed)}</td>
-								</tr>
-							))}
-							{data.reports.length === 0 && (
-								<tr>
-									<td colSpan={6}>
-										No activity in this window
-									</td>
-								</tr>
-							)}
-						</tbody>
-					</table>
-				</div>
-			</div>
+						<p className={styles.paneNote}>
+							Median is what a typical query costs and p95 is what
+							the slow tail costs. The gap between them says more
+							than either alone: a low median with a high p95 is
+							one expensive report rather than a slow platform.
+						</p>
+					</>
+				)}
 
-			<div className={styles.section}>
-				<h2 className={styles.sectionTitle}>Slowest sources</h2>
-				<p className={styles.sectionNote}>
-					Average warehouse time per source, with the share served
-					from cache. A slow source with a low hit rate is where cost
-					accumulates.
-				</p>
-				<div className={styles.tableWrap}>
-					<table className={styles.table}>
-						<thead>
-							<tr>
-								<th>Source</th>
-								<th className={styles.numeric}>Queries</th>
-								<th className={styles.numeric}>Avg</th>
-								<th className={styles.numeric}>Max</th>
-								<th className={styles.numeric}>Cache hit</th>
-							</tr>
-						</thead>
-						<tbody>
-							{data.slow.map((s) => (
-								<tr key={s.sourceKey ?? "unknown"}>
-									<td className={styles.mono}>
-										{s.sourceKey ?? "-"}
-									</td>
-									<td className={styles.numeric}>
-										{s.queries.toLocaleString()}
-									</td>
-									<td className={styles.numeric}>
-										{s.avgQueryMs}ms
-									</td>
-									<td className={styles.numeric}>
-										{s.maxQueryMs}ms
-									</td>
-									<td className={styles.numeric}>
-										{s.cacheHitRate.toFixed(0)}%
-									</td>
-								</tr>
-							))}
-							{data.slow.length === 0 && (
-								<tr>
-									<td colSpan={5}>
-										No queries in this window
-									</td>
-								</tr>
-							)}
-						</tbody>
-					</table>
-				</div>
-			</div>
+				{pane === "reports" && (
+					<>
+						<div className={styles.tableWrap}>
+							<table className={styles.table}>
+								<thead>
+									<tr>
+										<th>Report</th>
+										<th>Category</th>
+										<th className={styles.numeric}>
+											Views
+										</th>
+										<th className={styles.numeric}>
+											Users
+										</th>
+										<th className={styles.numeric}>
+											Avg load
+										</th>
+										<th>Last viewed</th>
+									</tr>
+								</thead>
+								<tbody>
+									{data.reports.map((r) => (
+										<tr
+											key={r.reportId}
+											className={styles.rowClickable}
+											onClick={() =>
+												setDrill({
+													kind: "report",
+													id: r.reportId,
+													label: r.title,
+												})
+											}
+											title="See who viewed this and when"
+										>
+											<td>{r.title}</td>
+											<td>{r.categoryId ?? "-"}</td>
+											<td className={styles.numeric}>
+												{r.views.toLocaleString()}
+											</td>
+											<td className={styles.numeric}>
+												{r.distinctUsers}
+											</td>
+											<td className={styles.numeric}>
+												{r.avgDurationMs}ms
+											</td>
+											<td>{timeAgo(r.lastViewed)}</td>
+										</tr>
+									))}
+									{data.reports.length === 0 && (
+										<tr>
+											<td colSpan={6}>
+												No activity in this window
+											</td>
+										</tr>
+									)}
+								</tbody>
+							</table>
+						</div>
 
-			<div className={styles.section}>
-				<h2 className={styles.sectionTitle}>Most active users</h2>
-				<div className={styles.tableWrap}>
-					<table className={styles.table}>
-						<thead>
-							<tr>
-								<th>User</th>
-								<th className={styles.numeric}>Events</th>
-								<th className={styles.numeric}>Reports</th>
-								<th className={styles.numeric}>Exports</th>
-								<th>Last seen</th>
-							</tr>
-						</thead>
-						<tbody>
-							{data.users.map((u) => (
-								<tr
-									key={u.userEmail}
-									className={styles.rowClickable}
-									onClick={() =>
-										setDrill({
-											kind: "user",
-											id: u.userEmail,
-											label: u.userEmail,
-										})
-									}
-									title="See everything this person has done"
-								>
-									<td>{u.userEmail}</td>
-									<td className={styles.numeric}>
-										{u.events.toLocaleString()}
-									</td>
-									<td className={styles.numeric}>
-										{u.reports}
-									</td>
-									<td className={styles.numeric}>
-										{u.exports}
-									</td>
-									<td>{timeAgo(u.lastSeen)}</td>
-								</tr>
-							))}
-							{data.users.length === 0 && (
-								<tr>
-									<td colSpan={5}>
-										No activity in this window
-									</td>
-								</tr>
-							)}
-						</tbody>
-					</table>
-				</div>
-			</div>
+						<p className={styles.paneNote}>
+							Many views from few distinct users is usually one
+							workflow rather than a shared asset. Open a row to
+							see who has been viewing it.
+						</p>
+					</>
+				)}
+
+				{pane === "people" && (
+					<>
+						<div className={styles.tableWrap}>
+							<table className={styles.table}>
+								<thead>
+									<tr>
+										<th>User</th>
+										<th className={styles.numeric}>
+											Events
+										</th>
+										<th className={styles.numeric}>
+											Reports
+										</th>
+										<th className={styles.numeric}>
+											Exports
+										</th>
+										<th>Last seen</th>
+									</tr>
+								</thead>
+								<tbody>
+									{data.users.map((u) => (
+										<tr
+											key={u.userEmail}
+											className={styles.rowClickable}
+											onClick={() =>
+												setDrill({
+													kind: "user",
+													id: u.userEmail,
+													label: u.userEmail,
+												})
+											}
+											title="See everything this person has done"
+										>
+											<td>{u.userEmail}</td>
+											<td className={styles.numeric}>
+												{u.events.toLocaleString()}
+											</td>
+											<td className={styles.numeric}>
+												{u.reports}
+											</td>
+											<td className={styles.numeric}>
+												{u.exports}
+											</td>
+											<td>{timeAgo(u.lastSeen)}</td>
+										</tr>
+									))}
+									{data.users.length === 0 && (
+										<tr>
+											<td colSpan={5}>
+												No activity in this window
+											</td>
+										</tr>
+									)}
+								</tbody>
+							</table>
+						</div>
+
+						<p className={styles.paneNote}>
+							Open a row for everything one person has done in the
+							window, in order.
+						</p>
+					</>
+				)}
+
+				{pane === "performance" && (
+					<>
+						<div className={styles.tableWrap}>
+							<table className={styles.table}>
+								<thead>
+									<tr>
+										<th>Source</th>
+										<th className={styles.numeric}>
+											Queries
+										</th>
+										<th className={styles.numeric}>Avg</th>
+										<th className={styles.numeric}>Max</th>
+										<th className={styles.numeric}>
+											Cache hit
+										</th>
+									</tr>
+								</thead>
+								<tbody>
+									{data.slow.map((s) => (
+										<tr key={s.sourceKey ?? "unknown"}>
+											<td className={styles.mono}>
+												{s.sourceKey ?? "-"}
+											</td>
+											<td className={styles.numeric}>
+												{s.queries.toLocaleString()}
+											</td>
+											<td className={styles.numeric}>
+												{s.avgQueryMs}ms
+											</td>
+											<td className={styles.numeric}>
+												{s.maxQueryMs}ms
+											</td>
+											<td className={styles.numeric}>
+												{s.cacheHitRate.toFixed(0)}%
+											</td>
+										</tr>
+									))}
+									{data.slow.length === 0 && (
+										<tr>
+											<td colSpan={5}>
+												No queries in this window
+											</td>
+										</tr>
+									)}
+								</tbody>
+							</table>
+						</div>
+
+						<p className={styles.paneNote}>
+							Average warehouse time per source, with the share
+							served from cache. A slow source with a low hit rate
+							is where cost accumulates, and it is the one worth
+							giving a longer cache lifetime under Configuration.
+						</p>
+					</>
+				)}
+			</Panes>
 
 			{drill && (
 				<DrillDrawer
@@ -1277,85 +1423,239 @@ function ConfigurationSection() {
 	);
 }
 
+const securityPanes = [
+	{
+		id: "grants",
+		label: "Access",
+		blurb: "Who can open what, and where that reaches them from.",
+	},
+	{
+		id: "privileged",
+		label: "Privileged groups",
+		blurb: "Members who hold a permission everywhere without a grant.",
+	},
+	{
+		id: "cache",
+		label: "Cache partitioning",
+		blurb: "Which memberships decide who may be served a stored answer.",
+	},
+	{
+		id: "exports",
+		label: "Export audit",
+		blurb: "Every request to take data out of the platform.",
+	},
+] as const;
+
+type SecurityPane = (typeof securityPanes)[number]["id"];
+
 function SecuritySection({ data }: { data: SecurityResponse }) {
+	const [pane, setPane] = useState<SecurityPane>("grants");
+
+	const incomplete = data.exports.filter(
+		(e) => e.action === "requested",
+	).length;
+
+	const unreadable = data.filterDiscovery.unreadableSources;
+	const fromFilters = data.policyGroups.filter(
+		(g) => g.origin === "row-filter",
+	).length;
+
+	// Whether a stored answer can reach somebody it was not computed for. It
+	// can whenever a source is filtered and the groups its filter branches on
+	// are not being probed.
+	const partitioned =
+		data.filteredSources === 0 ||
+		(unreadable.length === 0 && fromFilters > 0);
+
 	return (
-		<>
-			<div className={styles.section}>
-				<h2 className={styles.sectionTitle}>Privileged groups</h2>
-				<p className={styles.sectionNote}>
-					Members of these groups hold their permission on every
-					report, without an explicit grant. Editors publish changes
-					to everyone; administrators additionally manage access and
-					platform settings.
-				</p>
-				<div className={styles.definition}>
-					<span className={styles.definitionKey}>Editors</span>
-					<span className={styles.definitionValue}>
-						{data.editorGroups.join(", ") || "none"}
-					</span>
-					<span className={styles.definitionKey}>Administrators</span>
-					<span className={styles.definitionValue}>
-						{data.adminGroups.join(", ") || "none"}
-					</span>
-				</div>
-			</div>
+		<Panes
+			panes={securityPanes}
+			active={pane}
+			onSelect={setPane}
+			label="Security and access"
+			wide
+		>
+			{pane === "grants" && <AccessGrants />}
 
-			<AccessGrants />
+			{pane === "privileged" && (
+				<>
+					<div className={styles.definition}>
+						<span className={styles.definitionKey}>Editors</span>
+						<span className={styles.definitionValue}>
+							{data.editorGroups.join(", ") || "none"}
+						</span>
+						<span className={styles.definitionKey}>
+							Administrators
+						</span>
+						<span className={styles.definitionValue}>
+							{data.adminGroups.join(", ") || "none"}
+						</span>
+					</div>
 
-			<div className={styles.section}>
-				<h2 className={styles.sectionTitle}>Export audit</h2>
-				<p className={styles.sectionNote}>
-					Every export writes a request record before the query runs
-					and a completion record after it. A request with no matching
-					completion means the export failed or was interrupted, which
-					is itself worth seeing.
-				</p>
-				<div className={styles.tableWrap}>
-					<table className={styles.table}>
-						<thead>
-							<tr>
-								<th>When</th>
-								<th>User</th>
-								<th>Action</th>
-								<th>Detail</th>
-							</tr>
-						</thead>
-						<tbody>
-							{data.exports.map((e) => (
-								<tr key={e.logId}>
-									<td>{timeAgo(e.changedOn)}</td>
-									<td>{e.changedBy}</td>
-									<td>
-										<span
-											className={`${styles.badge} ${
-												e.action === "failed"
-													? styles.badgeFail
-													: e.action === "completed"
-														? styles.badgeOk
-														: ""
-											}`}
-										>
-											{e.action}
-										</span>
-									</td>
-									<td
-										className={styles.mono}
-										title={e.detail ?? ""}
-									>
-										{e.notes ?? e.detail ?? "-"}
-									</td>
-								</tr>
-							))}
-							{data.exports.length === 0 && (
+					<p className={styles.paneNote}>
+						Members hold their permission on every report without an
+						explicit grant. Editors publish changes to everyone, and
+						administrators additionally manage access and platform
+						settings. Set them under Configuration.
+					</p>
+
+					<p className={styles.paneNote}>
+						Matched against the account directory exactly as
+						written. Case matters, and a mismatch fails silently:
+						nobody is denied with an error, they simply hold no
+						permissions.
+					</p>
+				</>
+			)}
+
+			{pane === "cache" && (
+				<>
+					<p
+						className={`${styles.paneNote} ${
+							partitioned ? styles.paneNoteOk : styles.paneNoteBad
+						}`}
+					>
+						{partitioned
+							? `Answers are partitioned. ${fromFilters} group${
+									fromFilters === 1 ? "" : "s"
+								} found in row filters, across ${
+									data.filteredSources
+								} filtered source${
+									data.filteredSources === 1 ? "" : "s"
+								}.`
+							: `Answers are not partitioned. ${
+									data.filteredSources
+								} source${
+									data.filteredSources === 1 ? " is" : "s are"
+								} row filtered, and ${
+									unreadable.length > 0
+										? `the filters on ${unreadable.length} of them could not be read`
+										: "no group was found in any filter"
+								}, so two readers entitled to different rows resolve to the same class and one may be served an answer computed for the other.`}
+					</p>
+
+					{unreadable.length > 0 && (
+						<details className={styles.details}>
+							<summary>
+								{unreadable.length} source
+								{unreadable.length === 1 ? "" : "s"} the
+								catalogue walk could not read
+							</summary>
+							<div className={styles.mono}>
+								{unreadable.join(", ")}
+							</div>
+						</details>
+					)}
+
+					<div className={styles.tableWrap}>
+						<table className={styles.table}>
+							<thead>
 								<tr>
-									<td colSpan={4}>No exports recorded</td>
+									<th>Group</th>
+									<th>Directory</th>
+									<th>Why it is probed</th>
 								</tr>
-							)}
-						</tbody>
-					</table>
-				</div>
-			</div>
-		</>
+							</thead>
+							<tbody>
+								{data.policyGroups.map((g) => (
+									<tr key={`${g.scope}:${g.name}`}>
+										<td>{g.name}</td>
+										<td>
+											<span className={styles.badge}>
+												{g.scope}
+											</span>
+										</td>
+										<td>
+											{groupOrigins[g.origin] ?? g.origin}
+										</td>
+									</tr>
+								))}
+								{data.policyGroups.length === 0 && (
+									<tr>
+										<td colSpan={3}>
+											Nothing is being probed
+										</td>
+									</tr>
+								)}
+							</tbody>
+						</table>
+					</div>
+
+					<p className={styles.paneNote}>
+						This grants nothing and denies nothing. A stored answer
+						is reused for a second reader only when every group here
+						agrees for both of them, which is what stops a filtered
+						source handing one reader another reader rows. Most are
+						found rather than configured: the platform reads the row
+						filters on each source and probes whatever groups they
+						branch on, so the list follows a filter somebody edits.
+						The directory is the one each name is asked about,
+						matching the function the filter used.
+					</p>
+				</>
+			)}
+
+			{pane === "exports" && (
+				<>
+					<div className={styles.tableWrap}>
+						<table className={styles.table}>
+							<thead>
+								<tr>
+									<th>When</th>
+									<th>User</th>
+									<th>Action</th>
+									<th>Detail</th>
+								</tr>
+							</thead>
+							<tbody>
+								{data.exports.map((e) => (
+									<tr key={e.logId}>
+										<td>{timeAgo(e.changedOn)}</td>
+										<td>{e.changedBy}</td>
+										<td>
+											<span
+												className={`${styles.badge} ${
+													e.action === "failed"
+														? styles.badgeFail
+														: e.action ===
+															  "completed"
+															? styles.badgeOk
+															: ""
+												}`}
+											>
+												{e.action}
+											</span>
+										</td>
+										<td
+											className={styles.mono}
+											title={e.detail ?? ""}
+										>
+											{e.notes ?? e.detail ?? "-"}
+										</td>
+									</tr>
+								))}
+								{data.exports.length === 0 && (
+									<tr>
+										<td colSpan={4}>No exports recorded</td>
+									</tr>
+								)}
+							</tbody>
+						</table>
+					</div>
+
+					<p className={styles.paneNote}>
+						Every export writes a request before the query runs and
+						a completion after it, so a request with no completion
+						is an export that failed or was interrupted.
+						{incomplete > 0
+							? ` ${incomplete} in this window ${
+									incomplete === 1 ? "has" : "have"
+								} no completion yet.`
+							: ""}
+					</p>
+				</>
+			)}
+		</Panes>
 	);
 }
 
@@ -1466,24 +1766,7 @@ function AccessGrants() {
 	const ready = subjectId.trim() !== "" && resourceId !== "";
 
 	return (
-		<div className={styles.section}>
-			<h2 className={styles.sectionTitle}>Access grants</h2>
-			<p className={styles.sectionNote}>
-				Exceptions. While reachability follows Unity Catalog, a reader
-				already sees the reports built on data they hold SELECT on, and
-				nothing has to be listed here for that to work. These entries
-				add reach somebody would not otherwise have, or raise a
-				permission above view.
-			</p>
-			<p className={styles.sectionNote}>
-				Reachability only. Which rows a person sees inside a report is
-				decided by Unity Catalog when the query runs under their own
-				identity, and is not configurable here. Granting to a group also
-				puts that group on the membership probe list, so no separate
-				step is needed, and group names are matched against the account
-				directory exactly as spelled, including case.
-			</p>
-
+		<>
 			<div className={styles.fieldRow}>
 				<label className={styles.field}>
 					<span className={styles.fieldLabel}>Subject</span>
@@ -1641,7 +1924,21 @@ function AccessGrants() {
 					</tbody>
 				</table>
 			</div>
-		</div>
+
+			<p className={styles.paneNote}>
+				These are exceptions. While reachability follows Unity Catalog a
+				reader already sees the reports built on data they hold SELECT
+				on, and nothing has to be listed here for that to work. An entry
+				adds reach somebody would not otherwise have, or raises a
+				permission above view.
+			</p>
+
+			<p className={styles.paneNote}>
+				Reachability only. Which rows a person sees inside a report is
+				decided by Unity Catalog when the query runs under their own
+				identity, and is not configurable here.
+			</p>
+		</>
 	);
 }
 
@@ -1654,174 +1951,208 @@ const groupOrigins: Record<string, string> = {
 	configured: "added in Configuration",
 };
 
+const platformPanes = [
+	{
+		id: "health",
+		label: "Health",
+		blurb: "What the instance that served this request is holding.",
+	},
+	{
+		id: "sources",
+		label: "Sources",
+		blurb: "The datasets reports are built on, and how each is read.",
+	},
+	{
+		id: "runtime",
+		label: "Runtime",
+		blurb: "Where this deployment is connected, and how it is configured.",
+	},
+] as const;
+
+type PlatformPane = (typeof platformPanes)[number]["id"];
+
+// Counters arrive nested, one object per subsystem. Flattened to one label per
+// number, because a tile reading {"entries":1,"degraded":0} is a value somebody
+// has to parse rather than read.
+function counterTiles(replica: Record<string, unknown>) {
+	const tiles: { label: string; value: string; tone?: "good" | "bad" }[] = [];
+
+	const spaced = (name: string) =>
+		name.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
+
+	for (const [group, value] of Object.entries(replica)) {
+		if (value && typeof value === "object" && !Array.isArray(value)) {
+			for (const [name, inner] of Object.entries(
+				value as Record<string, unknown>,
+			)) {
+				// A count of things that went wrong is worth colouring. A count
+				// of things that are merely present is not.
+				const bad =
+					/degraded|dropped|failure|stale/i.test(name) &&
+					Number(inner) > 0;
+				tiles.push({
+					label: `${spaced(group)} ${spaced(name)}`,
+					value: String(inner),
+					tone: bad ? "bad" : undefined,
+				});
+			}
+		}
+	}
+	return tiles;
+}
+
 function PlatformSection({ data }: { data: PlatformResponse }) {
+	const [pane, setPane] = useState<PlatformPane>("health");
+
+	const loaded = (value: unknown) =>
+		typeof value === "number" && value > 0
+			? timeAgo(new Date(value).toISOString())
+			: "not yet";
+
 	return (
-		<>
-			<div className={styles.section}>
-				<h2 className={styles.sectionTitle}>Registered sources</h2>
-				<p className={styles.sectionNote}>
-					A metric view owns its own aggregation, so measures are read
-					with MEASURE() and the app never restates them. Sources
-					marked as filtered have their results cached per policy
-					class rather than shared.
-				</p>
-				<div className={styles.tableWrap}>
-					<table className={styles.table}>
-						<thead>
-							<tr>
-								<th>Source</th>
-								<th>Kind</th>
-								<th>Object</th>
-								<th className={styles.numeric}>Dimensions</th>
-								<th className={styles.numeric}>Measures</th>
-								<th>Row filtered</th>
-							</tr>
-						</thead>
-						<tbody>
-							{data.sources.map((s) => (
-								<tr key={s.sourceKey}>
-									<td>{s.title}</td>
-									<td>
-										<span className={styles.badge}>
-											{s.kind}
-										</span>
-									</td>
-									<td className={styles.mono}>{s.object}</td>
-									<td className={styles.numeric}>
-										{s.dimensions}
-									</td>
-									<td className={styles.numeric}>
-										{s.measures}
-									</td>
-									<td>{s.hasRowFilter ? "yes" : "no"}</td>
-								</tr>
-							))}
-						</tbody>
-					</table>
-				</div>
-			</div>
+		<Panes
+			panes={platformPanes}
+			active={pane}
+			onSelect={setPane}
+			label="Platform"
+			wide
+		>
+			{pane === "health" && (
+				<>
+					<div className={styles.tiles}>
+						{counterTiles(data.replica).map((tile) => (
+							<Tile
+								key={tile.label}
+								label={tile.label}
+								value={tile.value}
+								tone={tile.tone}
+							/>
+						))}
+					</div>
 
-			<div className={styles.section}>
-				<h2 className={styles.sectionTitle}>Policy groups</h2>
-				<p className={styles.sectionNote}>
-					Membership in these decides which cached answers a reader
-					may be served. Two people share a cached result only when
-					every one of these agrees for both, which is what stops a
-					filtered source handing one reader another reader&apos;s
-					rows.
-				</p>
-				<p className={styles.sectionNote}>
-					Most are found rather than configured: the platform reads
-					the row filters on each source and probes whatever groups
-					they branch on, so this list follows a filter someone edits
-					without anybody maintaining it. The scope is the directory
-					each is asked about, matching the function the filter used.
-				</p>
+					<div className={styles.definition}>
+						<span className={styles.definitionKey}>
+							Settings read
+						</span>
+						<span className={styles.definitionValue}>
+							{loaded(data.replica.settingsLoadedAt)}
+						</span>
+						<span className={styles.definitionKey}>
+							Registry read
+						</span>
+						<span className={styles.definitionValue}>
+							{loaded(data.replica.registryLoadedAt)}
+						</span>
+					</div>
 
-				{data.filterDiscovery.unreadableSources.length > 0 && (
-					<p className={styles.sectionNote}>
-						Could not read the filters on{" "}
-						{data.filterDiscovery.unreadableSources.join(", ")}.
-						Groups named only there are not being probed, so add
-						them below in Configuration until the catalogue is
-						readable.
+					<p className={styles.paneNote}>
+						Caches and pools are per replica, so these describe the
+						instance that answered this request rather than the
+						whole deployment.
 					</p>
-				)}
+				</>
+			)}
 
-				<div className={styles.tableWrap}>
-					<table className={styles.table}>
-						<thead>
-							<tr>
-								<th>Group</th>
-								<th>Directory</th>
-								<th>Source</th>
-							</tr>
-						</thead>
-						<tbody>
-							{data.policyGroups.map((g) => (
-								<tr key={`${g.scope}:${g.name}`}>
-									<td>{g.name}</td>
-									<td>
-										<span className={styles.badge}>
-											{g.scope}
-										</span>
-									</td>
-									<td>
-										{groupOrigins[g.origin] ?? g.origin}
-									</td>
-								</tr>
-							))}
-							{data.policyGroups.length === 0 && (
+			{pane === "sources" && (
+				<>
+					<div className={styles.tableWrap}>
+						<table className={styles.table}>
+							<thead>
 								<tr>
-									<td colSpan={3}>
-										No groups are being probed. Every reader
-										resolves to one policy class, so a
-										filtered source would share results
-										between people who see different rows.
-									</td>
+									<th>Source</th>
+									<th>Kind</th>
+									<th className={styles.numeric}>Fields</th>
+									<th>Filtered</th>
+									<th>Object</th>
 								</tr>
-							)}
-						</tbody>
-					</table>
-				</div>
-			</div>
+							</thead>
+							<tbody>
+								{data.sources.map((s) => (
+									<tr key={s.sourceKey}>
+										<td>{s.title}</td>
+										<td>
+											<span className={styles.badge}>
+												{s.kind === "metric_view"
+													? "metric view"
+													: s.kind}
+											</span>
+										</td>
+										<td className={styles.numeric}>
+											{s.dimensions} + {s.measures}
+										</td>
+										<td>{s.hasRowFilter ? "yes" : "no"}</td>
+										<td className={styles.mono}>
+											{s.object}
+										</td>
+									</tr>
+								))}
+								{data.sources.length === 0 && (
+									<tr>
+										<td colSpan={5}>
+											No sources registered
+										</td>
+									</tr>
+								)}
+							</tbody>
+						</table>
+					</div>
 
-			<div className={styles.section}>
-				<h2 className={styles.sectionTitle}>This replica</h2>
-				<p className={styles.sectionNote}>
-					Caches and pools are per replica, so these counters describe
-					the instance that served this request rather than the whole
-					deployment.
-				</p>
-				<div className={styles.definition}>
-					{Object.entries(data.replica).map(([key, value]) => (
-						<Row key={key} label={key} value={value} />
-					))}
-				</div>
-			</div>
+					<p className={styles.paneNote}>
+						Fields are dimensions plus measures. A metric view owns
+						its own aggregation, so measures are read with MEASURE()
+						and never restated here. A filtered source has its
+						results cached per policy class rather than shared.
+					</p>
+				</>
+			)}
 
-			<div className={styles.section}>
-				<h2 className={styles.sectionTitle}>Runtime</h2>
-				<div className={styles.definition}>
-					{Object.entries(data.runtime).map(([key, value]) => (
-						<Row key={key} label={key} value={value} />
-					))}
-				</div>
-			</div>
+			{pane === "runtime" && (
+				<>
+					<div className={styles.definition}>
+						{Object.entries(data.runtime).map(([key, value]) => (
+							<Row key={key} label={key} value={value} />
+						))}
+					</div>
 
-			<div className={styles.section}>
-				<h2 className={styles.sectionTitle}>Settings</h2>
-				<p className={styles.sectionNote}>
-					Stored in the platform_settings table and polled every
-					minute, so a change reaches every replica without a
-					redeploy.
-				</p>
-				<div className={styles.definition}>
-					{Object.entries(data.settings).map(([key, value]) => (
-						<Row
-							key={key}
-							label={
-								key === "trackedGroups"
-									? "trackedGroups (extra, added to those found)"
-									: key
-							}
-							value={
-								key === "trackedGroups" &&
-								Array.isArray(value) &&
-								value.length === 0
-									? "none set, see Policy groups above"
-									: key === "appLogo"
-										? typeof value === "string" &&
-											value.length > 0
-											? `${Math.round(value.length / 1024)}KB of SVG, see Configuration`
-											: "none set"
-										: value
-							}
-						/>
-					))}
-				</div>
-			</div>
-		</>
+					<p className={styles.paneNote}>
+						Set by the deployment. These have to be known before the
+						settings table can be read, which is why they are the
+						only values that cannot be changed in the app.
+					</p>
+
+					<div className={styles.definition}>
+						{Object.entries(data.settings).map(([key, value]) => (
+							<Row
+								key={key}
+								label={
+									key === "trackedGroups"
+										? "trackedGroups (extra)"
+										: key
+								}
+								value={
+									key === "trackedGroups" &&
+									Array.isArray(value) &&
+									value.length === 0
+										? "none set, added to those found"
+										: key === "appLogo"
+											? typeof value === "string" &&
+												value.length > 0
+												? `${Math.round(value.length / 1024)}KB of SVG`
+												: "none set"
+											: value
+								}
+							/>
+						))}
+					</div>
+
+					<p className={styles.paneNote}>
+						Held in the platform_settings table and polled every
+						minute, so a change reaches every replica without a
+						redeploy. Edit them under Configuration.
+					</p>
+				</>
+			)}
+		</Panes>
 	);
 }
 

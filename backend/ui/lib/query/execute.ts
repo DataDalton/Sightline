@@ -5,7 +5,13 @@ import { isDatabricksApp } from "../runtime";
 import { getSource } from "../semantic/registry";
 import type { SemanticSource } from "../semantic/types";
 import { compileQuery } from "./builder";
-import { buildCacheKey, cacheGet, cacheSet, type CacheEntry } from "./cache";
+import {
+	buildCacheKey,
+	cacheGet,
+	cacheSet,
+	isShareable,
+	type CacheEntry,
+} from "./cache";
 import { QuerySpecError, type QuerySpec } from "./spec";
 
 // Runs a query spec for one caller. This is the single entry point every
@@ -86,7 +92,14 @@ export async function executeQuery(
 	}
 
 	const key = buildCacheKey(source, spec, policy);
-	const lookup = await cacheGet(key);
+
+	// A filtered source whose filters have not been read is answered from the
+	// warehouse every time, under this reader token. Slower, and the only
+	// reading that cannot hand somebody another reader rows.
+	const shareable = isShareable(source);
+	const lookup = shareable
+		? await cacheGet(key)
+		: { entry: null, stale: false, tier: null };
 
 	if (lookup.entry && !lookup.stale) {
 		return toResult(
@@ -105,11 +118,20 @@ export async function executeQuery(
 			revalidating.add(key);
 			void runAndCache(identity, source, spec, policy, key)
 				.catch((error) => {
-					console.warn(`Background refresh failed for ${key}:`, error);
+					console.warn(
+						`Background refresh failed for ${key}:`,
+						error,
+					);
 				})
 				.finally(() => revalidating.delete(key));
 		}
-		return toResult(lookup.entry, lookup.tier ?? "l1", true, null, startedAt);
+		return toResult(
+			lookup.entry,
+			lookup.tier ?? "l1",
+			true,
+			null,
+			startedAt,
+		);
 	}
 
 	const queryStartedAt = Date.now();
@@ -149,7 +171,11 @@ async function runAndCache(
 	let rows;
 	if (identity.userToken) {
 		// The normal path: Unity Catalog filters rows for this caller.
-		rows = await queryAsUser(identity.userToken, compiled.sql, compiled.params);
+		rows = await queryAsUser(
+			identity.userToken,
+			compiled.sql,
+			compiled.params,
+		);
 	} else if (!isDatabricksApp) {
 		// Development only. Runs as the local Databricks credentials, so row
 		// filtering reflects that identity rather than the caller's. The
@@ -161,6 +187,19 @@ async function runAndCache(
 			"A user token is required to query data. Enable user authorization " +
 				"with the sql scope on the app.",
 		);
+	}
+
+	// Stored only when it may be reused. Writing an answer computed for one
+	// reader while the class is not known to be complete would hand it to the
+	// next reader the moment the walk finished.
+	if (!isShareable(source)) {
+		return {
+			rows,
+			columns: compiled.columns,
+			rowCount: rows.length,
+			computedAt: Date.now(),
+			expiresAt: Date.now(),
+		};
 	}
 
 	return cacheSet(key, policy, source, rows, compiled.columns);
