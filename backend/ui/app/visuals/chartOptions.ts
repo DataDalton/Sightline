@@ -1,4 +1,9 @@
-import { formatCompact, formatValue, toNumber, type FormatHint } from "../../lib/format";
+import {
+	formatCompact,
+	formatValue,
+	toNumber,
+	type FormatHint,
+} from "../../lib/format";
 import { styleForMeasure, type VisualStyle } from "../../lib/visuals/style";
 import { withAlpha, type ThemeColors } from "./colors";
 
@@ -22,6 +27,31 @@ export interface ChartContext {
 	// selected five, and highlighting the first of them while the page filters
 	// on all five says two different things at once.
 	highlight?: { field: string; values: string[] } | null;
+	// What the author set on this particular visual, as declared in the visual
+	// catalogue. Read through option(), which applies the catalogue fallback so
+	// a chart and the properties panel cannot disagree about what unset means.
+	options?: Record<string, unknown>;
+}
+
+// Sorting a chart by its own values.
+//
+// Done on the marks rather than in the query, because the query is shared: a
+// grid and a chart reading the same fields resolve to one cache entry, and
+// ordering in SQL would split that in two for a difference only one of them
+// renders.
+function sortedRows(
+	ctx: ChartContext,
+	measure: string,
+): Record<string, unknown>[] {
+	const by = ctx.options?.sortBy;
+	if (by !== "valueDesc" && by !== "valueAsc") return ctx.rows;
+
+	const direction = by === "valueDesc" ? -1 : 1;
+	return [...ctx.rows].sort(
+		(a, b) =>
+			direction *
+			((toNumber(a[measure]) ?? 0) - (toNumber(b[measure]) ?? 0)),
+	);
 }
 
 // Opacity per data point, dimming everything that is not the selection.
@@ -42,7 +72,11 @@ function highlightOpacity(
 	return ctx.highlight.values.includes(value) ? 1 : 0.25;
 }
 
-function seriesColor(ctx: ChartContext, measure: string, index: number): string {
+function seriesColor(
+	ctx: ChartContext,
+	measure: string,
+	index: number,
+): string {
 	const s = styleForMeasure(ctx.style, measure, index);
 	return ctx.colors.resolve(
 		s.color,
@@ -119,8 +153,11 @@ export function buildCartesian(
 	kind: "bar" | "line" | "area" | "scatter" | "combo" | "stacked100",
 	orientation: "vertical" | "horizontal" = "vertical",
 ) {
-	const { rows, dimensions, measures, colors, style } = ctx;
+	const { dimensions, measures, colors, style } = ctx;
 	const axisField = dimensions[0];
+	// Ordered before anything reads a row, so the categories and every series
+	// are built from the same sequence.
+	const rows = sortedRows(ctx, measures[0]);
 	const categories = rows.map((r) => String(r[axisField] ?? ""));
 	const primaryHint = ctx.hintFor(measures[0]);
 
@@ -169,10 +206,17 @@ export function buildCartesian(
 				const to =
 					s.gradientTo === "transparent" || s.gradientTo === undefined
 						? withAlpha(color, 0)
-						: withAlpha(colors.resolve(s.gradientTo, color), fillOpacity);
+						: withAlpha(
+								colors.resolve(s.gradientTo, color),
+								fillOpacity,
+							);
 				areaStyle = {
 					color: {
-						type: "linear", x: 0, y: 0, x2: 0, y2: 1,
+						type: "linear",
+						x: 0,
+						y: 0,
+						x2: 0,
+						y2: 1,
 						colorStops: [
 							{ offset: 0, color: withAlpha(color, fillOpacity) },
 							{ offset: 1, color: to },
@@ -214,28 +258,67 @@ export function buildCartesian(
 			stack:
 				kind === "stacked100"
 					? "total"
-					: (s.stack ?? (kind === "area" && measures.length > 1 ? undefined : s.stack)),
+					: (s.stack ??
+						(kind === "area" && measures.length > 1
+							? undefined
+							: s.stack)),
 			barMaxWidth: 36,
 			itemStyle: {
 				color,
 				borderRadius:
 					echartsType === "bar"
 						? orientation === "horizontal"
-							? [0, style?.cornerRadius ?? 2, style?.cornerRadius ?? 2, 0]
-							: [style?.cornerRadius ?? 2, style?.cornerRadius ?? 2, 0, 0]
+							? [
+									0,
+									style?.cornerRadius ?? 2,
+									style?.cornerRadius ?? 2,
+									0,
+								]
+							: [
+									style?.cornerRadius ?? 2,
+									style?.cornerRadius ?? 2,
+									0,
+									0,
+								]
 						: undefined,
 				opacity:
-					echartsType === "bar" && s.fill === "solid" ? fillOpacity : 1,
+					echartsType === "bar" && s.fill === "solid"
+						? fillOpacity
+						: 1,
 			},
+			// A gap is a period nobody measured. Joining across it draws a
+			// straight line through data that does not exist, which reads as a
+			// trend rather than as an absence, so it is off unless asked for.
+			connectNulls: ctx.options?.nulls === "connect",
+			label:
+				ctx.options?.valueLabels === true && echartsType === "bar"
+					? {
+							show: true,
+							position:
+								orientation === "horizontal" ? "right" : "top",
+							color: colors.textMuted,
+							fontSize: 11,
+							formatter: (p: unknown) =>
+								formatCompact(
+									(p as { value: number }).value,
+									ctx.hintFor(measure),
+								),
+						}
+					: undefined,
 			lineStyle:
-				echartsType === "line" ? { width: s.lineWidth ?? 2, color } : undefined,
+				echartsType === "line"
+					? { width: s.lineWidth ?? 2, color }
+					: undefined,
 			areaStyle,
 			data,
 		};
 	});
 
 	const category = categoryAxis(ctx, categories);
-	const value = valueAxis(ctx, kind === "stacked100" ? "percent" : primaryHint);
+	const value = valueAxis(
+		ctx,
+		kind === "stacked100" ? "percent" : primaryHint,
+	);
 
 	return {
 		animation: false,
@@ -265,7 +348,9 @@ export function buildCartesian(
 									formatter: (v: number) =>
 										formatCompact(
 											v,
-											(style?.rightAxis?.format as FormatHint) ?? "decimal",
+											(style?.rightAxis
+												?.format as FormatHint) ??
+												"decimal",
 										),
 								},
 								splitLine: { show: false },
@@ -304,7 +389,15 @@ function cartesianTooltip(
 			const share =
 				normalised || (ctx.style?.tooltip?.showShare && total !== 0)
 					? ` <span style="opacity:.7">(${(
-							((toNumber(raw) ?? 0) / (normalised ? ctx.measures.reduce((s2, m) => s2 + (toNumber(row[m]) ?? 0), 0) : total)) * 100
+							((toNumber(raw) ?? 0) /
+								(normalised
+									? ctx.measures.reduce(
+											(s2, m) =>
+												s2 + (toNumber(row[m]) ?? 0),
+											0,
+										)
+									: total)) *
+							100
 						).toFixed(1)}%)</span>`
 					: "";
 			return `<div>${e.marker} ${e.seriesName}: <b>${value}</b>${share}</div>`;
@@ -324,16 +417,59 @@ function cartesianTooltip(
 // --- Pie and donut ---------------------------------------------------------
 
 export function buildPie(ctx: ChartContext, donut: boolean) {
-	const { rows, dimensions, measures, colors } = ctx;
+	const { dimensions, measures, colors } = ctx;
 	const field = dimensions[0];
 	const measure = measures[0];
 	const hint = ctx.hintFor(measure);
 
-	const data = rows.map((r, i) => ({
+	// Largest first, always. A pie is read by comparing angles, and an
+	// arbitrary order makes that work the reader should not have to do.
+	const ordered = [...ctx.rows].sort(
+		(a, b) => (toNumber(b[measure]) ?? 0) - (toNumber(a[measure]) ?? 0),
+	);
+
+	// Past a dozen slices a pie is a colour key with a circle attached. Keeping
+	// the largest and gathering the rest says the same thing and stays legible,
+	// and the gathered slice is honest about being a sum rather than a value.
+	const topN = Number(ctx.options?.topN);
+	const grouped =
+		Number.isFinite(topN) && topN > 0 && ordered.length > topN
+			? [
+					...ordered.slice(0, topN),
+					{
+						[field]: `Other (${ordered.length - topN})`,
+						[measure]: ordered
+							.slice(topN)
+							.reduce(
+								(sum, r) => sum + (toNumber(r[measure]) ?? 0),
+								0,
+							),
+					} as Record<string, unknown>,
+				]
+			: ordered;
+
+	const data = grouped.map((r, i) => ({
 		name: String(r[field] ?? ""),
 		value: toNumber(r[measure]) ?? 0,
 		itemStyle: { color: colors.series[i % colors.series.length] },
 	}));
+
+	// What each slice says about itself. Percentage is the default because a
+	// pie is a composition, and the figure a reader wants from one is the share.
+	const labelMode = (ctx.options?.sliceLabels as string) ?? "percent";
+	const sliceLabel = (p: {
+		name: string;
+		value: number;
+		percent: number;
+	}) => {
+		if (labelMode === "value") return formatCompact(p.value, hint);
+		if (labelMode === "both")
+			return `${formatCompact(p.value, hint)} (${p.percent}%)`;
+		return `${p.percent}%`;
+	};
+	// Labels are hung outside the ring, so they stop being legible long before
+	// the slices do.
+	const showLabels = labelMode !== "none" && grouped.length <= 12;
 
 	return {
 		animation: false,
@@ -342,7 +478,12 @@ export function buildPie(ctx: ChartContext, donut: boolean) {
 		tooltip: {
 			...tooltip(ctx, "item"),
 			formatter: (p: unknown) => {
-				const e = p as { name: string; value: number; percent: number; marker: string };
+				const e = p as {
+					name: string;
+					value: number;
+					percent: number;
+					marker: string;
+				};
 				return `${e.marker} ${e.name}<br/><b>${formatValue(e.value, hint)}</b> (${e.percent}%)`;
 			},
 		},
@@ -354,9 +495,24 @@ export function buildPie(ctx: ChartContext, donut: boolean) {
 				radius: donut ? ["45%", "70%"] : "70%",
 				center: ["50%", "55%"],
 				avoidLabelOverlap: true,
-				itemStyle: { borderRadius: 3, borderColor: colors.surface, borderWidth: 2 },
-				label: { show: rows.length <= 8, color: colors.text, formatter: "{b}" },
-				labelLine: { show: rows.length <= 8 },
+				itemStyle: {
+					borderRadius: 3,
+					borderColor: colors.surface,
+					borderWidth: 2,
+				},
+				label: {
+					show: showLabels,
+					color: colors.text,
+					formatter: (p: unknown) =>
+						`${(p as { name: string }).name}\n${sliceLabel(
+							p as {
+								name: string;
+								value: number;
+								percent: number;
+							},
+						)}`,
+				},
+				labelLine: { show: showLabels },
 				data,
 			},
 		],
@@ -414,7 +570,11 @@ export function buildTreemap(ctx: ChartContext) {
 				breadcrumb: { show: nested },
 				label: { show: true, formatter: "{b}", color: "#fff" },
 				upperLabel: nested ? { show: true, height: 20 } : undefined,
-				itemStyle: { borderColor: colors.surface, borderWidth: 2, gapWidth: 2 },
+				itemStyle: {
+					borderColor: colors.surface,
+					borderWidth: 2,
+					gapWidth: 2,
+				},
 				data,
 			},
 		],
@@ -449,7 +609,9 @@ export function buildFunnel(ctx: ChartContext) {
 				data: rows.map((r, i) => ({
 					name: String(r[dimensions[0]] ?? ""),
 					value: toNumber(r[measures[0]]) ?? 0,
-					itemStyle: { color: colors.series[i % colors.series.length] },
+					itemStyle: {
+						color: colors.series[i % colors.series.length],
+					},
 				})),
 			},
 		],
@@ -466,7 +628,10 @@ export function buildGauge(ctx: ChartContext) {
 	// A second measure is read as the target, which is the only thing that
 	// makes a gauge more informative than a number.
 	const target = measures[1] ? toNumber(row[measures[1]]) : null;
-	const max = target && target > 0 ? Math.max(target * 1.25, value * 1.1) : value * 1.5 || 100;
+	const max =
+		target && target > 0
+			? Math.max(target * 1.25, value * 1.1)
+			: value * 1.5 || 100;
 
 	return {
 		animation: false,
@@ -477,7 +642,9 @@ export function buildGauge(ctx: ChartContext) {
 				min: 0,
 				max,
 				progress: { show: true, width: 14 },
-				axisLine: { lineStyle: { width: 14, color: [[1, colors.grid]] } },
+				axisLine: {
+					lineStyle: { width: 14, color: [[1, colors.grid]] },
+				},
 				itemStyle: { color: seriesColor(ctx, measures[0], 0) },
 				pointer: { show: false },
 				axisTick: { show: false },
@@ -499,7 +666,9 @@ export function buildGauge(ctx: ChartContext) {
 				data: [
 					{
 						value,
-						name: target ? `of ${formatCompact(target, hint)}` : measures[0],
+						name: target
+							? `of ${formatCompact(target, hint)}`
+							: measures[0],
 					},
 				],
 			},
@@ -545,7 +714,10 @@ export function buildWaterfall(ctx: ChartContext) {
 			...tooltip(ctx),
 			formatter: (params: unknown) => {
 				const list = Array.isArray(params) ? params : [params];
-				const first = list[0] as { dataIndex: number; axisValue: string };
+				const first = list[0] as {
+					dataIndex: number;
+					axisValue: string;
+				};
 				const value = values[first.dataIndex];
 				const cumulative = values
 					.slice(0, first.dataIndex + 1)
@@ -571,14 +743,20 @@ export function buildWaterfall(ctx: ChartContext) {
 				name: "Increase",
 				type: "bar",
 				stack: "wf",
-				itemStyle: { color: colors.positive, borderRadius: [2, 2, 0, 0] },
+				itemStyle: {
+					color: colors.positive,
+					borderRadius: [2, 2, 0, 0],
+				},
 				data: rising,
 			},
 			{
 				name: "Decrease",
 				type: "bar",
 				stack: "wf",
-				itemStyle: { color: colors.negative, borderRadius: [2, 2, 0, 0] },
+				itemStyle: {
+					color: colors.negative,
+					borderRadius: [2, 2, 0, 0],
+				},
 				data: falling,
 			},
 		],

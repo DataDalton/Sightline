@@ -41,6 +41,9 @@ interface DataGridProps {
 	baseFilters?: unknown[];
 	fields: Map<string, FieldMeta>;
 	pageSize?: number;
+	// How tall a row is. An author's judgement about the data rather than a
+	// reader preference, so it travels with the visual.
+	density?: GridDensity;
 	// A number, or "100%" when an enclosing layout has already decided.
 	height?: number | string;
 	reportId?: string | null;
@@ -70,7 +73,13 @@ interface QueryFilterShape {
 	values?: string[];
 }
 
-const rowHeight = 34;
+// Row heights the author can pick between.
+//
+// Not a reader preference and not resolution dependent: it is a judgement about
+// the data. A row of short codes reads fine at the tighter height and fits half
+// again as many on a screen, and a row of long names does not.
+const rowHeights = { comfortable: 34, compact: 26 } as const;
+export type GridDensity = keyof typeof rowHeights;
 const minColumnWidth = 130;
 const maxColumnWidth = 260;
 
@@ -103,6 +112,7 @@ export function DataGrid({
 	baseFilters = [],
 	fields,
 	pageSize = 200,
+	density = "comfortable",
 	height = 520,
 	reportId,
 	pageId,
@@ -306,7 +316,7 @@ export function DataGrid({
 	const virtualizer = useVirtualizer({
 		count: rows.length,
 		getScrollElement: () => scrollerRef.current,
-		estimateSize: () => rowHeight,
+		estimateSize: () => rowHeights[density],
 		overscan: 12,
 	});
 
@@ -433,7 +443,8 @@ export function DataGrid({
 	const skeletonRows = Math.max(
 		3,
 		Math.ceil(
-			((typeof height === "number" ? height : 420) - 44) / rowHeight,
+			((typeof height === "number" ? height : 420) - 44) /
+				rowHeights[density],
 		),
 	);
 

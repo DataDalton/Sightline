@@ -37,7 +37,6 @@ export function PageSettings({
 	onPageTitleChange,
 	onDescriptionChange,
 }: PageSettingsProps) {
-
 	// Date-like fields first, since a freshness stamp is almost always a date,
 	// but every dimension stays available: some sources carry the load stamp
 	// as a string.
@@ -50,14 +49,17 @@ export function PageSettings({
 	const otherFields = dimensions.filter((f) => !dateFields.includes(f));
 
 	const freshness = config.freshness ?? {};
-	const setFreshness = (next: { field?: string | null; label?: string | null }) =>
-		onChange({ ...config, freshness: { ...freshness, ...next } });
+	const setFreshness = (next: {
+		field?: string | null;
+		label?: string | null;
+	}) => onChange({ ...config, freshness: { ...freshness, ...next } });
 
 	return (
 		<div className={styles.settingsPanel}>
 			<div className={styles.settingsTitle}>Page settings</div>
 			<p className={styles.settingsIntro}>
-				These apply to the whole page. Select a visual to edit that instead.
+				These apply to the whole page. Select a visual to edit that
+				instead.
 			</p>
 
 			<label className={styles.settingsField}>
@@ -83,13 +85,15 @@ export function PageSettings({
 					onChange={(e) => onDescriptionChange(e.target.value)}
 				/>
 				<span className={styles.settingsHint}>
-					The line under the report title. It belongs to the report, so it
-					shows on every page.
+					The line under the report title. It belongs to the report,
+					so it shows on every page.
 				</span>
 			</label>
 
 			<label className={styles.settingsField}>
-				<span className={styles.settingsLabel}>Data through column</span>
+				<span className={styles.settingsLabel}>
+					Data through column
+				</span>
 				<select
 					className={styles.settingsInput}
 					value={freshness.field ?? ""}
@@ -122,8 +126,8 @@ export function PageSettings({
 					)}
 				</select>
 				<span className={styles.settingsHint}>
-					The stamp shows the largest value this column takes, ignoring the
-					page filters.
+					The stamp shows the largest value this column takes,
+					ignoring the page filters.
 				</span>
 			</label>
 
@@ -134,10 +138,53 @@ export function PageSettings({
 					className={styles.settingsInput}
 					placeholder="Data through"
 					value={freshness.label ?? ""}
-					onChange={(e) => setFreshness({ label: e.target.value || null })}
+					onChange={(e) =>
+						setFreshness({ label: e.target.value || null })
+					}
 				/>
 			</label>
 
+			<label className={styles.settingsField}>
+				<span className={styles.settingsLabel}>
+					<input
+						type="checkbox"
+						checked={config.stickyFilters === true}
+						onChange={(e) =>
+							onChange({
+								...config,
+								stickyFilters: e.target.checked,
+							})
+						}
+					/>{" "}
+					Keep the filters in view
+				</span>
+				<span className={styles.settingsHint}>
+					For a page long enough that the controls scroll away. On a
+					short page it costs height and buys nothing.
+				</span>
+			</label>
+
+			<label className={styles.settingsField}>
+				<span className={styles.settingsLabel}>
+					When there is nothing to show
+				</span>
+				<input
+					type="text"
+					className={styles.settingsInput}
+					placeholder="This page has no visuals configured yet."
+					value={(config.emptyText as string) ?? ""}
+					onChange={(e) =>
+						onChange({
+							...config,
+							emptyText: e.target.value || undefined,
+						})
+					}
+				/>
+				<span className={styles.settingsHint}>
+					The default is written for whoever is building the page,
+					which is the wrong audience once it is published.
+				</span>
+			</label>
 		</div>
 	);
 }

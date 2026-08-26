@@ -179,3 +179,69 @@ test("one drill field is not a hierarchy, so the encoding stands", () => {
 	);
 	assert.deepEqual(warmed?.dimensions, ["orderDate"]);
 });
+
+test("a top N ranks by its measure and asks for only that many", () => {
+	const q = queryForVisual("barChart", {
+		sourceKey: "orders",
+		dimensions: ["region"],
+		measures: ["revenue", "units"],
+		options: { topN: 10 },
+	});
+	assert.deepEqual(q?.sort, [{ field: "revenue", direction: "desc" }]);
+	assert.equal(q?.limit, 10);
+});
+
+test("a top N can rank by a measure that is not the first", () => {
+	const q = queryForVisual("barChart", {
+		sourceKey: "orders",
+		dimensions: ["region"],
+		measures: ["revenue", "units"],
+		options: { topN: 5, topBy: "units" },
+	});
+	assert.deepEqual(q?.sort, [{ field: "units", direction: "desc" }]);
+});
+
+test("a top N ranked by a measure the visual does not read is ignored", () => {
+	// The author renamed or removed the measure and left the setting behind.
+	// Ranking by a field that is not in the query would fail at the warehouse.
+	const q = queryForVisual("barChart", {
+		sourceKey: "orders",
+		dimensions: ["region"],
+		measures: ["revenue"],
+		options: { topN: 10, topBy: "retired" },
+	});
+	assert.deepEqual(q?.sort, [{ field: "region", direction: "asc" }]);
+	assert.equal(q?.limit, chartRows);
+});
+
+test("a top N with nothing to group by is ignored", () => {
+	// A top ten of one row is ten of nothing.
+	const q = queryForVisual("kpiRow", {
+		sourceKey: "orders",
+		dimensions: [],
+		measures: ["revenue"],
+		options: { topN: 10 },
+	});
+	assert.equal(q?.limit, 1);
+});
+
+test("the warmed top N is the one the page asks for", () => {
+	const config = {
+		dimensions: ["region"],
+		measures: ["revenue"],
+		options: { topN: 10 },
+	};
+	const warmed = initialQueryForVisual(
+		{ visualType: "barChart", config },
+		"orders",
+		source,
+	);
+	const asked = queryForVisual("barChart", {
+		sourceKey: "orders",
+		dimensions: ["region"],
+		measures: ["revenue"],
+		options: config.options,
+	});
+	assert.ok(warmed && asked);
+	assert.equal(keyFor(warmed), keyFor(asked));
+});

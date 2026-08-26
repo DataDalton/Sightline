@@ -26,6 +26,65 @@ export interface EncodingRequirement {
 	measures: { min: number; max: number; label?: string };
 }
 
+// A setting that belongs to one kind of visual rather than to all of them.
+//
+// Declared here rather than written into the properties panel, for the same
+// reason the query shape is declared in lib/query/visualSpec: a control the
+// editor draws and a value the renderer reads are two halves of one thing, and
+// when they are written in two places they drift. Several already had: the
+// pivot column of a cross-tab, whether a dropdown takes more than one value,
+// which way a threshold cuts. All of them worked, and none could be reached
+// without hand-writing an import manifest.
+//
+// The default lives here too, so the control and the renderer cannot disagree
+// about what happens when nobody has chosen.
+export type VisualOption =
+	| {
+			key: string;
+			label: string;
+			kind: "select";
+			choices: { value: string; label: string }[];
+			fallback: string;
+			help?: string;
+	  }
+	| {
+			key: string;
+			label: string;
+			kind: "toggle";
+			fallback: boolean;
+			help?: string;
+	  }
+	| {
+			key: string;
+			label: string;
+			kind: "number";
+			fallback?: number;
+			min?: number;
+			max?: number;
+			step?: number;
+			help?: string;
+	  }
+	| {
+			key: string;
+			label: string;
+			kind: "text";
+			fallback?: string;
+			placeholder?: string;
+			help?: string;
+	  }
+	// Bands of measures, each with a label. Repeatable, so none of the scalar
+	// kinds above can express it.
+	| { key: string; label: string; kind: "measureGroups"; help?: string }
+	// A field chosen from the source the visual reads. "none" is always
+	// offered, because every field option here is one an author may not want.
+	| {
+			key: string;
+			label: string;
+			kind: "field";
+			scope: "dimension" | "measure";
+			help?: string;
+	  };
+
 export interface VisualTypeDefinition {
 	type: string;
 	label: string;
@@ -52,8 +111,32 @@ export interface VisualTypeDefinition {
 		legend?: boolean;
 		tooltip?: boolean;
 	};
+	// Settings particular to this type, offered in the properties panel in the
+	// order they are declared.
+	options?: VisualOption[];
 	// Default layout footprint on the page grid, in a 12 column space.
 	defaultLayout: { w: number; h: number };
+}
+
+// What an option is set to, or what it falls back to when nobody has chosen.
+//
+// The renderer reads through this rather than reaching into config.options
+// directly, so a default changed in the catalogue changes what renders as well
+// as what the editor shows.
+export function optionValue<T = unknown>(
+	visualType: string,
+	config: { options?: Record<string, unknown> } | undefined,
+	key: string,
+): T | undefined {
+	const declared = visualByType[visualType]?.options?.find(
+		(o) => o.key === key,
+	);
+	const set = config?.options?.[key];
+	if (set !== undefined && set !== null && set !== "") return set as T;
+	if (!declared) return undefined;
+	return ("fallback" in declared ? declared.fallback : undefined) as
+		| T
+		| undefined;
 }
 
 export const visualCatalog: VisualTypeDefinition[] = [
@@ -64,8 +147,22 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		category: "summary",
 		guidance:
 			"Headline figures with no breakdown. Use for the handful of numbers a reader should see first.",
-		encoding: { dimensions: { min: 0, max: 0 }, measures: { min: 1, max: 8 } },
+		// Room for several bands. One row of tiles is four or so before they
+		// stop being readable, and the point of grouping them is to have more
+		// than one row.
+		encoding: {
+			dimensions: { min: 0, max: 0 },
+			measures: { min: 1, max: 24 },
+		},
 		supports: { color: true, conditionalFormat: true },
+		options: [
+			{
+				key: "groups",
+				label: "Bands",
+				kind: "measureGroups",
+				help: "Splits the tiles into labelled rows. Each band takes the next few measures in order, and anything left over becomes a final unlabelled row.",
+			},
+		],
 		defaultLayout: { w: 12, h: 2 },
 	},
 	{
@@ -74,7 +171,10 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		category: "summary",
 		guidance:
 			"A single value against a target. Only worth it when the target is meaningful; otherwise a KPI tile says the same thing in less space.",
-		encoding: { dimensions: { min: 0, max: 0 }, measures: { min: 1, max: 2 } },
+		encoding: {
+			dimensions: { min: 0, max: 0 },
+			measures: { min: 1, max: 2 },
+		},
 		supports: { color: true, tooltip: true },
 		defaultLayout: { w: 3, h: 4 },
 	},
@@ -87,13 +187,58 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		guidance:
 			"Compare a measure across categories. The default choice for ranking.",
 		encoding: {
-			dimensions: { min: 1, max: 2, label: "Category, then optional series" },
+			dimensions: {
+				min: 1,
+				max: 2,
+				label: "Category, then optional series",
+			},
 			measures: { min: 1, max: 6 },
 		},
 		supports: {
-			color: true, fill: true, stacking: true, secondAxis: true,
-			axes: true, legend: true, tooltip: true,
+			color: true,
+			fill: true,
+			stacking: true,
+			secondAxis: true,
+			axes: true,
+			legend: true,
+			tooltip: true,
 		},
+		options: [
+			{
+				key: "topN",
+				label: "Keep only the top",
+				kind: "number",
+				min: 1,
+				max: 500,
+				help: "Ranks by the measure below and asks the warehouse for that many rows. Left empty it asks for everything and draws it, which for a few thousand categories is a chart nobody can read and a query nobody needed.",
+			},
+			{
+				key: "topBy",
+				label: "Ranked by",
+				kind: "field",
+				scope: "measure",
+				help: "Defaults to the first measure.",
+			},
+			{
+				key: "sortBy",
+				label: "Order bars by",
+				kind: "select",
+				choices: [
+					{ value: "category", label: "Category" },
+					{ value: "valueDesc", label: "Value, largest first" },
+					{ value: "valueAsc", label: "Value, smallest first" },
+				],
+				fallback: "category",
+				help: "Sorted on the marks rather than in the query, so a grid reading the same fields still shares the cached answer.",
+			},
+			{
+				key: "valueLabels",
+				label: "Print values on bars",
+				kind: "toggle",
+				fallback: false,
+				help: "Worth it for a handful of bars a reader will quote. Past that the axis says it more quietly.",
+			},
+		],
 		defaultLayout: { w: 6, h: 5 },
 	},
 	{
@@ -107,9 +252,47 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			measures: { min: 1, max: 6 },
 		},
 		supports: {
-			color: true, fill: true, stacking: true, axes: true,
-			legend: true, tooltip: true,
+			color: true,
+			fill: true,
+			stacking: true,
+			axes: true,
+			legend: true,
+			tooltip: true,
 		},
+		options: [
+			{
+				key: "topN",
+				label: "Keep only the top",
+				kind: "number",
+				min: 1,
+				max: 500,
+				help: "Ranks by the measure below and asks the warehouse for that many rows. Left empty it asks for everything and draws it, which for a few thousand categories is a chart nobody can read and a query nobody needed.",
+			},
+			{
+				key: "topBy",
+				label: "Ranked by",
+				kind: "field",
+				scope: "measure",
+				help: "Defaults to the first measure.",
+			},
+			{
+				key: "sortBy",
+				label: "Order bars by",
+				kind: "select",
+				choices: [
+					{ value: "category", label: "Category" },
+					{ value: "valueDesc", label: "Value, largest first" },
+					{ value: "valueAsc", label: "Value, smallest first" },
+				],
+				fallback: "category",
+			},
+			{
+				key: "valueLabels",
+				label: "Print values on bars",
+				kind: "toggle",
+				fallback: false,
+			},
+		],
 		defaultLayout: { w: 6, h: 5 },
 	},
 	{
@@ -123,8 +306,12 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			measures: { min: 2, max: 6 },
 		},
 		supports: {
-			color: true, fill: true, secondAxis: true, axes: true,
-			legend: true, tooltip: true,
+			color: true,
+			fill: true,
+			secondAxis: true,
+			axes: true,
+			legend: true,
+			tooltip: true,
 		},
 		defaultLayout: { w: 6, h: 5 },
 	},
@@ -141,9 +328,26 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			measures: { min: 1, max: 6 },
 		},
 		supports: {
-			color: true, fill: true, secondAxis: true, axes: true,
-			legend: true, tooltip: true,
+			color: true,
+			fill: true,
+			secondAxis: true,
+			axes: true,
+			legend: true,
+			tooltip: true,
 		},
+		options: [
+			{
+				key: "nulls",
+				label: "Where data is missing",
+				kind: "select",
+				choices: [
+					{ value: "gap", label: "Leave a gap" },
+					{ value: "connect", label: "Join across it" },
+				],
+				fallback: "gap",
+				help: "Joining across a gap draws a line through data nobody has, which reads as a trend that was never measured.",
+			},
+		],
 		defaultLayout: { w: 6, h: 5 },
 	},
 	{
@@ -157,9 +361,25 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			measures: { min: 1, max: 6 },
 		},
 		supports: {
-			color: true, fill: true, stacking: true, axes: true,
-			legend: true, tooltip: true,
+			color: true,
+			fill: true,
+			stacking: true,
+			axes: true,
+			legend: true,
+			tooltip: true,
 		},
+		options: [
+			{
+				key: "nulls",
+				label: "Where data is missing",
+				kind: "select",
+				choices: [
+					{ value: "gap", label: "Leave a gap" },
+					{ value: "connect", label: "Join across it" },
+				],
+				fallback: "gap",
+			},
+		],
 		defaultLayout: { w: 6, h: 5 },
 	},
 	{
@@ -188,6 +408,44 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			measures: { min: 1, max: 1 },
 		},
 		supports: { color: true, legend: true, tooltip: true },
+		options: [
+			{
+				key: "topN",
+				label: "Keep only the top",
+				kind: "number",
+				min: 1,
+				max: 500,
+				help: "Ranks by the measure below and asks the warehouse for that many rows. Left empty it asks for everything and draws it, which for a few thousand categories is a chart nobody can read and a query nobody needed.",
+			},
+			{
+				key: "topBy",
+				label: "Ranked by",
+				kind: "field",
+				scope: "measure",
+				help: "Defaults to the first measure.",
+			},
+			{
+				key: "sliceLabels",
+				label: "Slice labels",
+				kind: "select",
+				choices: [
+					{ value: "percent", label: "Percentage" },
+					{ value: "value", label: "Value" },
+					{ value: "both", label: "Value and percentage" },
+					{ value: "none", label: "None" },
+				],
+				fallback: "percent",
+				help: "A pie is read as a share, so the share is the default. Labels are dropped past a dozen slices whatever this says, because they stop fitting.",
+			},
+			{
+				key: "topN",
+				label: "Group the tail",
+				kind: "number",
+				min: 2,
+				max: 50,
+				help: "Keeps the largest slices and gathers the rest into one named Other. Left empty every value gets a slice, which past a dozen is a colour key with a circle attached.",
+			},
+		],
 		defaultLayout: { w: 4, h: 5 },
 	},
 	{
@@ -201,6 +459,43 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			measures: { min: 1, max: 1 },
 		},
 		supports: { color: true, legend: true, tooltip: true },
+		options: [
+			{
+				key: "topN",
+				label: "Keep only the top",
+				kind: "number",
+				min: 1,
+				max: 500,
+				help: "Ranks by the measure below and asks the warehouse for that many rows. Left empty it asks for everything and draws it, which for a few thousand categories is a chart nobody can read and a query nobody needed.",
+			},
+			{
+				key: "topBy",
+				label: "Ranked by",
+				kind: "field",
+				scope: "measure",
+				help: "Defaults to the first measure.",
+			},
+			{
+				key: "sliceLabels",
+				label: "Slice labels",
+				kind: "select",
+				choices: [
+					{ value: "percent", label: "Percentage" },
+					{ value: "value", label: "Value" },
+					{ value: "both", label: "Value and percentage" },
+					{ value: "none", label: "None" },
+				],
+				fallback: "percent",
+			},
+			{
+				key: "topN",
+				label: "Group the tail",
+				kind: "number",
+				min: 2,
+				max: 50,
+				help: "Keeps the largest slices and gathers the rest into one named Other.",
+			},
+		],
 		defaultLayout: { w: 4, h: 5 },
 	},
 	{
@@ -214,6 +509,23 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			measures: { min: 1, max: 1 },
 		},
 		supports: { color: true, colorScale: true, tooltip: true },
+		options: [
+			{
+				key: "topN",
+				label: "Keep only the top",
+				kind: "number",
+				min: 1,
+				max: 500,
+				help: "Ranks by the measure below and asks the warehouse for that many rows. Left empty it asks for everything and draws it, which for a few thousand categories is a chart nobody can read and a query nobody needed.",
+			},
+			{
+				key: "topBy",
+				label: "Ranked by",
+				kind: "field",
+				scope: "measure",
+				help: "Defaults to the first measure.",
+			},
+		],
 		defaultLayout: { w: 6, h: 5 },
 	},
 	{
@@ -227,6 +539,23 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			measures: { min: 1, max: 1 },
 		},
 		supports: { color: true, legend: true, tooltip: true },
+		options: [
+			{
+				key: "topN",
+				label: "Keep only the top",
+				kind: "number",
+				min: 1,
+				max: 500,
+				help: "Ranks by the measure below and asks the warehouse for that many rows. Left empty it asks for everything and draws it, which for a few thousand categories is a chart nobody can read and a query nobody needed.",
+			},
+			{
+				key: "topBy",
+				label: "Ranked by",
+				kind: "field",
+				scope: "measure",
+				help: "Defaults to the first measure.",
+			},
+		],
 		defaultLayout: { w: 4, h: 5 },
 	},
 	{
@@ -300,9 +629,24 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			measures: { min: 0, max: 60 },
 		},
 		supports: {
-			conditionalFormat: true, colorScale: true, tooltip: true,
+			conditionalFormat: true,
+			colorScale: true,
+			tooltip: true,
 			fillHeight: true,
 		},
+		options: [
+			{
+				key: "density",
+				label: "Row height",
+				kind: "select",
+				choices: [
+					{ value: "comfortable", label: "Comfortable" },
+					{ value: "compact", label: "Compact" },
+				],
+				fallback: "comfortable",
+				help: "Compact fits about a third more rows on a screen. Worth it for short codes and dates, not for long names.",
+			},
+		],
 		defaultLayout: { w: 12, h: 6 },
 	},
 	{
@@ -320,9 +664,20 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			measures: { min: 1, max: 8 },
 		},
 		supports: {
-			conditionalFormat: true, colorScale: true, tooltip: true,
+			conditionalFormat: true,
+			colorScale: true,
+			tooltip: true,
 			fillHeight: true,
 		},
+		options: [
+			{
+				key: "columnDimension",
+				label: "Pivot across",
+				kind: "field",
+				scope: "dimension",
+				help: "Turns the row hierarchy into a cross-tab: this field becomes the columns and the measures are spread across them.",
+			},
+		],
 		defaultLayout: { w: 12, h: 6 },
 	},
 	{
@@ -352,6 +707,15 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			measures: { min: 0, max: 0 },
 		},
 		supports: {},
+		options: [
+			{
+				key: "group",
+				label: "Show inside",
+				kind: "text",
+				placeholder: "Filters",
+				help: "Names a panel this control lives in, behind a button in the strip. Controls sharing a name share a panel. Left empty it sits in the strip itself.",
+			},
+		],
 		defaultLayout: { w: 4, h: 1 },
 	},
 	{
@@ -365,6 +729,15 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			measures: { min: 0, max: 0 },
 		},
 		supports: {},
+		options: [
+			{
+				key: "group",
+				label: "Show inside",
+				kind: "text",
+				placeholder: "Filters",
+				help: "Names a panel this control lives in, behind a button in the strip. Controls sharing a name share a panel. Left empty it sits in the strip itself.",
+			},
+		],
 		defaultLayout: { w: 4, h: 1 },
 	},
 	{
@@ -378,6 +751,15 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			measures: { min: 0, max: 0 },
 		},
 		supports: {},
+		options: [
+			{
+				key: "group",
+				label: "Show inside",
+				kind: "text",
+				placeholder: "Filters",
+				help: "Names a panel this control lives in, behind a button in the strip. Controls sharing a name share a panel. Left empty it sits in the strip itself.",
+			},
+		],
 		defaultLayout: { w: 12, h: 1 },
 	},
 	{
@@ -385,12 +767,37 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		label: "Threshold",
 		category: "filter",
 		guidance:
-			"Keeps rows where a measure clears a cutoff the reader sets. For \"orders above\" and \"anything under\" questions.",
+			'Keeps rows where a measure clears a cutoff the reader sets. For "orders above" and "anything under" questions.',
 		encoding: {
 			dimensions: { min: 0, max: 1 },
 			measures: { min: 1, max: 1, label: "Measure to test" },
 		},
 		supports: {},
+		options: [
+			{
+				key: "group",
+				label: "Show inside",
+				kind: "text",
+				placeholder: "Filters",
+				help: "Names a panel this control lives in, behind a button in the strip. Controls sharing a name share a panel. Left empty it sits in the strip itself.",
+			},
+			{
+				key: "direction",
+				label: "Keeps rows",
+				kind: "select",
+				choices: [
+					{ value: "above", label: "Above the cutoff" },
+					{ value: "below", label: "Below the cutoff" },
+				],
+				fallback: "above",
+			},
+			{
+				key: "defaultValue",
+				label: "Starting cutoff",
+				kind: "number",
+				help: "Where the control sits when the page opens. Left empty it starts unset and filters nothing.",
+			},
+		],
 		defaultLayout: { w: 3, h: 1 },
 	},
 	{
@@ -404,6 +811,51 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			measures: { min: 0, max: 0 },
 		},
 		supports: {},
+		options: [
+			{
+				key: "match",
+				label: "Chosen values are",
+				kind: "select",
+				choices: [
+					{ value: "include", label: "Kept" },
+					{ value: "exclude", label: "Dropped" },
+				],
+				fallback: "include",
+				help: 'Dropping is the shorter way to say "everything except these two" on a field with forty values, and it stays right as values are added: a new one is kept, where an include list would silently leave it out.',
+			},
+			{
+				key: "presentation",
+				label: "Shown as",
+				kind: "select",
+				choices: [
+					{ value: "dropdown", label: "Dropdown" },
+					{ value: "segmented", label: "Buttons" },
+				],
+				fallback: "dropdown",
+				help: "Buttons suit a field with a handful of values, where opening a list to see two options is more work than reading them.",
+			},
+			{
+				key: "group",
+				label: "Show inside",
+				kind: "text",
+				placeholder: "Filters",
+				help: "Names a panel this control lives in, behind a button in the strip. Controls sharing a name share a panel. Left empty it sits in the strip itself.",
+			},
+			{
+				key: "multiple",
+				label: "Allow several values",
+				kind: "toggle",
+				fallback: true,
+				help: "Off makes it a single choice, which suits a field where two values together mean nothing.",
+			},
+			{
+				key: "defaultValues",
+				label: "Selected on open",
+				kind: "text",
+				placeholder: "North, South",
+				help: "Comma separated. A page that opens already narrowed asks the warehouse for less.",
+			},
+		],
 		defaultLayout: { w: 3, h: 1 },
 	},
 	{
@@ -417,6 +869,21 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			measures: { min: 0, max: 0 },
 		},
 		supports: {},
+		options: [
+			{
+				key: "group",
+				label: "Show inside",
+				kind: "text",
+				placeholder: "Filters",
+				help: "Names a panel this control lives in, behind a button in the strip. Controls sharing a name share a panel. Left empty it sits in the strip itself.",
+			},
+			{
+				key: "placeholder",
+				label: "Placeholder",
+				kind: "text",
+				placeholder: "Search orders",
+			},
+		],
 		defaultLayout: { w: 4, h: 1 },
 	},
 	{
@@ -430,35 +897,160 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			measures: { min: 0, max: 0 },
 		},
 		supports: {},
+		options: [
+			{
+				key: "group",
+				label: "Show inside",
+				kind: "text",
+				placeholder: "Filters",
+				help: "Names a panel this control lives in, behind a button in the strip. Controls sharing a name share a panel. Left empty it sits in the strip itself.",
+			},
+		],
 		defaultLayout: { w: 3, h: 2 },
 	},
 	{
 		type: "dateRangeFilter",
 		label: "Date range",
 		category: "filter",
-		guidance:
-			"Restrict to a period, with the usual relative presets.",
+		guidance: "Restrict to a period, with the usual relative presets.",
 		encoding: {
 			dimensions: { min: 1, max: 1, label: "Date field" },
 			measures: { min: 0, max: 0 },
 		},
 		supports: {},
+		options: [
+			{
+				key: "group",
+				label: "Show inside",
+				kind: "text",
+				placeholder: "Filters",
+				help: "Names a panel this control lives in, behind a button in the strip. Controls sharing a name share a panel. Left empty it sits in the strip itself.",
+			},
+			{
+				key: "rangeMode",
+				label: "Presentation",
+				kind: "select",
+				choices: [
+					{ value: "combined", label: "Presets and calendar" },
+					{ value: "presets", label: "Presets only" },
+					{ value: "calendar", label: "Calendar only" },
+					{ value: "slider", label: "Timeline slider" },
+				],
+				fallback: "combined",
+				help: "The slider reads the real extent of the column, so it spans the dates that exist rather than an assumed range.",
+			},
+			{
+				key: "defaultPreset",
+				label: "Applied on open",
+				kind: "select",
+				choices: [
+					{ value: "", label: "Everything" },
+					{ value: "7d", label: "Last 7 days" },
+					{ value: "30d", label: "Last 30 days" },
+					{ value: "90d", label: "Last 90 days" },
+					{ value: "12m", label: "Last 12 months" },
+					{ value: "MTD", label: "Month to date" },
+					{ value: "QTD", label: "Quarter to date" },
+					{ value: "YTD", label: "Year to date" },
+				],
+				fallback: "",
+				help: "A page that opens on everything runs its widest query every time somebody arrives. A default is usually both faster and closer to what the reader wanted.",
+			},
+		],
 		defaultLayout: { w: 4, h: 1 },
 	},
 	{
 		type: "numericRangeFilter",
 		label: "Numeric range",
 		category: "filter",
-		guidance:
-			"Restrict a measure or numeric dimension to a band.",
+		guidance: "Restrict a measure or numeric dimension to a band.",
 		encoding: {
 			dimensions: { min: 1, max: 1 },
 			measures: { min: 0, max: 1 },
 		},
 		supports: {},
+		options: [
+			{
+				key: "group",
+				label: "Show inside",
+				kind: "text",
+				placeholder: "Filters",
+				help: "Names a panel this control lives in, behind a button in the strip. Controls sharing a name share a panel. Left empty it sits in the strip itself.",
+			},
+			{
+				key: "rangeMode",
+				label: "Presentation",
+				kind: "select",
+				choices: [
+					{ value: "combined", label: "Slider and boxes" },
+					{ value: "slider", label: "Slider only" },
+					{ value: "inputs", label: "Boxes only" },
+				],
+				fallback: "combined",
+			},
+		],
 		defaultLayout: { w: 3, h: 1 },
 	},
 
+	{
+		type: "toggleFilter",
+		label: "Flag toggle",
+		category: "filter",
+		guidance:
+			"One condition, on or off. For a field a reader thinks of as yes or no: open orders, active contracts, anything flagged.",
+		encoding: {
+			dimensions: { min: 1, max: 1, label: "Field to test" },
+			measures: { min: 0, max: 0 },
+		},
+		supports: {},
+		options: [
+			{
+				key: "onValue",
+				label: "Value that means yes",
+				kind: "text",
+				fallback: "true",
+				placeholder: "true",
+				help: "A flag is spelled differently in every warehouse: true, Y, 1, Active. This is the one that turns the filter on.",
+			},
+			{
+				key: "defaultOn",
+				label: "On when the page opens",
+				kind: "toggle",
+				fallback: false,
+				help: "A page whose whole subject is open orders should open on open orders, and ask the warehouse for less while it does.",
+			},
+			{
+				key: "group",
+				label: "Show inside",
+				kind: "text",
+				placeholder: "Filters",
+				help: "Names a panel this control lives in, behind a button in the strip. Controls sharing a name share a panel. Left empty it sits in the strip itself.",
+			},
+		],
+		defaultLayout: { w: 3, h: 1 },
+	},
+	{
+		type: "presenceFilter",
+		label: "Blank filter",
+		category: "filter",
+		guidance:
+			"Whether a field has anything in it. For finding the rows nobody filled in, which a value list can never offer because a missing value is not one of the values.",
+		encoding: {
+			dimensions: { min: 1, max: 1, label: "Field to test" },
+			measures: { min: 0, max: 0 },
+		},
+		supports: {},
+		options: [
+			{
+				key: "group",
+				label: "Show inside",
+				kind: "text",
+				placeholder: "Filters",
+				help: "Names a panel this control lives in, behind a button in the strip. Controls sharing a name share a panel. Left empty it sits in the strip itself.",
+			},
+		],
+		defaultLayout: { w: 3, h: 1 },
+	},
 	{
 		type: "entityHeader",
 		label: "Entity header",
@@ -477,6 +1069,37 @@ export const visualCatalog: VisualTypeDefinition[] = [
 	},
 
 	// --- Text --------------------------------------------------------------
+	{
+		type: "sectionHeader",
+		label: "Section heading",
+		category: "text",
+		guidance:
+			"Breaks a long page into parts. A heading and a rule, with nothing behind it: use it where a reader would otherwise have to work out where one subject ends and the next begins.",
+		encoding: {
+			dimensions: { min: 0, max: 0 },
+			measures: { min: 0, max: 0 },
+		},
+		supports: {},
+		options: [
+			{
+				key: "level",
+				label: "Weight",
+				kind: "select",
+				choices: [
+					{ value: "major", label: "Major" },
+					{ value: "minor", label: "Minor" },
+				],
+				fallback: "major",
+			},
+			{
+				key: "rule",
+				label: "Draw a rule under it",
+				kind: "toggle",
+				fallback: true,
+			},
+		],
+		defaultLayout: { w: 12, h: 1 },
+	},
 	{
 		type: "textPanel",
 		label: "Text panel",
@@ -520,7 +1143,11 @@ export function isFilterVisual(type: string): boolean {
 // it will actually render, which is what happened when the two lists of
 // control types were maintained separately.
 export function isPageControl(type: string): boolean {
-	return isFilterVisual(type) || type === "dimensionSwitch" || type === "periodSwitch";
+	return (
+		isFilterVisual(type) ||
+		type === "dimensionSwitch" ||
+		type === "periodSwitch"
+	);
 }
 
 export const categoryLabels: Record<VisualCategory, string> = {

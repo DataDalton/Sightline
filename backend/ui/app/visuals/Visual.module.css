@@ -174,8 +174,12 @@
 }
 
 @keyframes shimmer {
-	0% { background-position: 200% 0; }
-	100% { background-position: -200% 0; }
+	0% {
+		background-position: 200% 0;
+	}
+	100% {
+		background-position: -200% 0;
+	}
 }
 
 .skeletonBar {
@@ -266,8 +270,6 @@
 	flex-shrink: 0;
 	margin-top: 1px;
 }
-
-
 
 /* Shown on a chart the reader drew a range across. Clicking it puts the full
    range back, so the way out is on the thing that changed rather than only in
@@ -363,4 +365,73 @@
 	background: var(--surface-sunken);
 	font-size: var(--text-sm);
 	color: var(--text-secondary);
+}
+
+/*
+ * A section heading, which is page structure rather than a visual.
+ *
+ * No card, no border and no padding of its own: it sits in the grid because
+ * that is how a page is laid out here, but it should read as a break in the
+ * page rather than as another panel on it.
+ */
+.sectionHeader {
+	display: flex;
+	align-items: baseline;
+	gap: var(--space-3);
+	width: 100%;
+	height: 100%;
+	font-size: var(--text-lg);
+	font-weight: 600;
+	color: var(--text-primary);
+	letter-spacing: -0.01em;
+}
+
+.sectionHeaderMinor {
+	font-size: var(--text-md);
+	font-weight: 600;
+	color: var(--text-secondary);
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+}
+
+.sectionHeaderRule {
+	border-bottom: 1px solid var(--border-subtle);
+	padding-bottom: var(--space-2);
+}
+
+/* The line after the heading, for the caveat that belongs to the section
+   rather than to any one visual in it. */
+.sectionHeaderNote {
+	font-size: var(--text-sm);
+	font-weight: 400;
+	color: var(--text-secondary);
+}
+
+/* Several bands of scorecards in one visual.
+ *
+ * The spacing between bands is wider than the spacing between tiles, which is
+ * what makes them read as separate groups rather than as one row that happened
+ * to wrap. */
+.kpiBands {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-5);
+	width: 100%;
+}
+
+.kpiBand {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+
+/* Named here, where a reader can see it. These names existed before as the
+   titles of separate visuals, and a scorecard row renders without a frame, so
+   nobody outside the editor ever saw them. */
+.kpiBandLabel {
+	font-size: var(--text-sm);
+	font-weight: 600;
+	color: var(--text-secondary);
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
 }

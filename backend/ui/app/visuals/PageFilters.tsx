@@ -102,9 +102,23 @@ const PageFilterContext = createContext<PageState>({
 	hasAnything: false,
 });
 
-export function PageFilterProvider({ children }: { children: ReactNode }) {
-	const [byWidget, setByWidget] = useState<Record<string, FilterClause[]>>({});
-	const [crossFilter, setCrossFilterState] = useState<CrossFilter | null>(null);
+// opening is what the page's filter widgets are set to before anybody touches
+// them, derived in lib/visuals/pageDefaults. Seeded into state rather than
+// applied afterwards: an effect that narrows the page once it has rendered has
+// already let every visual issue its widest query and throw the answer away.
+export function PageFilterProvider({
+	opening,
+	children,
+}: {
+	opening?: Record<string, FilterClause[]>;
+	children: ReactNode;
+}) {
+	const [byWidget, setByWidget] = useState<Record<string, FilterClause[]>>(
+		() => opening ?? {},
+	);
+	const [crossFilter, setCrossFilterState] = useState<CrossFilter | null>(
+		null,
+	);
 	const [drillByVisual, setDrillByVisual] = useState<
 		Record<string, DrillStep[]>
 	>({});
@@ -209,7 +223,8 @@ export function PageFilterProvider({ children }: { children: ReactNode }) {
 			// of drawing it.
 			const cross =
 				crossFilter &&
-				(crossFilter.sourceVisualId !== visualId || crossFilter.zoomSource)
+				(crossFilter.sourceVisualId !== visualId ||
+					crossFilter.zoomSource)
 					? crossFilter.clauses
 					: [];
 
@@ -250,9 +265,21 @@ export function PageFilterProvider({ children }: { children: ReactNode }) {
 				Object.keys(drillByVisual).length > 0,
 		}),
 		[
-			setWidgetFilter, clearWidget, byWidget, crossFilter, setCrossFilter,
-			selectedDimension, selectedGrain, drillByVisual, drillDown, drillUp, clearAll,
-			activeClauses, clausesFor, clausesExcept, widgetClauses,
+			setWidgetFilter,
+			clearWidget,
+			byWidget,
+			crossFilter,
+			setCrossFilter,
+			selectedDimension,
+			selectedGrain,
+			drillByVisual,
+			drillDown,
+			drillUp,
+			clearAll,
+			activeClauses,
+			clausesFor,
+			clausesExcept,
+			widgetClauses,
 		],
 	);
 
