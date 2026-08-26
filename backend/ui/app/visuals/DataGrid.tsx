@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { maxExportRows } from "../../lib/query/exportLimits";
+import { createResultMemo, resultMaxAgeMs } from "./resultMemo";
+import { useExport } from "../hooks/useExport";
 import {
 	formatValue,
 	isNumericHint,
@@ -80,13 +83,7 @@ function columnWidth(name: string, hint: FormatHint): number {
 	return Math.min(Math.max(base, forKind, minColumnWidth), maxColumnWidth);
 }
 
-// The first page of each query, kept outside the component.
-//
-// Charts go through useVisualQuery, which is SWR, so leaving a report and
-// coming back re-renders them from cache. This grid owns its rows as component
-// state instead, because it also pages and reorders them, and state does not
-// survive unmount: navigating away and back threw away every row and asked
-// again, which is a full reload of the thing the reader just waited for.
+// The first page of each query, kept across mounts.
 //
 // Only the first page. Later pages are cheap to re-fetch and rarely still
 // wanted, and holding all of them would keep whole result sets alive for a
@@ -95,29 +92,9 @@ interface FirstPage {
 	rows: Record<string, unknown>[];
 	columns: string[];
 	hasMore: boolean;
-	at: number;
 }
 
-// Matches the lifetime the server gives a cached result, so a page held here
-// is never older than one it would hand back anyway. Without a bound, a tab
-// left open for a day would show yesterday numbers on every revisit.
-const firstPageMaxAgeMs = 5 * 60 * 1000;
-
-const firstPages = new Map<string, FirstPage>();
-
-// Bounded, and oldest first. A reader who opens forty reports should not be
-// holding forty result sets.
-const maxFirstPages = 40;
-
-function rememberFirstPage(key: string, page: FirstPage): void {
-	firstPages.delete(key);
-	firstPages.set(key, page);
-	while (firstPages.size > maxFirstPages) {
-		const oldest = firstPages.keys().next().value;
-		if (oldest === undefined) break;
-		firstPages.delete(oldest);
-	}
-}
+const firstPages = createResultMemo<FirstPage>(40, resultMaxAgeMs);
 
 export function DataGrid({
 	sourceKey,
@@ -157,7 +134,6 @@ export function DataGrid({
 	const [error, setError] = useState<(Error & { status?: number }) | null>(
 		null,
 	);
-	const [exporting, setExporting] = useState(false);
 	const [openFilter, setOpenFilter] = useState<{
 		field: string;
 		x: number;
@@ -281,11 +257,10 @@ export function DataGrid({
 				setHasMore(more);
 
 				if (replace) {
-					rememberFirstPage(queryKeyRef.current, {
+					firstPages.set(queryKeyRef.current, {
 						rows: data.rows ?? [],
 						columns: data.columns ?? [],
 						hasMore: more,
-						at: Date.now(),
 					});
 				}
 			} catch (e) {
@@ -312,7 +287,7 @@ export function DataGrid({
 		// with no request and no placeholder. The server caches the answer too,
 		// but a round trip is still a round trip.
 		const remembered = firstPages.get(queryKey);
-		if (remembered && Date.now() - remembered.at < firstPageMaxAgeMs) {
+		if (remembered) {
 			setRows(remembered.rows);
 			setColumns(remembered.columns);
 			setHasMore(remembered.hasMore);
@@ -717,53 +692,30 @@ export function DataGrid({
 		});
 	};
 
-	const runExport = async () => {
-		setExporting(true);
-		try {
-			const response = await fetch("/api/query/export", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					spec: {
-						sourceKey,
-						dimensions,
-						measures,
-						filters: activeFilters,
-						sort: sort
-							? [{ field: sort.field, direction: sort.direction }]
-							: [],
-						limit: 100000,
-					},
-					reportId,
-					pageId,
-					visualId,
-				}),
-			});
+	// Scoped to this grid, so two on one page do not watch each other's work
+	// and a reader who leaves and comes back is offered the file they asked for.
+	const exporter = useExport(`export:${visualId ?? sourceKey}`);
 
-			if (!response.ok) {
-				const detail = await response.json().catch(() => null);
-				throw new Error(detail?.error ?? "Export failed");
-			}
+	const runExport = () =>
+		void exporter.start({
+			spec: {
+				sourceKey,
+				dimensions,
+				measures,
+				filters: activeFilters,
+				sort: sort
+					? [{ field: sort.field, direction: sort.direction }]
+					: [],
+				limit: maxExportRows,
+			},
+			reportId,
+			pageId,
+			visualId,
+		});
 
-			const blob = await response.blob();
-			const disposition =
-				response.headers.get("Content-Disposition") ?? "";
-			const match = /filename="([^"]+)"/.exec(disposition);
-			const url = URL.createObjectURL(blob);
-			const link = document.createElement("a");
-			link.href = url;
-			link.download = match?.[1] ?? "export.csv";
-			link.style.display = "none";
-			document.body.appendChild(link);
-			link.click();
-			document.body.removeChild(link);
-			setTimeout(() => URL.revokeObjectURL(url), 0);
-		} catch (e) {
-			setError(e as Error & { status?: number });
-		} finally {
-			setExporting(false);
-		}
-	};
+	// An export that failed says so where it was asked for, rather than in the
+	// grid's own error slot, which would replace the rows the reader still has.
+	const exportError = exporter.error;
 
 	// Combines threshold rules and colour scales for one cell.
 	//
@@ -913,12 +865,27 @@ export function DataGrid({
 					{hasMore ? "+" : ""} rows
 				</span>
 
+				{/* A file that stopped at the ceiling is not the whole answer,
+				    and a reader who is not told will treat it as one. */}
+				{exporter.job?.truncated && !exporter.busy && (
+					<span
+						className={styles.exportNote}
+						title={`An export stops at ${maxExportRows.toLocaleString()} rows. Narrow the filters, or read the source directly for more.`}
+					>
+						first {maxExportRows.toLocaleString()} rows exported
+					</span>
+				)}
+
 				<button
 					type="button"
 					className={styles.toolButton}
 					onClick={runExport}
-					disabled={exporting || rows.length === 0}
-					title="Exports are recorded in the audit log"
+					disabled={exporter.busy || rows.length === 0}
+					title={
+						exportError
+							? exportError.message
+							: "Exports are recorded in the audit log. Large ones keep running if you leave the page."
+					}
 				>
 					<svg
 						width="13"
@@ -933,7 +900,13 @@ export function DataGrid({
 						<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
 						<path d="M7 10l5 5 5-5M12 15V3" />
 					</svg>
-					{exporting ? "Exporting" : "Export"}
+					{exporter.busy
+						? exporter.job && exporter.job.rowCount > 0
+							? `${exporter.job.rowCount.toLocaleString()} rows`
+							: "Exporting"
+						: exportError
+							? "Export failed"
+							: "Export"}
 				</button>
 			</div>
 

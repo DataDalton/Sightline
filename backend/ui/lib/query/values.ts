@@ -7,6 +7,7 @@ import { getSource } from "../semantic/registry";
 import { settings } from "../settings";
 import { QuerySpecError } from "./spec";
 import { QueryAccessError } from "./execute";
+import { isShareable } from "./cache";
 import type { QueryFilter } from "./spec";
 import { compileQuery } from "./builder";
 
@@ -63,9 +64,15 @@ function cacheKey(
 				q: request.search ?? "",
 				l: request.limit ?? defaultLimit,
 				// Filters change the result set, so they belong in the key.
-				fl: (request.filters ?? []).map((x) =>
-					[x.field, x.op, x.values?.join("") ?? x.value ?? ""].join(" "),
-				).sort(),
+				fl: (request.filters ?? [])
+					.map((x) =>
+						[
+							x.field,
+							x.op,
+							x.values?.join("") ?? x.value ?? "",
+						].join(" "),
+					)
+					.sort(),
 			}),
 		)
 		.digest("hex")
@@ -120,14 +127,21 @@ export async function getDistinctValues(
 		maxLimit,
 	);
 
+	// Which values exist is as filtered as the rows they came from, so this is
+	// held to the same rule the result cache is: a filtered source may only be
+	// shared within a policy class, and a policy class only means something once
+	// the walk has read every filter. Until then the list is computed for the
+	// caller and kept by nobody.
+	const shareable = isShareable(source);
+
 	const key = cacheKey(request, policy.id, source.hasRowFilter);
 	const now = Date.now();
-	const cached = cache.get(key);
+	const cached = shareable ? cache.get(key) : undefined;
 	if (cached && cached.expiresAt > now) {
 		return { ...cached.value, source: "cache" };
 	}
 
-	const existing = inflight.get(key);
+	const existing = shareable ? inflight.get(key) : undefined;
 	if (existing) return existing;
 
 	const pending = (async (): Promise<ValuesResult> => {
@@ -155,12 +169,15 @@ export async function getDistinctValues(
 			});
 
 			const rows = identity.userToken
-				? await queryAsUser(identity.userToken, compiled.sql, compiled.params)
+				? await queryAsUser(
+						identity.userToken,
+						compiled.sql,
+						compiled.params,
+					)
 				: !isDatabricksApp
-					? await (await import("../data/localSession")).queryLocally(
-							compiled.sql,
-							compiled.params,
-						)
+					? await (
+							await import("../data/localSession")
+						).queryLocally(compiled.sql, compiled.params)
 					: (() => {
 							throw new QueryAccessError(
 								"A user token is required to read column values.",
@@ -179,17 +196,21 @@ export async function getDistinctValues(
 				source: "warehouse",
 			};
 
-			cache.set(key, {
-				value: result,
-				expiresAt: now + settings().resultTtlSeconds * 1000,
-			});
-			evictIfNeeded();
+			if (shareable) {
+				// Dated from here rather than from the start of the request, so
+				// a slow warehouse does not shorten the life of its own answer.
+				cache.set(key, {
+					value: result,
+					expiresAt: Date.now() + settings().resultTtlSeconds * 1000,
+				});
+				evictIfNeeded();
+			}
 			return result;
 		} finally {
 			inflight.delete(key);
 		}
 	})();
 
-	inflight.set(key, pending);
+	if (shareable) inflight.set(key, pending);
 	return pending;
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { usePostResource } from "../hooks/usePostResource";
 import styles from "./DataGrid.module.css";
 
 // Per-column sort and value filter.
@@ -47,10 +48,6 @@ export function ColumnFilter({
 }: ColumnFilterProps) {
 	const [search, setSearch] = useState("");
 	const [debounced, setDebounced] = useState("");
-	const [values, setValues] = useState<string[]>([]);
-	const [truncated, setTruncated] = useState(false);
-	const [loading, setLoading] = useState(true);
-	const [error, setError] = useState<string | null>(null);
 	const [draft, setDraft] = useState<string[]>(selected);
 	const panelRef = useRef<HTMLDivElement | null>(null);
 	const inputRef = useRef<HTMLInputElement | null>(null);
@@ -65,7 +62,10 @@ export function ColumnFilter({
 	useEffect(() => {
 		inputRef.current?.focus();
 		const onClick = (e: MouseEvent) => {
-			if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+			if (
+				panelRef.current &&
+				!panelRef.current.contains(e.target as Node)
+			) {
 				onClose();
 			}
 		};
@@ -80,47 +80,23 @@ export function ColumnFilter({
 		};
 	}, [onClose]);
 
-	useEffect(() => {
-		let cancelled = false;
-		setLoading(true);
-		setError(null);
+	// The panel reopens on the same column constantly, and the answer does not
+	// change between one opening and the next. Held by the question rather than
+	// by this component, so reopening it costs nothing.
+	const { data, error, isLoading } = usePostResource<ValuesResponse>(
+		"/api/query/values",
+		{
+			sourceKey,
+			field,
+			search: debounced,
+			filters: otherFilters,
+			limit: 200,
+		},
+	);
 
-		fetch("/api/query/values", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				sourceKey,
-				field,
-				search: debounced,
-				filters: otherFilters,
-				limit: 200,
-			}),
-		})
-			.then(async (response) => {
-				if (!response.ok) {
-					const detail = await response.json().catch(() => null);
-					throw new Error(detail?.error ?? "Could not load values");
-				}
-				return response.json() as Promise<ValuesResponse>;
-			})
-			.then((data) => {
-				if (cancelled) return;
-				setValues(data.values);
-				setTruncated(data.truncated);
-				setLoading(false);
-			})
-			.catch((e) => {
-				if (cancelled) return;
-				setError(e instanceof Error ? e.message : "Could not load values");
-				setLoading(false);
-			});
-
-		return () => {
-			cancelled = true;
-		};
-		// otherFilters is serialized rather than referenced, so a new array
-		// with identical contents does not retrigger the fetch.
-	}, [sourceKey, field, debounced, JSON.stringify(otherFilters)]);
+	const values = useMemo(() => data?.values ?? [], [data]);
+	const truncated = data?.truncated ?? false;
+	const loading = isLoading;
 
 	// Selected values stay visible even when a search would exclude them, so a
 	// user can always see and undo what they picked.
@@ -139,7 +115,10 @@ export function ColumnFilter({
 	};
 
 	// Keep the panel on screen when the column is near the right edge.
-	const left = Math.min(anchor.x, (typeof window !== "undefined" ? window.innerWidth : 1200) - 296);
+	const left = Math.min(
+		anchor.x,
+		(typeof window !== "undefined" ? window.innerWidth : 1200) - 296,
+	);
 
 	return (
 		<div
@@ -155,7 +134,9 @@ export function ColumnFilter({
 					className={`${styles.sortButton} ${
 						sortDirection === "asc" ? styles.sortActive : ""
 					}`}
-					onClick={() => onSort(sortDirection === "asc" ? null : "asc")}
+					onClick={() =>
+						onSort(sortDirection === "asc" ? null : "asc")
+					}
 				>
 					↑ Asc
 				</button>
@@ -164,7 +145,9 @@ export function ColumnFilter({
 					className={`${styles.sortButton} ${
 						sortDirection === "desc" ? styles.sortActive : ""
 					}`}
-					onClick={() => onSort(sortDirection === "desc" ? null : "desc")}
+					onClick={() =>
+						onSort(sortDirection === "desc" ? null : "desc")
+					}
 				>
 					↓ Desc
 				</button>
@@ -187,7 +170,7 @@ export function ColumnFilter({
 					<div className={styles.sentinel}>Loading values</div>
 				) : error ? (
 					<div className={`${styles.sentinel} ${styles.stateError}`}>
-						{error}
+						{error.message}
 					</div>
 				) : listed.length === 0 ? (
 					<div className={styles.sentinel}>No matching values</div>
@@ -208,7 +191,12 @@ export function ColumnFilter({
 									}`}
 									aria-hidden="true"
 								>
-									<svg width="9" height="9" viewBox="0 0 16 16" fill="none">
+									<svg
+										width="9"
+										height="9"
+										viewBox="0 0 16 16"
+										fill="none"
+									>
 										<path
 											d="M3 8.5l3.5 3.5L13 5"
 											stroke="currentColor"
@@ -218,7 +206,9 @@ export function ColumnFilter({
 										/>
 									</svg>
 								</span>
-								<span className={styles.valueLabel}>{value}</span>
+								<span className={styles.valueLabel}>
+									{value}
+								</span>
 							</button>
 						);
 					})

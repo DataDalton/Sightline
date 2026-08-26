@@ -25,6 +25,21 @@ interface Entry {
 const entries = new Map<string, Entry>();
 const inflight = new Map<string, Promise<unknown>>();
 
+// An expired entry is never read, but it is still held: the map only ever grew,
+// one slot per report the installation has, each holding a full definition.
+// Swept on write rather than on a timer, so a module instance that stops being
+// asked stops doing work.
+const sweepIntervalMs = 60 * 1000;
+let sweptAt = 0;
+
+function sweep(now: number): void {
+	if (now - sweptAt < sweepIntervalMs) return;
+	sweptAt = now;
+	for (const [key, held] of entries) {
+		if (held.expiresAt <= now) entries.delete(key);
+	}
+}
+
 export async function cachedDefinition<T>(
 	key: string,
 	load: () => Promise<T>,
@@ -33,6 +48,8 @@ export async function cachedDefinition<T>(
 
 	const held = entries.get(key);
 	if (held && held.expiresAt > now) return held.value as T;
+
+	sweep(now);
 
 	// One load per key, however many requests arrive together. Without this a
 	// popular report opened by ten people at once is ten identical queries.

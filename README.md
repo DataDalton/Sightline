@@ -106,6 +106,22 @@ milliseconds and up to 110KB of YAML each, so the tables they resolve to are
 written down and reused. The filters on those tables are re-read every walk,
 because that is the part that has to stay current.
 
+### Taking data out
+
+Export runs behind the request rather than inside it. Asking for one records a
+job and returns; the work streams rows out of the warehouse in batches and
+writes them to Postgres as it goes, so nothing ever holds the whole file, the
+reader can leave the page, and the result can be collected from a replica that
+had nothing to do with producing it.
+
+One export is capped at 50,000 rows. That is a statement about what an export is
+for, which is a spreadsheet somebody works with. A file that reaches the ceiling
+says so rather than ending on a round number.
+
+Every export writes an audit row naming who took what before the query runs, so
+an attempt that fails is still on record. **Administration -> Security & access**
+lists them.
+
 ## Getting started
 
 ```bash
@@ -261,7 +277,7 @@ npm test
 
 Covers the query builder, the saved-view overlay, layout arithmetic,
 conditional formatting, brush selection geometry, version diffing, row filter
-group discovery, hostname parsing and the SVG sanitiser.
+group discovery, hostname parsing, CSV encoding and the SVG sanitiser.
 
 ## Repository layout
 

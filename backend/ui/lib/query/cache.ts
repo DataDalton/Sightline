@@ -70,14 +70,47 @@ export function buildCacheKey(
 
 // --- L1: per-replica memory ------------------------------------------------
 
+// Bounded by weight, not by count.
+//
+// A result is whatever the query returned, and those differ by four orders of
+// magnitude: a scorecard holds one row, a grid page holds a few hundred, an
+// unaggregated extract holds the query limit. Counting entries prices all of
+// them the same, so a ceiling set where a thousand small results fit is a
+// ceiling a hundred large ones blow through without ever reaching. Measured on
+// representative rows, a single 50000-row result holds about 79MB, so the old
+// two thousand entry cap stood at roughly 150GB and the container died long
+// before eviction ran once.
+//
+// Weight is measured from the JSON the L2 write already produces, so nothing is
+// serialized twice. Resident objects cost more than their serialized form, near
+// enough to double on the shapes measured, and the multiplier below carries
+// that so the budget can be stated in the memory it is actually protecting.
+const residentPerJsonByte = 2;
+
+// Evicting exactly enough to fit means the next insert evicts again, and each
+// eviction orders the whole map. Dropping to a low mark instead amortizes that
+// over the entries the headroom absorbs.
+const evictionLowMark = 0.8;
+
+// The largest share of the budget one entry may hold. Past this it is served
+// to the caller and not retained: a single result big enough to evict most of
+// the cache costs every other reader their hits to benefit one query shape.
+const maxEntryShare = 0.25;
+
 interface MemoryEntry {
 	value: CacheEntry;
 	// Insertion counter used for least-recently-used eviction.
 	touched: number;
+	bytes: number;
 }
 
 const memory = new Map<string, MemoryEntry>();
 let counter = 0;
+let heldBytes = 0;
+
+function budgetBytes(): number {
+	return settings().resultMaxBytes * 1024 * 1024;
+}
 
 function memoryGet(key: string): CacheEntry | null {
 	const found = memory.get(key);
@@ -86,24 +119,54 @@ function memoryGet(key: string): CacheEntry | null {
 	return found.value;
 }
 
-function memorySet(key: string, value: CacheEntry): void {
-	memory.set(key, { value, touched: ++counter });
+function memoryDelete(key: string): void {
+	const held = memory.get(key);
+	if (!held) return;
+	heldBytes -= held.bytes;
+	memory.delete(key);
+}
+
+// jsonBytes is the length of the serialized payload. Callers that already have
+// it pass it; the rest estimate, because measuring costs a serialization this
+// is trying to avoid.
+function memorySet(key: string, value: CacheEntry, jsonBytes: number): void {
+	const bytes = jsonBytes * residentPerJsonByte;
+	const budget = budgetBytes();
+
+	// Too big to hold without evicting most of what is there. The caller still
+	// has its answer, so this costs a repeat query and not a wrong one.
+	if (bytes > budget * maxEntryShare) {
+		memoryDelete(key);
+		return;
+	}
+
+	memoryDelete(key);
+	memory.set(key, { value, touched: ++counter, bytes });
+	heldBytes += bytes;
 
 	const max = settings().resultMaxEntries;
-	if (memory.size <= max) return;
+	if (heldBytes <= budget && memory.size <= max) return;
 
-	// Drop expired entries first, then the least recently used.
+	// Expired entries first: they are free to drop and cost nobody a hit.
 	const now = Date.now();
 	for (const [k, v] of memory) {
-		if (v.value.expiresAt <= now) memory.delete(k);
+		if (v.value.expiresAt <= now) memoryDelete(k);
 	}
-	if (memory.size > max) {
-		const sorted = Array.from(memory.entries()).sort(
-			(a, b) => a[1].touched - b[1].touched,
-		);
-		for (const [k] of sorted.slice(0, memory.size - max)) {
-			memory.delete(k);
-		}
+
+	const targetBytes = budget * evictionLowMark;
+	const targetCount = Math.floor(max * evictionLowMark);
+	if (heldBytes <= targetBytes && memory.size <= targetCount) return;
+
+	// Ordered once, then walked. The low mark above is what keeps this from
+	// running on every insert.
+	const byAge = Array.from(memory.entries()).sort(
+		(a, b) => a[1].touched - b[1].touched,
+	);
+	for (const [k] of byAge) {
+		if (heldBytes <= targetBytes && memory.size <= targetCount) break;
+		// Never evict what was just inserted: the caller is about to read it.
+		if (k === key) continue;
+		memoryDelete(k);
 	}
 }
 
@@ -116,7 +179,9 @@ interface CacheRow {
 	expires_on: string;
 }
 
-async function sharedGet(key: string): Promise<CacheEntry | null> {
+async function sharedGet(
+	key: string,
+): Promise<{ entry: CacheEntry; bytes: number } | null> {
 	try {
 		const rows = await sql<CacheRow>(
 			`SELECT payload, row_count, created_on, expires_on
@@ -127,13 +192,19 @@ async function sharedGet(key: string): Promise<CacheEntry | null> {
 		const row = rows[0];
 		if (!row) return null;
 
-		return {
+		const entry: CacheEntry = {
 			rows: row.payload.rows ?? [],
 			columns: row.payload.columns ?? [],
 			rowCount: row.row_count,
 			computedAt: new Date(row.created_on).getTime(),
 			expiresAt: new Date(row.expires_on).getTime(),
 		};
+
+		// Estimated rather than measured. Serializing it back to weigh it would
+		// cost as much as the read did, and the estimate only has to be close
+		// enough to keep the budget honest.
+		const bytes = estimateJsonBytes(entry);
+		return { entry, bytes };
 	} catch (error) {
 		// A cache read that fails is a miss, never an error the user sees.
 		console.warn("Shared cache read failed:", error);
@@ -141,11 +212,25 @@ async function sharedGet(key: string): Promise<CacheEntry | null> {
 	}
 }
 
+// Weight without serializing. Samples the first rows rather than walking every
+// one, because this runs on the read path and a thousand-row result would cost
+// more to measure than to return.
+function estimateJsonBytes(entry: CacheEntry): number {
+	if (entry.rows.length === 0) return 64;
+	const sampleSize = Math.min(entry.rows.length, 20);
+	let sampled = 0;
+	for (let i = 0; i < sampleSize; i++) {
+		sampled += JSON.stringify(entry.rows[i]).length;
+	}
+	return Math.round((sampled / sampleSize) * entry.rows.length) + 64;
+}
+
 async function sharedSet(
 	key: string,
 	policy: PolicyClass,
 	source: SemanticSource,
 	entry: CacheEntry,
+	payload: string,
 ): Promise<void> {
 	try {
 		await sql(
@@ -161,7 +246,7 @@ async function sharedSet(
 				key,
 				source.hasRowFilter ? policy.id : "unfiltered",
 				source.sourceKey,
-				JSON.stringify({ rows: entry.rows, columns: entry.columns }),
+				payload,
 				entry.rowCount,
 				entry.computedAt / 1000,
 				entry.expiresAt / 1000,
@@ -189,11 +274,11 @@ export async function cacheGet(key: string): Promise<CacheLookup> {
 	const shared = await sharedGet(key);
 	if (shared) {
 		// Promote into L1 so the next hit on this replica skips the round trip.
-		memorySet(key, shared);
-		if (shared.expiresAt > now) {
-			return { entry: shared, tier: "l2", stale: false };
+		memorySet(key, shared.entry, shared.bytes);
+		if (shared.entry.expiresAt > now) {
+			return { entry: shared.entry, tier: "l2", stale: false };
 		}
-		if (allowStale) return { entry: shared, tier: "l2", stale: true };
+		if (allowStale) return { entry: shared.entry, tier: "l2", stale: true };
 	}
 
 	return { entry: null, tier: null, stale: false };
@@ -216,16 +301,23 @@ export async function cacheSet(
 		expiresAt: now + ttlSeconds * 1000,
 	};
 
-	memorySet(key, entry);
-	await sharedSet(key, policy, source, entry);
+	// Serialized once, here, and used for both the weight and the write.
+	const payload = JSON.stringify({ rows, columns });
+	memorySet(key, entry, payload.length);
+
+	// Not awaited. Nothing in this request reads it back, and the caller has
+	// been holding a finished result while a payload of several megabytes went
+	// to Postgres. A failed write is already handled as a miss on the next read.
+	void sharedSet(key, policy, source, entry, payload);
+
 	return entry;
 }
 
 // Drops cached results for one source across both tiers. Called when a dataset
 // is refreshed or its semantic definition changes.
 export async function invalidateSource(sourceKey: string): Promise<void> {
-	for (const key of memory.keys()) {
-		if (key.startsWith(`${sourceKey}:`)) memory.delete(key);
+	for (const key of Array.from(memory.keys())) {
+		if (key.startsWith(`${sourceKey}:`)) memoryDelete(key);
 	}
 	try {
 		await sql(`DELETE FROM result_cache WHERE source_key = $1`, [
@@ -236,6 +328,14 @@ export async function invalidateSource(sourceKey: string): Promise<void> {
 	}
 }
 
-export function cacheStats(): { l1Entries: number } {
-	return { l1Entries: memory.size };
+export function cacheStats(): {
+	l1Entries: number;
+	l1Bytes: number;
+	l1BudgetBytes: number;
+} {
+	return {
+		l1Entries: memory.size,
+		l1Bytes: heldBytes,
+		l1BudgetBytes: budgetBytes(),
+	};
 }
