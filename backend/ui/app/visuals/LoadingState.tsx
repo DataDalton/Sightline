@@ -36,7 +36,12 @@ export function VisualLoadingState({
 
 	if (variant === "spinner") {
 		return (
-			<div className={styles.wrap} style={style} role="status" aria-busy="true">
+			<div
+				className={styles.wrap}
+				style={style}
+				role="status"
+				aria-busy="true"
+			>
 				<span className={styles.spinner} aria-hidden="true" />
 				{label && <span className={styles.label}>{label}</span>}
 			</div>
@@ -45,7 +50,12 @@ export function VisualLoadingState({
 
 	if (variant === "pulse") {
 		return (
-			<div className={styles.wrap} style={style} role="status" aria-busy="true">
+			<div
+				className={styles.wrap}
+				style={style}
+				role="status"
+				aria-busy="true"
+			>
 				<span className={styles.pulse} aria-hidden="true" />
 				<span className="sr-only">{label ?? "Loading"}</span>
 			</div>
@@ -54,7 +64,12 @@ export function VisualLoadingState({
 
 	if (variant === "bars") {
 		return (
-			<div className={styles.wrap} style={style} role="status" aria-busy="true">
+			<div
+				className={styles.wrap}
+				style={style}
+				role="status"
+				aria-busy="true"
+			>
 				<div className={styles.bars} aria-hidden="true">
 					{Array.from({ length: 5 }, (_, i) => (
 						<span
@@ -69,8 +84,21 @@ export function VisualLoadingState({
 		);
 	}
 
+	// A single bar is standing in for one line inside a panel that has its own
+	// padding. More than one is the panel itself, and pads like one.
+	const fitted = rows === 1;
+
 	return (
-		<div className={styles.skeleton} style={style} role="status" aria-busy="true">
+		<div
+			className={
+				fitted
+					? `${styles.skeleton} ${styles.skeletonInline}`
+					: styles.skeleton
+			}
+			style={style}
+			role="status"
+			aria-busy="true"
+		>
 			{Array.from({ length: rows }, (_, i) => (
 				<span
 					key={i}

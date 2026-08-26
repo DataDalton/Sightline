@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { useVisualQuery } from "../hooks/useVisualQuery";
+import { queryForVisual } from "../../lib/query/visualSpec";
 import { formatCompact, toNumber, type FormatHint } from "../../lib/format";
 import { evaluateConditions, type VisualStyle } from "../../lib/visuals/style";
 import { readThemeColors, withAlpha } from "./colors";
@@ -42,9 +43,12 @@ export function KpiRow({
 	style,
 }: KpiRowProps) {
 	const { rows, error, isLoading } = useVisualQuery(
-		measures.length > 0
-			? { sourceKey, measures, filters, limit: 1 }
-			: null,
+		queryForVisual("kpiRow", {
+			sourceKey,
+			dimensions: [],
+			measures,
+			filters,
+		}),
 	);
 
 	const colors = useMemo(
@@ -112,7 +116,10 @@ export function KpiRow({
 				const background =
 					match?.background && colors
 						? withAlpha(
-								colors.resolve(match.background, colors.series[0]),
+								colors.resolve(
+									match.background,
+									colors.series[0],
+								),
 								0.14,
 							)
 						: undefined;
@@ -140,9 +147,13 @@ export function KpiRow({
 							    colour, so the tile still reads in greyscale and
 							    for a reader who cannot distinguish the hue. */}
 							{match?.marker && (
-								<span className={styles.kpiMarker}>{match.marker}</span>
+								<span className={styles.kpiMarker}>
+									{match.marker}
+								</span>
 							)}
-							{signed && numeric !== null && numeric > 0 ? "+" : ""}
+							{signed && numeric !== null && numeric > 0
+								? "+"
+								: ""}
 							{formatCompact(raw, hint)}
 						</span>
 					</div>

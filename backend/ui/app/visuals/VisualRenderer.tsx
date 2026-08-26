@@ -22,6 +22,7 @@ import { usePageFilters } from "./PageFilters";
 import { VisualFrame, VisualNotice } from "./VisualFrame";
 import { fieldMap, type SourceMeta } from "./types";
 import { isFilterVisual, visualByType } from "../../lib/visuals/catalog";
+import { chartTypes, gridTypes, recordTypes } from "../../lib/query/visualSpec";
 import type { VisualStyle } from "../../lib/visuals/style";
 import styles from "./Visual.module.css";
 
@@ -95,35 +96,6 @@ function displayTitle(visual: VisualSpec): string | null {
 	if (!visual.title) return null;
 	return slotTitles[visual.title] ?? visual.title;
 }
-
-// Chart types the ECharts renderer handles. Everything else is a grid, a
-// filter, or text.
-const chartTypes = new Set([
-	"lineChart",
-	"barChart",
-	"areaChart",
-	"scatterChart",
-	"horizontalBarChart",
-	"stackedBarChart",
-	"comboChart",
-	"pieChart",
-	"donutChart",
-	"treemapChart",
-	"funnelChart",
-	"gauge",
-	"waterfallChart",
-	"heatmapChart",
-	"radarChart",
-	// Kept so reports authored before the real heatmap landed still render.
-	"heatmap",
-]);
-
-const gridTypes = new Set(["table"]);
-
-// One record, not a table of many. Both were grids until it became obvious a
-// search box and an export button were the wrong furniture for a page about a
-// single customer.
-const recordTypes = new Set(["definitionList", "entityHeader"]);
 
 export function VisualRenderer({
 	visual,
@@ -556,6 +528,7 @@ export function VisualRenderer({
 				{note && <VisualNotice>{note}</VisualNotice>}
 				<RecordPanel
 					sourceKey={sourceKey}
+					visualType={visual.visualType}
 					dimensions={dimensions}
 					measures={measures}
 					filters={filters}

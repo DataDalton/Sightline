@@ -51,9 +51,18 @@ const UserContext = createContext<UserContextValue>({
 	refresh: () => {},
 });
 
-export function UserProvider({ children }: { children: ReactNode }) {
-	const [user, setUser] = useState<User | null>(null);
-	const [loading, setLoading] = useState(true);
+// initial is the answer the server resolved while rendering the document. With
+// it the shell knows who the reader is on its first paint, rather than showing
+// an empty header until a round trip comes back.
+export function UserProvider({
+	initial = null,
+	children,
+}: {
+	initial?: User | null;
+	children: ReactNode;
+}) {
+	const [user, setUser] = useState<User | null>(initial);
+	const [loading, setLoading] = useState(initial === null);
 	const [error, setError] = useState(false);
 	const inFlight = useRef(false);
 
@@ -82,8 +91,12 @@ export function UserProvider({ children }: { children: ReactNode }) {
 	}, []);
 
 	useEffect(() => {
+		// Nothing to ask for when the document already carried the answer. It
+		// was resolved for this request, so it cannot be staler than a fetch
+		// issued a moment later would be.
+		if (initial) return;
 		load();
-	}, [load]);
+	}, [load, initial]);
 
 	// A degraded policy class resolves itself once the lookup recovers, so the
 	// shell retries rather than leaving the user stuck until a reload.

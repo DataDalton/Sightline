@@ -26,6 +26,7 @@ import {
 import { CanvasRenderer } from "echarts/renderers";
 import { useTheme } from "../context/ThemeContext";
 import { useVisualQuery } from "../hooks/useVisualQuery";
+import { queryForVisual } from "../../lib/query/visualSpec";
 import type { FormatHint } from "../../lib/format";
 import { checkEncoding } from "../../lib/visuals/catalog";
 import { indicesToValues, rangeToIndices } from "../../lib/visuals/brush";
@@ -125,19 +126,18 @@ export function Chart({
 	const problem = checkEncoding(visualType, dimensions, measures);
 	const ready = problem === null;
 
+	// Shaped by lib/query/visualSpec, which is also what the server warms
+	// against. Two spellings of the same query are two cache keys, and the warm
+	// one would be the key nobody asks for.
 	const { rows, error, isLoading } = useVisualQuery(
 		ready
-			? {
+			? queryForVisual(visualType, {
 					sourceKey,
 					dimensions,
 					measures,
 					filters,
-					sort:
-						dimensions.length > 0
-							? [{ field: dimensions[0], direction: "asc" }]
-							: [],
 					limit,
-				}
+				})
 			: null,
 	);
 
@@ -188,7 +188,11 @@ export function Chart({
 
 		// The chart that produced a selection marks it, so the reader can see
 		// what they picked rather than only its effect on everything else.
-		if (selectedValues && selectedValues.length > 0 && dimensions.length > 0) {
+		if (
+			selectedValues &&
+			selectedValues.length > 0 &&
+			dimensions.length > 0
+		) {
 			ctx.highlight = { field: dimensions[0], values: selectedValues };
 		}
 
@@ -227,7 +231,12 @@ export function Chart({
 		// Held by content, since the selection is rebuilt on every render.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [
-		rows, dimensions, measures, visualType, fields, style,
+		rows,
+		dimensions,
+		measures,
+		visualType,
+		fields,
+		style,
 		(selectedValues ?? []).join("\u0000"),
 	]);
 
@@ -291,8 +300,11 @@ export function Chart({
 				const area = Array.isArray(areas)
 					? (areas[0] as { coordRange?: unknown } | undefined)
 					: undefined;
-				const { dimensions: dims, rows: current, onSelectRange: report } =
-					liveRef.current;
+				const {
+					dimensions: dims,
+					rows: current,
+					onSelectRange: report,
+				} = liveRef.current;
 				const field = dims[0];
 				if (!field || !report) return;
 
@@ -312,31 +324,40 @@ export function Chart({
 			// gesture the reader was halfway through was gone. So the moving
 			// region is only remembered here.
 			chartRef.current.on("brushSelected", (params: unknown) => {
-				const batch = (params as { batch?: { areas?: unknown }[] }).batch?.[0];
+				const batch = (params as { batch?: { areas?: unknown }[] })
+					.batch?.[0];
 				if (batch?.areas) areasRef.current = batch.areas;
 			});
 
 			// Letting go is the decision. A drag that covered nothing clears,
 			// which is how a selection is undone without a separate control.
 			chartRef.current.on("brushEnd", (params: unknown) => {
-				const areas = (params as { areas?: unknown }).areas ?? areasRef.current;
+				const areas =
+					(params as { areas?: unknown }).areas ?? areasRef.current;
 				areasRef.current = null;
 				commit(areas);
 			});
 		}
 
 		chartRef.current.off("click");
-		chartRef.current.on("click", (params: { name?: string; dataIndex?: number }) => {
-			const { dimensions: dims, rows: current, onSelect: pick } = liveRef.current;
-			if (!pick || dims.length === 0) return;
-			const field = dims[0];
-			const value =
-				params.name ??
-				(params.dataIndex !== undefined
-					? String(current[params.dataIndex]?.[field] ?? "")
-					: "");
-			if (value) pick({ field, value });
-		});
+		chartRef.current.on(
+			"click",
+			(params: { name?: string; dataIndex?: number }) => {
+				const {
+					dimensions: dims,
+					rows: current,
+					onSelect: pick,
+				} = liveRef.current;
+				if (!pick || dims.length === 0) return;
+				const field = dims[0];
+				const value =
+					params.name ??
+					(params.dataIndex !== undefined
+						? String(current[params.dataIndex]?.[field] ?? "")
+						: "");
+				if (value) pick({ field, value });
+			},
+		);
 		// resolved is a dependency because the palette is read off the
 		// document, so a theme change has to repaint.
 		// Deliberately narrow. The handlers read what they need at call time, so
@@ -384,7 +405,11 @@ export function Chart({
 	return (
 		<div
 			ref={attachContainer}
-			style={{ width: "100%", height, cursor: onSelect ? "pointer" : "default" }}
+			style={{
+				width: "100%",
+				height,
+				cursor: onSelect ? "pointer" : "default",
+			}}
 		/>
 	);
 }

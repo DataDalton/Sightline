@@ -62,12 +62,29 @@ interface ReportResponse {
 	sources: Record<string, SourceMeta>;
 }
 
-export default function ReportView({ slug }: { slug: string }) {
+// initial is the definition the server resolved while rendering the document.
+//
+// Handed to the hook rather than provided through context. A nested SWRConfig
+// looked equivalent and was not: the shell's fallback reached its hooks and this
+// one did not, so the report rendered an empty page on the server and every
+// visual waited for hydration before it could even start. fallbackData on the
+// call is unambiguous about which key it answers.
+export default function ReportView({
+	slug,
+	initial,
+}: {
+	slug: string;
+	initial?: ReportResponse;
+}) {
 	const { data, error, isLoading, mutate } = useSWR<ReportResponse>(
 		`/api/report/${encodeURIComponent(slug)}`,
+		{ fallbackData: initial },
 	);
 	const { user } = useUser();
-	const showSkeleton = useDeferredLoading(isLoading);
+	// Only a wait with nothing to show yet. SWR reports isLoading while it
+	// revalidates behind data it already has, and treating that as a wait threw
+	// away a report the server had already resolved.
+	const showSkeleton = useDeferredLoading(isLoading && !data);
 	const [editing, setEditing] = useState(false);
 	// Held by id rather than by index, because a report with subpages has two
 	// rows of tabs and an index into a flat list cannot say which one is on.
@@ -118,7 +135,13 @@ export default function ReportView({ slug }: { slug: string }) {
 		);
 	}
 
-	if (isLoading || !data) {
+	if (!data) {
+		// Whether the definition is being revalidated does not matter here:
+		// having it is what decides there is a report to draw. Waiting on
+		// isLoading as well meant a definition the server had already resolved
+		// was rendered as an empty page, so every visual, placeholder included,
+		// appeared only after hydration and the whole report popped in at once.
+		//
 		// Blank rather than a skeleton for a report that answers from
 		// cache, because the shell is already on screen and a flash of
 		// placeholder under it is the only thing the reader would see.

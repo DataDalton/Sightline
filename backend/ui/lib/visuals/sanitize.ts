@@ -11,13 +11,34 @@
 // attribute that could carry script, which is not a list anyone finishes.
 
 const allowedTags = new Set([
-	"p", "br", "hr", "div", "span",
-	"h1", "h2", "h3", "h4",
-	"strong", "b", "em", "i", "u", "s", "code", "pre",
-	"ul", "ol", "li",
+	"p",
+	"br",
+	"hr",
+	"div",
+	"span",
+	"h1",
+	"h2",
+	"h3",
+	"h4",
+	"strong",
+	"b",
+	"em",
+	"i",
+	"u",
+	"s",
+	"code",
+	"pre",
+	"ul",
+	"ol",
+	"li",
 	"blockquote",
 	"a",
-	"table", "thead", "tbody", "tr", "th", "td",
+	"table",
+	"thead",
+	"tbody",
+	"tr",
+	"th",
+	"td",
 ]);
 
 // Style properties an author can set. Anything else, including position and
@@ -50,7 +71,8 @@ function sanitizeStyle(value: string): string {
 		if (!safeStyleValue.test(propertyValue)) continue;
 		// url() would fetch, and behaviours would execute, regardless of which
 		// property carries them.
-		if (/url\s*\(|expression\s*\(|javascript:/i.test(propertyValue)) continue;
+		if (/url\s*\(|expression\s*\(|javascript:/i.test(propertyValue))
+			continue;
 
 		kept.push(`${property}: ${propertyValue}`);
 	}
@@ -72,10 +94,10 @@ function sanitizeHref(value: string): string | null {
 // rebuilds the tree keeping only what is allowed.
 export function sanitizeHtml(input: string): string {
 	if (typeof window === "undefined" || typeof DOMParser === "undefined") {
-		// On the server the value is stored as given and sanitised again on
-		// render. Storing raw is safe only because nothing renders it without
-		// passing through here first.
-		return stripTagsFallback(input);
+		// No DOM, so no allow-list, so no markup. See the note on
+		// escapeToText: the server render is what reaches the browser first,
+		// and it must not carry anything a parser could read as a tag.
+		return escapeToText(input);
 	}
 
 	const parsed = new DOMParser().parseFromString(
@@ -130,21 +152,47 @@ export function sanitizeHtml(input: string): string {
 	return container.innerHTML;
 }
 
-// Server-side fallback. Without a DOM the safe move is to keep the text and
-// discard the markup entirely, rather than attempt to parse HTML with regular
-// expressions.
-function stripTagsFallback(input: string): string {
+// Server-side fallback: the text, with every character that could begin markup
+// escaped so it cannot.
+//
+// This used to strip tags with regular expressions, which is the thing the note
+// at the top of this file says nobody finishes. It did not finish. An
+// unterminated tag has no closing bracket, so `<[^>]+>` does not match it and
+// `<img src=x onerror=alert(1)` passed through whole. In a server render that
+// string is not at the end of anything: the rest of the document follows it, the
+// parser goes on looking for the bracket, finds one further down the page, and
+// closes the tag with the handler intact.
+//
+// Escaping has no such edge. Nothing here can start a tag, so there is no
+// grammar left to get wrong. The cost is that a server-rendered panel shows its
+// text unformatted for the moment before the browser sanitises it properly,
+// which is why the panel renders this only until it has mounted.
+function escapeToText(input: string): string {
 	return input
-		.replace(/<script[\s\S]*?<\/script>/gi, "")
-		.replace(/<style[\s\S]*?<\/style>/gi, "")
-		.replace(/<[^>]+>/g, "")
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;")
+		.replace(/'/g, "&#39;");
+}
+
+// Plain text for a server render, with the markup dropped rather than escaped
+// into view. Only ever used as text content, never as markup.
+function textOnlyFallback(input: string): string {
+	return input
+		.replace(/<script[\s\S]*?<\/script>/gi, " ")
+		.replace(/<style[\s\S]*?<\/style>/gi, " ")
+		.replace(/<[^>]*>?/g, " ")
+		.replace(/\s+/g, " ")
 		.trim();
 }
 
 // Plain text for previews and search, with entities resolved.
 export function toPlainText(html: string): string {
 	if (typeof window === "undefined" || typeof DOMParser === "undefined") {
-		return stripTagsFallback(html);
+		// Text, not markup: the caller renders this as a string. The trailing
+		// `>?` matters, so an unterminated tag at the end is dropped too.
+		return textOnlyFallback(html);
 	}
 	const parsed = new DOMParser().parseFromString(html, "text/html");
 	return parsed.body.textContent?.trim() ?? "";
