@@ -165,6 +165,27 @@
 	margin-bottom: var(--space-4);
 }
 
+/*
+ * Kept in view while the page scrolls.
+ *
+ * On a long page the controls that decide what is on screen end up above the
+ * fold, so a reader who wants to narrow what they are looking at has to scroll
+ * back to the top, change it, and scroll down again to see what happened. The
+ * background is opaque because the content passes underneath it.
+ *
+ * Not the default: on a short page it costs vertical space and buys nothing,
+ * and a strip that sticks when there was never anything to scroll past reads as
+ * a bug.
+ */
+.filterStripSticky {
+	position: sticky;
+	top: 0;
+	z-index: 3;
+	background: var(--surface-base);
+	padding-top: var(--space-3);
+	margin-top: calc(var(--space-3) * -1);
+}
+
 .state {
 	padding: var(--space-7);
 	text-align: center;

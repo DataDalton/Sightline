@@ -57,6 +57,10 @@ export interface VisualInputs {
 	sourceKey: string;
 	dimensions: string[];
 	measures: string[];
+	// What the author set on this visual. Read here rather than unpacked by the
+	// caller, so a component and the warmer cannot derive a different query
+	// from the same settings.
+	options?: Record<string, unknown>;
 	// Optional so a caller with nothing applied can leave it out. Absent and
 	// empty have to mean the same thing, or they would be two cache keys.
 	filters?: unknown[];
@@ -84,6 +88,34 @@ export function queryForVisual(
 	const filters = inputs.filters ?? [];
 	if (!sourceKey) return null;
 	if (isFilterVisual(visualType)) return null;
+
+	// Keep only the largest few. Applied to the query rather than to the marks:
+	// the point is not to draw fewer bars, it is to stop asking the warehouse
+	// for four thousand rows in order to show ten. Which also changes the cache
+	// key, and has to, because it is a different question.
+	//
+	// Only meaningful where rows are grouped by something and ranked by a
+	// figure. A scorecard is already one row, and a top ten of one row is ten
+	// of nothing.
+	const count = Number(inputs.options?.topN);
+	const by =
+		typeof inputs.options?.topBy === "string" && inputs.options.topBy
+			? (inputs.options.topBy as string)
+			: measures[0];
+	const top =
+		Number.isFinite(count) &&
+		count > 0 &&
+		dimensions.length > 0 &&
+		by &&
+		measures.includes(by)
+			? { measure: by, count }
+			: null;
+	const ranked = top
+		? {
+				sort: [{ field: top.measure, direction: "desc" as const }],
+				limit: top.count,
+			}
+		: null;
 
 	if (visualType === "kpiRow") {
 		// A scorecard is one aggregate with no grouping.
@@ -114,11 +146,13 @@ export function queryForVisual(
 			dimensions,
 			measures,
 			filters,
-			sort:
-				dimensions.length > 0
-					? [{ field: dimensions[0], direction: "asc" }]
-					: [],
-			limit: inputs.limit ?? chartRows,
+			...(ranked ?? {
+				sort:
+					dimensions.length > 0
+						? [{ field: dimensions[0], direction: "asc" as const }]
+						: [],
+				limit: inputs.limit ?? chartRows,
+			}),
 		};
 	}
 
@@ -133,8 +167,7 @@ export function queryForVisual(
 			dimensions,
 			measures,
 			filters,
-			sort: [],
-			limit: gridPageSize,
+			...(ranked ?? { sort: [], limit: gridPageSize }),
 			offset: 0,
 		};
 	}
@@ -196,6 +229,11 @@ export function initialQueryForVisual(
 	visual: VisualDefinition,
 	sourceKey: string,
 	source: SourceFields,
+	// What the page's filter widgets contribute before anybody touches them.
+	// A page that opens on the last ninety days asks a different question from
+	// one that opens on everything, and warming the second is warming a key
+	// nobody reads.
+	pageFilters: unknown[] = [],
 ): VisualQueryShape | null {
 	const { dimensions, measures } = fieldsForVisual(visual.config, source);
 
@@ -209,16 +247,19 @@ export function initialQueryForVisual(
 			? [drillFields[0]].filter(Boolean)
 			: dimensions;
 
-	const authorLimit =
-		typeof visual.config.options?.limit === "number"
-			? (visual.config.options.limit as number)
-			: undefined;
-
+	// No author limit is read here. The renderer does not pass one to a chart
+	// either, so both take the same default, and reading a key only one side
+	// honoured would be the drift this module exists to prevent.
 	return queryForVisual(visual.visualType, {
 		sourceKey,
 		dimensions: active,
 		measures,
-		filters: (visual.config.filters ?? []) as unknown[],
-		limit: authorLimit,
+		options: visual.config.options,
+		// Page state first, exactly as the renderer composes it: a visual's own
+		// filters narrow further but never widen past what the page set.
+		filters: [
+			...pageFilters,
+			...((visual.config.filters ?? []) as unknown[]),
+		],
 	});
 }

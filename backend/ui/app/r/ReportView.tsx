@@ -9,8 +9,13 @@ import { titleSeparator, usePageTitle } from "../hooks/usePageTitle";
 import { DataFreshness } from "../visuals/DataFreshness";
 import { VisualRenderer, type VisualSpec } from "../visuals/VisualRenderer";
 import { PageFilterProvider } from "../visuals/PageFilters";
+import { openingFilters } from "../../lib/visuals/pageDefaults";
 import { FilterBar } from "../visuals/FilterWidgets";
-import { isPageControl, visualByType } from "../../lib/visuals/catalog";
+import {
+	isPageControl,
+	optionValue,
+	visualByType,
+} from "../../lib/visuals/catalog";
 import { ReportEditor } from "./editorEntry";
 import type { EditableVisual } from "../editor/types";
 import { useUser } from "../context/UserContext";
@@ -40,6 +45,12 @@ interface PageDefinition {
 	// stamp takes a maximum of.
 	config?: {
 		freshness?: { field?: string | null; label?: string | null };
+		// Keeps the filter controls in view while the page scrolls.
+		stickyFilters?: boolean;
+		// What a reader sees when the page has nothing to show. The default is
+		// written for whoever is building the page, which is the wrong audience
+		// once it is published.
+		emptyText?: string;
 		[key: string]: unknown;
 	};
 	visuals: StoredVisual[];
@@ -157,6 +168,22 @@ export default function ReportView({
 	const page =
 		report.pages.find((p) => p.pageId === activePageId) ?? report.pages[0];
 
+	// What this page's filter widgets are set to before anybody touches them.
+	// Handed to the provider as its opening state rather than applied after
+	// mount, so the visuals never issue the unfiltered query first.
+	const opening = openingFilters(
+		(page?.visuals ?? []).map((v) => ({
+			visualId: v.visualId,
+			visualType: v.visualType,
+			config: v.config as {
+				dimensions?: string[];
+				measures?: string[];
+				options?: Record<string, unknown>;
+			},
+		})),
+		new Date(),
+	);
+
 	// Everything a reader had arranged belonged to the page they were on.
 	const openPage = (nextId: string) => {
 		setActivePageId(nextId);
@@ -173,6 +200,27 @@ export default function ReportView({
 	// page is broken down by, which is page chrome rather than a panel in the
 	// reading order.
 	const filterWidgets = allVisuals.filter((v) => isPageControl(v.visualType));
+
+	// Controls an author put behind a named button, and the rest, which stay in
+	// the strip. Order is the order they were placed, so a panel appears where
+	// its first control would have.
+	const panelNames: string[] = [];
+	const panelled = new Map<string, typeof filterWidgets>();
+	const inlineWidgets: typeof filterWidgets = [];
+	for (const widget of filterWidgets) {
+		const group = (
+			optionValue<string>(widget.visualType, widget.config, "group") ?? ""
+		).trim();
+		if (!group) {
+			inlineWidgets.push(widget);
+			continue;
+		}
+		if (!panelled.has(group)) {
+			panelled.set(group, []);
+			panelNames.push(group);
+		}
+		panelled.get(group)?.push(widget);
+	}
 	const visuals = allVisuals
 		.filter((v) => !isPageControl(v.visualType))
 		.map((v) =>
@@ -272,7 +320,7 @@ export default function ReportView({
 	}
 
 	return (
-		<PageFilterProvider>
+		<PageFilterProvider key={page.pageId} opening={opening}>
 			<ViewScaleProvider
 				sizes={visualSizes}
 				onSizesChange={(next) => {
@@ -430,9 +478,33 @@ export default function ReportView({
 						)}
 
 						{(filterWidgets.length > 0 || visuals.length > 0) && (
-							<div className={styles.filterStrip}>
-								<FilterBar>
-									{filterWidgets.map((visual) => (
+							<div
+								className={`${styles.filterStrip} ${
+									page?.config?.stickyFilters
+										? styles.filterStripSticky
+										: ""
+								}`}
+							>
+								<FilterBar
+									panels={panelNames.map((name) => ({
+										name,
+										visualIds: (
+											panelled.get(name) ?? []
+										).map((v) => v.visualId),
+										content: (panelled.get(name) ?? []).map(
+											(visual) => (
+												<VisualRenderer
+													key={visual.visualId}
+													visual={visual}
+													sources={sources}
+													reportId={report.reportId}
+													pageId={page?.pageId}
+												/>
+											),
+										),
+									}))}
+								>
+									{inlineWidgets.map((visual) => (
 										<VisualRenderer
 											key={visual.visualId}
 											visual={visual}
@@ -447,7 +519,15 @@ export default function ReportView({
 
 						{visuals.length === 0 ? (
 							<div className={styles.state}>
-								This page has no visuals configured yet.
+								{/* What an author wrote for the case where the
+								    page is empty on purpose, otherwise the
+								    default, which is about configuration and
+								    is addressed to them rather than to a
+								    reader. */}
+								{typeof page?.config?.emptyText === "string" &&
+								page.config.emptyText.trim() !== ""
+									? page.config.emptyText
+									: "This page has no visuals configured yet."}
 							</div>
 						) : (
 							<ReportGrid

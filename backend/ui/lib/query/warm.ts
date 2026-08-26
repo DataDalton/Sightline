@@ -6,6 +6,7 @@ import { buildCacheKey, cacheGet, isShareable } from "./cache";
 import { executeQuery } from "./execute";
 import { parseQuerySpec } from "./spec";
 import { initialQueryForVisual } from "./visualSpec";
+import { openingFilters } from "../visuals/pageDefaults";
 
 // Filling a cache partition before somebody waits on it.
 //
@@ -42,6 +43,7 @@ const maxConcurrent = 4;
 const maxQueries = 24;
 
 interface WarmableVisual {
+	visualId?: string;
 	visualType: string;
 	sourceKey: string | null;
 	config: {
@@ -67,10 +69,22 @@ export interface WarmableReport {
 // The queries a report makes when each of its pages is opened and nothing has
 // been touched. Page state is empty on arrival, so a visual's filters are its
 // own and nothing else.
-function queriesFor(report: WarmableReport): unknown[] {
+function queriesFor(report: WarmableReport, today: Date): unknown[] {
 	const specs: unknown[] = [];
 
 	for (const page of report.pages) {
+		// The same opening state the reader's page will carry, from the same
+		// function, so the key this warms is the key they ask for.
+		const opening = openingFilters(
+			page.visuals.map((v, i) => ({
+				visualId: v.visualId ?? `w${i}`,
+				visualType: v.visualType,
+				config: v.config,
+			})),
+			today,
+		);
+		const pageFilters = Object.values(opening).flat();
+
 		for (const visual of page.visuals) {
 			const sourceKey =
 				visual.sourceKey ?? page.sourceKey ?? report.sourceKey;
@@ -84,7 +98,12 @@ function queriesFor(report: WarmableReport): unknown[] {
 			// else, and they are about to ask for it themselves anyway.
 			if (!isShareable(source)) continue;
 
-			const shape = initialQueryForVisual(visual, sourceKey, source);
+			const shape = initialQueryForVisual(
+				visual,
+				sourceKey,
+				source,
+				pageFilters,
+			);
 			if (shape) specs.push(shape);
 		}
 	}
@@ -129,7 +148,9 @@ export function warmReport(identity: Identity, report: WarmableReport): void {
 			const policy = await resolvePolicyClass(identity);
 			if (policy.degraded) return;
 
-			const specs = queriesFor(report);
+			// Stamped once for the whole walk, so two visuals on one page cannot
+			// resolve "the last ninety days" to different days.
+			const specs = queriesFor(report, new Date());
 			if (specs.length === 0) return;
 
 			// Already answered is the common case on a warm replica, and asking

@@ -1,10 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-	findFreeSlot,
-	type Rect,
-} from "../../lib/visuals/layout";
+import { findFreeSlot, type Rect } from "../../lib/visuals/layout";
 import { visualByType } from "../../lib/visuals/catalog";
 import type { SourceMeta } from "../visuals/types";
 import type { AppliedVisual } from "../../lib/visuals/applyOps";
@@ -53,6 +50,10 @@ interface ReportEditorProps {
 
 export interface PageConfig {
 	freshness?: { field?: string | null; label?: string | null };
+	// Keeps the filter controls in view while the page scrolls.
+	stickyFilters?: boolean;
+	// What a reader sees when the page has nothing to show.
+	emptyText?: string;
 	[key: string]: unknown;
 }
 
@@ -107,7 +108,9 @@ export function ReportEditor({
 	// insert from an update without diffing the whole page.
 	const pendingRef = useRef<Map<string, PendingOp>>(new Map());
 	const sessionIdRef = useRef<string>(
-		typeof crypto !== "undefined" ? crypto.randomUUID() : String(Date.now()),
+		typeof crypto !== "undefined"
+			? crypto.randomUUID()
+			: String(Date.now()),
 	);
 
 	const selected = visuals.find((v) => v.visualId === selectedId) ?? null;
@@ -157,9 +160,7 @@ export function ReportEditor({
 					}),
 				);
 
-				const names = actors
-					.map((a) => a.split("@")[0])
-					.join(", ");
+				const names = actors.map((a) => a.split("@")[0]).join(", ");
 				setRemoteNotice(`${names} changed this page`);
 				window.setTimeout(() => setRemoteNotice(null), 4000);
 			}
@@ -225,7 +226,8 @@ export function ReportEditor({
 
 		// A visual added and then edited in the same session is still an
 		// insert; a visual added and then removed cancels out entirely.
-		if (existing?.type === "addVisual" && op.type === "updateVisual") return;
+		if (existing?.type === "addVisual" && op.type === "updateVisual")
+			return;
 		if (existing?.type === "addVisual" && op.type === "removeVisual") {
 			pendingRef.current.delete(key);
 			return;
@@ -279,7 +281,9 @@ export function ReportEditor({
 	const changeLayout = useCallback(
 		(visualId: string, rect: Rect) => {
 			setVisuals((prev) =>
-				prev.map((v) => (v.visualId === visualId ? { ...v, layout: rect } : v)),
+				prev.map((v) =>
+					v.visualId === visualId ? { ...v, layout: rect } : v,
+				),
 			);
 			markPending({ type: "updateVisual", visualId });
 			setDirty(true);
@@ -382,11 +386,13 @@ export function ReportEditor({
 					// Derived from the title, and made unique by the id, since
 					// two subpages can reasonably be called the same thing on
 					// different parents.
-					slug: `${op.title
-						.toLowerCase()
-						.replace(/[^a-z0-9]+/g, "-")
-						.replace(/^-|-$/g, "")
-						.slice(0, 40) || "page"}-${op.pageId.slice(0, 8)}`,
+					slug: `${
+						op.title
+							.toLowerCase()
+							.replace(/[^a-z0-9]+/g, "-")
+							.replace(/^-|-$/g, "")
+							.slice(0, 40) || "page"
+					}-${op.pageId.slice(0, 8)}`,
 					sourceKey: pageSourceKey,
 				};
 			}
@@ -447,8 +453,15 @@ export function ReportEditor({
 			setSaving(false);
 		}
 	}, [
-		slug, baseVersion, pageId, pageSourceKey, visuals, pageConfig, pageTitle,
-		description, onSaved,
+		slug,
+		baseVersion,
+		pageId,
+		pageSourceKey,
+		visuals,
+		pageConfig,
+		pageTitle,
+		description,
+		onSaved,
 	]);
 
 	const others = live.others;
@@ -573,7 +586,9 @@ export function ReportEditor({
 							</span>
 						))}
 						{others.length > 4 && (
-							<span className={styles.avatar}>+{others.length - 4}</span>
+							<span className={styles.avatar}>
+								+{others.length - 4}
+							</span>
 						)}
 					</div>
 				)}
@@ -583,7 +598,11 @@ export function ReportEditor({
 				<button
 					type="button"
 					className={`${styles.status} ${styles.statusButton} ${
-						dirty ? styles.statusDirty : savedAt ? styles.statusSaved : ""
+						dirty
+							? styles.statusDirty
+							: savedAt
+								? styles.statusSaved
+								: ""
 					}`}
 					onClick={() => {
 						setSelectedId(null);
@@ -693,17 +712,22 @@ export function ReportEditor({
 					remoteSelections={remoteSelections}
 					onContentChange={changeContent}
 					previewWidth={
-						previewWidths.find((w) => w.id === preview)?.width ?? null
+						previewWidths.find((w) => w.id === preview)?.width ??
+						null
 					}
 				/>
 				<PropertiesPanel
 					visual={selected}
 					source={
-						selected?.sourceKey ? sources[selected.sourceKey] : undefined
+						selected?.sourceKey
+							? sources[selected.sourceKey]
+							: undefined
 					}
 					onChange={updateVisual}
 					onRemove={removeVisual}
-					pageSource={pageSourceKey ? sources[pageSourceKey] : undefined}
+					pageSource={
+						pageSourceKey ? sources[pageSourceKey] : undefined
+					}
 					pageConfig={pageConfig}
 					pageTitle={pageTitle}
 					reportDescription={description}
@@ -712,10 +736,10 @@ export function ReportEditor({
 					historySlug={slug}
 					historyKey={historyKey}
 					onRestored={() => {
-							// The restore has already landed. Everything the
-							// editor is holding is now a version behind, and
-							// reconstructing it here would be guessing, so the
-							// page reloads from what was actually written.
+						// The restore has already landed. Everything the
+						// editor is holding is now a version behind, and
+						// reconstructing it here would be guessing, so the
+						// page reloads from what was actually written.
 						setHistoryKey((k) => k + 1);
 						onSaved();
 						onExit();
@@ -732,7 +756,9 @@ export function ReportEditor({
 					}}
 					onDescriptionChange={(next) => {
 						setDescription(next);
-						pendingRef.current.set("report", { type: "updateReport" });
+						pendingRef.current.set("report", {
+							type: "updateReport",
+						});
 						setDirty(true);
 					}}
 				/>
