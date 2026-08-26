@@ -95,6 +95,46 @@ export default function RolesPane({
 	const { data, isLoading, mutate } =
 		useSWR<RolesResponse>("/api/admin/roles");
 	const { data: resources } = useSWR<ResourceResponse>("/api/admin/access");
+
+	// Whether a probe has ever come back true for each group this replica
+	// tracks. Group names are matched exactly and case sensitively, and nothing
+	// validates one at the point somebody types it here, so a misspelling
+	// produces a row that looks correct and grants nothing.
+	const { data: probeData } = useSWR<{
+		probes?: { name: string; probedAt: number; matchedAt: number }[];
+	}>("/api/admin?section=probes");
+	const probes = new Map(
+		(probeData?.probes ?? []).map((p) => [p.name.toLowerCase(), p]),
+	);
+
+	// Said carefully. A group nobody has matched is the shape of a typo, but a
+	// correctly named group that nobody in it has signed in under yet looks
+	// exactly the same, so this reports what was observed rather than a verdict.
+	const resolution = (a: AssignmentRecord) => {
+		if (a.subjectType === "user") return "Named directly";
+		const probe = probes.get(a.subjectId.toLowerCase());
+		if (!probe) {
+			return (
+				<span
+					className={styles.scope}
+					title="Nothing has caused this group to be probed on this instance yet."
+				>
+					Not probed
+				</span>
+			);
+		}
+		if (!probe.matchedAt) {
+			return (
+				<span
+					className={admin.warnText}
+					title="This group has been probed and has never matched anybody who signed in. Check the spelling and the case against the account group."
+				>
+					Never matched
+				</span>
+			);
+		}
+		return "Matched";
+	};
 	const showSkeleton = useDeferredLoading(isLoading);
 
 	const [editing, setEditing] = useState<Draft | null>(null);
@@ -304,6 +344,7 @@ export default function RolesPane({
 										<th>Holder</th>
 										<th>Role</th>
 										<th>Where</th>
+										<th>Resolves</th>
 										<th>Assigned by</th>
 										<th />
 									</tr>
@@ -347,6 +388,7 @@ export default function RolesPane({
 													</>
 												)}
 											</td>
+											<td>{resolution(a)}</td>
 											<td>{a.grantedBy ?? "-"}</td>
 											<td>
 												<button

@@ -1,3 +1,31 @@
+/* The first thing a keyboard reaches, and the only way past the navigation.
+
+   The sidebar is one long tab stop that does not remount between pages, so
+   without this every navigation costs a pass through the menu button, the
+   account block, every category and every expanded report before the content
+   the reader came for. Off screen until focused, then over the header. */
+.skipLink {
+	position: fixed;
+	top: var(--space-2);
+	left: var(--space-2);
+	z-index: 200;
+	padding: var(--space-2) var(--space-4);
+	border: 1px solid var(--brand);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font-size: var(--text-sm);
+	font-weight: 600;
+	text-decoration: none;
+	box-shadow: var(--shadow-lg);
+	transform: translateY(calc(-100% - var(--space-4)));
+	transition: transform var(--transition-fast);
+}
+
+.skipLink:focus {
+	transform: translateY(0);
+}
+
 .container {
 	display: flex;
 	height: calc(100vh - var(--header-height));

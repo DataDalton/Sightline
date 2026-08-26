@@ -30,6 +30,9 @@ interface PageStripProps {
 	// answers rather than the question.
 	onAdd: () => void;
 	onRemove: (pageId: string) => void;
+	// The whole list in its new order. Sent whole rather than as a pair of
+	// positions, so the server does not have to work out what moved.
+	onReorder: (pageIds: string[]) => void;
 }
 
 export function PageStrip({
@@ -39,7 +42,20 @@ export function PageStrip({
 	onSelect,
 	onAdd,
 	onRemove,
+	onReorder,
 }: PageStripProps) {
+	// Offered on the active tab only, matching removal. A nudge control on
+	// every tab turns the strip into a row of arrows and makes the page an
+	// author is working on harder to pick out, not easier.
+	const nudge = (pageId: string, delta: number) => {
+		const index = pages.findIndex((p) => p.pageId === pageId);
+		const target = index + delta;
+		if (index === -1 || target < 0 || target >= pages.length) return;
+		const next = pages.map((p) => p.pageId);
+		[next[index], next[target]] = [next[target], next[index]];
+		onReorder(next);
+	};
+
 	return (
 		<div className={styles.pageStrip}>
 			<div className={styles.pageTabs} role="tablist">
@@ -70,15 +86,42 @@ export function PageStrip({
 							    stray click on a tab cannot delete a page the
 							    author is not even looking at. */}
 							{on && pages.length > 1 && (
-								<button
-									type="button"
-									className={styles.pageTabRemove}
-									onClick={() => onRemove(page.pageId)}
-									aria-label={`Remove ${page.title}`}
-									title="Remove this page"
-								>
-									✕
-								</button>
+								<>
+									<button
+										type="button"
+										className={styles.pageTabMove}
+										onClick={() => nudge(page.pageId, -1)}
+										disabled={
+											pages[0]?.pageId === page.pageId
+										}
+										aria-label={`Move ${page.title} earlier`}
+										title="Move earlier"
+									>
+										‹
+									</button>
+									<button
+										type="button"
+										className={styles.pageTabMove}
+										onClick={() => nudge(page.pageId, 1)}
+										disabled={
+											pages[pages.length - 1]?.pageId ===
+											page.pageId
+										}
+										aria-label={`Move ${page.title} later`}
+										title="Move later"
+									>
+										›
+									</button>
+									<button
+										type="button"
+										className={styles.pageTabRemove}
+										onClick={() => onRemove(page.pageId)}
+										aria-label={`Remove ${page.title}`}
+										title="Remove this page"
+									>
+										✕
+									</button>
+								</>
 							)}
 						</div>
 					);

@@ -1,5 +1,6 @@
 import { sql } from "../data/lakebase";
 import { setTrackedGroups } from "../auth/policy";
+import { settings } from "../settings";
 import type {
 	AccessMode,
 	FieldKind,
@@ -45,9 +46,19 @@ interface FieldRow {
 let sources = new Map<string, SemanticSource>();
 let loadedAt = 0;
 let loading: Promise<void> | null = null;
-let refreshTimer: ReturnType<typeof setInterval> | null = null;
+let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
-const refreshIntervalMs = 60000;
+// What is stored about each source, reread. Registering or editing one reloads
+// this immediately, so the poll is only for changes another replica made, which
+// is not something worth asking about every minute.
+//
+// Read per tick rather than once at startup, so changing the setting takes
+// effect on the next tick instead of on the next deploy. Floored, because a
+// setting of zero or a stray small number would turn this into a busy loop
+// against the platform store.
+function refreshIntervalMs(): number {
+	return Math.max(settings().refreshIntervalSeconds, 30) * 1000;
+}
 
 function toField(row: FieldRow): SemanticField {
 	return {
@@ -274,15 +285,20 @@ export function registryLoadedAt(): number {
 
 export function startRegistryPolling(): void {
 	if (refreshTimer) return;
-	refreshTimer = setInterval(() => {
+	// A timeout that reschedules itself rather than a fixed interval, so a
+	// change to the setting is picked up without a restart.
+	const tick = () => {
 		void loadRegistry();
-	}, refreshIntervalMs);
+		refreshTimer = setTimeout(tick, refreshIntervalMs());
+		refreshTimer.unref?.();
+	};
+	refreshTimer = setTimeout(tick, refreshIntervalMs());
 	refreshTimer.unref?.();
 }
 
 export function stopRegistryPolling(): void {
 	if (refreshTimer) {
-		clearInterval(refreshTimer);
+		clearTimeout(refreshTimer);
 		refreshTimer = null;
 	}
 }

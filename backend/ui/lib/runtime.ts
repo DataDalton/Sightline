@@ -195,3 +195,20 @@ export function resolveWarehousePath(): string {
 
 	return configured ? `/sql/1.0/warehouses/${configured}` : warehouseHttpPath;
 }
+
+// This process, named.
+//
+// Every counter under Platform > Health describes whichever replica served the
+// request, so refreshing the page changes the numbers and nothing says why. A
+// name per process makes that visible: two refreshes reporting two different
+// instance ids is the answer, and a one-instance problem stops looking like an
+// everything problem.
+//
+// Generated rather than read from the environment. Databricks Apps does not
+// expose a replica identifier, and a random name that lives as long as the
+// process is exactly what is being identified.
+export const instanceId = `${process.pid.toString(36)}-${Math.random()
+	.toString(36)
+	.slice(2, 8)}`;
+
+export const instanceStartedAt = Date.now();

@@ -848,3 +848,194 @@
 		transform: rotate(360deg);
 	}
 }
+
+/* An observation that should be looked at, inside a table cell. Not an error
+   treatment: a group that has never matched anybody is the shape of a typo, but
+   a correctly named group nobody has signed in under yet looks the same. */
+.warnText {
+	color: var(--warning);
+	font-weight: 500;
+}
+
+/* A standing condition worth acting on, above the thing it is about.
+
+   Distinct from an inline field hint: this says something about the state of
+   the deployment rather than about the input beside it, so it carries a rule
+   down its leading edge and sits at full width. */
+.notice {
+	display: flex;
+	gap: var(--space-3);
+	padding: var(--space-3) var(--space-4);
+	margin-bottom: var(--space-4);
+	border: 1px solid var(--border-subtle);
+	border-left: 3px solid var(--info);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+}
+
+.noticeWarn {
+	border-left-color: var(--warning);
+}
+
+.noticeError {
+	border-left-color: var(--danger);
+}
+
+.noticeTitle {
+	font-weight: 600;
+	font-size: var(--text-sm);
+	margin-bottom: 2px;
+}
+
+.noticeBody {
+	margin: 0;
+	font-size: var(--text-sm);
+	line-height: 1.55;
+	color: var(--text-secondary);
+}
+
+/* A list opened from inside a table row. Indented and on the sunken surface so
+   it reads as belonging to the row above rather than as another table. */
+.nested {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	padding: var(--space-3);
+	border-radius: var(--radius-md);
+	background: var(--surface-sunken);
+}
+
+.nestedRow {
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	padding: var(--space-1) var(--space-2);
+	font-size: var(--text-sm);
+}
+
+.nestedName {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* --- Grouped settings ------------------------------------------------------
+
+   A pane of settings reads as a list of decisions, not a form. Each group says
+   what it governs, so the one you came for is found by heading rather than by
+   reading every label. */
+.settingGroup {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+	padding-bottom: var(--space-5);
+}
+
+.settingGroup + .settingGroup {
+	padding-top: var(--space-5);
+	border-top: 1px solid var(--border-subtle);
+}
+
+.settingGroupHead {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.settingGroupTitle {
+	margin: 0;
+	font-size: var(--text-md);
+	font-weight: 600;
+	color: var(--text-primary);
+}
+
+.settingGroupBlurb {
+	margin: 0;
+	max-width: 62ch;
+	font-size: var(--text-sm);
+	line-height: 1.5;
+	color: var(--text-secondary);
+}
+
+/* Fixed tracks rather than auto-fit, so how many sit on a row is a decision
+   rather than a consequence of the window width. */
+.settingGrid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+	gap: var(--space-4);
+	max-width: 760px;
+}
+
+.numberSetting {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	min-width: 0;
+}
+
+/* The unit lives inside the field, so a column of these aligns on the input
+   edge rather than on whatever the longest unit happened to be. */
+.numberBox {
+	display: flex;
+	align-items: stretch;
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	overflow: hidden;
+}
+
+.numberBox:focus-within {
+	border-color: var(--brand);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 22%, transparent);
+}
+
+.numberInput {
+	flex: 1;
+	min-width: 0;
+	padding: var(--space-2) var(--space-3);
+	border: none;
+	background: none;
+	color: var(--text-primary);
+	font-size: var(--text-sm);
+	font-family: inherit;
+	font-variant-numeric: tabular-nums;
+}
+
+.numberInput:focus-visible {
+	outline: none;
+}
+
+.numberUnit {
+	display: flex;
+	align-items: center;
+	flex-shrink: 0;
+	padding: 0 var(--space-3);
+	border-left: 1px solid var(--border-subtle);
+	background: var(--surface-sunken);
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+	white-space: nowrap;
+}
+
+/* A switch gets the full width with the control on the right, so it does not
+   read as a field somebody forgot to fill in. */
+.switchSetting {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: var(--space-4);
+	max-width: 760px;
+	padding: var(--space-3);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-md);
+	background: var(--surface-sunken);
+}
+
+.switchText {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}

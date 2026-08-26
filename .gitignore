@@ -402,7 +402,7 @@ backend/ui/**/*.tsbuildinfo
 
 # Organisation branding. Trademarks belong to whoever owns them, not in a
 # repository other people read. A deployment loads its mark through
-# Administration -> Configuration, or scripts/setLogo.mjs.
+# Administration -> Configuration.
 branding/
 
 # Import scripts that know one organisation's planning format. The platform

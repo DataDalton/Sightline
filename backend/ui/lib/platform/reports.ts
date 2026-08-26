@@ -108,14 +108,14 @@ export async function listReports(
 				`SELECT ${reportColumns}
 				 FROM reports
 				 WHERE is_active = TRUE AND is_personal = FALSE AND category_id = $1
-				 ORDER BY title`,
+				 ORDER BY sort_order, title`,
 				[categoryId],
 			)
 		: await sql<ReportRow>(
 				`SELECT ${reportColumns}
 				 FROM reports
 				 WHERE is_active = TRUE AND is_personal = FALSE
-				 ORDER BY title`,
+				 ORDER BY sort_order, title`,
 			);
 
 	const visible: ReportSummary[] = [];

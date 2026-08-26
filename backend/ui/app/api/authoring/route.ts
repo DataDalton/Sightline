@@ -11,7 +11,9 @@ import {
 	deactivateCategory,
 	removeReport,
 	reorderCategories,
+	reorderReports,
 	updateCategory,
+	updateReportPlacement,
 } from "@/lib/platform/authoring";
 import { assertCanEdit } from "@/lib/platform/editing";
 import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
@@ -275,6 +277,66 @@ export async function POST(request: NextRequest) {
 			}
 
 			await removeReport(identity, reportId);
+			return NextResponse.json({ ok: true });
+		}
+
+		if (action === "moveReport") {
+			const reportId = String(body.reportId ?? "").trim();
+
+			// Editing the report is the bar for changing its address: the slug
+			// is part of the report, and an editor who can rewrite every visual
+			// on it can reasonably fix what it is called in a URL.
+			try {
+				await assertCanEdit(policy, identity.email, reportId);
+			} catch {
+				return refused;
+			}
+
+			// Which category it sits in is a decision about navigation rather
+			// than about the report, so that half needs the capability that
+			// governs navigation. Checked only when the category is actually
+			// changing, so fixing an address does not require it.
+			if (body.categoryId !== undefined) {
+				const current = await sql<{ category_id: string | null }>(
+					`SELECT category_id FROM reports WHERE report_id = $1`,
+					[reportId],
+				);
+				const moving =
+					(current[0]?.category_id ?? null) !==
+					(String(body.categoryId ?? "") || null);
+				if (
+					moving &&
+					!(await canDo(policy, identity, "category.manage"))
+				) {
+					return refused;
+				}
+			}
+
+			const placed = await updateReportPlacement(identity, reportId, {
+				categoryId:
+					body.categoryId === undefined
+						? undefined
+						: String(body.categoryId ?? "") || null,
+				slug:
+					body.slug === undefined
+						? undefined
+						: String(body.slug ?? ""),
+			});
+			return NextResponse.json(placed);
+		}
+
+		if (action === "reorderReports") {
+			if (!(await canDo(policy, identity, "category.manage"))) {
+				return refused;
+			}
+			const reportIds = Array.isArray(body.reportIds)
+				? body.reportIds.map((id) => String(id))
+				: [];
+			await reorderReports(
+				identity,
+				String(body.categoryId ?? ""),
+				reportIds,
+			);
 			return NextResponse.json({ ok: true });
 		}
 

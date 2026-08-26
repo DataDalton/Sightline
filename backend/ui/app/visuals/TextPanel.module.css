@@ -141,13 +141,13 @@
 	color: var(--brand-contrast);
 }
 
+/* Width only. These wrap a shared Select, which draws its own bordered trigger
+   inside, so repeating the border and background here would put a button inside
+   a button. The width keeps the two toolbar dropdowns from collapsing to their
+   content and jumping about as the selection changes. */
 .select {
-	height: 26px;
-	padding: 0 var(--space-1);
-	border: 1px solid var(--border-default);
-	border-radius: var(--radius-sm);
-	background: var(--surface-raised);
-	font-size: var(--text-xs);
+	width: 108px;
+	flex-shrink: 0;
 }
 
 .swatches {

@@ -63,43 +63,61 @@
 	letter-spacing: -0.01em;
 }
 
-.spacer {
-	flex: 1;
-}
+/* The search field, which is a button.
 
-.actions {
-	display: flex;
-	align-items: center;
-	gap: var(--space-1);
-}
-
-.iconButton {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 32px;
-	height: 32px;
-	border-radius: var(--radius-md);
-	color: var(--chrome-text-muted);
-	transition: background var(--transition-fast), color var(--transition-fast);
-}
-
-.iconButton:hover {
-	background: var(--chrome-hover);
-	color: var(--chrome-text);
-}
-
-.user {
+   Centred in the bar rather than pushed right: it is the primary action in the
+   header now that identity has moved to the foot of the navigation, and a
+   centred target is a shorter trip from anywhere on a wide screen. */
+.search {
 	display: flex;
 	align-items: center;
 	gap: var(--space-2);
-	padding: var(--space-1) var(--space-2) var(--space-1) var(--space-1);
-	border-radius: var(--radius-full);
-	transition: background var(--transition-fast);
+	width: 100%;
+	max-width: 420px;
+	margin: 0 auto;
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid var(--chrome-border);
+	border-radius: var(--radius-md);
+	background: var(--chrome-hover);
+	color: var(--chrome-text-muted);
+	font-family: inherit;
+	font-size: var(--text-sm);
+	text-align: left;
+	cursor: pointer;
+	transition:
+		background var(--transition-fast),
+		border-color var(--transition-fast);
 }
 
-.user:hover {
-	background: var(--chrome-hover);
+.search:hover {
+	background: var(--chrome-active);
+	border-color: var(--border-strong);
+	color: var(--chrome-text);
+}
+
+.searchIcon {
+	flex-shrink: 0;
+}
+
+.searchLabel {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.shortcut {
+	flex-shrink: 0;
+	padding: 1px var(--space-2);
+	border: 1px solid var(--chrome-border);
+	border-radius: var(--radius-sm);
+	background: var(--chrome-bg);
+	color: var(--chrome-text-muted);
+	font-family: var(--font-mono);
+	font-size: var(--text-xs);
+	font-weight: 500;
+	letter-spacing: 0.02em;
 }
 
 .avatar {
@@ -116,30 +134,45 @@
 	letter-spacing: 0.02em;
 }
 
-.userName {
-	font-size: var(--text-sm);
-	color: var(--chrome-text);
-	max-width: 160px;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
+/* Identity, only once the navigation that normally carries it has become a
+   drawer. Hidden by default and shown at the narrow breakpoint below. */
+.compactUser {
+	position: relative;
+	display: none;
+	flex-shrink: 0;
 }
 
-.badge {
-	padding: 1px var(--space-2);
+/* Says the session is not whole without spending a word on it. The account
+   block at the foot of the navigation carries the explanation. */
+.statusDot {
+	position: absolute;
+	right: -1px;
+	bottom: -1px;
+	width: 9px;
+	height: 9px;
 	border-radius: var(--radius-full);
-	background: var(--chrome-active);
-	color: var(--chrome-text-muted);
-	font-size: var(--text-xs);
-	font-weight: 500;
+	background: var(--warning);
+	border: 2px solid var(--chrome-bg);
 }
 
-.warning {
-	color: var(--warning);
-}
+/* Below the width where the sidebar becomes a drawer, identity goes with it,
+   so the mark comes back to the bar. The search field loses its label and
+   keeps its icon: the shortcut is not reachable without a keyboard anyway. */
+@media (max-width: 900px) {
+	.compactUser {
+		display: flex;
+	}
 
-@media (max-width: 860px) {
-	.userName {
+	.search {
+		width: auto;
+		max-width: none;
+		margin-left: auto;
+		margin-right: 0;
+		padding: var(--space-2);
+	}
+
+	.searchLabel,
+	.shortcut {
 		display: none;
 	}
 }

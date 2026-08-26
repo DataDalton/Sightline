@@ -53,7 +53,39 @@ export async function GET(request: NextRequest) {
 		 ORDER BY c.sort_order, c.name`,
 	);
 
+	// The reports themselves, for the screen that places them. Asked for
+	// explicitly rather than always returned, because the categories list is
+	// read by the navigation editor too and that one needs none of this.
+	//
+	// Personal pages are excluded. They belong to a person rather than to the
+	// structure, and moving one into a category is publishing it, which has its
+	// own path and its own capability.
+	const reports = request.nextUrl.searchParams.has("reports")
+		? (
+				await sql<{
+					report_id: string;
+					title: string;
+					slug: string;
+					category_id: string | null;
+					sort_order: number;
+				}>(
+					`SELECT report_id::text AS report_id, title, slug,
+					        category_id, sort_order
+					 FROM reports
+					 WHERE is_active = TRUE AND is_personal = FALSE
+					 ORDER BY sort_order, title`,
+				)
+			).map((row) => ({
+				reportId: row.report_id,
+				title: row.title,
+				slug: row.slug,
+				categoryId: row.category_id,
+				sortOrder: row.sort_order,
+			}))
+		: undefined;
+
 	const response = NextResponse.json({
+		reports,
 		categories: rows.map((row) => ({
 			categoryId: row.category_id,
 			name: row.name,
