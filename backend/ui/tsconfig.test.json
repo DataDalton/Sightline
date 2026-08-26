@@ -36,6 +36,8 @@
 		"lib/platform/overlay.ts",
 		"lib/platform/accessRules.ts",
 		"lib/platform/accessRules.test.ts",
+		"lib/platform/searchMatch.ts",
+		"lib/platform/searchMatch.test.ts",
 		"lib/platform/versionDiff.ts",
 		"lib/platform/versionDiff.test.ts",
 		"lib/platform/overlay.test.ts",

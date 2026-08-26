@@ -66,6 +66,30 @@ interface TrackedGroup {
 
 let trackedGroups: TrackedGroup[] = [];
 
+// Whether a probe has ever come back true for a group, per replica.
+//
+// Group names are matched exactly and case sensitively, and nothing validates
+// one at the point somebody types it into a role assignment. A misspelling
+// produces a row that looks right, grants nothing, and reports nothing, so this
+// is the evidence that distinguishes the two. Absence is not proof of a typo:
+// a correctly named group nobody in it has signed in under yet looks the same,
+// which is why the administration screen says "not seen" rather than "wrong".
+const groupProbes = new Map<string, { probedAt: number; matchedAt: number }>();
+
+export interface GroupProbeRecord {
+	name: string;
+	probedAt: number;
+	matchedAt: number;
+}
+
+export function getGroupProbes(): GroupProbeRecord[] {
+	return [...groupProbes.entries()].map(([name, seen]) => ({
+		name,
+		probedAt: seen.probedAt,
+		matchedAt: seen.matchedAt,
+	}));
+}
+
 export function setTrackedGroups(
 	groups: string[],
 	filterGroups: { accountGroups: string[]; workspaceGroups: string[] } = {
@@ -252,9 +276,27 @@ async function probeGrants(identity: Identity): Promise<string[]> {
 	const isTrue = (value: unknown): boolean =>
 		value === true || String(value).toLowerCase() === "true";
 
-	return trackedGroups
-		.filter((_, i) => isTrue(row[`m${i}`]))
-		.map((group) => group.name);
+	const matched = trackedGroups.filter((_, i) => isTrue(row[`m${i}`]));
+
+	// Records that a probe has resolved for these groups, which is what lets
+	// administration tell a group name somebody typed correctly from one they
+	// typed wrong. A group assigned a role but never matched by anyone who has
+	// signed in is the shape of a typo.
+	const now = Date.now();
+	for (const group of trackedGroups) {
+		const seen = groupProbes.get(group.name) ?? {
+			probedAt: 0,
+			matchedAt: 0,
+		};
+		seen.probedAt = now;
+		groupProbes.set(group.name, seen);
+	}
+	for (const group of matched) {
+		const seen = groupProbes.get(group.name);
+		if (seen) seen.matchedAt = now;
+	}
+
+	return matched.map((group) => group.name);
 }
 
 // The set of groups an answer was computed against. A stored answer is only

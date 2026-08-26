@@ -23,6 +23,7 @@ import { useUser } from "../context/UserContext";
 import type { SourceMeta } from "../visuals/types";
 import { FieldPicker } from "./FieldPicker";
 import { SavedViews, type SavedView } from "./SavedViews";
+import { FavouriteButton } from "./FavouriteButton";
 import { ReportGrid } from "./ReportGrid";
 import {
 	ScaledArea,
@@ -97,6 +98,20 @@ export default function ReportView({
 		{ fallbackData: initial },
 	);
 	const { user } = useUser();
+
+	// Read off the navigation rather than fetched here. It carries the marked
+	// list already, is seeded into the document, and is the thing this button
+	// updates, so reading the same key keeps the star and the rail in step.
+	const { data: navigation } = useSWR<{
+		favourites?: { reportId: string }[];
+	}>("/api/navigation");
+	const isFavourite = Boolean(
+		data?.report &&
+		navigation?.favourites?.some(
+			(f) => f.reportId === data.report.reportId,
+		),
+	);
+
 	// Only a wait with nothing to show yet. SWR reports isLoading while it
 	// revalidates behind data it already has, and treating that as a wait threw
 	// away a report the server had already resolved.
@@ -327,6 +342,8 @@ export default function ReportView({
 					pageTitle={page.title}
 					reportTitle={report.title}
 					reportDescription={report.description}
+					categoryId={report.categoryId}
+					isPersonal={report.isPersonal}
 					pages={report.pages.map((p) => ({
 						pageId: p.pageId,
 						title: p.title,
@@ -378,7 +395,24 @@ export default function ReportView({
 								)}
 								<span>{report.title}</span>
 							</div>
-							<h1 className={styles.title}>{report.title}</h1>
+							<div className={styles.titleRow}>
+								<h1 className={styles.title}>{report.title}</h1>
+								{/* Beside the name rather than in the row of view
+								    controls to the right. Those are things you do
+								    to what is on screen; this is a mark on the
+								    report itself, and it reads as one where a
+								    name is.
+
+								    Personal pages are already under My pages, so
+								    marking one would list it twice in the same
+								    rail. */}
+								{!report.isPersonal && (
+									<FavouriteButton
+										reportId={report.reportId}
+										initial={isFavourite}
+									/>
+								)}
+							</div>
 							{report.description && (
 								<p className={styles.description}>
 									{report.description}

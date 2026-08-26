@@ -671,6 +671,68 @@
 	line-height: 1.4;
 }
 
+/* A break between what the panel is editing. Page settings above it, report
+   settings below, because the two are saved by different paths: page settings
+   ride the editor's operation log, and moving the report is its own write that
+   can change the URL. */
+.settingsDivider {
+	margin: var(--space-2) 0;
+	border: none;
+	border-top: 1px solid var(--border-subtle);
+}
+
+.settingsError {
+	padding: var(--space-2);
+	border-radius: var(--radius-sm);
+	background: var(--danger-subtle);
+	color: var(--danger);
+	font-size: var(--text-xs);
+	line-height: 1.4;
+}
+
+.settingsActions {
+	display: flex;
+	gap: var(--space-2);
+	align-items: center;
+}
+
+.settingsSave {
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid transparent;
+	border-radius: var(--radius-sm);
+	background: var(--brand);
+	color: var(--brand-contrast);
+	font-size: var(--text-xs);
+	font-weight: 600;
+	font-family: inherit;
+	cursor: pointer;
+}
+
+.settingsSave:hover:not(:disabled) {
+	background: var(--brand-strong);
+}
+
+.settingsSave:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.settingsDiscard {
+	padding: var(--space-2) var(--space-2);
+	border: none;
+	border-radius: var(--radius-sm);
+	background: none;
+	color: var(--text-secondary);
+	font-size: var(--text-xs);
+	font-family: inherit;
+	cursor: pointer;
+}
+
+.settingsDiscard:hover:not(:disabled) {
+	background: var(--state-hover);
+	color: var(--text-primary);
+}
+
 /* Page controls, shown the way a reader will see them rather than as grid
    boxes. The strip sizes to its contents, so a filter group with seven fields
    is seven dropdowns here as well as on the page. */
@@ -1002,22 +1064,40 @@
    down, so what an author sees is the arrangement a reader on that screen
    gets, including the point where it stops being twelve columns and becomes
    one. A scaled screenshot would show neither. */
+/* The icon and the dropdown are one control, so one border goes round both.
+
+   They used to be an icon sitting next to a bordered field, inside a toolbar
+   that is itself a bordered box in the same colour, which read as a box inside
+   a box. The edge belongs to the control; the field inside it is bare. */
 .previewPicker {
 	display: flex;
 	align-items: center;
 	gap: var(--space-1);
+	padding-left: var(--space-2);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-base);
 	color: var(--text-secondary);
+	cursor: pointer;
 }
 
+.previewPicker:hover {
+	border-color: var(--border-strong);
+}
+
+/* Focus lands on the field inside, so the ring is drawn on the group. */
+.previewPicker:focus-within {
+	border-color: var(--brand);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 22%, transparent);
+}
+
+/* Width only. This sits on the wrapper of a shared Select, which draws its own
+   bordered trigger inside: repeating the border and background here put a
+   button inside a button. The width stops the field collapsing to its content
+   in a toolbar laid out with flex. */
 .previewSelect {
-	padding: var(--space-1) var(--space-2);
-	border: 1px solid var(--border-default);
-	border-radius: var(--radius-sm);
-	background: var(--surface-raised);
-	color: var(--text-primary);
-	font-size: var(--text-sm);
-	font-family: inherit;
-	cursor: pointer;
+	width: 160px;
+	flex-shrink: 0;
 }
 
 /* A preview is centred and edged, so the width being checked is visible as a
@@ -1110,6 +1190,30 @@
 	color: var(--danger);
 }
 
+/* Nudges the active page one place along the strip. Shares the removal
+   button's footprint so the three controls read as one group. */
+.pageTabMove {
+	width: 16px;
+	height: 18px;
+	border: none;
+	border-radius: var(--radius-sm);
+	background: none;
+	color: var(--text-muted);
+	font-size: var(--text-md);
+	line-height: 1;
+	cursor: pointer;
+}
+
+.pageTabMove:hover:not(:disabled) {
+	background: var(--surface-active);
+	color: var(--text-primary);
+}
+
+.pageTabMove:disabled {
+	opacity: 0.3;
+	cursor: not-allowed;
+}
+
 .pageAddButton {
 	padding: var(--space-2) var(--space-2);
 	border: none;
@@ -1165,4 +1269,43 @@
 
 .bandBreak:hover {
 	color: var(--text-primary);
+}
+
+/* The one destructive control in the panel, set apart from the settings above
+   it. Not styled red until pressed on: a permanently red block in a settings
+   panel reads as a warning about the panel rather than about the action. */
+.settingsDanger {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	align-items: flex-start;
+	margin-top: var(--space-3);
+	padding-top: var(--space-3);
+	border-top: 1px solid var(--border-subtle);
+}
+
+.settingsRemove {
+	margin-top: var(--space-1);
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-sm);
+	background: var(--surface-raised);
+	color: var(--danger);
+	font-size: var(--text-xs);
+	font-weight: 600;
+	font-family: inherit;
+	cursor: pointer;
+	transition:
+		background var(--transition-fast),
+		border-color var(--transition-fast);
+}
+
+.settingsRemove:hover:not(:disabled) {
+	background: var(--danger-subtle);
+	border-color: var(--danger);
+}
+
+.settingsRemove:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
 }

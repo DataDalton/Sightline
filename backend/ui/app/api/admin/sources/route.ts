@@ -11,6 +11,8 @@ import {
 	registerSource,
 	RegistrationError,
 	sourceKeyFor,
+	updateSource,
+	updateSourceFields,
 } from "@/lib/semantic/discovery";
 import { checkWriteRateLimit } from "@/lib/rateLimit";
 
@@ -107,6 +109,52 @@ export async function POST(request: NextRequest) {
 		if (action === "remove") {
 			await deactivateSource(identity, String(body.sourceKey ?? ""));
 			return NextResponse.json({ ok: true });
+		}
+
+		if (action === "update") {
+			await updateSource(identity, String(body.sourceKey ?? ""), {
+				title:
+					body.title === undefined ? undefined : String(body.title),
+				description:
+					body.description === undefined
+						? undefined
+						: String(body.description ?? "").slice(0, 500) || null,
+				defaultTimeField:
+					body.defaultTimeField === undefined
+						? undefined
+						: String(body.defaultTimeField ?? "") || null,
+				cacheTtlSeconds:
+					body.cacheTtlSeconds === undefined
+						? undefined
+						: Number(body.cacheTtlSeconds) || 0,
+			});
+			return NextResponse.json({ ok: true });
+		}
+
+		if (action === "updateFields") {
+			const edits = Array.isArray(body.fields)
+				? (body.fields as Record<string, unknown>[]).map((field) => ({
+						fieldName: String(field.fieldName ?? ""),
+						displayName:
+							field.displayName === undefined
+								? undefined
+								: String(field.displayName ?? "").slice(0, 120),
+						description:
+							field.description === undefined
+								? undefined
+								: String(field.description ?? "").slice(0, 500),
+						formatHint:
+							field.formatHint === undefined
+								? undefined
+								: String(field.formatHint ?? "").slice(0, 40),
+					}))
+				: [];
+			const changed = await updateSourceFields(
+				identity,
+				String(body.sourceKey ?? ""),
+				edits.filter((edit) => edit.fieldName),
+			);
+			return NextResponse.json({ ok: true, changed });
 		}
 
 		const catalog = String(body.catalog ?? "");

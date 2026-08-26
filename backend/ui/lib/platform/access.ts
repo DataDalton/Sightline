@@ -128,7 +128,20 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<AccessContext>>();
-const ttlMs = 60000;
+// How long a resolved access context is reused.
+//
+// The same setting the membership probe uses, rather than a second number
+// meaning nearly the same thing. Both answer "how long is a membership-derived
+// decision trusted", and having one at sixty seconds and the other at five
+// minutes meant the shorter one silently decided, so the setting an admin can
+// see did not describe the behaviour.
+//
+// This bounds how long a withdrawn grant keeps working inside the app. Access
+// to the app itself is gated upstream by the identity provider, which revokes
+// on its own schedule regardless of this.
+function contextTtlMs(): number {
+	return Math.max(settings().groupCacheTtlSeconds, 30) * 1000;
+}
 
 // What a caller holds when nothing can be read from the platform store.
 //
@@ -244,7 +257,7 @@ async function cached(
 	const pending = (async () => {
 		try {
 			const context = await load();
-			cache.set(key, { context, expiresAt: now + ttlMs });
+			cache.set(key, { context, expiresAt: now + contextTtlMs() });
 			return context;
 		} catch (error) {
 			console.error(

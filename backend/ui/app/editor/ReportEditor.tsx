@@ -10,6 +10,8 @@ import { useLiveSync } from "./useLiveSync";
 import { ConfirmDialog } from "../components/shared/ConfirmDialog";
 import { NewPageDialog } from "../authoring/NewPage";
 import { PageStrip } from "./PageStrip";
+import { Select } from "../components/shared/Select";
+import { ReportPlacement } from "./ReportPlacement";
 import { VisualPicker } from "./VisualPicker";
 import { PropertiesPanel } from "./PropertiesPanel";
 import type { EditableVisual } from "./types";
@@ -44,6 +46,11 @@ interface ReportEditorProps {
 	// The line under the report title. Report-level rather than page-level,
 	// because that is where it is stored and where every page shows it.
 	reportDescription: string | null;
+	// Which section of the navigation the report sits in, and whether it is a
+	// personal page. A personal page is placed by publishing it rather than by
+	// moving it, so the placement controls are not offered for one.
+	categoryId: string | null;
+	isPersonal: boolean;
 	// Every page in the report, for the strip under the toolbar.
 	pages: { pageId: string; title: string }[];
 	// Switching page is the page owner's business, not the editor's: the
@@ -71,7 +78,8 @@ type PendingOp =
 	| { type: "updatePage" }
 	| { type: "updateReport" }
 	| { type: "addPage"; pageId: string; title: string }
-	| { type: "removePage"; pageId: string };
+	| { type: "removePage"; pageId: string }
+	| { type: "reorderPages"; pageIds: string[] };
 
 export function ReportEditor({
 	reportId,
@@ -85,6 +93,8 @@ export function ReportEditor({
 	pageTitle: initialPageTitle,
 	reportTitle,
 	reportDescription: initialDescription,
+	categoryId,
+	isPersonal,
 	pages,
 	onSelectPage,
 	onExit,
@@ -106,7 +116,9 @@ export function ReportEditor({
 	const [pageTitle, setPageTitle] = useState(initialPageTitle);
 	// Which tab the panel shows when nothing is selected. Selecting a visual
 	// switches it to that visual's properties and back again on deselect.
-	const [panelTab, setPanelTab] = useState<"page" | "history">("page");
+	const [panelTab, setPanelTab] = useState<"page" | "report" | "history">(
+		"page",
+	);
 	// Which screen the canvas is being laid out for. "fit" is the editor's own
 	// width, which is the normal way to work.
 	const [preview, setPreview] = useState("fit");
@@ -114,6 +126,26 @@ export function ReportEditor({
 	// the new version rather than showing what it read when it opened.
 	const [historyKey, setHistoryKey] = useState(0);
 	const [description, setDescription] = useState(initialDescription ?? "");
+
+	// The order the strip is showing, which leads the saved order while a
+	// reorder is pending. Reset when the report reloads, so a save that lands
+	// hands control back to what the server says.
+	const [pageOrder, setPageOrder] = useState<string[] | null>(null);
+	useEffect(() => {
+		setPageOrder(null);
+	}, [version]);
+
+	// Applied to the prop rather than replacing it, so a page added or removed
+	// while a reorder is pending still appears.
+	const orderedPages = useMemo(() => {
+		if (!pageOrder) return pages;
+		const rank = new Map(pageOrder.map((id, i) => [id, i]));
+		return [...pages].sort(
+			(a, b) =>
+				(rank.get(a.pageId) ?? Number.MAX_SAFE_INTEGER) -
+				(rank.get(b.pageId) ?? Number.MAX_SAFE_INTEGER),
+		);
+	}, [pages, pageOrder]);
 
 	// Operations accumulate rather than replacing state, so a save can tell an
 	// insert from an update without diffing the whole page.
@@ -255,7 +287,9 @@ export function ReportEditor({
 						? "report"
 						: op.type === "addPage" || op.type === "removePage"
 							? `page:${op.pageId}`
-							: op.visualId;
+							: op.type === "reorderPages"
+								? "pageOrder"
+								: op.visualId;
 		const existing = pendingRef.current.get(key);
 
 		// A visual added and then edited in the same session is still an
@@ -433,6 +467,9 @@ export function ReportEditor({
 			if (op.type === "removePage") {
 				return { type: "removePage", pageId: op.pageId };
 			}
+			if (op.type === "reorderPages") {
+				return { type: "reorderPages", pageIds: op.pageIds };
+			}
 			const v = visuals.find((x) => x.visualId === op.visualId);
 			return {
 				type: "updateVisual",
@@ -540,23 +577,18 @@ export function ReportEditor({
 						<path d="M2 19h14" />
 						<rect x="18" y="9" width="4" height="10" rx="1" />
 					</svg>
-					<select
+					<Select
 						className={styles.previewSelect}
+						bare
 						value={preview}
-						onChange={(e) => setPreview(e.target.value)}
-						title={
-							previewWidths.find((w) => w.id === preview)?.note ??
-							"Lay the canvas out for a different screen"
-						}
-						aria-label="Preview width"
-					>
-						{previewWidths.map((w) => (
-							<option key={w.id} value={w.id}>
-								{w.label}
-								{w.width ? ` · ${w.width}px` : ""}
-							</option>
-						))}
-					</select>
+						onChange={setPreview}
+						ariaLabel="Preview width"
+						options={previewWidths.map((w) => ({
+							value: w.id,
+							label: w.label,
+							note: w.width ? `${w.width}px` : undefined,
+						}))}
+					/>
 				</label>
 
 				<span className={styles.divider} aria-hidden="true" />
@@ -663,15 +695,6 @@ export function ReportEditor({
 				</button>
 				<button
 					type="button"
-					className={styles.toolButton}
-					onClick={() => setConfirmingRemove(true)}
-					disabled={saving || removing}
-					title="Remove this report"
-				>
-					{removing ? "Deleting" : "Delete"}
-				</button>
-				<button
-					type="button"
 					className={`${styles.toolButton} ${styles.primary}`}
 					onClick={save}
 					disabled={!dirty || saving}
@@ -764,7 +787,7 @@ export function ReportEditor({
 			)}
 
 			<PageStrip
-				pages={pages}
+				pages={orderedPages}
 				activePageId={pageId}
 				dirty={dirty}
 				onSelect={onSelectPage}
@@ -774,6 +797,17 @@ export function ReportEditor({
 						type: "removePage",
 						pageId: removeId,
 					});
+					setDirty(true);
+				}}
+				onReorder={(pageIds) => {
+					// One pending op whatever the order was changed to, keyed
+					// on the whole list rather than on a page, so nudging a tab
+					// four places along is still one write.
+					pendingRef.current.set("pageOrder", {
+						type: "reorderPages",
+						pageIds,
+					});
+					setPageOrder(pageIds);
 					setDirty(true);
 				}}
 			/>
@@ -810,6 +844,40 @@ export function ReportEditor({
 					pageConfig={pageConfig}
 					pageTitle={pageTitle}
 					reportDescription={description}
+					placement={
+						<>
+							{!isPersonal && (
+								<ReportPlacement
+									reportId={reportId}
+									slug={slug}
+									categoryId={categoryId}
+									dirty={dirty}
+								/>
+							)}
+
+							{/* Kept away from the toolbar, where it sat between
+							    Done and Publish and was one slip from either.
+							    Down here it takes a deliberate trip into the
+							    settings panel, and still asks. */}
+							<div className={styles.settingsDanger}>
+								<span className={styles.settingsLabel}>
+									Delete this report
+								</span>
+								<span className={styles.settingsHint}>
+									Removes every page on it. Anyone who could
+									open it loses it.
+								</span>
+								<button
+									type="button"
+									className={styles.settingsRemove}
+									onClick={() => setConfirmingRemove(true)}
+									disabled={saving || removing}
+								>
+									{removing ? "Deleting" : "Delete report"}
+								</button>
+							</div>
+						</>
+					}
 					panelTab={panelTab}
 					onPanelTab={setPanelTab}
 					historySlug={slug}

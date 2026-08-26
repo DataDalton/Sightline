@@ -398,3 +398,117 @@ export async function getUserActivity(
 		errorMessage: row.error_message,
 	}));
 }
+
+// --- Change history ---------------------------------------------------------
+
+// Everything the platform recorded somebody doing to it.
+//
+// Thirty-one places write to activity_log, and until this existed two of them
+// could be read back: the export filter above, and the per-report history in
+// the editor. Role grants, category creation, source registration, settings
+// changes and administrative reads of somebody's private page were all recorded
+// and then unreachable, which is the half of an access review nobody could
+// answer.
+
+export interface ActivityRecord {
+	logId: string;
+	recordType: string;
+	recordId: string;
+	action: string;
+	fieldName: string | null;
+	oldValue: string | null;
+	newValue: string | null;
+	changedBy: string;
+	changedOn: string;
+	notes: string | null;
+}
+
+export interface ActivityFilter {
+	// One of the record types listed by activityRecordTypes, or null for all.
+	recordType?: string | null;
+	// Substring, matched case insensitively against the actor.
+	actor?: string | null;
+	days?: number;
+	limit?: number;
+	// Row offset, so a long history can be walked rather than truncated
+	// silently at the limit.
+	offset?: number;
+}
+
+// What the log actually holds, counted, so the filter offers the types this
+// deployment has rather than a list written into the source.
+export async function activityRecordTypes(
+	days = 30,
+): Promise<{ recordType: string; events: number }[]> {
+	const rows = await sql<{ record_type: string; events: string }>(
+		`SELECT record_type, count(*)::text AS events
+		 FROM activity_log
+		 WHERE changed_on > now() - ($1 || ' days')::interval
+		 GROUP BY record_type
+		 ORDER BY 2 DESC`,
+		[days],
+	);
+	return rows.map((row) => ({
+		recordType: row.record_type,
+		events: Number(row.events),
+	}));
+}
+
+export async function getActivityLog(
+	filter: ActivityFilter = {},
+): Promise<{ records: ActivityRecord[]; more: boolean }> {
+	const days = filter.days ?? 30;
+	const limit = Math.min(Math.max(filter.limit ?? 100, 1), 500);
+	const offset = Math.max(filter.offset ?? 0, 0);
+
+	// Parameterised rather than interpolated. These reach the endpoint from a
+	// query string, and a record type is compared rather than concatenated so
+	// there is nothing to escape.
+	const rows = await sql<{
+		log_id: string;
+		record_type: string;
+		record_id: string;
+		action: string;
+		field_name: string | null;
+		old_value: string | null;
+		new_value: string | null;
+		changed_by: string;
+		changed_on: string;
+		notes: string | null;
+	}>(
+		`SELECT log_id, record_type, record_id, action, field_name,
+		        old_value, new_value, changed_by, changed_on, notes
+		 FROM activity_log
+		 WHERE changed_on > now() - ($1 || ' days')::interval
+		   AND ($2::text IS NULL OR record_type = $2)
+		   AND ($3::text IS NULL OR changed_by ILIKE '%' || $3 || '%')
+		 ORDER BY changed_on DESC
+		 LIMIT $4 OFFSET $5`,
+		[
+			days,
+			filter.recordType || null,
+			filter.actor || null,
+			// One more than asked for, so the caller can be told there is a
+			// next page without running a second count over the whole table.
+			limit + 1,
+			offset,
+		],
+	);
+
+	const more = rows.length > limit;
+	return {
+		records: rows.slice(0, limit).map((row) => ({
+			logId: row.log_id,
+			recordType: row.record_type,
+			recordId: row.record_id,
+			action: row.action,
+			fieldName: row.field_name,
+			oldValue: row.old_value,
+			newValue: row.new_value,
+			changedBy: row.changed_by,
+			changedOn: row.changed_on,
+			notes: row.notes,
+		})),
+		more,
+	};
+}

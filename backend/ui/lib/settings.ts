@@ -32,12 +32,6 @@ export interface PlatformSettings {
 	// single global value would silently disagree with them.
 	warehouseId: string;
 
-	// Analytics cache. Budgets are deliberately conservative: the container
-	// shares this memory with SSR and the Node heap.
-	cacheMemoryLimitMb: number;
-	cacheMaxDatasetMb: number;
-	cacheThreads: number;
-
 	// Query result cache
 	resultTtlSeconds: number;
 	resultMaxEntries: number;
@@ -51,9 +45,9 @@ export interface PlatformSettings {
 	// cold policy class costs one slow request rather than many.
 	staleWhileRevalidate: boolean;
 
-	// Dataset refresh
+	// How often each replica rereads what is stored about every source. Not a
+	// catalogue sync: that is a manual walk under Platform, Sources.
 	refreshIntervalSeconds: number;
-	refreshConcurrency: number;
 
 	// Identity
 	groupCacheTtlSeconds: number;
@@ -108,17 +102,15 @@ export const defaultSettings: PlatformSettings = {
 
 	warehouseId: "",
 
-	cacheMemoryLimitMb: 4096,
-	cacheMaxDatasetMb: 3072,
-	cacheThreads: 2,
-
-	resultTtlSeconds: 300,
+	// Reporting data lands on a schedule rather than continuously, so an
+	// answer stays right for far longer than a web session. An hour is a floor
+	// worth raising for a warehouse loaded once a day.
+	resultTtlSeconds: 3600,
 	resultMaxEntries: 2000,
 	resultMaxBytes: 256,
 	staleWhileRevalidate: true,
 
 	refreshIntervalSeconds: 3600,
-	refreshConcurrency: 2,
 
 	groupCacheTtlSeconds: 300,
 	policyGraceSeconds: 3600,

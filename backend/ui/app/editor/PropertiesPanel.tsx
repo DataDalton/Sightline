@@ -15,6 +15,7 @@ import {
 import { readThemeColors } from "../visuals/colors";
 import { resolveKpiGroups, type KpiGroup } from "../../lib/visuals/kpiGroups";
 import { ConditionsEditor } from "./ConditionsEditor";
+import { Select } from "../components/shared/Select";
 import { HistoryPanel } from "./HistoryPanel";
 import { PageSettings } from "./PageSettings";
 import type { PageConfig } from "./ReportEditor";
@@ -40,14 +41,15 @@ interface PropertiesPanelProps {
 	pageConfig: PageConfig;
 	pageTitle: string;
 	reportDescription: string;
+	placement?: React.ReactNode;
 	onPageChange: (next: PageConfig) => void;
 	onPageTitleChange: (next: string) => void;
 	onDescriptionChange: (next: string) => void;
 	// With nothing selected the panel is about the page, and the history is
 	// about the page too, so they are tabs of the same panel rather than a
 	// button in the toolbar competing with the arranging controls.
-	panelTab: "page" | "history";
-	onPanelTab: (tab: "page" | "history") => void;
+	panelTab: "page" | "report" | "history";
+	onPanelTab: (tab: "page" | "report" | "history") => void;
 	historySlug: string;
 	historyKey: number;
 	onRestored: () => void;
@@ -64,6 +66,7 @@ export function PropertiesPanel({
 	pageConfig,
 	pageTitle,
 	reportDescription,
+	placement,
 	onPageChange,
 	onPageTitleChange,
 	onDescriptionChange,
@@ -91,6 +94,20 @@ export function PropertiesPanel({
 					>
 						Page
 					</button>
+					{/* Its own tab rather than a heading part way down the page
+					    settings. What a report is called, where it sits and
+					    whether it still exists are not properties of the page
+					    somebody happens to have open, and looking for them
+					    under "Page" means not finding them. */}
+					<button
+						type="button"
+						role="tab"
+						aria-selected={panelTab === "report"}
+						className={`${styles.tab} ${panelTab === "report" ? styles.tabActive : ""}`}
+						onClick={() => onPanelTab("report")}
+					>
+						Report
+					</button>
 					<button
 						type="button"
 						role="tab"
@@ -108,15 +125,42 @@ export function PropertiesPanel({
 						refreshKey={historyKey}
 						onRestored={onRestored}
 					/>
+				) : panelTab === "report" ? (
+					<div className={styles.settingsPanel}>
+						<div className={styles.settingsTitle}>
+							Report settings
+						</div>
+						<p className={styles.settingsIntro}>
+							These apply to every page of the report.
+						</p>
+
+						<label className={styles.settingsField}>
+							<span className={styles.settingsLabel}>
+								Subtitle
+							</span>
+							<textarea
+								className={styles.settingsInput}
+								rows={2}
+								placeholder="What this report is for"
+								value={reportDescription}
+								onChange={(e) =>
+									onDescriptionChange(e.target.value)
+								}
+							/>
+							<span className={styles.settingsHint}>
+								The line under the report title.
+							</span>
+						</label>
+
+						{placement}
+					</div>
 				) : (
 					<PageSettings
 						source={pageSource}
 						config={pageConfig}
 						pageTitle={pageTitle}
-						reportDescription={reportDescription}
 						onChange={onPageChange}
 						onPageTitleChange={onPageTitleChange}
-						onDescriptionChange={onDescriptionChange}
 					/>
 				)}
 			</div>
@@ -271,18 +315,16 @@ function DataTab({
 				<label className={styles.fieldLabel} htmlFor="visual-type">
 					Visual type
 				</label>
-				<select
+				<Select
 					id="visual-type"
-					className={styles.select}
 					value={visual.visualType}
-					onChange={(e) => update({ visualType: e.target.value })}
-				>
-					{Object.values(visualByType).map((d) => (
-						<option key={d.type} value={d.type}>
-							{d.label}
-						</option>
-					))}
-				</select>
+					onChange={(v) => update({ visualType: v })}
+					searchable
+					options={Object.values(visualByType).map((d) => ({
+						value: d.type,
+						label: d.label,
+					}))}
+				/>
 			</div>
 
 			{/* Selected fields first, in order, because for most visuals the
@@ -556,22 +598,18 @@ function VisualOptions({
 							<label className={styles.fieldLabel}>
 								{option.label}
 							</label>
-							<select
-								className={styles.select}
-								value={(value as string) ?? option.fallback}
-								onChange={(e) =>
-									set(option.key, e.target.value)
+							<Select
+								value={
+									(value as string) ??
+									String(option.fallback ?? "")
 								}
-							>
-								{option.choices.map((choice) => (
-									<option
-										key={choice.value}
-										value={choice.value}
-									>
-										{choice.label}
-									</option>
-								))}
-							</select>
+								onChange={(v) => set(option.key, v)}
+								ariaLabel={option.label}
+								options={option.choices.map((choice) => ({
+									value: choice.value,
+									label: choice.label,
+								}))}
+							/>
 							{option.help && (
 								<p className={styles.guidance}>{option.help}</p>
 							)}
@@ -688,25 +726,21 @@ function VisualOptions({
 						<label className={styles.fieldLabel}>
 							{option.label}
 						</label>
-						<select
-							className={styles.select}
+						<Select
 							value={(value as string) ?? ""}
-							onChange={(e) =>
-								set(
-									option.key,
-									e.target.value === ""
-										? undefined
-										: e.target.value,
-								)
+							onChange={(v) =>
+								set(option.key, v === "" ? undefined : v)
 							}
-						>
-							<option value="">None</option>
-							{choices.map((name) => (
-								<option key={name} value={name}>
-									{name}
-								</option>
-							))}
-						</select>
+							ariaLabel={option.label}
+							searchable={choices.length > 12}
+							options={[
+								{ value: "", label: "None" },
+								...choices.map((name) => ({
+									value: name,
+									label: name,
+								})),
+							]}
+						/>
 						{option.help && (
 							<p className={styles.guidance}>{option.help}</p>
 						)}
@@ -957,19 +991,15 @@ function FormatTab({
 
 					{measures.length > 1 && (
 						<div className={styles.field}>
-							<select
-								className={styles.select}
-								value={seriesIndex}
-								onChange={(e) =>
-									setSeriesIndex(Number(e.target.value))
-								}
-							>
-								{measures.map((m, i) => (
-									<option key={m} value={i}>
-										{m}
-									</option>
-								))}
-							</select>
+							<Select
+								value={String(seriesIndex)}
+								onChange={(v) => setSeriesIndex(Number(v))}
+								ariaLabel="Series"
+								options={measures.map((m, i) => ({
+									value: String(i),
+									label: m,
+								}))}
+							/>
 						</div>
 					)}
 
@@ -1008,17 +1038,19 @@ function FormatTab({
 								<label className={styles.fieldLabel}>
 									Fill
 								</label>
-								<select
-									className={styles.select}
+								<Select
 									value={seriesEntry?.fill ?? "none"}
-									onChange={(e) =>
-										updateSeries({ fill: e.target.value })
-									}
-								>
-									<option value="none">None</option>
-									<option value="solid">Solid</option>
-									<option value="gradient">Gradient</option>
-								</select>
+									onChange={(v) => updateSeries({ fill: v })}
+									ariaLabel="Fill"
+									options={[
+										{ value: "none", label: "None" },
+										{ value: "solid", label: "Solid" },
+										{
+											value: "gradient",
+											label: "Gradient",
+										},
+									]}
+								/>
 							</div>
 
 							{seriesEntry?.fill &&
@@ -1193,22 +1225,26 @@ function FormatTab({
 
 				<div className={styles.field}>
 					<label className={styles.fieldLabel}>While it loads</label>
-					<select
-						className={styles.select}
+					<Select
 						value={style.loadingAnimation ?? "skeleton"}
-						onChange={(e) =>
+						onChange={(v) =>
 							updateStyle({
-								loadingAnimation: e.target
-									.value as VisualStyle["loadingAnimation"],
+								loadingAnimation:
+									v as VisualStyle["loadingAnimation"],
 							})
 						}
-					>
-						<option value="skeleton">Shape of the content</option>
-						<option value="bars">Bars</option>
-						<option value="spinner">Spinner</option>
-						<option value="pulse">Pulse</option>
-						<option value="none">Nothing</option>
-					</select>
+						ariaLabel="While it loads"
+						options={[
+							{
+								value: "skeleton",
+								label: "Shape of the content",
+							},
+							{ value: "bars", label: "Bars" },
+							{ value: "spinner", label: "Spinner" },
+							{ value: "pulse", label: "Pulse" },
+							{ value: "none", label: "Nothing" },
+						]}
+					/>
 				</div>
 			</div>
 
@@ -1238,27 +1274,28 @@ function FormatTab({
 					<div className={styles.sectionTitle}>Tooltip</div>
 					<div className={styles.field}>
 						<label className={styles.fieldLabel}>Mode</label>
-						<select
-							className={styles.select}
+						<Select
 							value={style.tooltip?.mode ?? "axis"}
-							onChange={(e) =>
+							onChange={(v) =>
 								updateStyle({
 									tooltip: {
 										...style.tooltip,
-										mode: e.target.value as
-											| "single"
-											| "axis",
+										mode: v as "single" | "axis",
 									},
 								})
 							}
-						>
-							<option value="axis">
-								Every series at that point
-							</option>
-							<option value="single">
-								Just the hovered point
-							</option>
-						</select>
+							ariaLabel="Tooltip mode"
+							options={[
+								{
+									value: "axis",
+									label: "Every series at that point",
+								},
+								{
+									value: "single",
+									label: "Just the hovered point",
+								},
+							]}
+						/>
 					</div>
 					<button
 						type="button"
@@ -1291,26 +1328,6 @@ function FormatTab({
 					onChange={updateStyle}
 				/>
 			)}
-
-			<div className={styles.section}>
-				<SkeletonText lines={3} />
-				<select
-					className={styles.select}
-					value={style.loadingAnimation ?? "skeleton"}
-					onChange={(e) =>
-						updateStyle({
-							loadingAnimation: e.target
-								.value as VisualStyle["loadingAnimation"],
-						})
-					}
-				>
-					<option value="skeleton">Skeleton</option>
-					<option value="bars">Chart bars</option>
-					<option value="spinner">Spinner</option>
-					<option value="pulse">Pulse</option>
-					<option value="none">None</option>
-				</select>
-			</div>
 		</>
 	);
 }

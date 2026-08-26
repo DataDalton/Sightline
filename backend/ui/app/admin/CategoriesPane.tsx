@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import useSWR from "swr";
 import { Skeleton } from "../components/shared/Skeleton";
 import { useDeferredLoading } from "../hooks/useDeferredLoading";
@@ -21,8 +21,17 @@ interface Category {
 	reportCount: number;
 }
 
+interface ReportRow {
+	reportId: string;
+	title: string;
+	slug: string;
+	categoryId: string | null;
+	sortOrder: number;
+}
+
 interface CategoriesResponse {
 	categories: Category[];
+	reports?: ReportRow[];
 	canCreate: boolean;
 	canManage: boolean;
 }
@@ -35,12 +44,17 @@ const emptyDraft = {
 };
 
 export default function CategoriesPane() {
+	// The reports come with the categories, so opening one costs nothing.
+	// Which category a report sits in is changed from the report itself, in the
+	// editor; what is decided here is the order they appear in, which is a
+	// property of the category rather than of any one report.
 	const { data, isLoading, mutate } = useSWR<CategoriesResponse>(
-		"/api/admin/categories",
+		"/api/admin/categories?reports=1",
 	);
 	const showSkeleton = useDeferredLoading(isLoading);
 
 	const [draft, setDraft] = useState(emptyDraft);
+	const [opened, setOpened] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [failure, setFailure] = useState<string | null>(null);
 
@@ -103,82 +117,135 @@ export default function CategoriesPane() {
 					</thead>
 					<tbody>
 						{categories.map((category, index) => (
-							<tr key={category.categoryId}>
-								<td>
-									{category.icon} {category.name}
-									{category.description && (
-										<div className={styles.fieldHint}>
-											{category.description}
-										</div>
-									)}
-								</td>
-								<td>
-									<span className={styles.mono}>
-										{category.categoryId}
-									</span>
-								</td>
-								<td className={styles.numeric}>
-									{category.reportCount}
-								</td>
-								<td>
-									<button
-										type="button"
-										className={styles.linkButton}
-										disabled={busy || index === 0}
-										onClick={() => move(index, -1)}
-										aria-label={`Move ${category.name} up`}
-									>
-										↑
-									</button>
-									<button
-										type="button"
-										className={styles.linkButton}
-										disabled={
-											busy ||
-											index === categories.length - 1
-										}
-										onClick={() => move(index, 1)}
-										aria-label={`Move ${category.name} down`}
-									>
-										↓
-									</button>
-								</td>
-								<td>
-									<button
-										type="button"
-										className={styles.linkButton}
-										disabled={busy}
-										onClick={() =>
-											setDraft({
-												categoryId: category.categoryId,
-												name: category.name,
-												description:
-													category.description ?? "",
-												icon: category.icon ?? "",
-											})
-										}
-									>
-										Edit
-									</button>
-									<button
-										type="button"
-										className={styles.linkButton}
-										disabled={busy}
-										onClick={() =>
-											post(
-												{
-													action: "removeCategory",
+							<Fragment key={category.categoryId}>
+								<tr>
+									<td>
+										{category.icon} {category.name}
+										{category.description && (
+											<div className={styles.fieldHint}>
+												{category.description}
+											</div>
+										)}
+									</td>
+									<td>
+										<span className={styles.mono}>
+											{category.categoryId}
+										</span>
+									</td>
+									<td className={styles.numeric}>
+										{category.reportCount > 0 ? (
+											<button
+												type="button"
+												className={styles.linkButton}
+												onClick={() =>
+													setOpened(
+														opened ===
+															category.categoryId
+															? null
+															: category.categoryId,
+													)
+												}
+												aria-expanded={
+													opened ===
+													category.categoryId
+												}
+											>
+												{category.reportCount}
+											</button>
+										) : (
+											category.reportCount
+										)}
+									</td>
+									<td>
+										<button
+											type="button"
+											className={styles.linkButton}
+											disabled={busy || index === 0}
+											onClick={() => move(index, -1)}
+											aria-label={`Move ${category.name} up`}
+										>
+											↑
+										</button>
+										<button
+											type="button"
+											className={styles.linkButton}
+											disabled={
+												busy ||
+												index === categories.length - 1
+											}
+											onClick={() => move(index, 1)}
+											aria-label={`Move ${category.name} down`}
+										>
+											↓
+										</button>
+									</td>
+									<td>
+										<button
+											type="button"
+											className={styles.linkButton}
+											disabled={busy}
+											onClick={() =>
+												setDraft({
 													categoryId:
 														category.categoryId,
-												},
-												"Could not remove",
-											)
-										}
-									>
-										Remove
-									</button>
-								</td>
-							</tr>
+													name: category.name,
+													description:
+														category.description ??
+														"",
+													icon: category.icon ?? "",
+												})
+											}
+										>
+											Edit
+										</button>
+										<button
+											type="button"
+											className={styles.linkButton}
+											disabled={busy}
+											onClick={() =>
+												post(
+													{
+														action: "removeCategory",
+														categoryId:
+															category.categoryId,
+													},
+													"Could not remove",
+												)
+											}
+										>
+											Remove
+										</button>
+									</td>
+								</tr>
+								{opened === category.categoryId && (
+									<tr>
+										<td colSpan={5}>
+											<ReportOrder
+												categoryId={category.categoryId}
+												reports={(
+													data?.reports ?? []
+												).filter(
+													(r) =>
+														r.categoryId ===
+														category.categoryId,
+												)}
+												busy={busy}
+												onReorder={(reportIds) =>
+													post(
+														{
+															action: "reorderReports",
+															categoryId:
+																category.categoryId,
+															reportIds,
+														},
+														"Could not reorder",
+													)
+												}
+											/>
+										</td>
+									</tr>
+								)}
+							</Fragment>
 						))}
 						{!isLoading && categories.length === 0 && (
 							<tr>
@@ -305,5 +372,72 @@ export default function CategoriesPane() {
 
 			{failure && <div className={styles.saveError}>{failure}</div>}
 		</>
+	);
+}
+
+// The order reports appear in inside one category.
+//
+// Categories have carried an order since the beginning and reports never did,
+// so a category listed alphabetically and the report a team opens every morning
+// sat wherever its title happened to fall.
+//
+// Only the order lives here. Which category a report belongs to is changed from
+// the report, in the editor, where somebody is already looking at it rather than
+// hunting for it in a list.
+function ReportOrder({
+	categoryId,
+	reports,
+	busy,
+	onReorder,
+}: {
+	categoryId: string;
+	reports: ReportRow[];
+	busy: boolean;
+	onReorder: (reportIds: string[]) => void;
+}) {
+	const ordered = [...reports].sort(
+		(a, b) => a.sortOrder - b.sortOrder || a.title.localeCompare(b.title),
+	);
+
+	// The whole list is sent rather than a pair of positions, so the server does
+	// not have to work out what moved.
+	const move = (index: number, delta: number) => {
+		const target = index + delta;
+		if (target < 0 || target >= ordered.length) return;
+		const next = ordered.map((r) => r.reportId);
+		[next[index], next[target]] = [next[target], next[index]];
+		onReorder(next);
+	};
+
+	if (ordered.length === 0) return null;
+
+	return (
+		<div className={styles.nested}>
+			<div className={styles.fieldLabel}>Order in {categoryId}</div>
+			{ordered.map((report, index) => (
+				<div key={report.reportId} className={styles.nestedRow}>
+					<span className={styles.nestedName}>{report.title}</span>
+					<span className={styles.mono}>/r/{report.slug}</span>
+					<button
+						type="button"
+						className={styles.linkButton}
+						disabled={busy || index === 0}
+						onClick={() => move(index, -1)}
+						aria-label={`Move ${report.title} up`}
+					>
+						↑
+					</button>
+					<button
+						type="button"
+						className={styles.linkButton}
+						disabled={busy || index === ordered.length - 1}
+						onClick={() => move(index, 1)}
+						aria-label={`Move ${report.title} down`}
+					>
+						↓
+					</button>
+				</div>
+			))}
+		</div>
 	);
 }

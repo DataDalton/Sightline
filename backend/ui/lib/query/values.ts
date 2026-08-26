@@ -201,7 +201,13 @@ export async function getDistinctValues(
 				// a slow warehouse does not shorten the life of its own answer.
 				cache.set(key, {
 					value: result,
-					expiresAt: Date.now() + settings().resultTtlSeconds * 1000,
+					// Four times the result TTL, matching ranges. The set of
+					// values a column takes changes when the data lands, not
+					// while somebody is using a filter, so holding these as
+					// briefly as a query answer refetched them constantly for
+					// no change.
+					expiresAt:
+						Date.now() + settings().resultTtlSeconds * 4 * 1000,
 				});
 				evictIfNeeded();
 			}

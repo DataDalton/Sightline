@@ -34,6 +34,10 @@ export async function GET(request: NextRequest) {
 		console.error("Navigation load failed:", error);
 		// An empty navigation is a safe answer: it shows nothing rather than
 		// showing something the caller may not be entitled to.
-		return NextResponse.json({ categories: [], degraded: true });
+		return NextResponse.json({
+			categories: [],
+			favourites: [],
+			degraded: true,
+		});
 	}
 }

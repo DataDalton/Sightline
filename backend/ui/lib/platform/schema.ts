@@ -508,6 +508,26 @@ const statements: string[] = [
 		ON usage_events (report_id, occurred_on DESC)`,
 	`CREATE INDEX IF NOT EXISTS usage_events_user_idx
 		ON usage_events (user_email, occurred_on DESC)`,
+
+	// Reports somebody chose to keep to hand.
+	//
+	// Separate from usage_events, which answers what a reader opened. That is
+	// evidence of habit and this is a statement of intent, and they disagree
+	// often enough to matter: the report opened most is frequently the one
+	// nobody chose, reached through a link somebody sends every week.
+	//
+	// No foreign key to reports, so removing a report does not have to know
+	// this table exists. A favourite pointing at something gone is filtered by
+	// the join that reads it.
+	`CREATE TABLE IF NOT EXISTS favourites (
+		user_email TEXT NOT NULL,
+		report_id  UUID NOT NULL,
+		created_on TIMESTAMPTZ NOT NULL DEFAULT now(),
+		PRIMARY KEY (user_email, report_id)
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS favourites_user_idx
+		ON favourites (user_email, created_on DESC)`,
 ];
 
 // Columns added after the initial schema shipped. CREATE TABLE IF NOT EXISTS
@@ -557,6 +577,25 @@ const migrations: string[] = [
 	// moved: the table stays exactly as it was, so a conversion that got
 	// something wrong can be looked at rather than reconstructed.
 	`ALTER TABLE explorations ADD COLUMN IF NOT EXISTS migrated_to UUID`,
+
+	// Where a report sits inside its category.
+	//
+	// Categories have carried an order since the beginning and reports never
+	// did, so a category listed alphabetically and the report a team opens
+	// every morning sat wherever its title fell. Defaulting to zero leaves
+	// every existing report tied, and a tie falls back to title, which is the
+	// order they were in before this column existed.
+	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0`,
+
+	// Zero means "use the platform default" rather than "do not cache".
+	//
+	// The column defaulted to 300, and the resolver preferred any positive
+	// source value over the platform setting, so every source pinned itself to
+	// five minutes and the Result cache setting had no effect on anything. New
+	// sources now inherit. Existing rows keep whatever they hold, because a
+	// value somebody set deliberately and the old default are indistinguishable
+	// from here: they are changed per source under Platform, Sources, Edit.
+	`ALTER TABLE data_sources ALTER COLUMN cache_ttl_seconds SET DEFAULT 0`,
 ];
 
 // Creates anything missing. Safe to run on every startup.
@@ -603,19 +642,67 @@ async function adoptSchemaOwner(): Promise<void> {
 	}
 }
 
-export async function initPlatformSchema(): Promise<void> {
-	for (const statement of statements) {
-		await sql(statement);
+// The first line of a statement, for a log message that says which one failed
+// without printing the whole definition.
+function firstLine(statement: string): string {
+	const trimmed = statement.trim();
+	const breakAt = trimmed.indexOf("\n");
+	return (breakAt === -1 ? trimmed : trimmed.slice(0, breakAt)).slice(0, 100);
+}
+
+// Runs every statement, and does not let one failure stop the others.
+//
+// These ran in a single unbroken loop, so the first statement to throw took
+// every statement after it with it. That turns one bad definition into a
+// database missing half its columns, and since the access tables and the
+// is_personal column are in that half, into everybody being locked out by
+// something unrelated.
+//
+// Each of these is independently useful and independently safe to retry: they
+// are all IF NOT EXISTS or ADD COLUMN IF NOT EXISTS, and the next start runs
+// them again. Logging and carrying on leaves the schema as complete as it can
+// be rather than as complete as it got to.
+async function applyAll(kind: string, all: string[]): Promise<void> {
+	const failures: string[] = [];
+
+	for (const statement of all) {
+		try {
+			await sql(statement);
+		} catch (error) {
+			failures.push(firstLine(statement));
+			console.error(
+				`Schema ${kind} failed: ${firstLine(statement)}`,
+				error,
+			);
+		}
 	}
+
+	if (failures.length > 0) {
+		console.error(
+			`${failures.length} of ${all.length} schema ${kind} statements ` +
+				`did not apply. The app is running against an incomplete ` +
+				`schema and some features will not work: ${failures.join("; ")}`,
+		);
+	}
+}
+
+export async function initPlatformSchema(): Promise<void> {
+	await applyAll("setup", statements);
 
 	// Between the two, because a migration is an ALTER TABLE and that is the
 	// statement ownership gates. A table this identity created a moment ago is
 	// already its own, so this is for the ones an earlier identity created.
-	await adoptSchemaOwner();
-
-	for (const statement of migrations) {
-		await sql(statement);
+	//
+	// Not allowed to stop the migrations either. Ownership is about who may
+	// alter a table later, and failing to adopt one is not a reason to skip
+	// adding a column to every other table.
+	try {
+		await adoptSchemaOwner();
+	} catch (error) {
+		console.error("Schema ownership could not be adopted:", error);
 	}
+
+	await applyAll("migration", migrations);
 }
 
 // Removes expired presence and cache rows. Cheap, and called on a timer

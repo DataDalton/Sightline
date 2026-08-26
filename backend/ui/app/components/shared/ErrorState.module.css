@@ -1,0 +1,109 @@
+/* The shape every unhandled failure takes.
+
+   Centred in whatever space it is given rather than at a fixed height, so the
+   same component reads correctly filling a page and filling one visual. */
+.state {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: var(--space-3);
+	min-height: 240px;
+	height: 100%;
+	padding: var(--space-6) var(--space-5);
+	text-align: center;
+}
+
+/* Inside a visual or a pane there is no room for the full treatment, and the
+   frame around it already says where the failure is. */
+.inline {
+	min-height: 140px;
+	padding: var(--space-4);
+	gap: var(--space-2);
+}
+
+.icon {
+	color: var(--danger);
+	flex-shrink: 0;
+}
+
+.inline .icon {
+	width: 20px;
+	height: 20px;
+}
+
+.title {
+	font-size: var(--text-xl);
+	font-weight: 600;
+	color: var(--text-primary);
+	text-wrap: balance;
+}
+
+.inline .title {
+	font-size: var(--text-md);
+}
+
+.body {
+	max-width: 440px;
+	color: var(--text-secondary);
+	line-height: 1.6;
+}
+
+.inline .body {
+	font-size: var(--text-sm);
+}
+
+.actions {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	gap: var(--space-2);
+	margin-top: var(--space-2);
+}
+
+.primary,
+.secondary {
+	padding: var(--space-2) var(--space-4);
+	border-radius: var(--radius-md);
+	font-size: var(--text-sm);
+	font-weight: 500;
+	font-family: inherit;
+	cursor: pointer;
+	transition:
+		background var(--transition-fast),
+		border-color var(--transition-fast);
+}
+
+.primary {
+	border: 1px solid transparent;
+	background: var(--brand);
+	color: var(--brand-contrast);
+	font-weight: 600;
+}
+
+.primary:hover {
+	background: var(--brand-strong);
+}
+
+.secondary {
+	border: 1px solid var(--border-default);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	text-decoration: none;
+}
+
+.secondary:hover {
+	background: var(--surface-hover);
+	border-color: var(--border-strong);
+}
+
+/* The identifier a deployment logs alongside the stack. Shown so somebody
+   reporting the failure can name the one they saw, and small enough that it
+   does not read as the point of the screen. */
+.digest {
+	margin-top: var(--space-2);
+	font-family: var(--font-mono);
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+	user-select: all;
+}

@@ -9,6 +9,7 @@ import { Skeleton } from "./shared/Skeleton";
 import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { useShell } from "../context/ShellContext";
 import { NewReportButton } from "../authoring/NewReport";
+import { AccountBlock } from "./AccountBlock";
 import styles from "./Sidebar.module.css";
 
 // Navigation comes from the categories the caller can actually open, resolved
@@ -21,6 +22,12 @@ interface NavCategory {
 	name: string;
 	icon: string | null;
 	reportCount: number;
+}
+
+interface Favourite {
+	reportId: string;
+	slug: string;
+	title: string;
 }
 
 const iconPaths: Record<string, string> = {
@@ -120,14 +127,16 @@ function NavIcon({ name }: { name: string | null }) {
 
 export default memo(function Sidebar() {
 	const pathname = usePathname();
-	const { user, error: userError, refresh } = useUser();
+	const { user } = useUser();
 	const { navOpen } = useShell();
 
-	const { data, isLoading } = useSWR<{ categories: NavCategory[] }>(
-		"/api/navigation",
-	);
+	const { data, isLoading } = useSWR<{
+		categories: NavCategory[];
+		favourites?: Favourite[];
+	}>("/api/navigation");
 	const navSkeleton = useDeferredLoading(isLoading);
 	const categories = data?.categories ?? [];
+	const favourites = data?.favourites ?? [];
 
 	// Which categories are showing their reports. Opening a category from the
 	// sidebar expands it as well as navigating, since a reader who clicked it
@@ -180,6 +189,40 @@ export default memo(function Sidebar() {
 					</Link>
 				</nav>
 			</div>
+
+			{favourites.length > 0 && (
+				<div className={styles.section}>
+					<div className={styles.sectionTitle}>Favourites</div>
+					<nav className={styles.nav}>
+						{favourites.map((report) => {
+							const href = `/r/${report.slug}`;
+							return (
+								<Link
+									key={report.reportId}
+									href={href}
+									className={`${styles.navItem} ${
+										isActive(href) ? styles.active : ""
+									}`}
+									title={report.title}
+								>
+									<svg
+										width="18"
+										height="18"
+										viewBox="0 0 24 24"
+										fill="currentColor"
+										aria-hidden="true"
+									>
+										<path d="M12 2l3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z" />
+									</svg>
+									<span className={styles.label}>
+										{report.title}
+									</span>
+								</Link>
+							);
+						})}
+					</nav>
+				</div>
+			)}
 
 			<div className={styles.section}>
 				<div className={styles.sectionTitle}>Reports</div>
@@ -291,17 +334,7 @@ export default memo(function Sidebar() {
 				</div>
 			)}
 
-			{userError && (
-				<div className={styles.footer}>
-					<button
-						type="button"
-						className={styles.retryButton}
-						onClick={refresh}
-					>
-						Connection lost. Retry
-					</button>
-				</div>
-			)}
+			<AccountBlock />
 		</aside>
 	);
 });

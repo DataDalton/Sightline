@@ -101,7 +101,8 @@ export type EditOperation =
 			slug: string;
 			sourceKey?: string | null;
 	  }
-	| { type: "removePage"; pageId: string };
+	| { type: "removePage"; pageId: string }
+	| { type: "reorderPages"; pageIds: string[] };
 
 export interface EditRequest {
 	reportId: string;
@@ -426,6 +427,19 @@ export async function applyEdits(
 					);
 					break;
 				}
+
+				case "reorderPages":
+					// Operations are cast from the request body rather than
+					// parsed, so the shape is checked here before it is walked.
+					if (!Array.isArray(op.pageIds)) break;
+					for (let i = 0; i < op.pageIds.length; i++) {
+						await client.query(
+							`UPDATE report_pages SET sort_order = $2
+							 WHERE page_id = $1 AND report_id = $3`,
+							[op.pageIds[i], i, request.reportId],
+						);
+					}
+					break;
 
 				case "removePage":
 					// Deactivated rather than deleted, so a restore brings it
