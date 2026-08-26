@@ -169,9 +169,17 @@ async function previousFilterGroups(): Promise<{
 }
 
 async function accessRuleGroups(): Promise<string[]> {
+	// Both tables that can name a group, because membership of a group nothing
+	// probes is never resolved, and an assignment against an unprobed group
+	// matches nobody. The failure is silent: the role exists, the assignment
+	// exists, and the person it names holds nothing.
 	const rows = await sql<{ subject_id: string }>(
 		`SELECT DISTINCT subject_id
 		 FROM access_policies
+		 WHERE subject_type = 'group' AND is_active = TRUE
+		 UNION
+		 SELECT DISTINCT subject_id
+		 FROM role_assignments
 		 WHERE subject_type = 'group' AND is_active = TRUE`,
 	);
 	return rows.map((r) => r.subject_id);

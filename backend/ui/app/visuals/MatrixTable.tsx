@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { formatValue, type FormatHint } from "../../lib/format";
 import type { VisualStyle } from "../../lib/visuals/style";
 import { VisualError } from "./VisualFrame";
@@ -297,6 +304,17 @@ export function MatrixTable({
 	const groups =
 		columnDimension && columnValues.length > 0 ? columnValues : [null];
 
+	// How far down the second header row has to sit: the height of the row
+	// above it, or nothing when that row is not rendered. Measured rather than
+	// assumed, because assuming it is what left a gap for the body to scroll
+	// through on every matrix without a pivot.
+	const groupRowRef = useRef<HTMLTableRowElement | null>(null);
+	const [stackOffset, setStackOffset] = useState(0);
+
+	useLayoutEffect(() => {
+		setStackOffset(groupRowRef.current?.offsetHeight ?? 0);
+	}, [columnDimension, columnValues.length, measures.length]);
+
 	if (error && rows.length === 0) return <VisualError error={error} />;
 	if (loading) {
 		return (
@@ -333,10 +351,20 @@ export function MatrixTable({
 			</div>
 
 			<div className={styles.scroller}>
-				<table className={styles.table}>
+				<table
+					className={styles.table}
+					style={
+						{
+							"--matrix-stack": `${stackOffset}px`,
+						} as React.CSSProperties
+					}
+				>
 					<thead>
 						{columnDimension && (
-							<tr className={styles.groupHeader}>
+							<tr
+								className={styles.groupHeader}
+								ref={groupRowRef}
+							>
 								<th className={styles.rowHeader} rowSpan={2}>
 									{rowDimensions[0]}
 								</th>

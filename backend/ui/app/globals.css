@@ -16,6 +16,26 @@
 	--surface-base: #f7f8fa;
 	--surface-raised: #ffffff;
 	--surface-overlay: #ffffff;
+	/* One step above an overlay, for a popup that opens inside one. White
+	   here because in a light theme the shadow does the separating; the dark
+	   values lift instead, where a shadow on a dark surface does not read. */
+	--surface-float: #ffffff;
+
+	/* Hover and selection, as a layer rather than a colour.
+	   
+	   A fixed surface cannot serve both: --surface-hover is the page's hover
+	   colour and in the dark theme it is the same value as --surface-overlay,
+	   so hovering anything inside a dialog did nothing at all. These compose
+	   over whatever is underneath, so one definition is correct on a page, a
+	   card, a dialog and a popup alike.
+	   
+	   Tinted rather than neutral. Both surface ramps are cool, with blue
+	   running ahead of red by a widening margin at each step, and a neutral
+	   layer over them flattens that to grey: the dialog stops looking like the
+	   application it is in. These carry the same cast, so a hovered row lands
+	   on the next colour along the ramp rather than beside it. */
+	--state-hover: rgba(19, 44, 82, 0.07);
+	--state-selected: color-mix(in srgb, var(--brand) 15%, transparent);
 	--surface-hover: #eceef1;
 	--surface-active: #e3e6ea;
 
@@ -133,7 +153,9 @@
 		--surface-sunken: #0d0f12;
 		--surface-base: #131519;
 		--surface-raised: #1a1d22;
-		--surface-overlay: #21252c;
+		--surface-overlay: #16191f;
+		--surface-float: #1f242b;
+		--state-hover: rgba(150, 180, 224, 0.08);
 		--surface-hover: #21252c;
 		--surface-active: #2b3038;
 
@@ -201,7 +223,9 @@
 	--surface-sunken: #0d0f12;
 	--surface-base: #131519;
 	--surface-raised: #1a1d22;
-	--surface-overlay: #21252c;
+	--surface-overlay: #16191f;
+	--surface-float: #1f242b;
+	--state-hover: rgba(150, 180, 224, 0.08);
 	--surface-hover: #21252c;
 	--surface-active: #2b3038;
 
@@ -308,6 +332,53 @@ textarea {
 	color: inherit;
 }
 
+/* Anything that acts on a click says so.
+   
+   button already carries this above. What was missing is everything that is
+   clickable without being a button: a select, a disclosure, a label wrapping a
+   checkbox, and the elements that carry a button or tab role rather than the
+   tag. Each of those was being given a cursor by whichever stylesheet happened
+   to remember, so the same kind of control felt different in different parts of
+   the application. */
+select,
+summary,
+[role="button"],
+[role="tab"],
+[role="option"],
+[role="switch"],
+label:has(> input[type="checkbox"]),
+label:has(> input[type="radio"]),
+input[type="checkbox"],
+input[type="radio"] {
+	cursor: pointer;
+}
+
+/* Native selects, where one is still used.
+   
+   The list a native select opens is drawn by the browser and cannot be styled,
+   which is why the pickers that matter use components/shared/Select instead.
+   The closed control can be made to match, so a select that has not been
+   converted still sits on the page like everything around it rather than like
+   part of the operating system. */
+select {
+	appearance: none;
+	-webkit-appearance: none;
+	padding-right: 28px;
+	background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23767d87' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+	background-repeat: no-repeat;
+	background-position: right 10px center;
+}
+
+/* And anything that will not act says that instead, rather than keeping the
+   pointer and doing nothing when pressed. */
+button:disabled,
+select:disabled,
+input:disabled,
+textarea:disabled,
+[aria-disabled="true"] {
+	cursor: not-allowed;
+}
+
 /* A single visible focus treatment everywhere, only for keyboard users. */
 :focus-visible {
 	outline: 2px solid var(--focus-ring);
@@ -359,14 +430,30 @@ textarea {
 	background: transparent;
 }
 
+/* The gap around the thumb shows whatever is behind it rather than one fixed
+   surface. Painting it --surface-base put a page-coloured halo around every
+   thumb in a dialog or a popup, which is the wrong colour everywhere except
+   the page. */
 ::-webkit-scrollbar-thumb {
-	background: var(--border-default);
+	background: var(--border-strong);
 	border-radius: var(--radius-full);
-	border: 2px solid var(--surface-base);
+	border: 3px solid transparent;
+	background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-	background: var(--border-strong);
+	background: var(--text-muted);
+	background-clip: padding-box;
+}
+
+::-webkit-scrollbar-corner {
+	background: transparent;
+}
+
+/* Firefox draws its own and takes two colours rather than a rule per part. */
+* {
+	scrollbar-width: thin;
+	scrollbar-color: var(--border-strong) transparent;
 }
 
 @media (prefers-reduced-motion: reduce) {

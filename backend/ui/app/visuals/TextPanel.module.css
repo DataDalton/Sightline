@@ -9,18 +9,51 @@
 
 /* Rendered rich text. Styles are scoped here rather than global so a text
    panel cannot restyle the rest of the page. */
-.content h1 { font-size: var(--text-2xl); font-weight: 600; margin: 0 0 var(--space-3); letter-spacing: -0.02em; }
-.content h2 { font-size: var(--text-xl); font-weight: 600; margin: var(--space-4) 0 var(--space-2); }
-.content h3 { font-size: var(--text-lg); font-weight: 600; margin: var(--space-3) 0 var(--space-2); }
-.content p { margin: 0 0 var(--space-3); }
-.content p:last-child { margin-bottom: 0; }
-.content ul, .content ol { margin: 0 0 var(--space-3) var(--space-5); }
-.content li { margin-bottom: var(--space-1); }
-.content strong { font-weight: 600; }
-.content em { font-style: italic; }
-.content u { text-decoration: underline; }
-.content s { text-decoration: line-through; }
-.content a { color: var(--text-link); text-decoration: underline; }
+.content h1 {
+	font-size: var(--text-2xl);
+	font-weight: 600;
+	margin: 0 0 var(--space-3);
+	letter-spacing: -0.02em;
+}
+.content h2 {
+	font-size: var(--text-xl);
+	font-weight: 600;
+	margin: var(--space-4) 0 var(--space-2);
+}
+.content h3 {
+	font-size: var(--text-lg);
+	font-weight: 600;
+	margin: var(--space-3) 0 var(--space-2);
+}
+.content p {
+	margin: 0 0 var(--space-3);
+}
+.content p:last-child {
+	margin-bottom: 0;
+}
+.content ul,
+.content ol {
+	margin: 0 0 var(--space-3) var(--space-5);
+}
+.content li {
+	margin-bottom: var(--space-1);
+}
+.content strong {
+	font-weight: 600;
+}
+.content em {
+	font-style: italic;
+}
+.content u {
+	text-decoration: underline;
+}
+.content s {
+	text-decoration: line-through;
+}
+.content a {
+	color: var(--text-link);
+	text-decoration: underline;
+}
 .content code {
 	font-family: var(--font-mono);
 	font-size: 0.92em;
@@ -40,8 +73,12 @@
 	border-top: 1px solid var(--border-subtle);
 	margin: var(--space-4) 0;
 }
-.content table { border-collapse: collapse; margin-bottom: var(--space-3); }
-.content th, .content td {
+.content table {
+	border-collapse: collapse;
+	margin-bottom: var(--space-3);
+}
+.content th,
+.content td {
 	border: 1px solid var(--border-subtle);
 	padding: var(--space-1) var(--space-2);
 	text-align: left;
@@ -78,7 +115,9 @@
 	border-right: 1px solid var(--border-subtle);
 }
 
-.group:last-child { border-right: none; }
+.group:last-child {
+	border-right: none;
+}
 
 .tool {
 	display: flex;
@@ -163,9 +202,9 @@
 	gap: var(--space-2);
 	width: 280px;
 	padding: var(--space-3);
-	border: 1px solid var(--border-default);
+	border: 1px solid var(--border-strong);
 	border-radius: var(--radius-md);
-	background: var(--surface-overlay);
+	background: var(--surface-float);
 	box-shadow: var(--shadow-lg);
 }
 
@@ -211,9 +250,9 @@
 
 .linkApply:disabled {
 	opacity: 0.5;
-	cursor: default;
+	cursor: not-allowed;
 }
 
 .linkRemove:hover {
-	background: var(--surface-hover);
+	background: var(--state-hover);
 }

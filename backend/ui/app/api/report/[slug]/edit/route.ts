@@ -6,6 +6,7 @@ import {
 	applyEdits,
 	EditConflictError,
 	EditForbiddenError,
+	EditRejectedError,
 	type EditOperation,
 } from "@/lib/platform/editing";
 import { getReport } from "@/lib/platform/reports";
@@ -63,6 +64,12 @@ export async function POST(
 		}
 		if (error instanceof EditForbiddenError) {
 			return NextResponse.json({ error: error.message }, { status: 403 });
+		}
+		if (error instanceof EditRejectedError) {
+			// The definition itself is the problem, and the message names what
+			// to fix. Carried through rather than flattened into "Edit failed",
+			// which would leave an editor with no idea which visual to look at.
+			return NextResponse.json({ error: error.message }, { status: 400 });
 		}
 		console.error("Report edit failed:", error);
 		return NextResponse.json({ error: "Edit failed" }, { status: 500 });

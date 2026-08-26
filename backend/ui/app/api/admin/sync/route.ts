@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getIdentity } from "@/lib/auth/identity";
 import { resolvePolicyClass } from "@/lib/auth/policy";
-import { isAdmin } from "@/lib/platform/access";
+import { canDo } from "@/lib/platform/access";
 import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
 import {
 	countActiveSources,
@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
 	}
 
 	const policy = await resolvePolicyClass(identity);
-	if (!isAdmin(policy)) {
+	if (!(await canDo(policy, identity, "semantic.sync"))) {
 		return NextResponse.json({ error: "Not found" }, { status: 404 });
 	}
 
@@ -148,7 +148,7 @@ export async function GET(request: NextRequest) {
 	}
 
 	const policy = await resolvePolicyClass(identity);
-	if (!isAdmin(policy)) {
+	if (!(await canDo(policy, identity, "semantic.sync"))) {
 		return NextResponse.json({ error: "Not found" }, { status: 404 });
 	}
 

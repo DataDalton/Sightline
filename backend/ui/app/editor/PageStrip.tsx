@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import styles from "./Editor.module.css";
 
 // The pages of a report, along the top of the editor.
@@ -26,7 +25,10 @@ interface PageStripProps {
 	// so it is refused rather than done quietly.
 	dirty: boolean;
 	onSelect: (pageId: string) => void;
-	onAdd: (title: string) => void;
+	// Opens the dialog that asks what shape the page should start in. The strip
+	// used to take a name inline and make an empty page, which is one of the
+	// answers rather than the question.
+	onAdd: () => void;
 	onRemove: (pageId: string) => void;
 }
 
@@ -38,16 +40,6 @@ export function PageStrip({
 	onAdd,
 	onRemove,
 }: PageStripProps) {
-	const [adding, setAdding] = useState(false);
-	const [title, setTitle] = useState("");
-
-	const commit = () => {
-		const trimmed = title.trim();
-		if (trimmed) onAdd(trimmed);
-		setTitle("");
-		setAdding(false);
-	};
-
 	return (
 		<div className={styles.pageStrip}>
 			<div className={styles.pageTabs} role="tablist">
@@ -92,39 +84,14 @@ export function PageStrip({
 					);
 				})}
 
-				{adding ? (
-					<div className={styles.pageAdd}>
-						<input
-							type="text"
-							className={styles.pageAddInput}
-							placeholder="Page name"
-							value={title}
-							// eslint-disable-next-line jsx-a11y/no-autofocus
-							autoFocus
-							onChange={(e) => setTitle(e.target.value)}
-							onKeyDown={(e) => {
-								if (e.key === "Enter") {
-									e.preventDefault();
-									commit();
-								}
-								if (e.key === "Escape") {
-									setAdding(false);
-									setTitle("");
-								}
-							}}
-							onBlur={commit}
-						/>
-					</div>
-				) : (
-					<button
-						type="button"
-						className={styles.pageAddButton}
-						onClick={() => setAdding(true)}
-						title="Add a page to this report"
-					>
-						+ Page
-					</button>
-				)}
+				<button
+					type="button"
+					className={styles.pageAddButton}
+					onClick={onAdd}
+					title="Add a page to this report"
+				>
+					+ Page
+				</button>
 			</div>
 
 			{dirty && (

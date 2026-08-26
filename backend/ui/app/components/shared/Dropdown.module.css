@@ -20,8 +20,8 @@
 	gap: 8px;
 	width: 100%;
 	padding: 8px 12px;
-	background: var(--bg-secondary);
-	border: 1px solid var(--border-color);
+	background: var(--surface-overlay);
+	border: 1px solid var(--border-default);
 	border-radius: 6px;
 	color: var(--text-primary);
 	font-size: 0.85rem;
@@ -34,7 +34,7 @@
 }
 
 .trigger.open {
-	border-color: var(--accent);
+	border-color: var(--info);
 }
 
 .selectedLabel {
@@ -65,8 +65,8 @@
 	top: calc(100% + 4px);
 	left: 0;
 	right: 0;
-	background: var(--bg-tertiary);
-	border: 1px solid var(--border-color);
+	background: var(--surface-float);
+	border: 1px solid var(--border-strong);
 	border-radius: 6px;
 	z-index: 50;
 	overflow: hidden;
@@ -75,14 +75,14 @@
 
 .searchContainer {
 	padding: 8px;
-	border-bottom: 1px solid var(--border-color);
+	border-bottom: 1px solid var(--border-default);
 }
 
 .searchInput {
 	width: 100%;
 	padding: 6px 8px;
-	background: var(--bg-secondary);
-	border: 1px solid var(--border-color);
+	background: var(--surface-overlay);
+	border: 1px solid var(--border-default);
 	border-radius: 4px;
 	color: var(--text-primary);
 	font-size: 0.85rem;
@@ -90,7 +90,7 @@
 }
 
 .searchInput:focus {
-	border-color: var(--accent);
+	border-color: var(--info);
 }
 
 .searchInput::placeholder {
@@ -118,11 +118,11 @@
 
 .option:hover,
 .option.highlighted {
-	background: var(--bg-hover);
+	background: var(--state-hover);
 }
 
 .option.selected {
-	color: var(--accent);
+	color: var(--info);
 }
 
 .noResults {

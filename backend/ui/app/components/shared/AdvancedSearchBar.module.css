@@ -1,16 +1,28 @@
+/* Palette note.
+ *
+ * This was authored against a token set the application does not define
+ * (--bg-primary, --border-color, --accent). An unset custom property resolves
+ * to nothing rather than to a default, so every surface here was transparent
+ * and the filter panel rendered as text floating over the page.
+ *
+ * Mapped onto the real names rather than defining the old ones, so there stays
+ * one palette.
+ */
+
 .wrapper {
 	position: relative;
 	width: 100%;
 }
 
 .bar {
+	cursor: pointer;
 	display: flex;
 	align-items: center;
 	gap: 8px;
 	min-height: 38px;
 	padding: 4px 8px 4px 12px;
-	background: var(--bg-primary);
-	border: 1px solid var(--border-color);
+	background: var(--surface-overlay);
+	border: 1px solid var(--border-default);
 	border-radius: 8px;
 	transition: border-color 0.12s ease;
 	cursor: text;
@@ -19,7 +31,7 @@
 
 .bar:focus-within,
 .barOpen {
-	border-color: var(--accent);
+	border-color: var(--brand);
 }
 
 .searchIcon {
@@ -96,7 +108,7 @@
 }
 
 .chipRemove:hover {
-	color: var(--error);
+	color: var(--danger);
 	background: rgba(239, 68, 68, 0.1);
 }
 
@@ -104,8 +116,8 @@
 	display: inline-flex;
 	align-items: center;
 	padding: 3px 8px;
-	background: var(--bg-tertiary);
-	border: 1px solid var(--border-color);
+	background: var(--surface-sunken);
+	border: 1px solid var(--border-default);
 	border-radius: 5px;
 	font-size: 0.7rem;
 	font-weight: 700;
@@ -117,8 +129,8 @@
 }
 
 .connector:hover {
-	color: var(--accent);
-	border-color: var(--accent);
+	color: var(--brand);
+	border-color: var(--brand);
 }
 
 .chevron {
@@ -149,7 +161,7 @@
 	height: 26px;
 	padding: 0 10px;
 	background: none;
-	border: 1px solid var(--border-color);
+	border: 1px solid var(--border-default);
 	border-radius: 6px;
 	color: var(--text-secondary);
 	font-size: 0.78rem;
@@ -167,8 +179,8 @@
 }
 
 .filterButtonOpen {
-	color: var(--accent);
-	border-color: var(--accent);
+	color: var(--brand);
+	border-color: var(--brand);
 	background: rgba(59, 130, 246, 0.1);
 }
 
@@ -177,8 +189,8 @@
 	left: 0;
 	right: 0;
 	top: calc(100% + 6px);
-	background: var(--bg-secondary);
-	border: 1px solid var(--border-color);
+	background: var(--surface-float);
+	border: 1px solid var(--border-strong);
 	border-radius: 10px;
 	box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
 	z-index: 50;
@@ -194,7 +206,7 @@
 	gap: 4px;
 	padding: 10px 12px;
 	background: rgba(0, 0, 0, 0.08);
-	border-bottom: 1px solid var(--border-color);
+	border-bottom: 1px solid var(--border-default);
 	position: sticky;
 	top: 0;
 	z-index: 1;
@@ -213,8 +225,8 @@
 
 .operatorPill {
 	padding: 4px 10px;
-	background: var(--bg-primary);
-	border: 1px solid var(--border-color);
+	background: var(--surface-overlay);
+	border: 1px solid var(--border-default);
 	border-radius: 14px;
 	color: var(--text-secondary);
 	font-size: 0.74rem;
@@ -226,19 +238,19 @@
 }
 
 .operatorPill:hover:not(:disabled) {
-	border-color: var(--accent);
+	border-color: var(--brand);
 	color: var(--text-primary);
 }
 
 .operatorPillActive {
-	background: var(--accent);
-	border-color: var(--accent);
+	background: var(--brand);
+	border-color: var(--brand);
 	color: white;
 }
 
 .operatorPillActive:hover {
-	background: var(--accent-hover);
-	border-color: var(--accent-hover);
+	background: var(--brand-strong);
+	border-color: var(--brand-strong);
 }
 
 .operatorPill:disabled {
@@ -287,7 +299,7 @@
 
 .columnItem:hover,
 .columnItemActive {
-	background: var(--bg-hover);
+	background: var(--state-hover);
 }
 
 .columnItemIcon {
@@ -297,7 +309,7 @@
 	width: 22px;
 	height: 22px;
 	border-radius: 4px;
-	background: var(--bg-tertiary);
+	background: var(--surface-sunken);
 	color: var(--text-muted);
 	flex-shrink: 0;
 }
@@ -328,7 +340,7 @@
 	align-items: center;
 	gap: 8px;
 	padding: 10px 14px;
-	border-bottom: 1px solid var(--border-color);
+	border-bottom: 1px solid var(--border-default);
 	background: rgba(0, 0, 0, 0.04);
 }
 
@@ -338,8 +350,8 @@
 	justify-content: center;
 	width: 26px;
 	height: 26px;
-	background: var(--bg-primary);
-	border: 1px solid var(--border-color);
+	background: var(--surface-overlay);
+	border: 1px solid var(--border-default);
 	border-radius: 6px;
 	color: var(--text-muted);
 	cursor: pointer;
@@ -349,7 +361,7 @@
 
 .backButton:hover {
 	color: var(--text-primary);
-	border-color: var(--accent);
+	border-color: var(--brand);
 }
 
 .valueHeaderLabel {
@@ -385,8 +397,8 @@
 	flex: 1;
 	height: 34px;
 	padding: 0 10px;
-	background: var(--bg-primary);
-	border: 1px solid var(--border-color);
+	background: var(--surface-overlay);
+	border: 1px solid var(--border-default);
 	border-radius: 6px;
 	color: var(--text-primary);
 	font-family: inherit;
@@ -395,7 +407,7 @@
 }
 
 .valueInput:focus {
-	border-color: var(--accent);
+	border-color: var(--brand);
 }
 
 .addButton {
@@ -404,7 +416,7 @@
 	gap: 4px;
 	padding: 0 14px;
 	height: 34px;
-	background: var(--accent);
+	background: var(--brand);
 	border: none;
 	border-radius: 6px;
 	color: white;
@@ -415,7 +427,7 @@
 }
 
 .addButton:hover:not(:disabled) {
-	background: var(--accent-hover);
+	background: var(--brand-strong);
 }
 
 .addButton:disabled {
@@ -445,10 +457,16 @@
 }
 
 .valueItem:hover {
-	background: var(--bg-hover);
+	background: var(--state-hover);
 }
 
 .valuelessHint {
 	font-size: 0.8rem;
 	color: var(--text-muted);
+}
+
+/* The bar opens on a click anywhere along it, except where the caret goes. */
+.bar input,
+.bar textarea {
+	cursor: text;
 }

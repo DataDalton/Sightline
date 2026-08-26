@@ -5,12 +5,13 @@ import { warmUserSession } from "../data/userSession";
 import { getSource } from "../semantic/registry";
 import type { SemanticField } from "../semantic/types";
 import {
-	baselinePermission,
-	getGrants,
+	getAccessContext,
+	getExplicitContext,
 	isAdmin,
 	isEditor,
 	resolveCategoryAccess,
 	resolveReportAccess,
+	type Capability,
 } from "./access";
 import { cachedDefinition } from "./definitionCache";
 import { sql } from "../data/lakebase";
@@ -93,12 +94,19 @@ export interface UserPayload {
 	};
 	canEdit: boolean;
 	canAdminister: boolean;
+	// The platform actions this caller holds somewhere, so the client can hide
+	// a button it would be refused anyway. Names only, not scopes: a scoped
+	// capability still shows the affordance, and the server decides when it is
+	// used. Hiding a button is a courtesy, never the control.
+	capabilities: Capability[];
 }
 
-export function userPayload(
+export async function userPayload(
 	identity: Identity,
 	policy: PolicyClass,
-): UserPayload {
+): Promise<UserPayload> {
+	const context = await getExplicitContext(policy, identity.email);
+
 	return {
 		email: identity.email,
 		name: identity.name,
@@ -114,8 +122,15 @@ export function userPayload(
 		},
 		// Capabilities rather than group names, so the client renders the right
 		// affordances without having to know how membership is decided.
-		canEdit: isEditor(policy),
-		canAdminister: isAdmin(policy),
+		//
+		// The configured groups are ORed in because they are the floor that
+		// keeps an administrator from being locked out by the role tables they
+		// would use to fix the role tables.
+		canEdit:
+			isEditor(policy) ||
+			(context.baseline !== null && context.baseline !== "view"),
+		canAdminister: isAdmin(policy) || context.baseline === "admin",
+		capabilities: [...context.capabilities.keys()],
 	};
 }
 
@@ -145,12 +160,15 @@ export async function navigationPayload(
 	identity: Identity,
 	policy: PolicyClass,
 ): Promise<NavigationPayload> {
-	const grants = await getGrants(policy, identity);
-	const baseline = baselinePermission(policy);
+	const context = await getAccessContext(policy, identity);
 
 	// Ids rather than a count, because the count is per reader and the list is
 	// not. Counting in SQL gave everybody the total, so a category read
 	// "Sales (12)" and opened on the three reports that reader holds.
+	//
+	// Personal pages are excluded: they sit in no category, so they would add
+	// nothing to a count here, and walking them for every reader on every
+	// navigation load would grow with the number of people using the app.
 	const [rows, reportRows] = await cachedDefinition(
 		"navigation:categories",
 		async () =>
@@ -164,7 +182,7 @@ export async function navigationPayload(
 				sql<ReportRow>(
 					`SELECT report_id, category_id
 					 FROM reports
-					 WHERE is_active = TRUE`,
+					 WHERE is_active = TRUE AND is_personal = FALSE`,
 				),
 			]),
 	);
@@ -173,11 +191,16 @@ export async function navigationPayload(
 	for (const report of reportRows) {
 		if (!report.category_id) continue;
 		const allowed = resolveReportAccess(
-			grants,
-			report.report_id,
-			report.category_id,
+			context.grants,
+			{
+				reportId: report.report_id,
+				categoryId: report.category_id,
+				isPersonal: false,
+				ownerEmail: null,
+			},
+			context.email,
 			"view",
-			baseline,
+			context.baseline,
 		).allowed;
 		if (!allowed) continue;
 		visiblePerCategory.set(
@@ -191,10 +214,10 @@ export async function navigationPayload(
 			.filter(
 				(row) =>
 					resolveCategoryAccess(
-						grants,
+						context.grants,
 						row.category_id,
 						"view",
-						baseline,
+						context.baseline,
 					).allowed,
 			)
 			.map((row) => ({
@@ -316,10 +339,12 @@ export async function shellPayload(identity: Identity): Promise<{
 	warmSourceAccess(identity);
 	warmUserSession(identity.userToken);
 
-	return {
-		policy,
-		user: userPayload(identity, policy),
-		navigation: await navigationPayload(identity, policy),
-		info: infoPayload(),
-	};
+	// Concurrent because both resolve the caller's access, and the second finds
+	// the first already in flight rather than repeating it.
+	const [user, navigation] = await Promise.all([
+		userPayload(identity, policy),
+		navigationPayload(identity, policy),
+	]);
+
+	return { policy, user, navigation, info: infoPayload() };
 }

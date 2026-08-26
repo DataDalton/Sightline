@@ -218,6 +218,30 @@ const statements: string[] = [
 	`CREATE INDEX IF NOT EXISTS saved_views_owner_idx
 		ON saved_views (owner_email, page_id)`,
 
+	// A question somebody asked outside any report.
+	//
+	// Held apart from saved_views because a view is an arrangement of a report
+	// that already exists, and this is the whole thing: which source, which
+	// fields, which filters, drawn how. It has no report to hang off, and
+	// nulling out the two columns that make a view a view would leave a table
+	// where half the rows mean something different from the other half.
+	//
+	// The config is a visual definition, the same shape a report visual stores,
+	// so the renderer draws one without knowing where it came from.
+	`CREATE TABLE IF NOT EXISTS explorations (
+		exploration_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		owner_email    TEXT NOT NULL,
+		name           TEXT NOT NULL,
+		source_key     TEXT NOT NULL,
+		config         JSONB NOT NULL DEFAULT '{}'::jsonb,
+		is_shared      BOOLEAN NOT NULL DEFAULT FALSE,
+		created_on     TIMESTAMPTZ NOT NULL DEFAULT now(),
+		modified_on    TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS explorations_owner_idx
+		ON explorations (owner_email, modified_on DESC)`,
+
 	// --- Access control ----------------------------------------------------
 
 	// Governs what a user can open. Which rows they see stays with Unity
@@ -236,6 +260,58 @@ const statements: string[] = [
 
 	`CREATE INDEX IF NOT EXISTS access_policies_lookup_idx
 		ON access_policies (resource_type, resource_id, is_active)`,
+
+	// A named bundle of one resource permission and the platform actions its
+	// holder may take. The built-in three are re-asserted on every start from
+	// lib/platform/accessRules; anything else is an administrator's own.
+	`CREATE TABLE IF NOT EXISTS roles (
+		role_id     TEXT PRIMARY KEY,
+		name        TEXT NOT NULL,
+		description TEXT,
+		-- What the holder may do to resources inside the assignment's scope.
+		permission  TEXT NOT NULL DEFAULT 'view'
+			CHECK (permission IN ('view', 'edit', 'admin')),
+		-- Built-in roles are owned by the code and cannot be deleted.
+		is_builtin  BOOLEAN NOT NULL DEFAULT FALSE,
+		is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+		created_by  TEXT,
+		created_on  TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
+	`CREATE TABLE IF NOT EXISTS role_capabilities (
+		role_id    TEXT NOT NULL REFERENCES roles(role_id) ON DELETE CASCADE,
+		capability TEXT NOT NULL,
+		PRIMARY KEY (role_id, capability)
+	)`,
+
+	// Binds a role to a group or a named individual, within a scope.
+	//
+	// Scope is what makes "edit, but only in this subject area" expressible
+	// without inventing a permission level for it. A global assignment stands
+	// in wherever nothing else names the resource; a scoped one reaches that
+	// resource and, for a category, the reports inside it.
+	`CREATE TABLE IF NOT EXISTS role_assignments (
+		assignment_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		role_id       TEXT NOT NULL REFERENCES roles(role_id) ON DELETE CASCADE,
+		subject_type  TEXT NOT NULL CHECK (subject_type IN ('group', 'user')),
+		subject_id    TEXT NOT NULL,
+		scope_type    TEXT NOT NULL DEFAULT 'global'
+			CHECK (scope_type IN ('global', 'category', 'report')),
+		scope_id      TEXT,
+		granted_by    TEXT,
+		granted_on    TIMESTAMPTZ NOT NULL DEFAULT now(),
+		is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+		-- A global assignment names no scope and a scoped one must. Enforced
+		-- here because a scoped row with a null scope would otherwise read as
+		-- global, which widens a grant on malformed input.
+		CHECK ((scope_type = 'global') = (scope_id IS NULL))
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS role_assignments_subject_idx
+		ON role_assignments (subject_type, subject_id, is_active)`,
+
+	`CREATE INDEX IF NOT EXISTS role_assignments_scope_idx
+		ON role_assignments (scope_type, scope_id, is_active)`,
 
 	// --- Shared result cache -----------------------------------------------
 
@@ -457,6 +533,30 @@ const migrations: string[] = [
 	`ALTER TABLE source_fields ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '{}'::jsonb`,
 	`ALTER TABLE source_fields ADD COLUMN IF NOT EXISTS display_name TEXT`,
 	`ALTER TABLE report_pages ADD COLUMN IF NOT EXISTS config JSONB NOT NULL DEFAULT '{}'::jsonb`,
+
+	// Marks a report somebody built for themselves rather than for the
+	// catalogue. Personal reports are exempt from every implicit grant: a
+	// global editor role does not reach one and neither does catalogue
+	// reachability, so the only ways in are owning it and being named on it.
+	//
+	// A column of its own rather than a reading of visibility, which defaults
+	// to 'private' on every row already in the table. Treating those as
+	// personal would hide the entire curated catalogue the moment this shipped.
+	// Defaulting to FALSE means the rule is inert for everything that came
+	// before it, and true only for what the personal path creates.
+	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS is_personal BOOLEAN NOT NULL DEFAULT FALSE`,
+
+	`CREATE INDEX IF NOT EXISTS reports_owner_idx
+		ON reports (owner_email, is_personal) WHERE is_personal = TRUE`,
+
+	// Records which personal page an exploration became.
+	//
+	// Saved questions used to live in a table only the explore screen could
+	// read, so nobody could find what they had kept and nothing could be built
+	// on one. They are personal pages now. The rows are converted rather than
+	// moved: the table stays exactly as it was, so a conversion that got
+	// something wrong can be looked at rather than reconstructed.
+	`ALTER TABLE explorations ADD COLUMN IF NOT EXISTS migrated_to UUID`,
 ];
 
 // Creates anything missing. Safe to run on every startup.

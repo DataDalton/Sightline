@@ -1,0 +1,212 @@
+/* The dialogs that create a category, a report or a page. */
+
+.form {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-5);
+}
+
+.field {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	min-width: 0;
+}
+
+.row {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: var(--space-3);
+}
+
+/* Full contrast. A label is the question being asked, and at secondary weight
+   in a dialog of near-neighbour surfaces it sank into them. */
+.label {
+	display: flex;
+	align-items: baseline;
+	gap: var(--space-2);
+	font-size: var(--text-sm);
+	font-weight: 600;
+	color: var(--text-primary);
+}
+
+.optional {
+	font-weight: 400;
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+}
+
+.input {
+	width: 100%;
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	/* Raised rather than base. A control on the page background is invisible
+	   against it, and inside a dialog it read as a hole. */
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font-size: var(--text-sm);
+	font-family: inherit;
+}
+
+.input:hover {
+	border-color: var(--border-strong);
+}
+
+.input:focus-visible {
+	outline: none;
+	border-color: var(--brand);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 22%, transparent);
+}
+
+.hint {
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+	line-height: 1.5;
+}
+
+/* Cards rather than a select, because the blurb is the thing that makes the
+   choice. A dropdown of five names asks the author to already know what each
+   one builds. */
+.templates {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+	gap: var(--space-2);
+}
+
+.template {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	padding: var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	text-align: left;
+	cursor: pointer;
+	font-family: inherit;
+}
+
+.template:hover {
+	border-color: var(--border-strong);
+	background: var(--state-hover);
+}
+
+.templateOn {
+	border-color: var(--brand);
+	background: var(--state-selected);
+}
+
+.templateName {
+	font-size: var(--text-sm);
+	font-weight: 600;
+	color: var(--text-primary);
+}
+
+.templateBlurb {
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+	line-height: 1.5;
+}
+
+/* The slots a template needs, once one is chosen. */
+.slots {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+	gap: var(--space-3);
+	padding: var(--space-3);
+	border-left: 2px solid var(--brand);
+	background: var(--surface-sunken);
+	border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.failure {
+	padding: var(--space-2) var(--space-3);
+	border-radius: var(--radius-sm);
+	background: var(--danger-surface, var(--surface-sunken));
+	color: var(--danger, var(--text-primary));
+	font-size: var(--text-sm);
+}
+
+.actions {
+	display: flex;
+	gap: var(--space-2);
+	justify-content: flex-end;
+}
+
+.primary {
+	padding: var(--space-2) var(--space-4);
+	border: 1px solid var(--brand);
+	border-radius: var(--radius-md);
+	background: var(--brand);
+	color: var(--brand-contrast, #fff);
+	font-size: var(--text-sm);
+	font-weight: 600;
+	font-family: inherit;
+	cursor: pointer;
+}
+
+.primary:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.secondary {
+	padding: var(--space-2) var(--space-4);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: transparent;
+	color: var(--text-secondary);
+	font-size: var(--text-sm);
+	font-family: inherit;
+	cursor: pointer;
+}
+
+/* The button that opens the dialog, sitting beside a heading. */
+.openButton {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font-size: var(--text-sm);
+	font-weight: 600;
+	font-family: inherit;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.openButton:hover {
+	border-color: var(--brand);
+}
+
+/* One person a page is shared with, and the way to stop. */
+.shareRow {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-3);
+	padding: var(--space-2) 0;
+	border-bottom: 1px solid var(--border-subtle, var(--border-default));
+	font-size: var(--text-sm);
+	color: var(--text-primary);
+}
+
+.shareRow:last-child {
+	border-bottom: none;
+}
+
+/* Whose page this is, shown to somebody who is not its owner. An administrator
+   reaching one should be told, rather than left to notice the name is not
+   theirs. */
+.borrowedTag {
+	padding: var(--space-1) var(--space-2);
+	border-radius: var(--radius-sm);
+	background: var(--surface-sunken);
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+	white-space: nowrap;
+}

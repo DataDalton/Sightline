@@ -3,11 +3,13 @@ import type { PolicyClass } from "../auth/policy";
 import { insertLog } from "../activityLog";
 import { invalidateDefinitions } from "./definitionCache";
 import { record } from "../telemetry/usage";
+import { getExplicitContext, resolveReportAccess } from "./access";
+import { getSource } from "../semantic/registry";
 import {
-	baselinePermission,
-	getExplicitGrants,
-	resolveReportAccess,
-} from "./access";
+	describeProblems,
+	hasError,
+	validateVisual,
+} from "../visuals/validate";
 
 // Editing a report.
 //
@@ -37,6 +39,9 @@ export class EditConflictError extends Error {
 }
 
 export class EditForbiddenError extends Error {}
+
+// A definition the catalogue says cannot be drawn.
+export class EditRejectedError extends Error {}
 
 // Position on the canvas. Stored in its own columns rather than inside the
 // config blob, so a layout query does not have to parse JSON and so the two
@@ -115,30 +120,140 @@ export interface EditResult {
 	seq: number;
 }
 
+// Returns whether the report is a personal page, which the caller needs anyway
+// and which is already loaded here.
 export async function assertCanEdit(
 	policy: PolicyClass,
 	email: string,
 	reportId: string,
-): Promise<void> {
-	const rows = await sql<{ category_id: string | null }>(
-		`SELECT category_id FROM reports WHERE report_id = $1 AND is_active = TRUE`,
+): Promise<boolean> {
+	const rows = await sql<{
+		category_id: string | null;
+		is_personal: boolean;
+		owner_email: string | null;
+	}>(
+		`SELECT category_id, is_personal, owner_email
+		 FROM reports WHERE report_id = $1 AND is_active = TRUE`,
 		[reportId],
 	);
 	const report = rows[0];
 	if (!report) throw new EditForbiddenError("Report not found");
 
-	const grants = await getExplicitGrants(policy, email);
+	const context = await getExplicitContext(policy, email);
 	const access = resolveReportAccess(
-		grants,
-		reportId,
-		report.category_id,
+		context.grants,
+		{
+			reportId,
+			categoryId: report.category_id,
+			isPersonal: report.is_personal,
+			ownerEmail: report.owner_email,
+		},
+		context.email,
 		"edit",
-		baselinePermission(policy),
+		context.baseline,
 	);
 	if (!access.allowed) {
 		throw new EditForbiddenError(
 			"You do not have permission to edit this report",
 		);
+	}
+
+	return report.is_personal;
+}
+
+// Checks every visual an edit would store against the catalogue.
+//
+// Before this, applyEdits took whatever arrived: a visual_type nothing renders,
+// a chart with no measure, a setting of the wrong kind. It was safe only
+// because the editor UI was the only thing that could produce an edit, and that
+// stopped being true the moment a second authoring surface existed.
+//
+// Runs before the transaction opens. A refusal should not have taken a row lock
+// on the report first, and the reads here are of the semantic registry, which
+// is already in memory.
+async function assertDefinitionsAreDrawable(
+	operations: EditOperation[],
+): Promise<void> {
+	// An update may change only a title, in which case the type and the source
+	// it is checked against are the stored ones rather than the op's.
+	const needStored = operations
+		.filter(
+			(op): op is Extract<EditOperation, { type: "updateVisual" }> =>
+				op.type === "updateVisual" && op.config !== undefined,
+		)
+		.map((op) => op.visualId);
+
+	const stored = new Map<
+		string,
+		{ type: string; sourceKey: string | null }
+	>();
+	if (needStored.length > 0) {
+		const rows = await sql<{
+			visual_id: string;
+			visual_type: string;
+			source_key: string | null;
+		}>(
+			`SELECT visual_id::text AS visual_id, visual_type, source_key
+			 FROM report_visuals WHERE visual_id = ANY($1::uuid[])`,
+			[needStored],
+		);
+		for (const row of rows) {
+			stored.set(row.visual_id, {
+				type: row.visual_type,
+				sourceKey: row.source_key,
+			});
+		}
+	}
+
+	for (const op of operations) {
+		if (op.type !== "addVisual" && op.type !== "updateVisual") continue;
+		if (op.type === "updateVisual" && op.config === undefined) continue;
+
+		const previous =
+			op.type === "updateVisual" ? stored.get(op.visualId) : undefined;
+		const visualType = op.visualType ?? previous?.type;
+		if (!visualType) continue;
+
+		const sourceKey =
+			op.sourceKey !== undefined
+				? op.sourceKey
+				: (previous?.sourceKey ?? null);
+		const source = sourceKey ? getSource(sourceKey) : null;
+
+		// A source key naming nothing the registry knows is refused outright.
+		// The query would fail later anyway, with a message about a table
+		// instead of about the visual.
+		if (sourceKey && !source) {
+			throw new EditRejectedError(
+				`There is no source called ${sourceKey}.`,
+			);
+		}
+
+		const problems = validateVisual(
+			visualType,
+			(op.config ?? {}) as Record<string, unknown>,
+			source
+				? {
+						dimensions: source.dimensions.map((f) => f.name),
+						measures: source.measures.map((f) => f.name),
+					}
+				: null,
+		);
+
+		if (hasError(problems)) {
+			throw new EditRejectedError(describeProblems(problems));
+		}
+
+		// Drift rather than a mistake: a field the semantic layer dropped since
+		// the report was authored. Allowed through, because refusing would
+		// block an unrelated edit until somebody else fixed the source, and
+		// logged, because otherwise it is invisible until a reader asks why a
+		// column is missing.
+		for (const problem of problems) {
+			console.warn(
+				`Visual definition drift on ${visualType}: ${problem.message}`,
+			);
+		}
 	}
 }
 
@@ -147,11 +262,13 @@ export async function applyEdits(
 	email: string,
 	request: EditRequest,
 ): Promise<EditResult> {
-	await assertCanEdit(policy, email, request.reportId);
+	const personal = await assertCanEdit(policy, email, request.reportId);
 
 	if (request.operations.length === 0) {
 		throw new Error("No operations supplied");
 	}
+
+	await assertDefinitionsAreDrawable(request.operations);
 
 	return transaction(async (client) => {
 		// Locking the report row serializes concurrent edits to it. Without
@@ -377,6 +494,17 @@ export async function applyEdits(
 		// Everything a restore has to put back, which means the layout columns
 		// as well: without them a restore returned the right visuals with every
 		// position lost, which is worse than not offering one.
+		//
+		// Not for a personal page. A curated report is edited by several people
+		// and read by many, so the record of who changed what earns three
+		// queries and a full copy on every save. A page somebody is building
+		// for themselves is saved constantly by one person, and the history
+		// would be a copy of the whole page per keystroke-sized change, kept
+		// for a restore nobody asks for.
+		if (personal) {
+			return { version: nextVersion, seq };
+		}
+
 		const snapshot = await client.query(
 			`SELECT v.visual_id, v.page_id, v.visual_type, v.title, v.source_key,
 			        v.config, v.layout_x, v.layout_y, v.layout_w, v.layout_h,

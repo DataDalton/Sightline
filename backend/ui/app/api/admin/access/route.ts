@@ -3,7 +3,7 @@ import { getIdentity } from "@/lib/auth/identity";
 import { resolvePolicyClass } from "@/lib/auth/policy";
 import {
 	invalidateAccessCache,
-	isAdmin,
+	canDo,
 	type Permission,
 } from "@/lib/platform/access";
 import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
@@ -111,7 +111,7 @@ async function requireAdmin(request: NextRequest) {
 		};
 	}
 	const policy = await resolvePolicyClass(identity);
-	if (!isAdmin(policy)) {
+	if (!(await canDo(policy, identity, "access.grant"))) {
 		// Not found rather than forbidden, so an admin surface does not confirm
 		// its own existence to someone who cannot use it.
 		return {
@@ -195,6 +195,26 @@ export async function POST(request: NextRequest) {
 			{ error: `No ${grant.resourceType} with that id.` },
 			{ status: 400 },
 		);
+	}
+
+	// A personal page is seen by its owner and by the people they name, and by
+	// nobody else. A group grant would make "shared with two colleagues"
+	// indistinguishable from "shared with everyone in Sales", which is the one
+	// thing a personal page promises will not happen. Refused here rather than
+	// filtered at read time, so the promise holds for an administrator too.
+	if (grant.subjectType === "group" && grant.resourceType === "report") {
+		const personal = await sql<{ is_personal: boolean }>(
+			`SELECT is_personal FROM reports WHERE report_id::text = $1`,
+			[grant.resourceId],
+		);
+		if (personal[0]?.is_personal) {
+			return NextResponse.json(
+				{
+					error: "That is somebody's personal page. It can be shared with named people, not with a group. Publish it into a category to make it reachable that way.",
+				},
+				{ status: 400 },
+			);
+		}
 	}
 
 	const params = [

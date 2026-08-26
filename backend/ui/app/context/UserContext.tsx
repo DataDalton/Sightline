@@ -34,6 +34,10 @@ export interface User {
 	// Member of a central editor group: edits publish to everyone.
 	canEdit: boolean;
 	canAdminister: boolean;
+	// Platform actions this caller holds somewhere. Names only, not scopes: a
+	// scoped capability still shows the affordance and the server decides when
+	// it is used. Hiding a button is a courtesy, never the control.
+	capabilities?: string[];
 	policy: UserPolicy;
 }
 

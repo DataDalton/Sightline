@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
 	// rather than hide it.
 	warmSourceAccess(identity);
 
-	const response = NextResponse.json(userPayload(identity, policy));
+	const response = NextResponse.json(await userPayload(identity, policy));
 	response.headers.set("Cache-Control", "private, no-store");
 	return response;
 }

@@ -14,8 +14,8 @@
 	position: relative;
 	width: 40px;
 	height: 22px;
-	background: var(--bg-tertiary);
-	border: 1px solid var(--border-color);
+	background: var(--surface-sunken);
+	border: 1px solid var(--border-default);
 	border-radius: 11px;
 	cursor: pointer;
 	transition:
@@ -29,8 +29,8 @@
 }
 
 .trackOn {
-	background: var(--accent);
-	border-color: var(--accent);
+	background: var(--info);
+	border-color: var(--info);
 }
 
 .thumb {
