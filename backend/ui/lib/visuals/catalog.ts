@@ -487,14 +487,6 @@ export const visualCatalog: VisualTypeDefinition[] = [
 				],
 				fallback: "percent",
 			},
-			{
-				key: "topN",
-				label: "Group the tail",
-				kind: "number",
-				min: 2,
-				max: 50,
-				help: "Keeps the largest slices and gathers the rest into one named Other.",
-			},
 		],
 		defaultLayout: { w: 4, h: 5 },
 	},
@@ -636,6 +628,13 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		},
 		options: [
 			{
+				key: "fillHeight",
+				label: "Grow to fill the screen",
+				kind: "toggle",
+				fallback: true,
+				help: "On, this takes the room left below it when it is the last thing on the page. Turn it off where the table is deliberately a preview rather than the thing being worked in.",
+			},
+			{
 				key: "density",
 				label: "Row height",
 				kind: "select",
@@ -670,6 +669,13 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			fillHeight: true,
 		},
 		options: [
+			{
+				key: "fillHeight",
+				label: "Grow to fill the screen",
+				kind: "toggle",
+				fallback: true,
+				help: "On, this takes the room left below it when it is the last thing on the page. Turn it off where the table is deliberately a preview rather than the thing being worked in.",
+			},
 			{
 				key: "columnDimension",
 				label: "Pivot across",

@@ -1,8 +1,8 @@
 .wrapper {
 	display: flex;
 	flex-direction: column;
-	background: var(--bg-tertiary);
-	border: 1px solid var(--border-color);
+	background: var(--surface-sunken);
+	border: 1px solid var(--border-default);
 	border-radius: 8px;
 	overflow: hidden;
 }
@@ -33,8 +33,8 @@
 
 .th {
 	padding: 10px 14px;
-	background: var(--bg-secondary);
-	border-bottom: 1px solid var(--border-color);
+	background: var(--surface-raised);
+	border-bottom: 1px solid var(--border-default);
 	color: var(--text-secondary);
 	font-size: 0.8rem;
 	font-weight: 600;
@@ -56,7 +56,7 @@
 }
 
 .th.sortActive {
-	color: var(--accent);
+	color: var(--info);
 }
 
 .thContent {
@@ -81,7 +81,7 @@
 }
 
 .tbody tr + tr {
-	border-top: 1px solid var(--border-color);
+	border-top: 1px solid var(--border-default);
 }
 
 /* Rows sit on whatever surface the table is placed on, so the band and the
@@ -110,7 +110,7 @@
 }
 
 .expandedRow {
-	background: var(--bg-secondary);
+	background: var(--surface-raised);
 }
 
 .expandedCell {
@@ -119,7 +119,7 @@
 	max-width: none;
 	overflow: visible;
 	text-overflow: clip;
-	border-top: 1px solid var(--border-color);
+	border-top: 1px solid var(--border-default);
 }
 
 .td {
@@ -146,8 +146,8 @@
 	display: flex;
 	justify-content: flex-end;
 	padding: 8px 10px;
-	background: var(--bg-hover);
-	border-bottom: 1px solid var(--border-color);
+	background: var(--surface-hover);
+	border-bottom: 1px solid var(--border-default);
 }
 
 .addActionButton {
@@ -155,7 +155,7 @@
 	align-items: center;
 	gap: 5px;
 	padding: 6px 12px;
-	background: var(--accent);
+	background: var(--info);
 	border: none;
 	border-radius: 6px;
 	color: white;
@@ -167,7 +167,8 @@
 }
 
 .addActionButton:hover {
-	background: var(--accent-hover);
+	background: var(--info);
+	opacity: 0.88;
 }
 
 /* A loading row. The bars inside carry the shimmer, from
@@ -195,8 +196,8 @@
 	align-items: center;
 	justify-content: space-between;
 	padding: 10px 14px;
-	background: var(--bg-secondary);
-	border-top: 1px solid var(--border-color);
+	background: var(--surface-raised);
+	border-top: 1px solid var(--border-default);
 	gap: 16px;
 }
 
@@ -225,8 +226,8 @@
 
 .pageSizeSelect {
 	padding: 4px 6px;
-	background: var(--bg-tertiary);
-	border: 1px solid var(--border-color);
+	background: var(--surface-sunken);
+	border: 1px solid var(--border-default);
 	border-radius: 4px;
 	color: var(--text-primary);
 	font-size: 0.8rem;
@@ -235,7 +236,7 @@
 }
 
 .pageSizeSelect:focus {
-	border-color: var(--accent);
+	border-color: var(--info);
 }
 
 .pageNav {
@@ -250,8 +251,8 @@
 	justify-content: center;
 	width: 28px;
 	height: 28px;
-	background: var(--bg-tertiary);
-	border: 1px solid var(--border-color);
+	background: var(--surface-sunken);
+	border: 1px solid var(--border-default);
 	border-radius: 4px;
 	color: var(--text-secondary);
 	cursor: pointer;
@@ -259,7 +260,7 @@
 }
 
 .pageButton:hover:not(:disabled) {
-	background: var(--bg-hover);
+	background: var(--state-hover);
 	color: var(--text-primary);
 	border-color: var(--text-muted);
 }

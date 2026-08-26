@@ -134,7 +134,7 @@
 }
 
 .table tbody tr:hover td {
-	background: var(--surface-hover);
+	background: var(--state-hover);
 }
 
 .numeric {
@@ -224,13 +224,13 @@
 }
 
 .crumb:hover:not(:disabled) {
-	background: var(--surface-hover);
+	background: var(--state-hover);
 }
 
 .crumb:disabled {
 	color: var(--text-primary);
 	font-weight: 600;
-	cursor: default;
+	cursor: not-allowed;
 }
 
 .crumbSep {

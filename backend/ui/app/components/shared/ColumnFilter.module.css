@@ -18,13 +18,13 @@
 
 .filterButton:hover {
 	opacity: 1;
-	color: var(--accent);
+	color: var(--info);
 	background: rgba(99, 102, 241, 0.12);
 }
 
 .filterButtonActive {
 	opacity: 1;
-	color: var(--accent);
+	color: var(--info);
 }
 
 .filterCount {
@@ -40,8 +40,8 @@
 	width: 240px;
 	display: flex;
 	flex-direction: column;
-	background: var(--bg-secondary);
-	border: 1px solid var(--border-color);
+	background: var(--surface-float);
+	border: 1px solid var(--border-strong);
 	border-radius: 8px;
 	box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
 	overflow: hidden;
@@ -53,7 +53,7 @@
 	font-weight: 400;
 	color: var(--text-primary);
 	user-select: text;
-	cursor: default;
+	cursor: not-allowed;
 }
 
 .panelHeader {
@@ -62,7 +62,7 @@
 	justify-content: space-between;
 	gap: 8px;
 	padding: 8px 8px 6px 10px;
-	border-bottom: 1px solid var(--border-color);
+	border-bottom: 1px solid var(--border-default);
 }
 
 .panelTitle {
@@ -91,14 +91,14 @@
 
 .panelClose:hover {
 	color: var(--text-primary);
-	background: var(--bg-hover);
+	background: var(--state-hover);
 }
 
 .searchInput {
 	margin: 8px 8px 0;
 	padding: 6px 8px;
-	background: var(--bg-primary);
-	border: 1px solid var(--border-color);
+	background: var(--surface-base);
+	border: 1px solid var(--border-default);
 	border-radius: 5px;
 	color: var(--text-primary);
 	font-family: inherit;
@@ -108,7 +108,7 @@
 }
 
 .searchInput:focus {
-	border-color: var(--accent);
+	border-color: var(--info);
 }
 
 .searchInput::placeholder {
@@ -125,7 +125,7 @@
 	background: none;
 	border: none;
 	padding: 0;
-	color: var(--accent);
+	color: var(--info);
 	font-family: inherit;
 	font-size: 0.72rem;
 	font-weight: 500;
@@ -147,7 +147,7 @@
 	flex-direction: column;
 	max-height: 220px;
 	overflow-y: auto;
-	border-top: 1px solid var(--border-color);
+	border-top: 1px solid var(--border-default);
 }
 
 .option {
@@ -162,7 +162,7 @@
 }
 
 .option:hover {
-	background: var(--bg-hover);
+	background: var(--state-hover);
 }
 
 /* Drawn rather than native so the unchecked box stays dark and the checkmark
@@ -175,7 +175,7 @@
 	height: 14px;
 	margin: 0;
 	flex-shrink: 0;
-	background: var(--bg-primary);
+	background: var(--surface-base);
 	border: 1px solid var(--text-muted);
 	border-radius: 3px;
 	cursor: pointer;
@@ -185,17 +185,17 @@
 }
 
 .optionCheckbox:hover {
-	border-color: var(--accent);
+	border-color: var(--info);
 }
 
 .optionCheckbox:focus-visible {
-	outline: 2px solid var(--accent);
+	outline: 2px solid var(--info);
 	outline-offset: 1px;
 }
 
 .optionCheckbox:checked {
-	background: var(--accent);
-	border-color: var(--accent);
+	background: var(--info);
+	border-color: var(--info);
 }
 
 .optionCheckbox:checked::after {
@@ -233,8 +233,8 @@
 
 .footer {
 	padding: 6px 10px;
-	border-top: 1px solid var(--border-color);
-	background: var(--bg-tertiary);
+	border-top: 1px solid var(--border-default);
+	background: var(--surface-sunken);
 	color: var(--text-muted);
 	font-size: 0.7rem;
 	font-weight: 400;

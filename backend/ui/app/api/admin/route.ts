@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getIdentity } from "@/lib/auth/identity";
 import { resolvePolicyClass } from "@/lib/auth/policy";
-import { isAdmin } from "@/lib/platform/access";
+import { canAdminister } from "@/lib/platform/access";
 import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
 import {
 	getDailyActivity,
@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
 	}
 
 	const policy = await resolvePolicyClass(identity);
-	if (!isAdmin(policy)) {
+	if (!(await canAdminister(policy, identity))) {
 		// Reported as missing rather than forbidden, so the response does not
 		// advertise an admin surface to someone without it.
 		return NextResponse.json({ error: "Not found" }, { status: 404 });

@@ -13,14 +13,14 @@
 }
 
 .required {
-	color: var(--error);
+	color: var(--danger);
 	margin-left: 2px;
 }
 
 .input {
 	padding: 8px 12px;
-	background: var(--bg-tertiary);
-	border: 1px solid var(--border-color);
+	background: var(--surface-sunken);
+	border: 1px solid var(--border-default);
 	border-radius: 6px;
 	color: var(--text-primary);
 	font-size: 0.9rem;
@@ -30,7 +30,7 @@
 }
 
 .input:focus {
-	border-color: var(--accent);
+	border-color: var(--info);
 }
 
 .input:disabled {
@@ -39,10 +39,10 @@
 }
 
 .inputError {
-	border-color: var(--error);
+	border-color: var(--danger);
 }
 
 .error {
 	font-size: 0.75rem;
-	color: var(--error);
+	color: var(--danger);
 }

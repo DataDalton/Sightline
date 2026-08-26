@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getIdentity } from "@/lib/auth/identity";
 import { resolvePolicyClass } from "@/lib/auth/policy";
-import { invalidateAccessCache, isAdmin } from "@/lib/platform/access";
+import { canDo, invalidateAccessCache } from "@/lib/platform/access";
 import { invalidateSourceAccess } from "@/lib/auth/sourceAccess";
 import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
 import { insertLog } from "@/lib/activityLog";
@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
 	}
 
 	const policy = await resolvePolicyClass(identity);
-	if (!isAdmin(policy)) {
+	if (!(await canDo(policy, identity, "settings.manage"))) {
 		return NextResponse.json({ error: "Not found" }, { status: 404 });
 	}
 
@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
 	}
 
 	const policy = await resolvePolicyClass(identity);
-	if (!isAdmin(policy)) {
+	if (!(await canDo(policy, identity, "settings.manage"))) {
 		return NextResponse.json({ error: "Not found" }, { status: 404 });
 	}
 

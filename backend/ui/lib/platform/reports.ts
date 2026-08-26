@@ -3,12 +3,12 @@ import { cachedDefinition } from "./definitionCache";
 import type { Identity } from "../auth/identity";
 import type { PolicyClass } from "../auth/policy";
 import {
-	baselinePermission,
-	getGrants,
+	getAccessContext,
 	resolveCategoryAccess,
 	resolveReportAccess,
 	type Permission,
 } from "./access";
+import { insertLog } from "../activityLog";
 
 // Reading reports, pages and visuals, always filtered by what the caller may
 // open. Access is applied here rather than in each route so there is one place
@@ -26,6 +26,10 @@ export interface ReportSummary {
 	// What the caller may do with it, so the client can hide edit affordances
 	// it would be refused anyway.
 	permission: Permission;
+	// A page somebody built for themselves. The client renders sharing and
+	// publishing for one of these and neither for a curated report.
+	isPersonal: boolean;
+	ownerEmail: string;
 }
 
 export interface VisualDefinition {
@@ -76,43 +80,57 @@ interface ReportRow {
 	visibility: string;
 	version: string | number;
 	modified_on: string;
+	// Read on every path that resolves access, because the ownership rule needs
+	// both and a query that omits them would resolve a personal page as though
+	// it were curated.
+	is_personal: boolean;
+	owner_email: string | null;
 }
+
+// The columns every access decision about a report needs.
+const reportColumns = `report_id, category_id, slug, title, description,
+	        source_key, visibility, version, modified_on,
+	        is_personal, owner_email`;
 
 export async function listReports(
 	policy: PolicyClass,
 	identity: Identity,
 	categoryId?: string,
 ): Promise<ReportSummary[]> {
-	const grants = await getGrants(policy, identity);
-	// A central editor holds edit everywhere, so their baseline stands in when
-	// no explicit grant names them.
-	const baseline = baselinePermission(policy);
+	const context = await getAccessContext(policy, identity);
 
+	// A curated listing. Personal pages are excluded here rather than left to
+	// the resolver: they belong to nobody's category, so a category listing
+	// that included them would be asking a question with no useful answer, and
+	// the uncategorised listing is what the home page walks.
 	const rows = categoryId
 		? await sql<ReportRow>(
-				`SELECT report_id, category_id, slug, title, description,
-				        source_key, visibility, version, modified_on
+				`SELECT ${reportColumns}
 				 FROM reports
-				 WHERE is_active = TRUE AND category_id = $1
+				 WHERE is_active = TRUE AND is_personal = FALSE AND category_id = $1
 				 ORDER BY title`,
 				[categoryId],
 			)
 		: await sql<ReportRow>(
-				`SELECT report_id, category_id, slug, title, description,
-				        source_key, visibility, version, modified_on
+				`SELECT ${reportColumns}
 				 FROM reports
-				 WHERE is_active = TRUE
+				 WHERE is_active = TRUE AND is_personal = FALSE
 				 ORDER BY title`,
 			);
 
 	const visible: ReportSummary[] = [];
 	for (const row of rows) {
 		const access = resolveReportAccess(
-			grants,
-			row.report_id,
-			row.category_id,
+			context.grants,
+			{
+				reportId: row.report_id,
+				categoryId: row.category_id,
+				isPersonal: row.is_personal,
+				ownerEmail: row.owner_email,
+			},
+			context.email,
 			"view",
-			baseline,
+			context.baseline,
 		);
 		if (!access.allowed || !access.permission) continue;
 		visible.push({
@@ -125,6 +143,8 @@ export async function listReports(
 			visibility: row.visibility,
 			modifiedOn: row.modified_on,
 			permission: access.permission,
+			isPersonal: row.is_personal,
+			ownerEmail: row.owner_email ?? "",
 		});
 	}
 	return visible;
@@ -142,9 +162,15 @@ export async function getCategory(
 	identity: Identity,
 	categoryId: string,
 ): Promise<CategoryDetail | null> {
-	const grants = await getGrants(policy, identity);
-	const baseline = baselinePermission(policy);
-	if (!resolveCategoryAccess(grants, categoryId, "view", baseline).allowed) {
+	const context = await getAccessContext(policy, identity);
+	if (
+		!resolveCategoryAccess(
+			context.grants,
+			categoryId,
+			"view",
+			context.baseline,
+		).allowed
+	) {
 		return null;
 	}
 
@@ -168,20 +194,60 @@ export async function getCategory(
 	};
 }
 
+// Administrators reaching somebody's personal page, recorded.
+//
+// Opening a page built for one person is a privileged act rather than an
+// ordinary read, and the trail is the thing that makes the access defensible:
+// an administrator can answer for what the platform holds, and the record shows
+// when they did.
+//
+// Deduplicated over a short window, per administrator and page. Without it a
+// tab left open on somebody's page writes a row every time SWR revalidates, and
+// an audit trail nobody can read through is one nobody reads.
+const noticed = new Map<string, number>();
+const noticeWindowMs = 5 * 60 * 1000;
+
+function noteAdministrativeRead(
+	email: string,
+	reportId: string,
+	ownerEmail: string | null,
+): void {
+	const key = `${email.toLowerCase()}|${reportId}`;
+	const now = Date.now();
+	const last = noticed.get(key);
+	if (last && now - last < noticeWindowMs) return;
+	noticed.set(key, now);
+
+	// Swept on write rather than on a timer, so a module instance that stops
+	// being asked stops doing work.
+	if (noticed.size > 500) {
+		for (const [held, at] of noticed) {
+			if (now - at >= noticeWindowMs) noticed.delete(held);
+		}
+	}
+
+	void insertLog({
+		recordType: "report",
+		recordId: reportId,
+		action: "administer_personal_page",
+		changedBy: email,
+		notes: ownerEmail ? `owned by ${ownerEmail}` : null,
+	});
+}
+
 export async function getReport(
 	policy: PolicyClass,
 	identity: Identity,
 	slug: string,
 ): Promise<ReportDetail | null> {
-	const grants = await getGrants(policy, identity);
+	const context = await getAccessContext(policy, identity);
 
 	// Fetched before the access check because the check needs the report id,
 	// and cached because the answer does not vary by reader. The check itself
 	// still runs per request, against this reader grants.
 	const report = await cachedDefinition(`report:${slug}`, async () => {
 		const rows = await sql<ReportRow>(
-			`SELECT report_id, category_id, slug, title, description,
-			        source_key, visibility, version, modified_on
+			`SELECT ${reportColumns}
 			 FROM reports
 			 WHERE slug = $1 AND is_active = TRUE`,
 			[slug],
@@ -191,13 +257,26 @@ export async function getReport(
 	if (!report) return null;
 
 	const access = resolveReportAccess(
-		grants,
-		report.report_id,
-		report.category_id,
+		context.grants,
+		{
+			reportId: report.report_id,
+			categoryId: report.category_id,
+			isPersonal: report.is_personal,
+			ownerEmail: report.owner_email,
+		},
+		context.email,
 		"view",
-		baselinePermission(policy),
+		context.baseline,
 	);
 	if (!access.allowed || !access.permission) return null;
+
+	if (access.viaAdministration) {
+		noteAdministrativeRead(
+			context.email,
+			report.report_id,
+			report.owner_email,
+		);
+	}
 
 	// Two more round trips, and the same for every reader. Cached against the
 	// report id rather than the slug, so a rename does not orphan the entry.
@@ -272,6 +351,8 @@ export async function getReport(
 		title: report.title,
 		description: report.description,
 		sourceKey: report.source_key,
+		isPersonal: report.is_personal,
+		ownerEmail: report.owner_email ?? "",
 		visibility: report.visibility,
 		modifiedOn: report.modified_on,
 		permission: access.permission,

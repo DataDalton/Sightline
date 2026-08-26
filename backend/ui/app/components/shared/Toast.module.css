@@ -21,8 +21,8 @@
 
 .error {
 	background: rgba(239, 68, 68, 0.1);
-	border-color: var(--error);
-	color: var(--error);
+	border-color: var(--danger);
+	color: var(--danger);
 }
 
 .warning {

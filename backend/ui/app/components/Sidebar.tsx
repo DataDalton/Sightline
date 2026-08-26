@@ -8,6 +8,7 @@ import { useUser } from "../context/UserContext";
 import { Skeleton } from "./shared/Skeleton";
 import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { useShell } from "../context/ShellContext";
+import { NewReportButton } from "../authoring/NewReport";
 import styles from "./Sidebar.module.css";
 
 // Navigation comes from the categories the caller can actually open, resolved
@@ -35,7 +36,7 @@ const iconPaths: Record<string, string> = {
 	rebates: "M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6",
 	asc: "M3 3v18h18M7 16l3-6 4 4 4-8",
 	market: "M18 20V10M12 20V4M6 20v-6",
-	explore: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35",
+	mine: "M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z",
 	admin: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z",
 	default: "M3 7h7v6H3zM14 7h7v6h-7zM3 16h18v5H3z",
 };
@@ -171,11 +172,11 @@ export default memo(function Sidebar() {
 						<span className={styles.label}>Home</span>
 					</Link>
 					<Link
-						href="/explore"
-						className={`${styles.navItem} ${isActive("/explore") ? styles.active : ""}`}
+						href="/mine"
+						className={`${styles.navItem} ${isActive("/mine") ? styles.active : ""}`}
 					>
-						<NavIcon name="explore" />
-						<span className={styles.label}>Explore</span>
+						<NavIcon name="mine" />
+						<span className={styles.label}>My pages</span>
 					</Link>
 				</nav>
 			</div>
@@ -266,6 +267,10 @@ export default memo(function Sidebar() {
 							);
 						})}
 					</nav>
+				)}
+
+				{user?.capabilities?.includes("report.create") && (
+					<NewReportButton className={styles.newReport} />
 				)}
 			</div>
 
