@@ -232,6 +232,40 @@ export async function queryAsUserBatches(
 	}
 }
 
+// Opens this caller's warehouse session without running anything on it.
+//
+// A session costs a connect and an openSession, which is hundreds of
+// milliseconds and is paid by whichever query happens to be first. That is
+// normally a visual, so the reader waits for it after the page has already
+// drawn.
+//
+// A returning reader is the case worth catching: their policy class is read
+// back from the platform store, so nothing has touched the warehouse and the
+// session is still cold when the first visual asks. Started during the document
+// render, it is usually connected by the time anything needs it.
+//
+// Errors are swallowed on purpose. This is an optimisation, and the query that
+// actually needs the session is the one that should report a failure.
+export function warmUserSession(userToken: string | null): void {
+	if (!userToken) return;
+	ensureSweeping();
+
+	const existing = pool.get(userToken);
+	if (existing) {
+		existing.lastUsed = Date.now();
+		return;
+	}
+
+	const entry = openSession(userToken);
+	pool.set(userToken, entry);
+	enforceCeiling();
+	void entry.session.catch(() => {
+		// A session that will not open is dropped, so the next caller tries
+		// again rather than awaiting a promise that already rejected.
+		void closeEntry(userToken, entry);
+	});
+}
+
 export function userSessionStats(): { pooled: number } {
 	return { pooled: pool.size };
 }

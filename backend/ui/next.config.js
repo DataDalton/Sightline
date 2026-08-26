@@ -1,32 +1,14 @@
 /** @type {import('next').NextConfig} */
 
-// Content Security Policy for the application. The app is a Next.js / React
-// front-end that only calls its own same-origin /api routes, so connect-src,
-// script-src, and style-src are scoped to 'self'. 'unsafe-inline' is required
-// for the Next.js bootstrap/hydration inline script and styled-jsx inline
-// styles. frame-ancestors 'none' blocks the app from being framed.
-// React uses eval() only in development mode for debugging, so 'unsafe-eval'
-// is added to script-src in development and excluded from the production policy.
-const isDev = process.env.NODE_ENV !== "production";
-const scriptSrc = isDev
-	? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
-	: "script-src 'self' 'unsafe-inline'";
-
-const contentSecurityPolicy = [
-	"default-src 'self'",
-	scriptSrc,
-	"style-src 'self' 'unsafe-inline'",
-	"img-src 'self' data:",
-	"font-src 'self'",
-	"connect-src 'self'",
-	"frame-ancestors 'none'",
-	"base-uri 'self'",
-	"form-action 'self'",
-	"object-src 'none'",
-].join("; ");
+// The Content Security Policy is not here.
+//
+// It carries a per-response nonce so the page can run its own two inline
+// scripts without naming 'unsafe-inline', which would permit any injected one.
+// A nonce has to be minted per request, and this file is read once at startup,
+// so the policy is set in middleware.ts instead. Everything below is constant
+// and can be declared here.
 
 const securityHeaders = [
-	{ key: "Content-Security-Policy", value: contentSecurityPolicy },
 	{ key: "X-Frame-Options", value: "DENY" },
 	// The legacy XSS Auditor was buggy and is removed from modern browsers.
 	// Send 0 to disable it on any old browser that still has it. CSP is the
@@ -44,6 +26,12 @@ const securityHeaders = [
 		key: "Permissions-Policy",
 		value: "camera=(), microphone=(), geolocation=()",
 	},
+	// Severs the window from anything that opened it or that it opens, so a
+	// cross-origin page cannot reach into this one through window.opener.
+	{ key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+	// Refuses to be embedded as a subresource by another origin, which is the
+	// read side of the same boundary frame-ancestors closes for framing.
+	{ key: "Cross-Origin-Resource-Policy", value: "same-origin" },
 ];
 
 const nextConfig = {
@@ -51,6 +39,7 @@ const nextConfig = {
 	// Nothing here depends on them, so they stay out of the tree.
 	agentRules: false,
 	trailingSlash: true,
+	skipTrailingSlashRedirect: true,
 	reactStrictMode: true,
 	compress: true,
 	poweredByHeader: false,

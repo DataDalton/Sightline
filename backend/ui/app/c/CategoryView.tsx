@@ -23,14 +23,25 @@ interface CategoryDetail {
 	reports: ReportSummary[];
 }
 
-export default function CategoryView({ categoryId }: { categoryId: string }) {
+// initial is the listing the server resolved while rendering the document. See
+// the note in ReportView on why this is handed to the hook rather than provided
+// through a nested config.
+export default function CategoryView({
+	categoryId,
+	initial,
+}: {
+	categoryId: string;
+	initial?: CategoryDetail;
+}) {
 	const { data, error, isLoading } = useSWR<CategoryDetail>(
 		`/api/category/${encodeURIComponent(categoryId)}`,
+		{ fallbackData: initial },
 	);
 
 	// Shown only when the wait is long enough to notice. Most loads answer from
 	// cache, where a placeholder would appear and vanish inside two frames.
-	const showSkeleton = useDeferredLoading(isLoading);
+	// Only a wait with nothing to show yet. See the note in ReportView.
+	const showSkeleton = useDeferredLoading(isLoading && !data);
 
 	// Set before the loading and error returns below, because a hook cannot be
 	// called conditionally. An unnamed category leaves the application name on
@@ -62,7 +73,8 @@ export default function CategoryView({ categoryId }: { categoryId: string }) {
 
 			{showSkeleton ? (
 				<SkeletonCards count={4} />
-			) : isLoading ? null : data && data.reports.length === 0 ? (
+			) : isLoading && !data ? null : data &&
+			  data.reports.length === 0 ? (
 				<div className={styles.state}>
 					No reports in this category yet.
 				</div>

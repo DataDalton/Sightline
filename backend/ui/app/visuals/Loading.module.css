@@ -23,6 +23,20 @@
 	padding: var(--space-4);
 }
 
+/*
+ * One bar standing in for one line, inside something that is already a panel.
+ *
+ * A scorecard tile and a record row reserve the height their figure will take
+ * and put a placeholder in it. The panel padding above is for a skeleton that
+ * is the whole panel, and applying it here put thirty six pixels of padding
+ * inside a thirty four pixel box: the bar was pushed out of the tile entirely,
+ * so all that showed was the label meant only for a screen reader.
+ */
+.skeletonInline {
+	padding: 0;
+	justify-content: center;
+}
+
 .bar {
 	height: 12px;
 	border-radius: var(--radius-sm);
@@ -37,8 +51,12 @@
 }
 
 @keyframes shimmer {
-	0% { background-position: 200% 0; }
-	100% { background-position: -200% 0; }
+	0% {
+		background-position: 200% 0;
+	}
+	100% {
+		background-position: -200% 0;
+	}
 }
 
 /* Bars: a chart-shaped placeholder, which reads as "a chart is loading"
@@ -62,15 +80,32 @@
 }
 
 @keyframes rise {
-	0%, 100% { opacity: 0.45; transform: scaleY(0.6); }
-	50% { opacity: 0.9; transform: scaleY(1); }
+	0%,
+	100% {
+		opacity: 0.45;
+		transform: scaleY(0.6);
+	}
+	50% {
+		opacity: 0.9;
+		transform: scaleY(1);
+	}
 }
 
-.barCol:nth-child(1) { animation-delay: 0s; }
-.barCol:nth-child(2) { animation-delay: 0.12s; }
-.barCol:nth-child(3) { animation-delay: 0.24s; }
-.barCol:nth-child(4) { animation-delay: 0.36s; }
-.barCol:nth-child(5) { animation-delay: 0.48s; }
+.barCol:nth-child(1) {
+	animation-delay: 0s;
+}
+.barCol:nth-child(2) {
+	animation-delay: 0.12s;
+}
+.barCol:nth-child(3) {
+	animation-delay: 0.24s;
+}
+.barCol:nth-child(4) {
+	animation-delay: 0.36s;
+}
+.barCol:nth-child(5) {
+	animation-delay: 0.48s;
+}
 
 /* Spinner: the smallest option, for tight spaces like a KPI tile. */
 .spinner {
@@ -83,7 +118,9 @@
 }
 
 @keyframes spin {
-	to { transform: rotate(360deg); }
+	to {
+		transform: rotate(360deg);
+	}
 }
 
 /* Pulse: a quiet option for a refresh behind already-visible content. */
@@ -97,8 +134,13 @@
 }
 
 @keyframes breathe {
-	0%, 100% { opacity: 0.5; }
-	50% { opacity: 0.85; }
+	0%,
+	100% {
+		opacity: 0.5;
+	}
+	50% {
+		opacity: 0.85;
+	}
 }
 
 /* An overlay used when data is refreshing behind content that is already on

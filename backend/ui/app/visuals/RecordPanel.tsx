@@ -1,6 +1,7 @@
 "use client";
 
 import { useVisualQuery } from "../hooks/useVisualQuery";
+import { queryForVisual } from "../../lib/query/visualSpec";
 import { formatValue, type FormatHint } from "../../lib/format";
 import { VisualLoadingState } from "./LoadingState";
 import { VisualEmpty, VisualError } from "./VisualFrame";
@@ -23,6 +24,10 @@ import styles from "./Visual.module.css";
 
 interface RecordPanelProps {
 	sourceKey: string;
+	// The stored type, not the layout. The query shape is decided from it in
+	// lib/query/visualSpec, which is also what the server warms against, so a
+	// name invented here would key on a query nobody asks for.
+	visualType: string;
 	dimensions: string[];
 	measures: string[];
 	filters: unknown[];
@@ -33,6 +38,7 @@ interface RecordPanelProps {
 
 export function RecordPanel({
 	sourceKey,
+	visualType,
 	dimensions,
 	measures,
 	filters,
@@ -43,9 +49,12 @@ export function RecordPanel({
 	// Two rows asked for rather than one, so the panel can tell the difference
 	// between "this is the record" and "this is one of several".
 	const { rows, error, isLoading } = useVisualQuery(
-		dimensions.length > 0 || measures.length > 0
-			? { sourceKey, dimensions, measures, filters, limit: 2 }
-			: null,
+		queryForVisual(visualType, {
+			sourceKey,
+			dimensions,
+			measures,
+			filters,
+		}),
 	);
 
 	if (error) return <VisualError error={error} />;
@@ -54,7 +63,13 @@ export function RecordPanel({
 
 	if (isLoading && rows.length === 0) {
 		return (
-			<div className={layout === "header" ? styles.recordHeader : styles.recordList}>
+			<div
+				className={
+					layout === "header"
+						? styles.recordHeader
+						: styles.recordList
+				}
+			>
 				{names.map((name) => (
 					<div key={name} className={styles.recordField}>
 						<span className={styles.recordLabel}>{name}</span>
@@ -78,12 +93,18 @@ export function RecordPanel({
 		<>
 			{ambiguous && (
 				<div className={styles.recordNotice} role="status">
-					Showing the first of several matching records. Add a filter to
-					this page to pick one.
+					Showing the first of several matching records. Add a filter
+					to this page to pick one.
 				</div>
 			)}
 
-			<div className={layout === "header" ? styles.recordHeader : styles.recordList}>
+			<div
+				className={
+					layout === "header"
+						? styles.recordHeader
+						: styles.recordList
+				}
+			>
 				{names.map((name) => {
 					const field = fields.get(name);
 					const hint = (field?.formatHint as FormatHint) ?? "text";

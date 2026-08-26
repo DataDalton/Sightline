@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { sanitizeHtml } from "../../lib/visuals/sanitize";
+import { sanitizeHtml, toPlainText } from "../../lib/visuals/sanitize";
 import { paletteTokens } from "../../lib/visuals/style";
 import { readThemeColors } from "./colors";
 import styles from "./TextPanel.module.css";
@@ -61,6 +61,18 @@ export function TextPanel({
 	// Sanitised for display. An editor sees the same content it will publish,
 	// so nothing appears in the editor that would be stripped on save.
 	const safe = useMemo(() => sanitizeHtml(html ?? ""), [html]);
+
+	// Whether the browser is running this.
+	//
+	// The allow-list sanitiser needs a DOM to parse into, so on the server there
+	// is no way to decide which markup is safe and the honest answer is to
+	// render none of it. The text still shows, as text, and the formatting
+	// arrives a frame later once the real sanitiser has run. See the note on
+	// escapeToText in lib/visuals/sanitize.
+	const [mounted, setMounted] = useState(false);
+	useEffect(() => setMounted(true), []);
+
+	const plain = useMemo(() => toPlainText(html ?? ""), [html]);
 
 	// The editable surface is uncontrolled: writing to innerHTML on every
 	// keystroke would move the caret to the end of the document. It is seeded
@@ -183,7 +195,10 @@ export function TextPanel({
 	useEffect(() => {
 		if (!linkOpen) return;
 		const onDown = (e: MouseEvent) => {
-			if (linkRef.current && !linkRef.current.contains(e.target as Node)) {
+			if (
+				linkRef.current &&
+				!linkRef.current.contains(e.target as Node)
+			) {
 				setLinkOpen(false);
 			}
 		};
@@ -245,24 +260,37 @@ export function TextPanel({
 			);
 		}
 		// Sanitised immediately above, and again whenever the value changes.
+		// Markup only once the browser is the one deciding what is safe.
 		return (
 			<div className={styles.panel}>
-				<div
-					className={styles.content}
-					dangerouslySetInnerHTML={{ __html: safe }}
-				/>
+				{mounted ? (
+					<div
+						className={styles.content}
+						dangerouslySetInnerHTML={{ __html: safe }}
+					/>
+				) : (
+					<div className={styles.content} suppressHydrationWarning>
+						{plain}
+					</div>
+				)}
 			</div>
 		);
 	}
 
 	return (
 		<div className={styles.editor}>
-			<div className={styles.toolbar} role="toolbar" aria-label="Text formatting">
+			<div
+				className={styles.toolbar}
+				role="toolbar"
+				aria-label="Text formatting"
+			>
 				<div className={styles.group}>
 					<select
 						className={styles.select}
 						aria-label="Paragraph style"
-						onChange={(e) => run("formatBlock", `<${e.target.value}>`)}
+						onChange={(e) =>
+							run("formatBlock", `<${e.target.value}>`)
+						}
 						defaultValue="p"
 					>
 						{blockFormats.map((f) => (
@@ -372,7 +400,9 @@ export function TextPanel({
 						<button
 							type="button"
 							className={`${styles.tool} ${linkOpen ? styles.toolActive : ""}`}
-							onClick={() => (linkOpen ? setLinkOpen(false) : openLink())}
+							onClick={() =>
+								linkOpen ? setLinkOpen(false) : openLink()
+							}
 							aria-label="Insert link"
 							aria-expanded={linkOpen}
 							title="Link"
