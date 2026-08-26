@@ -153,7 +153,7 @@
 }
 
 .table tbody tr:hover td {
-	background: var(--surface-hover);
+	background: var(--state-hover);
 }
 
 .numeric {
@@ -253,7 +253,7 @@
 }
 
 .rowClickable:hover {
-	background: var(--surface-hover);
+	background: var(--state-hover);
 }
 
 /* The drill-in itself. A drawer over the table rather than a separate page,
@@ -318,7 +318,7 @@
 }
 
 .drawerClose:hover {
-	background: var(--surface-hover);
+	background: var(--state-hover);
 	color: var(--text-primary);
 }
 
@@ -454,7 +454,7 @@
 }
 
 .configNavItem:hover {
-	background: var(--surface-hover);
+	background: var(--state-hover);
 	color: var(--text-primary);
 }
 
@@ -540,8 +540,9 @@
 }
 
 .input:focus-visible {
-	outline: 2px solid var(--focus-ring);
-	outline-offset: 1px;
+	outline: none;
+	border-color: var(--brand);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 22%, transparent);
 }
 
 .withUnit {
@@ -577,11 +578,12 @@
 
 .choice:hover {
 	color: var(--text-primary);
+	background: var(--state-hover);
 }
 
 .choiceActive {
 	border-color: var(--brand);
-	background: var(--surface-sunken);
+	background: var(--state-selected);
 	color: var(--text-primary);
 	font-weight: 600;
 }
@@ -611,6 +613,25 @@
 
 .linkButton:hover {
 	text-decoration: underline;
+}
+
+/* Two of these in one table cell otherwise run together, so "Edit" and
+   "Remove" read as one word. */
+.linkButton + .linkButton {
+	margin-left: var(--space-3);
+}
+
+/* Buttons inside a field row.
+   
+   The row is a grid of 240px minimum columns, which is right for an input and
+   wrong for a button: dropped in directly, a button becomes a 240px cell and
+   fills it. Shrink-wrapped here, and aligned to the foot of the row so it sits
+   on the same line as the inputs rather than level with their labels. */
+.rowActions {
+	display: flex;
+	align-items: flex-end;
+	gap: var(--space-3);
+	justify-self: start;
 }
 
 /* Appears only when there is something to save, so the page is not carrying a
@@ -656,7 +677,7 @@
 
 .saveButton:disabled {
 	opacity: 0.6;
-	cursor: default;
+	cursor: not-allowed;
 }
 
 @media (max-width: 720px) {
@@ -735,4 +756,95 @@
 .details > div {
 	padding-top: var(--space-2);
 	line-height: 1.6;
+}
+
+/* Navigation inside a pane, above whatever it switches between. */
+.paneNav {
+	margin-bottom: var(--space-4);
+}
+
+/* Actions at the head of a pane.
+   
+   A row that sizes to its buttons. These were being dropped into .fieldRow,
+   which is a grid of 240px minimum columns built for inputs, so a button
+   stretched to fill a cell meant for a text field. */
+.actionBar {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	flex-wrap: wrap;
+	margin-bottom: var(--space-4);
+}
+
+/* What the last action did, beside the buttons rather than in a block under
+   them, so the row does not grow and shrink as things are pressed. */
+.actionStatus {
+	margin-left: auto;
+	font-size: var(--text-sm);
+	color: var(--text-muted);
+}
+
+.actionStatusBad {
+	color: var(--danger);
+}
+
+/* The action that adds something. */
+.actionPrimary {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid var(--brand);
+	border-radius: var(--radius-md);
+	background: var(--brand);
+	color: var(--text-inverse);
+	font-size: var(--text-sm);
+	font-weight: 600;
+	font-family: inherit;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.actionPrimary:hover:not(:disabled) {
+	background: var(--brand-strong);
+	border-color: var(--brand-strong);
+}
+
+/* Everything else on the row: real, but not the reason somebody came. */
+.actionSecondary {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font-size: var(--text-sm);
+	font-weight: 500;
+	font-family: inherit;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.actionSecondary:hover:not(:disabled) {
+	border-color: var(--border-strong);
+	background: var(--state-hover);
+}
+
+.actionPrimary:disabled,
+.actionSecondary:disabled {
+	opacity: 0.55;
+	cursor: not-allowed;
+}
+
+/* Turns while the work it names is running. */
+.spin {
+	animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+	to {
+		transform: rotate(360deg);
+	}
 }

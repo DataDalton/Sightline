@@ -35,9 +35,18 @@
 	border-bottom: 1px solid var(--border-subtle);
 }
 
+/* Sticks below the group header when there is one, and at the top when there
+ * is not.
+ *
+ * This was a flat 33px, which is the height of the group header row. A matrix
+ * with no pivot renders no group header, so the only header row it has stuck
+ * thirty three pixels down the scroller and the rows scrolled up through the
+ * gap above it. The offset is measured from the row that is actually there and
+ * set on the table, so it is right in both shapes and stays right if the
+ * padding changes. */
 .measureHeader th {
 	position: sticky;
-	top: 33px;
+	top: var(--matrix-stack, 0px);
 	z-index: 3;
 	background: var(--surface-sunken);
 	padding: var(--space-2) var(--space-3);
@@ -93,7 +102,7 @@
 
 .row:hover .cell,
 .row:hover .labelCell {
-	background: var(--surface-hover);
+	background: var(--state-hover);
 }
 
 /* Depth is carried by indentation and by weight, so the hierarchy is readable
@@ -174,10 +183,12 @@
 }
 
 .toolButton:hover {
-	background: var(--surface-hover);
+	background: var(--state-hover);
 }
 
-.spacer { flex: 1; }
+.spacer {
+	flex: 1;
+}
 
 .hint {
 	font-size: var(--text-xs);

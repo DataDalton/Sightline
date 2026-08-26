@@ -25,9 +25,32 @@ async function initialize(): Promise<void> {
 	// does not trip a check about resources it never uses.
 	assertDeploymentConfigured();
 
+	// The schema, before anything reads it.
+	//
+	// Instrumentation runs this too, but instrumentation runs once when the
+	// process boots and a long-lived development server keeps serving requests
+	// with whatever schema existed when it started. Code that expects a column
+	// added since then queries a table that does not have it, and every read
+	// fails at once: no reports, no navigation, no way to tell why from the
+	// browser.
+	//
+	// Idempotent, and once per module instance, so the cost is one pass of
+	// CREATE IF NOT EXISTS on the first request that instance serves.
+	const { initPlatformSchema } = await import("./schema");
+	await initPlatformSchema();
+
+	const { bootstrapRoleAssignments, syncBuiltinRoles } =
+		await import("./roles");
+	await syncBuiltinRoles();
+
 	// Settings first: the registry and the pollers read their intervals from
 	// it, so loading in the other order would use defaults for one cycle.
 	await loadSettings();
+
+	// After the settings, which is where the configured admin and editor groups
+	// a first install converts into assignments are read from.
+	await bootstrapRoleAssignments();
+
 	await loadRegistry();
 
 	startSettingsPolling();

@@ -17,8 +17,8 @@
 	gap: 14px;
 	min-width: 240px;
 	padding: 28px 36px;
-	background: var(--bg-secondary);
-	border: 1px solid var(--border-color);
+	background: var(--surface-overlay);
+	border: 1px solid var(--border-default);
 	border-radius: 14px;
 	box-shadow:
 		0 20px 60px rgba(0, 0, 0, 0.45),

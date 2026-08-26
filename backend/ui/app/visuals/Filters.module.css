@@ -123,8 +123,8 @@
 	min-width: 240px;
 	display: flex;
 	flex-direction: column;
-	background: var(--surface-overlay);
-	border: 1px solid var(--border-default);
+	background: var(--surface-float);
+	border: 1px solid var(--border-strong);
 	border-radius: var(--radius-lg);
 	box-shadow: var(--shadow-lg);
 	overflow: hidden;
@@ -152,7 +152,7 @@
 }
 
 .miniButton:hover {
-	background: var(--surface-hover);
+	background: var(--state-hover);
 }
 
 .list {
@@ -173,7 +173,7 @@
 }
 
 .option:hover {
-	background: var(--surface-hover);
+	background: var(--state-hover);
 }
 
 .checkbox {
@@ -256,7 +256,7 @@
 }
 
 .clearAll:hover {
-	background: var(--surface-hover);
+	background: var(--state-hover);
 	border-color: var(--danger);
 	color: var(--danger);
 }
@@ -409,8 +409,8 @@
 	flex-direction: column;
 	gap: var(--space-3);
 	padding: var(--space-4);
-	background: var(--surface-overlay);
-	border: 1px solid var(--border-default);
+	background: var(--surface-float);
+	border: 1px solid var(--border-strong);
 	border-radius: var(--radius-lg);
 	box-shadow: var(--shadow-lg);
 }
@@ -448,7 +448,7 @@
 
 .segment:hover {
 	color: var(--text-primary);
-	background: var(--surface-hover);
+	background: var(--state-hover);
 }
 
 .segmentOn {

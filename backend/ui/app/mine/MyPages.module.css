@@ -1,0 +1,208 @@
+.page {
+	padding: var(--space-6);
+	max-width: 1400px;
+	margin: 0 auto;
+}
+
+.heading {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: var(--space-4);
+	flex-wrap: wrap;
+	margin-bottom: var(--space-6);
+}
+
+.title {
+	font-size: var(--text-2xl);
+	font-weight: 600;
+	color: var(--text-primary);
+	margin: 0;
+}
+
+.subtitle {
+	margin: var(--space-1) 0 0;
+	font-size: var(--text-sm);
+	color: var(--text-muted);
+}
+
+.sectionTitle {
+	font-size: var(--text-xs);
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	color: var(--text-muted);
+	margin: var(--space-6) 0 var(--space-3);
+}
+
+.grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+	gap: var(--space-3);
+}
+
+.card {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	padding: var(--space-4);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-lg);
+	background: var(--surface-raised);
+	text-decoration: none;
+	min-height: 104px;
+}
+
+.card:hover {
+	border-color: var(--brand);
+}
+
+.cardTitle {
+	font-size: var(--text-md);
+	font-weight: 600;
+	color: var(--text-primary);
+	text-decoration: none;
+}
+
+.cardTitle:hover {
+	color: var(--text-link);
+}
+
+.cardMeta {
+	margin-top: auto;
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	flex-wrap: wrap;
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+}
+
+.tag {
+	padding: 2px var(--space-2);
+	border-radius: var(--radius-sm);
+	background: var(--surface-sunken);
+	color: var(--text-secondary);
+}
+
+/* Sits in the grid alongside the cards, so making one is where the others are
+   rather than somewhere else on the page. */
+.newCard {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: var(--space-2);
+	min-height: 104px;
+	padding: var(--space-4);
+	border: 1px dashed var(--border-strong);
+	border-radius: var(--radius-lg);
+	background: none;
+	color: var(--text-secondary);
+	font-size: var(--text-sm);
+	font-family: inherit;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.newCard:hover {
+	border-color: var(--brand);
+	border-style: solid;
+	color: var(--text-primary);
+}
+
+.newCardPlus {
+	font-size: var(--text-xl);
+	line-height: 1;
+	font-weight: 400;
+}
+
+.empty {
+	padding: var(--space-6);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-lg);
+	background: var(--surface-sunken);
+	color: var(--text-muted);
+	font-size: var(--text-sm);
+	text-align: center;
+}
+
+.state {
+	padding: var(--space-7);
+	text-align: center;
+	color: var(--text-muted);
+}
+
+/* Choosing between a blank page and a copy of something that exists. */
+.startRow {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: var(--space-2);
+}
+
+.startOption {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	padding: var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	text-align: left;
+	font-family: inherit;
+	cursor: pointer;
+}
+
+.startOption:hover {
+	border-color: var(--border-strong);
+	background: var(--state-hover);
+}
+
+.startOptionOn {
+	border-color: var(--brand);
+	background: var(--state-selected);
+}
+
+.startName {
+	font-size: var(--text-sm);
+	font-weight: 600;
+	color: var(--text-primary);
+}
+
+.startBlurb {
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+	line-height: 1.5;
+}
+
+.cardActions {
+	display: flex;
+	gap: var(--space-3);
+	padding-top: var(--space-2);
+	border-top: 1px solid var(--border-subtle);
+}
+
+.cardAction {
+	padding: 0;
+	border: none;
+	background: none;
+	color: var(--text-link);
+	font-size: var(--text-sm);
+	font-family: inherit;
+	text-decoration: none;
+	cursor: pointer;
+}
+
+.cardAction:hover {
+	text-decoration: underline;
+}
+
+/* A qualifier beside a section heading, where the heading alone would be
+   ambiguous about what is in it. */
+.sectionNote {
+	margin-left: var(--space-2);
+	font-weight: 400;
+	text-transform: none;
+	letter-spacing: 0;
+	color: var(--text-muted);
+}

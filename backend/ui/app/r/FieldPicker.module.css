@@ -15,7 +15,7 @@
 }
 
 .trigger:hover {
-	background: var(--surface-hover);
+	background: var(--state-hover);
 	border-color: var(--border-strong);
 }
 
@@ -38,8 +38,8 @@
 	max-height: 460px;
 	display: flex;
 	flex-direction: column;
-	background: var(--surface-overlay);
-	border: 1px solid var(--border-default);
+	background: var(--surface-float);
+	border: 1px solid var(--border-strong);
 	border-radius: var(--radius-lg);
 	box-shadow: var(--shadow-lg);
 	overflow: hidden;
@@ -92,7 +92,7 @@
 }
 
 .item:hover {
-	background: var(--surface-hover);
+	background: var(--state-hover);
 }
 
 .checkbox {
@@ -144,7 +144,7 @@
 }
 
 .footerButton:hover {
-	background: var(--surface-hover);
+	background: var(--state-hover);
 }
 
 .primary {

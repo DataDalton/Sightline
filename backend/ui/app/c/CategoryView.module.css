@@ -114,3 +114,12 @@
 	border: 1px dashed var(--border-default);
 	border-radius: var(--radius-lg);
 }
+
+/* The title and whatever acts on the category, on one line. */
+.heading {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: var(--space-4);
+	flex-wrap: wrap;
+}

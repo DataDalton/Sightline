@@ -7,6 +7,8 @@ import type { SourceMeta } from "../visuals/types";
 import type { AppliedVisual } from "../../lib/visuals/applyOps";
 import { EditorCanvas, previewWidths } from "./EditorCanvas";
 import { useLiveSync } from "./useLiveSync";
+import { ConfirmDialog } from "../components/shared/ConfirmDialog";
+import { NewPageDialog } from "../authoring/NewPage";
 import { PageStrip } from "./PageStrip";
 import { VisualPicker } from "./VisualPicker";
 import { PropertiesPanel } from "./PropertiesPanel";
@@ -36,6 +38,9 @@ interface ReportEditorProps {
 	pageSourceKey: string | null;
 	pageConfig: PageConfig;
 	pageTitle: string;
+	// The report's own name. A confirmation about deleting the report has to say
+	// that; the page title names one page of it.
+	reportTitle: string;
 	// The line under the report title. Report-level rather than page-level,
 	// because that is where it is stored and where every page shows it.
 	reportDescription: string | null;
@@ -45,7 +50,9 @@ interface ReportEditorProps {
 	// reader view holds which one is open.
 	onSelectPage: (pageId: string) => void;
 	onExit: () => void;
-	onSaved: () => void;
+	// Awaited where the caller can supply one, so a page added from a template
+	// is in the strip before the editor is asked to open it.
+	onSaved: () => void | Promise<unknown>;
 }
 
 export interface PageConfig {
@@ -76,6 +83,7 @@ export function ReportEditor({
 	pageSourceKey,
 	pageConfig: initialPageConfig,
 	pageTitle: initialPageTitle,
+	reportTitle,
 	reportDescription: initialDescription,
 	pages,
 	onSelectPage,
@@ -90,6 +98,9 @@ export function ReportEditor({
 	const [conflict, setConflict] = useState<string | null>(null);
 	const [baseVersion, setBaseVersion] = useState(version);
 	const [pickerOpen, setPickerOpen] = useState(false);
+	const [addingPage, setAddingPage] = useState(false);
+	const [removing, setRemoving] = useState(false);
+	const [confirmingRemove, setConfirmingRemove] = useState(false);
 	const [savedAt, setSavedAt] = useState<number | null>(null);
 	const [pageConfig, setPageConfig] = useState<PageConfig>(initialPageConfig);
 	const [pageTitle, setPageTitle] = useState(initialPageTitle);
@@ -114,6 +125,29 @@ export function ReportEditor({
 	);
 
 	const selected = visuals.find((v) => v.visualId === selectedId) ?? null;
+
+	// Removing the whole report, not a page or a visual. Refused by the server
+	// unless the caller could edit it, which for a personal page means owning
+	// it and for a curated one means holding edit.
+	const remove = async () => {
+		setRemoving(true);
+		try {
+			const response = await fetch("/api/authoring", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ action: "removeReport", reportId }),
+			});
+			if (!response.ok) {
+				const detail = await response.json().catch(() => null);
+				setConflict(detail?.error ?? "Could not delete this report.");
+				setConfirmingRemove(false);
+				return;
+			}
+			window.location.href = "/";
+		} finally {
+			setRemoving(false);
+		}
+	};
 
 	// Ids the author is manipulating right now. A remote change to one of
 	// these is deferred rather than applied, so a visual is never yanked out
@@ -629,6 +663,15 @@ export function ReportEditor({
 				</button>
 				<button
 					type="button"
+					className={styles.toolButton}
+					onClick={() => setConfirmingRemove(true)}
+					disabled={saving || removing}
+					title="Remove this report"
+				>
+					{removing ? "Deleting" : "Delete"}
+				</button>
+				<button
+					type="button"
 					className={`${styles.toolButton} ${styles.primary}`}
 					onClick={save}
 					disabled={!dirty || saving}
@@ -673,23 +716,59 @@ export function ReportEditor({
 				onClose={() => setPickerOpen(false)}
 			/>
 
+			{confirmingRemove && (
+				<ConfirmDialog
+					title="Delete this report"
+					body={
+						<>
+							<strong>{reportTitle}</strong> and every page on it
+							will be removed. Anyone who could open it loses it.
+						</>
+					}
+					busy={removing}
+					onConfirm={remove}
+					onCancel={() => setConfirmingRemove(false)}
+				/>
+			)}
+
+			{addingPage && (
+				<NewPageDialog
+					reportId={reportId}
+					source={
+						pageSourceKey ? (sources[pageSourceKey] ?? null) : null
+					}
+					// A blank page keeps the operation path, because that is
+					// what other open sessions replay. A template page is one
+					// server call and the editor reloads onto it.
+					onBlank={(title) => {
+						const newId =
+							typeof crypto !== "undefined"
+								? crypto.randomUUID()
+								: String(Date.now());
+						pendingRef.current.set(`page:${newId}`, {
+							type: "addPage",
+							pageId: newId,
+							title,
+						});
+						setDirty(true);
+					}}
+					onCreated={async (newPageId) => {
+						// Refetched first so the page exists in the strip, then
+						// opened, which remounts the editor and re-seeds it from
+						// the current version.
+						await onSaved();
+						if (newPageId) onSelectPage(newPageId);
+					}}
+					onClose={() => setAddingPage(false)}
+				/>
+			)}
+
 			<PageStrip
 				pages={pages}
 				activePageId={pageId}
 				dirty={dirty}
 				onSelect={onSelectPage}
-				onAdd={(title: string) => {
-					const newId =
-						typeof crypto !== "undefined"
-							? crypto.randomUUID()
-							: String(Date.now());
-					pendingRef.current.set(`page:${newId}`, {
-						type: "addPage",
-						pageId: newId,
-						title,
-					});
-					setDirty(true);
-				}}
+				onAdd={() => setAddingPage(true)}
 				onRemove={(removeId) => {
 					pendingRef.current.set(`page:${removeId}`, {
 						type: "removePage",

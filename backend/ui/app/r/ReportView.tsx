@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { SkeletonReport } from "../components/shared/Skeleton";
@@ -17,6 +17,7 @@ import {
 	visualByType,
 } from "../../lib/visuals/catalog";
 import { ReportEditor } from "./editorEntry";
+import { PageActions } from "../authoring/PageActions";
 import type { EditableVisual } from "../editor/types";
 import { useUser } from "../context/UserContext";
 import type { SourceMeta } from "../visuals/types";
@@ -64,6 +65,10 @@ interface ReportDetail {
 	description: string | null;
 	sourceKey: string | null;
 	permission: "view" | "edit" | "admin";
+	// A page somebody built for themselves rather than a curated report. Its
+	// owner can name who else sees it; an editor can put it in a category.
+	isPersonal: boolean;
+	ownerEmail: string;
 	version: number;
 	pages: PageDefinition[];
 }
@@ -97,6 +102,20 @@ export default function ReportView({
 	// away a report the server had already resolved.
 	const showSkeleton = useDeferredLoading(isLoading && !data);
 	const [editing, setEditing] = useState(false);
+
+	// Opened straight into the editor when the URL asks for it. A report just
+	// created is one somebody came here to build, and landing on the read-only
+	// view would make them find it again and press Edit.
+	//
+	// After mount rather than as the initial state: this component renders on
+	// the server too, where there is no location to read, and seeding from one
+	// only on the client is a hydration mismatch. Runs once, so leaving the
+	// editor does not immediately re-enter it.
+	useEffect(() => {
+		if (new URLSearchParams(window.location.search).get("edit") === "1") {
+			setEditing(true);
+		}
+	}, []);
 	// Held by id rather than by index, because a report with subpages has two
 	// rows of tabs and an index into a flat list cannot say which one is on.
 	const [activePageId, setActivePageId] = useState<string | null>(null);
@@ -306,14 +325,27 @@ export default function ReportView({
 					pageSourceKey={freshnessSourceKey}
 					pageConfig={page.config ?? {}}
 					pageTitle={page.title}
+					reportTitle={report.title}
 					reportDescription={report.description}
 					pages={report.pages.map((p) => ({
 						pageId: p.pageId,
 						title: p.title,
 					}))}
 					onSelectPage={openPage}
-					onExit={() => setEditing(false)}
-					onSaved={() => void mutate()}
+					onExit={() => {
+						setEditing(false);
+						if (
+							typeof window !== "undefined" &&
+							window.location.search.includes("edit=1")
+						) {
+							window.history.replaceState(
+								null,
+								"",
+								window.location.pathname,
+							);
+						}
+					}}
+					onSaved={() => mutate()}
 				/>
 			</div>
 		);
@@ -369,6 +401,17 @@ export default function ReportView({
 									}
 								/>
 							)}
+
+							{/* Renders nothing for a curated report. On a page
+					    somebody built for themselves its owner can name who
+					    else sees it, and an editor can put it in a category. */}
+							<PageActions
+								reportId={report.reportId}
+								title={report.title}
+								isPersonal={report.isPersonal}
+								ownerEmail={report.ownerEmail}
+								onChanged={() => void mutate()}
+							/>
 
 							{/* Editing publishes to everyone, so the button only
 					    appears for someone who actually holds that right. */}

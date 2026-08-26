@@ -15,6 +15,9 @@ export async function register() {
 		await import("@/lib/runtime");
 	const { initPlatformSchema, sweepExpired } =
 		await import("@/lib/platform/schema");
+	const { bootstrapRoleAssignments, syncBuiltinRoles } =
+		await import("@/lib/platform/roles");
+	const { migrateExplorations } = await import("@/lib/platform/personal");
 	const { loadSettings, startSettingsPolling } =
 		await import("@/lib/settings");
 	const { loadRegistry, startRegistryPolling } =
@@ -38,8 +41,27 @@ export async function register() {
 
 	try {
 		await initPlatformSchema();
+
+		// The built-in roles are defined in code and re-asserted here, so the
+		// capability set of a role everyone recognises by name cannot drift by
+		// hand.
+		await syncBuiltinRoles();
+
 		await loadSettings();
+
+		// After the settings, because a first install converts the configured
+		// admin and editor groups into global assignments and needs to have
+		// read them. Only when no assignment exists at all, so an administrator
+		// who removes one does not find it back after a restart.
+		await bootstrapRoleAssignments();
+
 		await loadRegistry();
+
+		// Saved questions predate personal pages and lived in a table only the
+		// explore screen could read. Converted here, after the registry, because
+		// a conversion checks the visual against the source it names. Finds
+		// nothing on almost every start.
+		await migrateExplorations();
 	} catch (error) {
 		// Reported, not rethrown. See the note at the top.
 		console.error(

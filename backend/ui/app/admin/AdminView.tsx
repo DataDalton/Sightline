@@ -10,6 +10,13 @@ import {
 } from "../components/shared/Skeleton";
 import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { usePageTitle } from "../hooks/usePageTitle";
+import { Select } from "../components/shared/Select";
+import { TabStrip } from "../components/shared/TabStrip";
+import { AccessSettings } from "./AccessSettings";
+import { AddSourceButton } from "./AddSource";
+import CategoriesPane from "./CategoriesPane";
+import PersonalPagesPane from "./PersonalPagesPane";
+import RolesPane from "./RolesPane";
 import styles from "./Admin.module.css";
 
 // Administration: adoption, cost, failures, and who can reach what.
@@ -245,9 +252,7 @@ function Panes<T extends string>({
 			</nav>
 
 			<div
-				className={`${styles.configPane} ${
-					wide ? styles.configPaneWide : ""
-				}`}
+				className={`${styles.configPane} ${wide ? styles.configPaneWide : ""}`}
 			>
 				<header className={styles.paneHeader}>
 					<h2 className={styles.paneTitle}>{current?.label}</h2>
@@ -398,23 +403,13 @@ function UsageSection({
 										key={d.day}
 										className={styles.sparkBar}
 										style={{
-											height: `${Math.max(
-												3,
-												(d.events / peak) * 100,
-											)}%`,
+											height: `${Math.max(3, (d.events / peak) * 100)}%`,
 										}}
 										title={`${d.day}: ${d.events} events, ${d.users} users`}
 									/>
 								))}
 							</div>
 						)}
-
-						<p className={styles.paneNote}>
-							Median is what a typical query costs and p95 is what
-							the slow tail costs. The gap between them says more
-							than either alone: a low median with a high p95 is
-							one expensive report rather than a slow platform.
-						</p>
 					</>
 				)}
 
@@ -476,12 +471,6 @@ function UsageSection({
 								</tbody>
 							</table>
 						</div>
-
-						<p className={styles.paneNote}>
-							Many views from few distinct users is usually one
-							workflow rather than a shared asset. Open a row to
-							see who has been viewing it.
-						</p>
 					</>
 				)}
 
@@ -541,11 +530,6 @@ function UsageSection({
 								</tbody>
 							</table>
 						</div>
-
-						<p className={styles.paneNote}>
-							Open a row for everything one person has done in the
-							window, in order.
-						</p>
 					</>
 				)}
 
@@ -596,13 +580,6 @@ function UsageSection({
 								</tbody>
 							</table>
 						</div>
-
-						<p className={styles.paneNote}>
-							Average warehouse time per source, with the share
-							served from cache. A slow source with a low hit rate
-							is where cost accumulates, and it is the one worth
-							giving a longer cache lifetime under Configuration.
-						</p>
 					</>
 				)}
 			</Panes>
@@ -910,11 +887,6 @@ const configGroups = [
 		label: "Performance",
 		blurb: "How long answers and memberships are reused before being asked again.",
 	},
-	{
-		id: "access",
-		label: "Access",
-		blurb: "Who may edit reports, and who may administer the platform.",
-	},
 ] as const;
 
 type ConfigGroup = (typeof configGroups)[number]["id"];
@@ -1020,22 +992,6 @@ function ConfigurationSection() {
 	const logoKb = Math.round(new Blob([values.appLogo ?? ""]).size / 1024);
 	const limitKb = Math.round((data?.maxLogoBytes ?? 0) / 1024);
 	const active = configGroups.find((g) => g.id === group);
-
-	const groupList = (key: "editorGroups" | "adminGroups") => (
-		<input
-			className={styles.input}
-			placeholder="None set"
-			value={values[key].join(", ")}
-			onChange={(e) =>
-				set({
-					[key]: e.target.value
-						.split(",")
-						.map((g) => g.trim())
-						.filter(Boolean),
-				} as Partial<ConfigValues>)
-			}
-		/>
-	);
 
 	return (
 		<div className={styles.config}>
@@ -1210,14 +1166,6 @@ function ConfigurationSection() {
 								Remove the mark
 							</button>
 						)}
-
-						<p className={styles.paneNote}>
-							Uploads are rebuilt from an allow-list before being
-							stored, so anything scriptable in the file is
-							dropped. The mark is kept in the settings table
-							rather than on disk, because a Databricks App has no
-							disk that survives a restart.
-						</p>
 					</>
 				)}
 
@@ -1238,14 +1186,6 @@ function ConfigurationSection() {
 								/>
 							</Field>
 						</div>
-
-						<p className={styles.paneNote}>
-							Applies to the next connection each reader opens, so
-							moving to a different warehouse needs no redeploy.
-							Catalogue and schema are not here: they belong to
-							each source rather than to the platform, and are set
-							per source in the semantic layer.
-						</p>
 
 						<details className={styles.paneDetails}>
 							<summary>
@@ -1332,77 +1272,6 @@ function ConfigurationSection() {
 								</div>
 							</Field>
 						</div>
-
-						<p className={styles.paneNote}>
-							An answer is only ever reused for someone whose
-							group membership is identical, so a longer cache
-							trades freshness for cost, never for correctness.
-						</p>
-					</>
-				)}
-
-				{group === "access" && (
-					<>
-						<div className={styles.fieldRow}>
-							<Field
-								label="Reachability"
-								hint="Where the list of reports a person can open comes from."
-							>
-								<select
-									className={styles.input}
-									value={values.accessModel ?? "catalog"}
-									onChange={(e) =>
-										set({
-											accessModel: e.target.value as
-												| "catalog"
-												| "grants",
-										})
-									}
-								>
-									<option value="catalog">
-										Follows Unity Catalog
-									</option>
-									<option value="grants">
-										Access grants only
-									</option>
-								</select>
-							</Field>
-						</div>
-
-						<p className={styles.paneNote}>
-							Following the catalogue means a reader sees the
-							reports built on data they already hold SELECT on,
-							so the grant made once in Unity Catalog is the whole
-							statement and there is no second list to keep in
-							step. Access grants still apply on top and can raise
-							somebody above view. Choosing grants only is for a
-							deployment where reaching a report is a narrower
-							decision than reading its data.
-						</p>
-
-						<div className={styles.fieldRow}>
-							<Field
-								label="Editor groups"
-								hint="May edit any report. Changes publish to everyone."
-							>
-								{groupList("editorGroups")}
-							</Field>
-
-							<Field
-								label="Admin groups"
-								hint="Hold every permission, including this page."
-							>
-								{groupList("adminGroups")}
-							</Field>
-						</div>
-
-						<p className={styles.paneNote}>
-							Comma separated, and matched against the account
-							exactly as written. Case matters: a group spelled
-							differently here never matches and the failure is
-							silent, so nobody is denied with an error, they
-							simply have no permissions.
-						</p>
 					</>
 				)}
 			</div>
@@ -1449,16 +1318,72 @@ function ConfigurationSection() {
 	);
 }
 
+const accessViews = [
+	{ id: "roles", label: "Roles" },
+	{ id: "holders", label: "Who holds what" },
+	{ id: "grants", label: "Direct grants" },
+	{ id: "settings", label: "Settings" },
+] as const;
+
+type AccessView = (typeof accessViews)[number]["id"];
+
+function AccessPane() {
+	const [view, setView] = useState<AccessView>("roles");
+
+	// The same keys the panes below fetch, so this shares their answer rather
+	// than asking again.
+	// Optional all the way down. These endpoints answer with an error object
+	// rather than an array when the caller cannot use them, and reading .length
+	// off the missing array throws during render, which blanks the whole page.
+	// A pane that cannot load should show no count, not take the page with it.
+	const { data: roleData } = useSWR<{
+		roles?: unknown[];
+		assignments?: unknown[];
+	}>("/api/admin/roles");
+	const { data: grantData } =
+		useSWR<Partial<AccessResponse>>("/api/admin/access");
+
+	return (
+		<>
+			<div className={styles.paneNav}>
+				<TabStrip
+					label="Access"
+					value={view}
+					onChange={setView}
+					tabs={[
+						{
+							id: "roles",
+							label: "Roles",
+							count: roleData?.roles?.length,
+						},
+						{
+							id: "holders",
+							label: "Who holds what",
+							count: roleData?.assignments?.length,
+						},
+						{
+							id: "grants",
+							label: "Direct grants",
+							count: grantData?.grants?.length,
+						},
+						{ id: "settings", label: "Settings" },
+					]}
+				/>
+			</div>
+
+			{view === "roles" && <RolesPane show="roles" />}
+			{view === "holders" && <RolesPane show="assignments" />}
+			{view === "grants" && <AccessGrants />}
+			{view === "settings" && <AccessSettings />}
+		</>
+	);
+}
+
 const securityPanes = [
 	{
-		id: "grants",
+		id: "access",
 		label: "Access",
-		blurb: "Who can open what, and where that reaches them from.",
-	},
-	{
-		id: "privileged",
-		label: "Privileged groups",
-		blurb: "Members who hold a permission everywhere without a grant.",
+		blurb: "What each role allows, who holds it, and who can open what.",
 	},
 	{
 		id: "cache",
@@ -1475,7 +1400,7 @@ const securityPanes = [
 type SecurityPane = (typeof securityPanes)[number]["id"];
 
 function SecuritySection({ data }: { data: SecurityResponse }) {
-	const [pane, setPane] = useState<SecurityPane>("grants");
+	const [pane, setPane] = useState<SecurityPane>("access");
 
 	const incomplete = data.exports.filter(
 		(e) => e.action === "requested",
@@ -1501,38 +1426,7 @@ function SecuritySection({ data }: { data: SecurityResponse }) {
 			label="Security and access"
 			wide
 		>
-			{pane === "grants" && <AccessGrants />}
-
-			{pane === "privileged" && (
-				<>
-					<div className={styles.definition}>
-						<span className={styles.definitionKey}>Editors</span>
-						<span className={styles.definitionValue}>
-							{data.editorGroups.join(", ") || "none"}
-						</span>
-						<span className={styles.definitionKey}>
-							Administrators
-						</span>
-						<span className={styles.definitionValue}>
-							{data.adminGroups.join(", ") || "none"}
-						</span>
-					</div>
-
-					<p className={styles.paneNote}>
-						Members hold their permission on every report without an
-						explicit grant. Editors publish changes to everyone, and
-						administrators additionally manage access and platform
-						settings. Set them under Configuration.
-					</p>
-
-					<p className={styles.paneNote}>
-						Matched against the account directory exactly as
-						written. Case matters, and a mismatch fails silently:
-						nobody is denied with an error, they simply hold no
-						permissions.
-					</p>
-				</>
-			)}
+			{pane === "access" && <AccessPane />}
 
 			{pane === "cache" && (
 				<>
@@ -1546,12 +1440,8 @@ function SecuritySection({ data }: { data: SecurityResponse }) {
 									fromFilters === 1 ? "" : "s"
 								} found in row filters, across ${
 									data.filteredSources
-								} filtered source${
-									data.filteredSources === 1 ? "" : "s"
-								}.`
-							: `Answers are not partitioned. ${
-									data.filteredSources
-								} source${
+								} filtered source${data.filteredSources === 1 ? "" : "s"}.`
+							: `Answers are not partitioned. ${data.filteredSources} source${
 									data.filteredSources === 1 ? " is" : "s are"
 								} row filtered, and ${
 									unreadable.length > 0
@@ -1612,18 +1502,6 @@ function SecuritySection({ data }: { data: SecurityResponse }) {
 							</tbody>
 						</table>
 					</div>
-
-					<p className={styles.paneNote}>
-						This grants nothing and denies nothing. A stored answer
-						is reused for a second reader only when every group here
-						agrees for both of them, which is what stops a filtered
-						source handing one reader another reader rows. Most are
-						found rather than configured: the platform reads the row
-						filters on each source and probes whatever groups they
-						branch on, so the list follows a filter somebody edits.
-						The directory is the one each name is asked about,
-						matching the function the filter used.
-					</p>
 				</>
 			)}
 
@@ -1804,16 +1682,14 @@ function AccessGrants() {
 			<div className={styles.fieldRow}>
 				<label className={styles.field}>
 					<span className={styles.fieldLabel}>Subject</span>
-					<select
-						className={styles.input}
+					<Select
 						value={subjectType}
-						onChange={(e) =>
-							setSubjectType(e.target.value as "group" | "user")
-						}
-					>
-						<option value="group">Group</option>
-						<option value="user">User</option>
-					</select>
+						onChange={(v) => setSubjectType(v as "group" | "user")}
+						options={[
+							{ value: "group", label: "Group" },
+							{ value: "user", label: "User" },
+						]}
+					/>
 				</label>
 				<label className={styles.field}>
 					<span className={styles.fieldLabel}>
@@ -1832,60 +1708,56 @@ function AccessGrants() {
 				</label>
 				<label className={styles.field}>
 					<span className={styles.fieldLabel}>Applies to</span>
-					<select
-						className={styles.input}
+					<Select
 						value={resourceType}
-						onChange={(e) =>
-							pickResourceType(
-								e.target.value as "category" | "report",
-							)
+						onChange={(v) =>
+							pickResourceType(v as "category" | "report")
 						}
-					>
-						<option value="category">Category</option>
-						<option value="report">Report</option>
-					</select>
+						options={[
+							{ value: "category", label: "Category" },
+							{ value: "report", label: "Report" },
+						]}
+					/>
 				</label>
 				<label className={styles.field}>
 					<span className={styles.fieldLabel}>
 						{resourceType === "category" ? "Category" : "Report"}
 					</span>
-					<select
-						className={styles.input}
+					<Select
 						value={resourceId}
-						onChange={(e) => setResourceId(e.target.value)}
-					>
-						<option value="">Choose one</option>
-						{choices.map((c) => (
-							<option key={c.id} value={c.id}>
-								{c.name}
-							</option>
-						))}
-					</select>
+						onChange={setResourceId}
+						placeholder="Choose one"
+						searchable={choices.length > 12}
+						options={choices.map((c) => ({
+							value: c.id,
+							label: c.name,
+						}))}
+					/>
 				</label>
 				<label className={styles.field}>
 					<span className={styles.fieldLabel}>Permission</span>
-					<select
-						className={styles.input}
+					<Select
 						value={permission}
-						onChange={(e) =>
-							setPermission(
-								e.target.value as "view" | "edit" | "admin",
-							)
+						onChange={(v) =>
+							setPermission(v as "view" | "edit" | "admin")
 						}
-					>
-						<option value="view">View</option>
-						<option value="edit">Edit</option>
-						<option value="admin">Admin</option>
-					</select>
+						options={[
+							{ value: "view", label: "View" },
+							{ value: "edit", label: "Edit" },
+							{ value: "admin", label: "Admin" },
+						]}
+					/>
 				</label>
-				<button
-					type="button"
-					className={styles.saveButton}
-					disabled={busy || !ready}
-					onClick={grant}
-				>
-					{busy ? "Working" : "Grant"}
-				</button>
+				<div className={styles.rowActions}>
+					<button
+						type="button"
+						className={styles.saveButton}
+						disabled={busy || !ready}
+						onClick={grant}
+					>
+						{busy ? "Working" : "Grant"}
+					</button>
+				</div>
 			</div>
 
 			{failure && <div className={styles.saveError}>{failure}</div>}
@@ -1963,20 +1835,6 @@ function AccessGrants() {
 					</tbody>
 				</table>
 			</div>
-
-			<p className={styles.paneNote}>
-				These are exceptions. While reachability follows Unity Catalog a
-				reader already sees the reports built on data they hold SELECT
-				on, and nothing has to be listed here for that to work. An entry
-				adds reach somebody would not otherwise have, or raises a
-				permission above view.
-			</p>
-
-			<p className={styles.paneNote}>
-				Reachability only. Which rows a person sees inside a report is
-				decided by Unity Catalog when the query runs under their own
-				identity, and is not configurable here.
-			</p>
 		</>
 	);
 }
@@ -2062,6 +1920,16 @@ const platformPanes = [
 		blurb: "The datasets reports are built on, and how each is read.",
 	},
 	{
+		id: "categories",
+		label: "Categories",
+		blurb: "The sections navigation is built from, and what sits in each.",
+	},
+	{
+		id: "personal",
+		label: "Personal pages",
+		blurb: "What people have built for themselves, and who they shared it with.",
+	},
+	{
 		id: "runtime",
 		label: "Runtime",
 		blurb: "Where this deployment is connected, and how it is configured.",
@@ -2143,19 +2011,18 @@ function PlatformSection({ data }: { data: PlatformResponse }) {
 							{loaded(data.replica.registryLoadedAt)}
 						</span>
 					</div>
-
-					<p className={styles.paneNote}>
-						Caches and pools are per replica, so these describe the
-						instance that answered this request rather than the
-						whole deployment.
-					</p>
 				</>
 			)}
 
 			{pane === "sources" && (
 				<>
-					<SyncSources />
-
+					<div className={styles.actionBar}>
+						<AddSourceButton
+							className={styles.actionPrimary}
+							onAdded={() => window.location.reload()}
+						/>
+						<SyncSources />
+					</div>
 					<div className={styles.tableWrap}>
 						<table className={styles.table}>
 							<thead>
@@ -2197,15 +2064,12 @@ function PlatformSection({ data }: { data: PlatformResponse }) {
 							</tbody>
 						</table>
 					</div>
-
-					<p className={styles.paneNote}>
-						Fields are dimensions plus measures. A metric view owns
-						its own aggregation, so measures are read with MEASURE()
-						and never restated here. A filtered source has its
-						results cached per policy class rather than shared.
-					</p>
 				</>
 			)}
+
+			{pane === "categories" && <CategoriesPane />}
+
+			{pane === "personal" && <PersonalPagesPane />}
 
 			{pane === "runtime" && (
 				<>
@@ -2214,12 +2078,6 @@ function PlatformSection({ data }: { data: PlatformResponse }) {
 							<Row key={key} label={key} value={value} />
 						))}
 					</div>
-
-					<p className={styles.paneNote}>
-						Set by the deployment. These have to be known before the
-						settings table can be read, which is why they are the
-						only values that cannot be changed in the app.
-					</p>
 
 					<div className={styles.definition}>
 						{Object.entries(data.settings).map(([key, value]) => (
@@ -2245,12 +2103,6 @@ function PlatformSection({ data }: { data: PlatformResponse }) {
 							/>
 						))}
 					</div>
-
-					<p className={styles.paneNote}>
-						Held in the platform_settings table and polled every
-						minute, so a change reaches every replica without a
-						redeploy. Edit them under Configuration.
-					</p>
 				</>
 			)}
 		</Panes>
