@@ -14,11 +14,16 @@ import type { QueryParams, Row } from "./types";
 // partitioned differently depending on who happened to ask. Asking under a
 // reader token would also mean the list changed with whoever was browsing.
 //
-// This is safe precisely because the service principal is granted BROWSE and
-// USE CATALOG and no SELECT. It can see that an object exists and read the
-// definition of a filter, and it cannot read a single row. If somebody later
-// grants it SELECT, that property is gone and this file becomes a way around
-// on-behalf-of.
+// Reading a filter needs SELECT on the catalogue. SHOW CREATE TABLE on a metric
+// view is gated behind it, and information_schema.row_filters answers an
+// under-privileged principal with zero rows rather than an error, which reads
+// as a source carrying no filter and is the one wrong answer that costs a
+// reader somebody else rows.
+//
+// So the service principal can reach data it must never return, and what keeps
+// on-behalf-of intact is which code calls this rather than what the principal
+// is allowed. Call it from catalogue metadata only. Nothing that answers a
+// dataset request may reach it.
 
 // Databricks parameter markers are :name; the statement API takes them as a
 // typed list. Types are inferred from the JavaScript value, matching how the
