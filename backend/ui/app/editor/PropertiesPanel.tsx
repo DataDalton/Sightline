@@ -13,6 +13,7 @@ import {
 	type VisualStyle,
 } from "../../lib/visuals/style";
 import { readThemeColors } from "../visuals/colors";
+import { resolveKpiGroups, type KpiGroup } from "../../lib/visuals/kpiGroups";
 import { ConditionsEditor } from "./ConditionsEditor";
 import { HistoryPanel } from "./HistoryPanel";
 import { PageSettings } from "./PageSettings";
@@ -508,6 +509,346 @@ function Check({ on }: { on: boolean }) {
 	);
 }
 
+// The settings a type declares, drawn from the catalogue.
+//
+// Every control here used to be written by hand next to a check on
+// visual.visualType, which is why several options the renderer reads had no
+// control at all: adding one meant editing this file, and whoever added the
+// option to the renderer did not. Reading the declaration means a type gains a
+// control by declaring it, and the default the control shows is the same one
+// the renderer falls back to.
+function VisualOptions({
+	visual,
+	definition,
+	dimensions,
+	measures,
+	updateConfig,
+}: {
+	visual: EditableVisual;
+	definition: VisualTypeDefinition;
+	dimensions: string[];
+	measures: string[];
+	updateConfig: (patch: Record<string, unknown>) => void;
+}) {
+	const declared = definition.options ?? [];
+	if (declared.length === 0) return null;
+
+	const set = (key: string, value: unknown) =>
+		updateConfig({
+			options: { ...(visual.config.options ?? {}), [key]: value },
+		});
+
+	// The stored value, or nothing. Deliberately not the catalogue default: a
+	// control has to show empty when nobody has chosen, or an author cannot
+	// tell a deliberate choice from a fallback.
+	const stored = (key: string): unknown => visual.config.options?.[key];
+
+	return (
+		<div className={styles.section}>
+			<div className={styles.sectionTitle}>Options</div>
+
+			{declared.map((option) => {
+				const value = stored(option.key);
+
+				if (option.kind === "select") {
+					return (
+						<div key={option.key} className={styles.field}>
+							<label className={styles.fieldLabel}>
+								{option.label}
+							</label>
+							<select
+								className={styles.select}
+								value={(value as string) ?? option.fallback}
+								onChange={(e) =>
+									set(option.key, e.target.value)
+								}
+							>
+								{option.choices.map((choice) => (
+									<option
+										key={choice.value}
+										value={choice.value}
+									>
+										{choice.label}
+									</option>
+								))}
+							</select>
+							{option.help && (
+								<p className={styles.guidance}>{option.help}</p>
+							)}
+						</div>
+					);
+				}
+
+				if (option.kind === "toggle") {
+					return (
+						<div key={option.key} className={styles.field}>
+							<label className={styles.checkRow}>
+								<input
+									type="checkbox"
+									className={styles.checkbox}
+									checked={
+										typeof value === "boolean"
+											? value
+											: option.fallback
+									}
+									onChange={(e) =>
+										set(option.key, e.target.checked)
+									}
+								/>
+								{option.label}
+							</label>
+							{option.help && (
+								<p className={styles.guidance}>{option.help}</p>
+							)}
+						</div>
+					);
+				}
+
+				if (option.kind === "number") {
+					return (
+						<div key={option.key} className={styles.field}>
+							<label className={styles.fieldLabel}>
+								{option.label}
+							</label>
+							<input
+								type="number"
+								className={styles.input}
+								value={value === undefined ? "" : String(value)}
+								min={option.min}
+								max={option.max}
+								step={option.step}
+								onChange={(e) =>
+									// Empty means unset rather than zero. They
+									// are different answers: one is "no cutoff",
+									// the other is "a cutoff of nothing".
+									set(
+										option.key,
+										e.target.value === ""
+											? undefined
+											: Number(e.target.value),
+									)
+								}
+							/>
+							{option.help && (
+								<p className={styles.guidance}>{option.help}</p>
+							)}
+						</div>
+					);
+				}
+
+				if (option.kind === "text") {
+					return (
+						<div key={option.key} className={styles.field}>
+							<label className={styles.fieldLabel}>
+								{option.label}
+							</label>
+							<input
+								type="text"
+								className={styles.input}
+								value={(value as string) ?? ""}
+								placeholder={option.placeholder}
+								onChange={(e) =>
+									set(
+										option.key,
+										e.target.value === ""
+											? undefined
+											: e.target.value,
+									)
+								}
+							/>
+							{option.help && (
+								<p className={styles.guidance}>{option.help}</p>
+							)}
+						</div>
+					);
+				}
+
+				if (option.kind === "measureGroups") {
+					return (
+						<MeasureBands
+							key={option.key}
+							option={option}
+							measures={measures}
+							value={
+								(visual.config.options?.[option.key] as
+									| KpiGroup[]
+									| undefined) ?? []
+							}
+							onChange={(next) => set(option.key, next)}
+						/>
+					);
+				}
+
+				// A field the visual already reads, so the list is what the
+				// author has encoded rather than everything the source offers.
+				const choices =
+					option.scope === "measure" ? measures : dimensions;
+				return (
+					<div key={option.key} className={styles.field}>
+						<label className={styles.fieldLabel}>
+							{option.label}
+						</label>
+						<select
+							className={styles.select}
+							value={(value as string) ?? ""}
+							onChange={(e) =>
+								set(
+									option.key,
+									e.target.value === ""
+										? undefined
+										: e.target.value,
+								)
+							}
+						>
+							<option value="">None</option>
+							{choices.map((name) => (
+								<option key={name} value={name}>
+									{name}
+								</option>
+							))}
+						</select>
+						{option.help && (
+							<p className={styles.guidance}>{option.help}</p>
+						)}
+					</div>
+				);
+			})}
+		</div>
+	);
+}
+
+// Splitting the measures into labelled bands.
+//
+// Shown as the measures themselves with a break between them, rather than as
+// counts to add up, because a count is a description of the list and the author
+// is looking at the list. Adding a break here is the same gesture as deciding
+// where one group ends.
+function MeasureBands({
+	option,
+	measures,
+	value,
+	onChange,
+}: {
+	option: { key: string; label: string; help?: string };
+	measures: string[];
+	value: KpiGroup[];
+	onChange: (next: KpiGroup[]) => void;
+}) {
+	const bands = resolveKpiGroups(measures, value);
+
+	// Rewritten from the bands on screen rather than patched, so what is stored
+	// always describes the list as it currently is. A count left over from a
+	// measure that has since been removed is how these drift.
+	const rewrite = (next: { label: string | null; measures: string[] }[]) =>
+		onChange(
+			next
+				.filter((b) => b.measures.length > 0)
+				.map((b) => ({
+					label: b.label ?? undefined,
+					count: b.measures.length,
+				})),
+		);
+
+	// A break before this measure starts a new band at it.
+	const toggleBreak = (measure: string) => {
+		const flat = bands.flatMap((b) => b.measures);
+		const at = flat.indexOf(measure);
+		if (at <= 0) return;
+
+		const starts = new Set<number>();
+		let index = 0;
+		for (const band of bands) {
+			starts.add(index);
+			index += band.measures.length;
+		}
+
+		if (starts.has(at)) starts.delete(at);
+		else starts.add(at);
+
+		const ordered = Array.from(starts).sort((a, b) => a - b);
+		const labelAt = new Map(
+			bands.map((b, i) => {
+				let offset = 0;
+				for (let k = 0; k < i; k++) offset += bands[k].measures.length;
+				return [offset, b.label] as const;
+			}),
+		);
+
+		rewrite(
+			ordered.map((from, i) => ({
+				label: labelAt.get(from) ?? null,
+				measures: flat.slice(from, ordered[i + 1] ?? flat.length),
+			})),
+		);
+	};
+
+	const rename = (index: number, label: string) =>
+		rewrite(
+			bands.map((b, i) =>
+				i === index ? { ...b, label: label || null } : b,
+			),
+		);
+
+	if (measures.length === 0) {
+		return (
+			<div className={styles.field}>
+				<label className={styles.fieldLabel}>{option.label}</label>
+				<p className={styles.guidance}>
+					Add measures first, then split them into bands.
+				</p>
+			</div>
+		);
+	}
+
+	let position = 0;
+	return (
+		<div className={styles.field}>
+			<label className={styles.fieldLabel}>{option.label}</label>
+
+			{bands.map((band, i) => {
+				const first = position;
+				position += band.measures.length;
+				return (
+					<div key={first} className={styles.bandGroup}>
+						<input
+							type="text"
+							className={styles.input}
+							placeholder={
+								i === 0 ? "Band name, optional" : "Band name"
+							}
+							value={band.label ?? ""}
+							onChange={(e) => rename(i, e.target.value)}
+						/>
+						{band.measures.map((measure, k) => (
+							<div key={measure} className={styles.bandMeasure}>
+								<span>{measure}</span>
+								{/* The first measure of the first band has
+								    nothing above it to break from. */}
+								{!(i === 0 && k === 0) && (
+									<button
+										type="button"
+										className={styles.bandBreak}
+										title={
+											k === 0
+												? "Join to the band above"
+												: "Start a new band here"
+										}
+										onClick={() => toggleBreak(measure)}
+									>
+										{k === 0 ? "join up" : "split here"}
+									</button>
+								)}
+							</div>
+						))}
+					</div>
+				);
+			})}
+
+			{option.help && <p className={styles.guidance}>{option.help}</p>}
+		</div>
+	);
+}
+
 function FormatTab({
 	visual,
 	definition,
@@ -602,64 +943,13 @@ function FormatTab({
 				</div>
 			)}
 
-			{/* How a range control presents itself. The right answer depends on
-			    the question: a preset answers "last quarter", a calendar
-			    answers "that specific week", a slider answers "roughly here,
-			    let me feel the edges". */}
-			{visual.visualType === "dateRangeFilter" && (
-				<div className={styles.section}>
-					<div className={styles.sectionTitle}>Presentation</div>
-					<select
-						className={styles.select}
-						value={
-							(visual.config.options?.rangeMode as string) ??
-							"combined"
-						}
-						onChange={(e) =>
-							updateConfig({
-								options: {
-									...visual.config.options,
-									rangeMode: e.target.value,
-								},
-							})
-						}
-					>
-						<option value="combined">Presets and calendar</option>
-						<option value="presets">Presets only</option>
-						<option value="calendar">Calendar only</option>
-						<option value="slider">Timeline slider</option>
-					</select>
-					<p className={styles.guidance} style={{ marginTop: 8 }}>
-						The slider reads the real extent of the column, so it
-						spans the dates that exist rather than an assumed range.
-					</p>
-				</div>
-			)}
-
-			{visual.visualType === "numericRangeFilter" && (
-				<div className={styles.section}>
-					<div className={styles.sectionTitle}>Presentation</div>
-					<select
-						className={styles.select}
-						value={
-							(visual.config.options?.rangeMode as string) ??
-							"combined"
-						}
-						onChange={(e) =>
-							updateConfig({
-								options: {
-									...visual.config.options,
-									rangeMode: e.target.value,
-								},
-							})
-						}
-					>
-						<option value="combined">Slider and boxes</option>
-						<option value="slider">Slider only</option>
-						<option value="inputs">Boxes only</option>
-					</select>
-				</div>
-			)}
+			<VisualOptions
+				visual={visual}
+				definition={definition}
+				dimensions={dimensions}
+				measures={measures}
+				updateConfig={updateConfig}
+			/>
 
 			{supports.color && measures.length > 0 && (
 				<div className={styles.section}>
@@ -846,6 +1136,81 @@ function FormatTab({
 					)}
 				</div>
 			)}
+
+			{/* Two settings the renderers have always honoured and nothing could
+			    set: a chart drew its bars with a two pixel corner because that
+			    is what the fallback said, and a grid striped its rows because
+			    the same. Both were reachable only by writing the style object
+			    by hand. */}
+			<div className={styles.section}>
+				<div className={styles.sectionTitle}>Appearance</div>
+
+				{(supports.fill || supports.stacking) && (
+					<div className={styles.field}>
+						<label className={styles.fieldLabel}>
+							Corner rounding
+						</label>
+						<input
+							type="range"
+							min={0}
+							max={12}
+							step={1}
+							value={style.cornerRadius ?? 2}
+							onChange={(e) =>
+								updateStyle({
+									cornerRadius: Number(e.target.value),
+								})
+							}
+						/>
+						<p className={styles.guidance}>
+							Zero is square. Past about six a bar stops reading
+							as a length, which is the thing it is measuring.
+						</p>
+					</div>
+				)}
+
+				{supports.conditionalFormat && (
+					<div className={styles.field}>
+						<label className={styles.checkRow}>
+							<input
+								type="checkbox"
+								className={styles.checkbox}
+								checked={style.stripedRows !== false}
+								onChange={(e) =>
+									updateStyle({
+										stripedRows: e.target.checked,
+									})
+								}
+							/>
+							Shade alternate rows
+						</label>
+						<p className={styles.guidance}>
+							Reading across a wide row is where a grid loses
+							people, and a stripe is the cheapest fix.
+						</p>
+					</div>
+				)}
+
+				<div className={styles.field}>
+					<label className={styles.fieldLabel}>While it loads</label>
+					<select
+						className={styles.select}
+						value={style.loadingAnimation ?? "skeleton"}
+						onChange={(e) =>
+							updateStyle({
+								loadingAnimation: e.target
+									.value as VisualStyle["loadingAnimation"],
+							})
+						}
+					>
+						<option value="skeleton">Shape of the content</option>
+						<option value="bars">Bars</option>
+						<option value="spinner">Spinner</option>
+						<option value="pulse">Pulse</option>
+						<option value="none">Nothing</option>
+					</select>
+				</div>
+			</div>
 
 			{supports.legend && (
 				<div className={styles.section}>

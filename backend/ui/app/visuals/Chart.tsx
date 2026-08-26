@@ -88,6 +88,10 @@ interface ChartProps {
 	// canvas is redrawn by a resize observer either way.
 	height?: number | string;
 	style?: VisualStyle;
+	// Settings declared for this visual type in the catalogue. Passed
+	// straight through to the builders rather than unpacked here, because
+	// which of them a type honours is a property of the builder.
+	options?: Record<string, unknown>;
 	// Fires when a reader clicks a mark. The page decides whether that means
 	// cross-filter or drill down, because the same click means different
 	// things depending on how the visual was configured.
@@ -113,6 +117,7 @@ export function Chart({
 	fields,
 	height = 300,
 	style,
+	options,
 	onSelect,
 	selectedValues,
 	onSelectRange,
@@ -137,6 +142,7 @@ export function Chart({
 					measures,
 					filters,
 					limit,
+					options,
 				})
 			: null,
 	);
@@ -182,6 +188,7 @@ export function Chart({
 			measures,
 			colors: readThemeColors(),
 			style,
+			options,
 			hintFor: (field) =>
 				(fields.get(field)?.formatHint as FormatHint) ?? "decimal",
 		};
@@ -237,6 +244,10 @@ export function Chart({
 		visualType,
 		fields,
 		style,
+		// Serialized rather than referenced, so a fresh object carrying the
+		// same settings does not rebuild the chart and drop a selection a
+		// reader is in the middle of drawing.
+		JSON.stringify(options ?? {}),
 		(selectedValues ?? []).join("\u0000"),
 	]);
 

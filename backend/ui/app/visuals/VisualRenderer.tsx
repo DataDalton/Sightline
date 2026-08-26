@@ -15,13 +15,20 @@ import {
 	DropdownFilter,
 	FilterGroup,
 	NumericRangeFilter,
+	PresenceFilter,
 	SearchFilter,
+	ToggleFilter,
 	ThresholdFilter,
 } from "./FilterWidgets";
 import { usePageFilters } from "./PageFilters";
 import { VisualFrame, VisualNotice } from "./VisualFrame";
 import { fieldMap, type SourceMeta } from "./types";
-import { isFilterVisual, visualByType } from "../../lib/visuals/catalog";
+import type { KpiGroup } from "../../lib/visuals/kpiGroups";
+import {
+	isFilterVisual,
+	optionValue,
+	visualByType,
+} from "../../lib/visuals/catalog";
 import { chartTypes, gridTypes, recordTypes } from "../../lib/query/visualSpec";
 import type { VisualStyle } from "../../lib/visuals/style";
 import styles from "./Visual.module.css";
@@ -229,6 +236,34 @@ export function VisualRenderer({
 		);
 	}
 
+	if (visual.visualType === "sectionHeader") {
+		// No frame and no query. A heading is page structure, so it renders as
+		// the heading it is rather than as a panel containing one.
+		const minor =
+			optionValue<string>(visual.visualType, visual.config, "level") ===
+			"minor";
+		return (
+			<div
+				className={`${styles.sectionHeader} ${
+					minor ? styles.sectionHeaderMinor : ""
+				} ${
+					optionValue<boolean>(
+						visual.visualType,
+						visual.config,
+						"rule",
+					) === false
+						? ""
+						: styles.sectionHeaderRule
+				}`}
+			>
+				<span>{visual.title ?? "Section"}</span>
+				{note && (
+					<span className={styles.sectionHeaderNote}>{note}</span>
+				)}
+			</div>
+		);
+	}
+
 	if (visual.visualType === "blockedNotice") {
 		return (
 			<VisualFrame title={displayTitle(visual)}>
@@ -285,7 +320,50 @@ export function VisualRenderer({
 						sourceKey={sourceKey}
 						field={field}
 						label={visual.title}
-						multiple={visual.config.options?.multiple !== false}
+						multiple={
+							optionValue<boolean>(
+								visual.visualType,
+								visual.config,
+								"multiple",
+							) !== false
+						}
+						segmented={
+							optionValue<string>(
+								visual.visualType,
+								visual.config,
+								"presentation",
+							) === "segmented"
+						}
+						exclude={
+							optionValue<string>(
+								visual.visualType,
+								visual.config,
+								"match",
+							) === "exclude"
+						}
+					/>
+				);
+			case "presenceFilter":
+				return (
+					<PresenceFilter
+						visualId={visual.visualId}
+						sourceKey={sourceKey}
+						field={field}
+						label={visual.title}
+					/>
+				);
+			case "toggleFilter":
+				return (
+					<ToggleFilter
+						visualId={visual.visualId}
+						sourceKey={sourceKey}
+						field={field}
+						label={visual.title}
+						onValue={optionValue<string>(
+							visual.visualType,
+							visual.config,
+							"onValue",
+						)}
 					/>
 				);
 			case "searchFilter":
@@ -295,12 +373,11 @@ export function VisualRenderer({
 						sourceKey={sourceKey}
 						fields={dimensions}
 						label={visual.title}
-						placeholder={
-							typeof visual.config.options?.placeholder ===
-							"string"
-								? visual.config.options.placeholder
-								: undefined
-						}
+						placeholder={optionValue<string>(
+							visual.visualType,
+							visual.config,
+							"placeholder",
+						)}
 					/>
 				);
 			case "bulkFilter":
@@ -319,14 +396,14 @@ export function VisualRenderer({
 						sourceKey={sourceKey}
 						field={field}
 						label={visual.title}
-						mode={
-							visual.config.options?.rangeMode as
-								| "presets"
-								| "calendar"
-								| "slider"
-								| "combined"
-								| undefined
-						}
+						mode={optionValue<
+							"presets" | "calendar" | "slider" | "combined"
+						>(visual.visualType, visual.config, "rangeMode")}
+						defaultPreset={optionValue<string>(
+							visual.visualType,
+							visual.config,
+							"defaultPreset",
+						)}
 					/>
 				);
 			case "numericRangeFilter":
@@ -336,13 +413,11 @@ export function VisualRenderer({
 						sourceKey={sourceKey}
 						field={measures[0] ?? field}
 						label={visual.title}
-						mode={
-							visual.config.options?.rangeMode as
-								| "inputs"
-								| "slider"
-								| "combined"
-								| undefined
-						}
+						mode={optionValue<"inputs" | "slider" | "combined">(
+							visual.visualType,
+							visual.config,
+							"rangeMode",
+						)}
 					/>
 				);
 			case "filterBar":
@@ -361,15 +436,20 @@ export function VisualRenderer({
 						field={measures[0] ?? field}
 						label={visual.title}
 						direction={
-							visual.config.options?.direction === "below"
+							optionValue<string>(
+								visual.visualType,
+								visual.config,
+								"direction",
+							) === "below"
 								? "below"
 								: "above"
 						}
 						defaultValue={
-							typeof visual.config.options?.defaultValue ===
-							"number"
-								? visual.config.options.defaultValue
-								: null
+							optionValue<number>(
+								visual.visualType,
+								visual.config,
+								"defaultValue",
+							) ?? null
 						}
 					/>
 				);
@@ -386,6 +466,11 @@ export function VisualRenderer({
 				filters={filters}
 				fields={fields}
 				style={style}
+				groups={optionValue<KpiGroup[]>(
+					visual.visualType,
+					visual.config,
+					"groups",
+				)}
 			/>
 		);
 	}
@@ -394,9 +479,11 @@ export function VisualRenderer({
 		// The last dimension is the pivot when the author marked one, so the
 		// same field list expresses both a plain hierarchy and a cross-tab.
 		const pivot =
-			typeof visual.config.options?.columnDimension === "string"
-				? visual.config.options.columnDimension
-				: null;
+			optionValue<string>(
+				visual.visualType,
+				visual.config,
+				"columnDimension",
+			) ?? null;
 		const rowDimensions = pivot
 			? dimensions.filter((d) => d !== pivot)
 			: dimensions;
@@ -476,6 +563,7 @@ export function VisualRenderer({
 				<Chart
 					visualType={visual.visualType}
 					sourceKey={sourceKey}
+					options={visual.config.options}
 					dimensions={activeDimensions}
 					measures={measures}
 					filters={filters}
@@ -554,6 +642,13 @@ export function VisualRenderer({
 					fields={fields}
 					height={frameHeight ? "100%" : gridHeight}
 					pageSize={compact ? 25 : 200}
+					density={
+						optionValue<"comfortable" | "compact">(
+							visual.visualType,
+							visual.config,
+							"density",
+						) ?? "comfortable"
+					}
 					reportId={reportId}
 					pageId={pageId}
 					visualId={visual.visualId}

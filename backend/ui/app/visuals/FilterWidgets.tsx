@@ -30,6 +30,15 @@ interface DropdownProps extends BaseProps {
 	// Single select is the right default for a field a reader thinks of as
 	// "which one"; multi for "which of these".
 	multiple?: boolean;
+	// Values as buttons rather than behind a dropdown. For a field with a
+	// handful of values, where opening a list to see two options is more work
+	// than reading them.
+	segmented?: boolean;
+	// Keeps the chosen values, or drops them. Excluding is the shorter way to
+	// say "everything except these two" when the field has forty values, and it
+	// stays correct as values are added: a new one is included by default,
+	// where an include list would silently leave it out.
+	exclude?: boolean;
 }
 
 interface ValuesResponse {
@@ -43,6 +52,8 @@ export function DropdownFilter({
 	field,
 	label,
 	multiple = true,
+	segmented = false,
+	exclude = false,
 }: DropdownProps) {
 	const { setWidgetFilter, clausesExcept, byWidget } = usePageFilters();
 	const [open, setOpen] = useState(false);
@@ -108,7 +119,9 @@ export function DropdownFilter({
 	const apply = (next: string[]) => {
 		setWidgetFilter(
 			visualId,
-			next.length > 0 ? [{ field, op: "eq", values: next }] : [],
+			next.length > 0
+				? [{ field, op: exclude ? "neq" : "eq", values: next }]
+				: [],
 		);
 	};
 
@@ -132,12 +145,52 @@ export function DropdownFilter({
 		return [...selected.filter((v) => !set.has(v)), ...values];
 	}, [values, selected]);
 
+	// Said rather than implied. A control set to exclude looks identical to one
+	// set to include until the reader notices the numbers are wrong, so the
+	// trigger says which it is doing whenever anything is chosen.
 	const summary =
 		selected.length === 0
 			? "All"
-			: selected.length === 1
-				? selected[0]
-				: `${selected.length} selected`;
+			: exclude
+				? selected.length === 1
+					? `Not ${selected[0]}`
+					: `Excluding ${selected.length}`
+				: selected.length === 1
+					? selected[0]
+					: `${selected.length} selected`;
+
+	// Buttons rather than a list, for a field with few enough values that
+	// opening something to see them is the slower way to read them. The values
+	// come from the same place either way, so this is presentation and not a
+	// different question.
+	if (segmented) {
+		return (
+			<div className={styles.widget}>
+				<span className={styles.label}>{label ?? field}</span>
+				<div className={styles.segmented}>
+					{loading && values.length === 0 ? (
+						<span className={styles.segmentLoading}>…</span>
+					) : (
+						listed.map((value) => (
+							<button
+								key={value}
+								type="button"
+								aria-pressed={selected.includes(value)}
+								className={`${styles.segment} ${
+									selected.includes(value)
+										? styles.segmentOn
+										: ""
+								}`}
+								onClick={() => toggle(value)}
+							>
+								{value}
+							</button>
+						))
+					)}
+				</div>
+			</div>
+		);
+	}
 
 	return (
 		<div className={styles.widget} style={{ minWidth: 180 }}>
@@ -417,6 +470,10 @@ interface DateRangeProps extends BaseProps {
 	// a preset answers "the last quarter", a calendar answers "that specific
 	// week", and a slider answers "roughly here, let me feel the edges".
 	mode?: DateRangeMode;
+	// The preset applied when the page opens, by its short label. Empty means
+	// everything, which is the widest query the page can run and the one it ran
+	// on every arrival before this existed.
+	defaultPreset?: string;
 }
 
 interface Preset {
@@ -490,11 +547,31 @@ export function DateRangeFilter({
 	field,
 	label,
 	mode = "combined",
+	defaultPreset,
 }: DateRangeProps) {
 	const { setWidgetFilter, clausesExcept } = usePageFilters();
 	const [from, setFrom] = useState("");
 	const [to, setTo] = useState("");
 	const [activePreset, setActivePreset] = useState<string | null>(null);
+
+	// The boxes and the highlighted preset, brought into line with the range the
+	// page opened on. The filter itself is already applied: it was in the
+	// opening state before this rendered, which is what stopped the visuals
+	// asking for everything first. This only makes the control say so.
+	const shown = useRef(false);
+	useEffect(() => {
+		if (shown.current) return;
+		shown.current = true;
+		if (!defaultPreset) return;
+
+		const preset = presets.find((p) => p.label === defaultPreset);
+		if (!preset) return;
+
+		const [start, end] = preset.resolve(startOfDay(new Date()));
+		setFrom(iso(start));
+		setTo(iso(end));
+		setActivePreset(preset.label);
+	}, [defaultPreset]);
 
 	const showPresets = mode === "presets" || mode === "combined";
 	const showCalendar = mode === "calendar" || mode === "combined";
@@ -924,6 +1001,129 @@ export function FilterGroup({ visualId, sourceKey, fields }: FilterGroupProps) {
 	);
 }
 
+// --- Toggle ----------------------------------------------------------------
+
+interface ToggleProps extends BaseProps {
+	field: string;
+	// The value the field takes when the answer is yes. Configured rather than
+	// assumed, because a flag is spelled differently in every warehouse: true,
+	// Y, 1, "Active".
+	onValue?: string;
+	// Whether it starts on. A page whose whole subject is open orders should
+	// open on open orders.
+	defaultOn?: boolean;
+}
+
+// One condition, on or off.
+//
+// A dropdown can express this and reads badly for it: a list of two values
+// where one of them is the whole point, behind a control that has to be opened
+// to find out which is set. A flag the reader can see the state of without
+// opening anything is a different control, not a configuration of that one.
+export function ToggleFilter({
+	visualId,
+	field,
+	label,
+	onValue = "true",
+	defaultOn = false,
+}: ToggleProps) {
+	const { setWidgetFilter, byWidget } = usePageFilters();
+	const on = (byWidget[visualId]?.length ?? 0) > 0;
+
+	// The opening state is seeded by lib/visuals/pageDefaults, so this only has
+	// to report what is already applied. See the note there on why a default
+	// applied after mount costs the page its widest query.
+	void defaultOn;
+
+	return (
+		<div className={styles.widget}>
+			<button
+				type="button"
+				role="switch"
+				aria-checked={on}
+				className={`${styles.trigger} ${on ? styles.triggerActive : ""}`}
+				onClick={() =>
+					setWidgetFilter(
+						visualId,
+						on ? [] : [{ field, op: "eq", values: [onValue] }],
+					)
+				}
+			>
+				<span className={styles.switchTrack} aria-hidden="true">
+					<span
+						className={`${styles.switchKnob} ${
+							on ? styles.switchKnobOn : ""
+						}`}
+					/>
+				</span>
+				<span className={styles.triggerText}>{label ?? field}</span>
+			</button>
+		</div>
+	);
+}
+
+// --- Presence --------------------------------------------------------------
+
+interface PresenceProps extends BaseProps {
+	field: string;
+}
+
+type Presence = "any" | "present" | "missing";
+
+// Whether the field has a value at all.
+//
+// Not a value filter with a blank in the list: a missing value is not one of
+// the values, and a dropdown reading distinct values will never offer it.
+// Finding the rows nobody filled in is a common question and there was no way
+// to ask it.
+export function PresenceFilter({ visualId, field, label }: PresenceProps) {
+	const { setWidgetFilter, byWidget } = usePageFilters();
+
+	const current: Presence =
+		byWidget[visualId]?.[0]?.op === "is_empty"
+			? "missing"
+			: byWidget[visualId]?.[0]?.op === "is_not_empty"
+				? "present"
+				: "any";
+
+	const choose = (next: Presence) => {
+		if (next === "any") {
+			setWidgetFilter(visualId, []);
+			return;
+		}
+		setWidgetFilter(visualId, [
+			{ field, op: next === "missing" ? "is_empty" : "is_not_empty" },
+		]);
+	};
+
+	const choices: { value: Presence; label: string }[] = [
+		{ value: "any", label: "Any" },
+		{ value: "present", label: "Has a value" },
+		{ value: "missing", label: "Missing" },
+	];
+
+	return (
+		<div className={styles.widget}>
+			<span className={styles.label}>{label ?? field}</span>
+			<div className={styles.segmented}>
+				{choices.map((choice) => (
+					<button
+						key={choice.value}
+						type="button"
+						aria-pressed={current === choice.value}
+						className={`${styles.segment} ${
+							current === choice.value ? styles.segmentOn : ""
+						}`}
+						onClick={() => choose(choice.value)}
+					>
+						{choice.label}
+					</button>
+				))}
+			</div>
+		</div>
+	);
+}
+
 // --- Dimension switch ------------------------------------------------------
 
 interface DimensionSwitchProps extends BaseProps {
@@ -1016,13 +1216,105 @@ export function DimensionSwitch({
 
 // --- The strip that holds them ---------------------------------------------
 
-export function FilterBar({ children }: { children: React.ReactNode }) {
+// A named panel of controls, behind a button in the strip.
+//
+// A page can carry more controls than fit across the top of it, and most of
+// them are not the one the reader came to change. Putting the rest behind a
+// button keeps the strip to what is used often, which is what an author is
+// saying when they group them.
+//
+// The count on the button is not decoration. Hiding a control hides the fact
+// that it is set, and a reader looking at a narrowed page with no visible
+// reason will conclude the data is wrong rather than that it is filtered. So
+// the button says how many of the controls inside it are doing something, and
+// says it whether the panel is open or shut.
+function FilterPanel({
+	name,
+	activeCount,
+	children,
+}: {
+	name: string;
+	activeCount: number;
+	children: React.ReactNode;
+}) {
+	const [open, setOpen] = useState(false);
+	const wrapperRef = useRef<HTMLDivElement | null>(null);
+
+	useEffect(() => {
+		if (!open) return;
+		const onClick = (e: MouseEvent) => {
+			if (!wrapperRef.current?.contains(e.target as Node)) setOpen(false);
+		};
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === "Escape") setOpen(false);
+		};
+		document.addEventListener("mousedown", onClick);
+		document.addEventListener("keydown", onKey);
+		return () => {
+			document.removeEventListener("mousedown", onClick);
+			document.removeEventListener("keydown", onKey);
+		};
+	}, [open]);
+
+	return (
+		<div className={styles.widget} ref={wrapperRef}>
+			<span className={styles.label}>{name}</span>
+			<button
+				type="button"
+				className={`${styles.trigger} ${
+					activeCount > 0 ? styles.triggerActive : ""
+				}`}
+				onClick={() => setOpen((v) => !v)}
+				aria-expanded={open}
+				title={
+					activeCount > 0
+						? `${activeCount} of these is set`
+						: `Open ${name}`
+				}
+			>
+				<span className={styles.triggerText}>
+					{activeCount > 0 ? `${activeCount} set` : "Any"}
+				</span>
+				<span className={styles.chevron} aria-hidden="true">
+					▾
+				</span>
+			</button>
+
+			{open && (
+				<div
+					className={styles.groupPanel}
+					role="dialog"
+					aria-label={name}
+				>
+					{children}
+				</div>
+			)}
+		</div>
+	);
+}
+
+export interface FilterPanelSpec {
+	name: string;
+	// The ids of the controls inside, so the button can say how many of them
+	// are set without the panel being open.
+	visualIds: string[];
+	content: React.ReactNode;
+}
+
+export function FilterBar({
+	panels = [],
+	children,
+}: {
+	panels?: FilterPanelSpec[];
+	children: React.ReactNode;
+}) {
 	const {
 		activeClauses,
 		clearAll,
 		crossFilter,
 		setCrossFilter,
 		hasAnything,
+		byWidget,
 	} = usePageFilters();
 
 	// A page with no controls and nothing selected has no strip. It used to
@@ -1030,12 +1322,27 @@ export function FilterBar({ children }: { children: React.ReactNode }) {
 	// fulfillment one: something that looked like a visual that had failed to
 	// load, and that could not be selected in the editor because it was not
 	// one.
-	const hasControls = Children.toArray(children).some(Boolean);
+	const hasControls =
+		Children.toArray(children).some(Boolean) || panels.length > 0;
 	if (!hasControls && !hasAnything) return null;
 
 	return (
 		<div className={styles.bar}>
 			{children}
+
+			{panels.map((panel) => (
+				<FilterPanel
+					key={panel.name}
+					name={panel.name}
+					activeCount={
+						panel.visualIds.filter(
+							(id) => (byWidget[id]?.length ?? 0) > 0,
+						).length
+					}
+				>
+					{panel.content}
+				</FilterPanel>
+			))}
 
 			{/* A selection made by clicking a chart is shown here as well, so
 			    a reader who cannot see the chart that produced it still knows

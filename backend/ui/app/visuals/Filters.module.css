@@ -274,7 +274,9 @@
 	text-decoration: underline;
 }
 
-.clearLink:hover { color: var(--danger); }
+.clearLink:hover {
+	color: var(--danger);
+}
 
 /* Presets wrap rather than scroll: a hidden preset is one nobody uses. */
 .presetGrid {
@@ -306,7 +308,10 @@
 	cursor: pointer;
 }
 
-.sliderDisabled { opacity: 0.5; cursor: not-allowed; }
+.sliderDisabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
 
 .sliderFill {
 	position: absolute;
@@ -383,4 +388,109 @@
 	color: var(--text-secondary);
 	font-weight: 600;
 	font-variant-numeric: tabular-nums;
+}
+
+/*
+ * A panel of controls rather than a list of values.
+ *
+ * The dropdown panel above is a scrolling list and sizes itself to one. This
+ * holds whole controls, each with its own label and its own popover, so it
+ * lays them out in a column, sits wider, and does not clip: a dropdown opened
+ * inside it has to be able to escape it.
+ */
+.groupPanel {
+	position: absolute;
+	left: 0;
+	top: calc(100% + 4px);
+	z-index: 60;
+	min-width: 280px;
+	max-width: 420px;
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+	padding: var(--space-4);
+	background: var(--surface-overlay);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-lg);
+	box-shadow: var(--shadow-lg);
+}
+
+/* Each control inside goes full width, since the panel is a column and a
+   control squeezed to its natural width in one reads as misaligned. */
+.groupPanel > * {
+	width: 100%;
+}
+
+/* Values as a row of buttons, for a field with few enough of them that a list
+   is the slower way to read them. Wraps rather than scrolling, because a value
+   pushed off the end of a segmented control is a value nobody knows is there. */
+.segmented {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 2px;
+	padding: 2px;
+	background: var(--surface-sunken);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-md);
+}
+
+.segment {
+	padding: 4px 10px;
+	font-size: var(--text-sm);
+	font-family: inherit;
+	color: var(--text-secondary);
+	background: none;
+	border: none;
+	border-radius: calc(var(--radius-md) - 2px);
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.segment:hover {
+	color: var(--text-primary);
+	background: var(--surface-hover);
+}
+
+.segmentOn {
+	color: var(--text-primary);
+	background: var(--surface-raised);
+	box-shadow: var(--shadow-sm);
+	font-weight: 500;
+}
+
+.segmentLoading {
+	padding: 4px 10px;
+	color: var(--text-muted);
+}
+
+/* The flag control. A switch reads as a state rather than as an action, which
+   is what a filter that is either on or off is. */
+.switchTrack {
+	position: relative;
+	display: inline-block;
+	width: 26px;
+	height: 15px;
+	flex: none;
+	background: var(--border-default);
+	border-radius: var(--radius-full);
+	transition: background 120ms ease;
+}
+
+.switchKnob {
+	position: absolute;
+	top: 2px;
+	left: 2px;
+	width: 11px;
+	height: 11px;
+	background: var(--surface-base);
+	border-radius: var(--radius-full);
+	transition: transform 120ms ease;
+}
+
+.switchKnobOn {
+	transform: translateX(11px);
+}
+
+.triggerActive .switchTrack {
+	background: var(--accent-solid, var(--text-primary));
 }
