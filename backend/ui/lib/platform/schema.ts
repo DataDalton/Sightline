@@ -255,6 +255,45 @@ const statements: string[] = [
 
 	`CREATE INDEX IF NOT EXISTS result_cache_expiry_idx ON result_cache (expires_on)`,
 
+	// Which sources a reader can read, as Unity Catalog answered it.
+	//
+	// Held here rather than only in memory because resolving it costs a
+	// warehouse round trip, which is three orders of magnitude slower than
+	// reading it back. In memory alone every replica pays that separately and
+	// pays it again after a restart, which is most of what a reader waits for
+	// on a cold first page.
+	//
+	// Recomputed only while that reader is making a request, since it is their
+	// token the question has to be asked with.
+	`CREATE TABLE IF NOT EXISTS reader_access (
+		user_email  TEXT PRIMARY KEY,
+		source_keys JSONB NOT NULL,
+		computed_on TIMESTAMPTZ NOT NULL DEFAULT now(),
+		expires_on  TIMESTAMPTZ NOT NULL
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS reader_access_expiry_idx
+		ON reader_access (expires_on)`,
+
+	// Which tracked groups a reader belongs to, as the account directory
+	// answered it.
+	//
+	// Costs a warehouse round trip to ask and a Postgres one to read back, and
+	// every replica was asking separately. Held against the exact set of groups
+	// it was asked about, so changing that set makes every stored answer a miss
+	// rather than a wrong answer.
+	`CREATE TABLE IF NOT EXISTS reader_policy (
+		user_email  TEXT NOT NULL,
+		group_set   TEXT NOT NULL,
+		grants      JSONB NOT NULL,
+		computed_on TIMESTAMPTZ NOT NULL DEFAULT now(),
+		expires_on  TIMESTAMPTZ NOT NULL,
+		PRIMARY KEY (user_email, group_set)
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS reader_policy_expiry_idx
+		ON reader_policy (expires_on)`,
+
 	// --- Operations --------------------------------------------------------
 
 	`CREATE TABLE IF NOT EXISTS platform_settings (
@@ -330,10 +369,59 @@ const migrations: string[] = [
 ];
 
 // Creates anything missing. Safe to run on every startup.
+// Hands every table in the schema to whoever owns the schema.
+//
+// A table belongs to whoever ran the CREATE, so the platform tables end up owned
+// by the identity that happened to start first: a service principal on one
+// deployment, a person who ran a migration by hand on another. Ownership is what
+// ALTER TABLE checks, so the next identity to start cannot apply a migration to
+// a table the previous one made, and the failure arrives as a permission error
+// on a column that already exists.
+//
+// Naming the schema owner rather than a configured role means there is one fact
+// to set, and it is set by whoever created the schema. Silent when the current
+// identity is not a member of that role, because then there is nothing it may
+// do and nothing it needs to.
+async function adoptSchemaOwner(): Promise<void> {
+	try {
+		await sql(
+			`DO $$
+			 DECLARE
+			   owner text;
+			   target record;
+			 BEGIN
+			   SELECT pg_get_userbyid(nspowner) INTO owner
+			   FROM pg_namespace WHERE nspname = current_schema();
+			   IF owner IS NULL OR NOT pg_has_role(current_user, owner, 'MEMBER')
+			   THEN
+			     RETURN;
+			   END IF;
+			   FOR target IN
+			     SELECT tablename FROM pg_tables
+			     WHERE schemaname = current_schema() AND tableowner <> owner
+			   LOOP
+			     EXECUTE format('ALTER TABLE %I.%I OWNER TO %I',
+			                    current_schema(), target.tablename, owner);
+			   END LOOP;
+			 END $$`,
+		);
+	} catch (error) {
+		// Worth knowing about and not worth refusing to start over: the tables
+		// this identity created are still usable by it.
+		console.warn("Could not align table ownership with the schema:", error);
+	}
+}
+
 export async function initPlatformSchema(): Promise<void> {
 	for (const statement of statements) {
 		await sql(statement);
 	}
+
+	// Between the two, because a migration is an ALTER TABLE and that is the
+	// statement ownership gates. A table this identity created a moment ago is
+	// already its own, so this is for the ones an earlier identity created.
+	await adoptSchemaOwner();
+
 	for (const statement of migrations) {
 		await sql(statement);
 	}
@@ -344,4 +432,6 @@ export async function initPlatformSchema(): Promise<void> {
 export async function sweepExpired(): Promise<void> {
 	await sql(`DELETE FROM presence WHERE expires_on < now()`);
 	await sql(`DELETE FROM result_cache WHERE expires_on < now()`);
+	await sql(`DELETE FROM reader_access WHERE expires_on < now()`);
+	await sql(`DELETE FROM reader_policy WHERE expires_on < now()`);
 }

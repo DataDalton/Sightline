@@ -3,6 +3,8 @@
 import { useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
+import { SkeletonReport } from "../components/shared/Skeleton";
+import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { titleSeparator, usePageTitle } from "../hooks/usePageTitle";
 import { DataFreshness } from "../visuals/DataFreshness";
 import { VisualRenderer, type VisualSpec } from "../visuals/VisualRenderer";
@@ -65,6 +67,7 @@ export default function ReportView({ slug }: { slug: string }) {
 		`/api/report/${encodeURIComponent(slug)}`,
 	);
 	const { user } = useUser();
+	const showSkeleton = useDeferredLoading(isLoading);
 	const [editing, setEditing] = useState(false);
 	// Held by id rather than by index, because a report with subpages has two
 	// rows of tabs and an index into a flat list cannot say which one is on.
@@ -116,10 +119,13 @@ export default function ReportView({ slug }: { slug: string }) {
 	}
 
 	if (isLoading || !data) {
+		// Blank rather than a skeleton for a report that answers from
+		// cache, because the shell is already on screen and a flash of
+		// placeholder under it is the only thing the reader would see.
+		if (!showSkeleton) return <div className={styles.page} />;
 		return (
 			<div className={styles.page}>
-				<div className={styles.skeleton} />
-				<div className={styles.skeleton} style={{ height: 280 }} />
+				<SkeletonReport />
 			</div>
 		);
 	}

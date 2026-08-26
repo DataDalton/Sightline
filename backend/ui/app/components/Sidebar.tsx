@@ -5,6 +5,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import useSWR from "swr";
 import { useUser } from "../context/UserContext";
+import { Skeleton } from "./shared/Skeleton";
+import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { useShell } from "../context/ShellContext";
 import styles from "./Sidebar.module.css";
 
@@ -30,14 +32,11 @@ const iconPaths: Record<string, string> = {
 	field: "M12 2a8 8 0 0 0-8 8c0 5.5 8 12 8 12s8-6.5 8-12a8 8 0 0 0-8-8zM12 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6z",
 	products:
 		"M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z",
-	rebates:
-		"M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6",
+	rebates: "M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6",
 	asc: "M3 3v18h18M7 16l3-6 4 4 4-8",
 	market: "M18 20V10M12 20V4M6 20v-6",
-	explore:
-		"M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35",
-	admin:
-		"M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z",
+	explore: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35",
+	admin: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z",
 	default: "M3 7h7v6H3zM14 7h7v6h-7zM3 16h18v5H3z",
 };
 
@@ -55,18 +54,27 @@ function CategoryReports({
 		reports: { reportId: string; slug: string; title: string }[];
 	}>(`/api/category/${encodeURIComponent(categoryId)}`);
 
+	const showSkeleton = useDeferredLoading(isLoading);
+
+	// Nothing rather than a placeholder for a wait nobody perceives. The
+	// category list answers from cache, and two bars appearing and vanishing
+	// under the item just clicked reads as a glitch.
 	if (isLoading) {
-		return (
+		return showSkeleton ? (
 			<div className={styles.subNav}>
-				<div className={styles.skeleton} />
-				<div className={styles.skeleton} />
+				<Skeleton height={30} onChrome />
+				<Skeleton height={30} onChrome />
 			</div>
-		);
+		) : null;
 	}
 
 	const reports = data?.reports ?? [];
 	if (reports.length === 0) {
-		return <div className={styles.subNav}><span className={styles.subEmpty}>No reports</span></div>;
+		return (
+			<div className={styles.subNav}>
+				<span className={styles.subEmpty}>No reports</span>
+			</div>
+		);
 	}
 
 	return (
@@ -117,6 +125,7 @@ export default memo(function Sidebar() {
 	const { data, isLoading } = useSWR<{ categories: NavCategory[] }>(
 		"/api/navigation",
 	);
+	const navSkeleton = useDeferredLoading(isLoading);
 	const categories = data?.categories ?? [];
 
 	// Which categories are showing their reports. Opening a category from the
@@ -173,13 +182,13 @@ export default memo(function Sidebar() {
 
 			<div className={styles.section}>
 				<div className={styles.sectionTitle}>Reports</div>
-				{isLoading ? (
+				{navSkeleton ? (
 					<>
-						<div className={styles.skeleton} />
-						<div className={styles.skeleton} />
-						<div className={styles.skeleton} />
+						<Skeleton height={30} onChrome />
+						<Skeleton height={30} onChrome />
+						<Skeleton height={30} onChrome />
 					</>
-				) : categories.length === 0 ? (
+				) : isLoading ? null : categories.length === 0 ? (
 					<p className={styles.empty}>
 						No reports available yet. Once datasets are registered
 						they appear here.
@@ -199,7 +208,9 @@ export default memo(function Sidebar() {
 										<Link
 											href={href}
 											className={styles.navLink}
-											onClick={() => expand(category.categoryId)}
+											onClick={() =>
+												expand(category.categoryId)
+											}
 										>
 											<NavIcon name={category.icon} />
 											<span className={styles.label}>
@@ -236,7 +247,8 @@ export default memo(function Sidebar() {
 													transform: open
 														? "rotate(90deg)"
 														: undefined,
-													transition: "transform 0.15s ease",
+													transition:
+														"transform 0.15s ease",
 												}}
 											>
 												<path d="M9 18l6-6-6-6" />

@@ -19,6 +19,7 @@ import { PageSettings } from "./PageSettings";
 import type { PageConfig } from "./ReportEditor";
 import type { SourceMeta } from "../visuals/types";
 import type { EditableVisual } from "./types";
+import { SkeletonText } from "../components/shared/Skeleton";
 import styles from "./Editor.module.css";
 
 // Editing one visual: what it shows, and how it looks.
@@ -315,7 +316,10 @@ function DataTab({
 				{definition.encoding.measures.max > 0 &&
 					filtered.measures.length > 0 && (
 						<>
-							<div className={styles.fieldLabel} style={{ marginTop: 10 }}>
+							<div
+								className={styles.fieldLabel}
+								style={{ marginTop: 10 }}
+							>
 								Measures ({filtered.measures.length})
 							</div>
 							{filtered.measures.slice(0, 60).map((f) => (
@@ -333,7 +337,10 @@ function DataTab({
 				{definition.encoding.dimensions.max > 0 &&
 					filtered.dimensions.length > 0 && (
 						<>
-							<div className={styles.fieldLabel} style={{ marginTop: 10 }}>
+							<div
+								className={styles.fieldLabel}
+								style={{ marginTop: 10 }}
+							>
 								Dimensions ({filtered.dimensions.length})
 							</div>
 							{filtered.dimensions.slice(0, 60).map((f) => (
@@ -342,7 +349,9 @@ function DataTab({
 									name={f.name}
 									description={f.description}
 									selected={dimensions.includes(f.name)}
-									onToggle={() => toggle(f.name, "dimensions")}
+									onToggle={() =>
+										toggle(f.name, "dimensions")
+									}
 								/>
 							))}
 						</>
@@ -365,14 +374,17 @@ function DataTab({
 							updateConfig({
 								options: {
 									...visual.config.options,
-									drillFields: visual.config.options?.drillFields
+									drillFields: visual.config.options
+										?.drillFields
 										? undefined
 										: dimensions,
 								},
 							})
 						}
 					>
-						<Check on={Boolean(visual.config.options?.drillFields)} />
+						<Check
+							on={Boolean(visual.config.options?.drillFields)}
+						/>
 						Use the selected dimensions as a drill path
 					</button>
 				</div>
@@ -408,7 +420,11 @@ function SelectedList({
 		<div className={styles.field}>
 			<span className={styles.fieldLabel}>{label}</span>
 			{items.map((name, i) => (
-				<div key={name} className={styles.row} style={{ marginBottom: 4 }}>
+				<div
+					key={name}
+					className={styles.row}
+					style={{ marginBottom: 4 }}
+				>
 					<span className={styles.chip} style={{ flex: 1 }}>
 						{name}
 					</span>
@@ -547,7 +563,9 @@ function FormatTab({
 					<label className={styles.checkRow}>
 						<input
 							type="checkbox"
-							checked={visual.config.options?.fillHeight !== false}
+							checked={
+								visual.config.options?.fillHeight !== false
+							}
 							onChange={(e) =>
 								updateConfig({
 									options: {
@@ -558,15 +576,17 @@ function FormatTab({
 							}
 						/>
 						<span>
-							Fill the rest of the screen when it is last on the page
+							Fill the rest of the screen when it is last on the
+							page
 						</span>
 					</label>
 					<p className={styles.guidance}>
 						On by default. A reader works inside a table rather than
-						glancing at it, so a short box inside a tall screen makes
-						them scroll through a window when the room was already
-						there. Turn it off where the table is deliberately a
-						preview. The canvas shows the height a reader will get.
+						glancing at it, so a short box inside a tall screen
+						makes them scroll through a window when the room was
+						already there. Turn it off where the table is
+						deliberately a preview. The canvas shows the height a
+						reader will get.
 					</p>
 				</div>
 			)}
@@ -592,7 +612,8 @@ function FormatTab({
 					<select
 						className={styles.select}
 						value={
-							(visual.config.options?.rangeMode as string) ?? "combined"
+							(visual.config.options?.rangeMode as string) ??
+							"combined"
 						}
 						onChange={(e) =>
 							updateConfig({
@@ -621,7 +642,8 @@ function FormatTab({
 					<select
 						className={styles.select}
 						value={
-							(visual.config.options?.rangeMode as string) ?? "combined"
+							(visual.config.options?.rangeMode as string) ??
+							"combined"
 						}
 						onChange={(e) =>
 							updateConfig({
@@ -648,7 +670,9 @@ function FormatTab({
 							<select
 								className={styles.select}
 								value={seriesIndex}
-								onChange={(e) => setSeriesIndex(Number(e.target.value))}
+								onChange={(e) =>
+									setSeriesIndex(Number(e.target.value))
+								}
 							>
 								{measures.map((m, i) => (
 									<option key={m} value={i}>
@@ -677,7 +701,9 @@ function FormatTab({
 										aria-label={`Colour ${s.token}`}
 										onClick={() =>
 											updateSeries({
-												color: { token: s.token } as ColorSpec,
+												color: {
+													token: s.token,
+												} as ColorSpec,
 											})
 										}
 									/>
@@ -689,7 +715,9 @@ function FormatTab({
 					{supports.fill && (
 						<>
 							<div className={styles.field}>
-								<label className={styles.fieldLabel}>Fill</label>
+								<label className={styles.fieldLabel}>
+									Fill
+								</label>
 								<select
 									className={styles.select}
 									value={seriesEntry?.fill ?? "none"}
@@ -703,27 +731,37 @@ function FormatTab({
 								</select>
 							</div>
 
-							{seriesEntry?.fill && seriesEntry.fill !== "none" && (
-								<div className={styles.field}>
-									<label className={styles.fieldLabel}>
-										Fill opacity{" "}
-										{Math.round((seriesEntry.fillOpacity ?? 0.25) * 100)}%
-									</label>
-									<input
-										type="range"
-										min={5}
-										max={100}
-										step={5}
-										value={(seriesEntry.fillOpacity ?? 0.25) * 100}
-										onChange={(e) =>
-											updateSeries({
-												fillOpacity: Number(e.target.value) / 100,
-											})
-										}
-										style={{ width: "100%" }}
-									/>
-								</div>
-							)}
+							{seriesEntry?.fill &&
+								seriesEntry.fill !== "none" && (
+									<div className={styles.field}>
+										<label className={styles.fieldLabel}>
+											Fill opacity{" "}
+											{Math.round(
+												(seriesEntry.fillOpacity ??
+													0.25) * 100,
+											)}
+											%
+										</label>
+										<input
+											type="range"
+											min={5}
+											max={100}
+											step={5}
+											value={
+												(seriesEntry.fillOpacity ??
+													0.25) * 100
+											}
+											onChange={(e) =>
+												updateSeries({
+													fillOpacity:
+														Number(e.target.value) /
+														100,
+												})
+											}
+											style={{ width: "100%" }}
+										/>
+									</div>
+								)}
 						</>
 					)}
 
@@ -733,7 +771,10 @@ function FormatTab({
 							className={styles.checkRow}
 							onClick={() =>
 								updateSeries({
-									axis: seriesEntry?.axis === "right" ? "left" : "right",
+									axis:
+										seriesEntry?.axis === "right"
+											? "left"
+											: "right",
 								})
 							}
 						>
@@ -748,7 +789,9 @@ function FormatTab({
 							className={styles.checkRow}
 							onClick={() =>
 								updateSeries({
-									stack: seriesEntry?.stack ? undefined : "total",
+									stack: seriesEntry?.stack
+										? undefined
+										: "total",
 								})
 							}
 						>
@@ -763,13 +806,18 @@ function FormatTab({
 				<div className={styles.section}>
 					<div className={styles.sectionTitle}>Axes</div>
 					<div className={styles.field}>
-						<label className={styles.fieldLabel}>Value axis label</label>
+						<label className={styles.fieldLabel}>
+							Value axis label
+						</label>
 						<input
 							className={styles.input}
 							value={style.yAxis?.label ?? ""}
 							onChange={(e) =>
 								updateStyle({
-									yAxis: { ...style.yAxis, label: e.target.value },
+									yAxis: {
+										...style.yAxis,
+										label: e.target.value,
+									},
 								})
 							}
 						/>
@@ -781,7 +829,8 @@ function FormatTab({
 							updateStyle({
 								yAxis: {
 									...style.yAxis,
-									beginAtZero: style.yAxis?.beginAtZero === false,
+									beginAtZero:
+										style.yAxis?.beginAtZero === false,
 								},
 							})
 						}
@@ -831,13 +880,19 @@ function FormatTab({
 								updateStyle({
 									tooltip: {
 										...style.tooltip,
-										mode: e.target.value as "single" | "axis",
+										mode: e.target.value as
+											| "single"
+											| "axis",
 									},
 								})
 							}
 						>
-							<option value="axis">Every series at that point</option>
-							<option value="single">Just the hovered point</option>
+							<option value="axis">
+								Every series at that point
+							</option>
+							<option value="single">
+								Just the hovered point
+							</option>
 						</select>
 					</div>
 					<button
@@ -873,7 +928,7 @@ function FormatTab({
 			)}
 
 			<div className={styles.section}>
-				<div className={styles.sectionTitle}>Loading</div>
+				<SkeletonText lines={3} />
 				<select
 					className={styles.select}
 					value={style.loadingAnimation ?? "skeleton"}

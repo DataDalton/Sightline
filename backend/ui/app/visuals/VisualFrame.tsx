@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import type { QueryMeta } from "../hooks/useVisualQuery";
 import { usePageFilters, type DrillStep } from "./PageFilters";
+import { Skeleton } from "../components/shared/Skeleton";
 import styles from "./Visual.module.css";
 
 // Shared chrome for every visual: title, freshness, and the loading, empty and
@@ -77,14 +78,22 @@ export function VisualFrame({
 								{drill.fields[0]}
 							</button>
 							{drill.path.map((step, i) => (
-								<span key={`${step.field}-${step.value}`} className={styles.crumbGroup}>
-									<span className={styles.crumbSep} aria-hidden="true">
+								<span
+									key={`${step.field}-${step.value}`}
+									className={styles.crumbGroup}
+								>
+									<span
+										className={styles.crumbSep}
+										aria-hidden="true"
+									>
 										›
 									</span>
 									<button
 										type="button"
 										className={styles.crumb}
-										onClick={() => drillUp(drill.visualId, i + 1)}
+										onClick={() =>
+											drillUp(drill.visualId, i + 1)
+										}
 										disabled={i === drill.path.length - 1}
 									>
 										{step.value}
@@ -93,7 +102,8 @@ export function VisualFrame({
 							))}
 							{drill.depth < drill.fields.length - 1 && (
 								<span className={styles.crumbHint}>
-									click to drill into {drill.fields[drill.depth + 1]}
+									click to drill into{" "}
+									{drill.fields[drill.depth + 1]}
 								</span>
 							)}
 						</nav>
@@ -152,12 +162,9 @@ export function VisualFrame({
 					{notice}
 				</div>
 			)}
-			<div
-				className={`${styles.body} ${flush ? styles.bodyFlush : ""}`}
-			>
+			<div className={`${styles.body} ${flush ? styles.bodyFlush : ""}`}>
 				{children}
 			</div>
-
 		</div>
 	);
 }
@@ -166,10 +173,11 @@ export function VisualLoading({ rows = 4 }: { rows?: number }) {
 	return (
 		<div aria-busy="true" aria-label="Loading">
 			{Array.from({ length: rows }, (_, i) => (
-				<div
+				<Skeleton
 					key={i}
-					className={`${styles.skeleton} ${styles.skeletonBar}`}
-					style={{ width: `${100 - i * 12}%` }}
+					height={12}
+					width={`${100 - i * 12}%`}
+					style={{ marginBottom: "var(--space-2)" }}
 				/>
 			))}
 		</div>

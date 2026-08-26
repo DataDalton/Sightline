@@ -13,6 +13,7 @@ import {
 	getUserActivity,
 	getUserUsage,
 } from "@/lib/platform/adminStats";
+import { cachedDefinition } from "@/lib/platform/definitionCache";
 import { getTrackedGroupDetail, policyCacheStats } from "@/lib/auth/policy";
 import { cacheStats } from "@/lib/query/cache";
 import { telemetryStats } from "@/lib/telemetry/usage";
@@ -89,7 +90,9 @@ export async function GET(request: NextRequest) {
 			return NextResponse.json({
 				editorGroups: current.editorGroups,
 				adminGroups: effectiveAdminGroups(),
-				exports: await getExportAudit(100),
+				exports: await cachedDefinition("admin-exports", () =>
+					getExportAudit(100),
+				),
 				// What is actually being probed, which is not the same as the
 				// stored setting: most of these are discovered from the row
 				// filters on each source rather than configured, so showing the
@@ -144,13 +147,21 @@ export async function GET(request: NextRequest) {
 			});
 		}
 
-		const [summary, reports, users, slow, daily] = await Promise.all([
-			getUsageSummary(days),
-			getReportUsage(days),
-			getUserUsage(days),
-			getSlowSources(days),
-			getDailyActivity(Math.max(days, 30)),
-		]);
+		// Five aggregates over the whole usage log, and the same numbers for
+		// every administrator looking at the same window. Shared briefly rather
+		// than recomputed per load: these describe a rolling period, so an
+		// answer a few seconds old is the same answer.
+		const [summary, reports, users, slow, daily] = await cachedDefinition(
+			`admin-usage:${days}`,
+			async () =>
+				await Promise.all([
+					getUsageSummary(days),
+					getReportUsage(days),
+					getUserUsage(days),
+					getSlowSources(days),
+					getDailyActivity(Math.max(days, 30)),
+				]),
+		);
 
 		const response = NextResponse.json({
 			days,

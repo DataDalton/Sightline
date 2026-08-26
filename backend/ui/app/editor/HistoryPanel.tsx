@@ -3,6 +3,8 @@
 import { useState } from "react";
 import useSWR from "swr";
 import type { Change } from "../../lib/platform/versionDiff";
+import { SkeletonText } from "../components/shared/Skeleton";
+import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import styles from "./Editor.module.css";
 
 // Who changed what, and putting a version back.
@@ -70,6 +72,8 @@ export function HistoryPanel({
 		canRestore: boolean;
 	}>(`/api/report/${encodeURIComponent(slug)}/history?k=${refreshKey}`);
 
+	const showSkeleton = useDeferredLoading(isLoading);
+
 	const [restoring, setRestoring] = useState<number | null>(null);
 	const [confirming, setConfirming] = useState<number | null>(null);
 	const [failure, setFailure] = useState<string | null>(null);
@@ -108,14 +112,14 @@ export function HistoryPanel({
 	return (
 		<div className={styles.historyPanel}>
 			<p className={styles.guidance}>
-				Every save, and what it changed. Restoring applies an old version
-				as a new one, so nothing is lost and a restore can itself be
-				undone.
+				Every save, and what it changed. Restoring applies an old
+				version as a new one, so nothing is lost and a restore can
+				itself be undone.
 			</p>
 
 			{failure && <div className={styles.historyError}>{failure}</div>}
 
-			{isLoading && <div className={styles.guidance}>Loading</div>}
+			{showSkeleton && <SkeletonText lines={4} />}
 
 			{!isLoading && entries.length === 0 && (
 				<div className={styles.guidance}>
@@ -137,17 +141,23 @@ export function HistoryPanel({
 							</span>
 							<span
 								className={styles.historyWhen}
-								title={new Date(entry.createdOn).toLocaleString()}
+								title={new Date(
+									entry.createdOn,
+								).toLocaleString()}
 							>
 								{when(entry.createdOn)}
 							</span>
 							{entry.isCurrent && (
-								<span className={styles.historyBadge}>current</span>
+								<span className={styles.historyBadge}>
+									current
+								</span>
 							)}
 						</div>
 
 						{entry.label && (
-							<div className={styles.historyLabel}>{entry.label}</div>
+							<div className={styles.historyLabel}>
+								{entry.label}
+							</div>
 						)}
 
 						<ul className={styles.changeList}>
@@ -182,7 +192,9 @@ export function HistoryPanel({
 										<button
 											type="button"
 											className={`${styles.toolButton} ${styles.primary}`}
-											onClick={() => restore(entry.version)}
+											onClick={() =>
+												restore(entry.version)
+											}
 											disabled={restoring !== null}
 										>
 											{restoring === entry.version
@@ -201,7 +213,9 @@ export function HistoryPanel({
 									<button
 										type="button"
 										className={styles.toolButton}
-										onClick={() => setConfirming(entry.version)}
+										onClick={() =>
+											setConfirming(entry.version)
+										}
 									>
 										Restore this version
 									</button>
