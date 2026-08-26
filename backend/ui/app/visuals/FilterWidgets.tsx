@@ -4,6 +4,7 @@ import { Children, useEffect, useMemo, useRef, useState } from "react";
 import { usePageFilters, type FilterClause } from "./PageFilters";
 import { RangeSlider } from "./RangeSlider";
 import { usePostResource } from "../hooks/usePostResource";
+import { Select } from "../components/shared/Select";
 import styles from "./Filters.module.css";
 
 // Filter widgets an editor can place on a page.
@@ -1199,17 +1200,16 @@ export function DimensionSwitch({
 	return (
 		<div className={styles.widget} style={{ minWidth: 200 }}>
 			<span className={styles.label}>{label ?? fallbackLabel}</span>
-			<select
-				className={styles.input}
+			<Select
 				value={active}
-				onChange={(e) => setSelected(e.target.value)}
-			>
-				{options.map((option) => (
-					<option key={option} value={option}>
-						{option}
-					</option>
-				))}
-			</select>
+				onChange={setSelected}
+				ariaLabel={label ?? fallbackLabel}
+				searchable={options.length > 12}
+				options={options.map((option) => ({
+					value: option,
+					label: option,
+				}))}
+			/>
 		</div>
 	);
 }

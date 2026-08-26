@@ -21,6 +21,10 @@ export const swrDefaults = {
 	fetcher,
 	revalidateOnFocus: false,
 	revalidateOnReconnect: true,
-	dedupingInterval: 5000,
+	// Two components asking the same question inside this window share one
+	// request. Reporting answers do not change between one visual mounting and
+	// the next, so five seconds was short enough that switching pages and back
+	// refetched everything.
+	dedupingInterval: 30000,
 	keepPreviousData: true,
 } as const;

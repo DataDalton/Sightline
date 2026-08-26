@@ -4,6 +4,7 @@ import Link from "next/link";
 import useSWR from "swr";
 import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { usePageTitle } from "../hooks/usePageTitle";
+import { useUser } from "../context/UserContext";
 import { SkeletonCards } from "../components/shared/Skeleton";
 import styles from "./CategoryView.module.css";
 
@@ -37,6 +38,7 @@ export default function CategoryView({
 		`/api/category/${encodeURIComponent(categoryId)}`,
 		{ fallbackData: initial },
 	);
+	const { user } = useUser();
 
 	// Shown only when the wait is long enough to notice. Most loads answer from
 	// cache, where a placeholder would appear and vanish inside two frames.
@@ -75,8 +77,16 @@ export default function CategoryView({
 				<SkeletonCards count={4} />
 			) : isLoading && !data ? null : data &&
 			  data.reports.length === 0 ? (
+				// An empty list means one of three unrelated things and they
+				// need different answers. The home page already distinguishes
+				// them; this said the same sentence to all three, so the same
+				// reader got a diagnosis on one screen and a shrug on the next.
 				<div className={styles.state}>
-					No reports in this category yet.
+					{user?.policy.degraded
+						? "Your group membership could not be resolved, so nothing here can be shown. This is usually a missing permission on the SQL warehouse rather than on the data. It retries on its own."
+						: user && !user.canQueryAsUser
+							? "No user token was forwarded to the app, so nothing here can be opened. Enable user authorization with the sql scope on the app."
+							: "No reports in this category yet, or none that you can open."}
 				</div>
 			) : (
 				<div className={styles.grid}>

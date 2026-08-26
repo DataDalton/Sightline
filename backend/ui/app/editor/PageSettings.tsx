@@ -2,6 +2,7 @@
 
 import type { SourceMeta } from "../visuals/types";
 import type { PageConfig } from "./ReportEditor";
+import { Select } from "../components/shared/Select";
 import styles from "./Editor.module.css";
 
 // Settings that belong to the page rather than to any visual on it.
@@ -21,21 +22,16 @@ interface PageSettingsProps {
 	source: SourceMeta | undefined;
 	config: PageConfig;
 	pageTitle: string;
-	// The line under the report title, shown on every page of the report.
-	reportDescription: string;
 	onChange: (next: PageConfig) => void;
 	onPageTitleChange: (next: string) => void;
-	onDescriptionChange: (next: string) => void;
 }
 
 export function PageSettings({
 	source,
 	config,
 	pageTitle,
-	reportDescription,
 	onChange,
 	onPageTitleChange,
-	onDescriptionChange,
 }: PageSettingsProps) {
 	// Date-like fields first, since a freshness stamp is almost always a date,
 	// but every dimension stays available: some sources carry the load stamp
@@ -76,55 +72,33 @@ export function PageSettings({
 			</label>
 
 			<label className={styles.settingsField}>
-				<span className={styles.settingsLabel}>Subtitle</span>
-				<textarea
-					className={styles.settingsInput}
-					rows={2}
-					placeholder="What this report is for"
-					value={reportDescription}
-					onChange={(e) => onDescriptionChange(e.target.value)}
-				/>
-				<span className={styles.settingsHint}>
-					The line under the report title. It belongs to the report,
-					so it shows on every page.
-				</span>
-			</label>
-
-			<label className={styles.settingsField}>
 				<span className={styles.settingsLabel}>
 					Data through column
 				</span>
-				<select
-					className={styles.settingsInput}
+				<Select
 					value={freshness.field ?? ""}
-					onChange={(e) =>
-						setFreshness({ field: e.target.value || null })
-					}
-				>
-					<option value="">
-						{source?.defaultTimeField
-							? `Source default (${source.defaultTimeField})`
-							: "None"}
-					</option>
-					{dateFields.length > 0 && (
-						<optgroup label="Dates">
-							{dateFields.map((f) => (
-								<option key={f.name} value={f.name}>
-									{f.name}
-								</option>
-							))}
-						</optgroup>
-					)}
-					{otherFields.length > 0 && (
-						<optgroup label="Other fields">
-							{otherFields.map((f) => (
-								<option key={f.name} value={f.name}>
-									{f.name}
-								</option>
-							))}
-						</optgroup>
-					)}
-				</select>
+					onChange={(v) => setFreshness({ field: v || null })}
+					ariaLabel="Freshness field"
+					searchable={dateFields.length + otherFields.length > 12}
+					options={[
+						{
+							value: "",
+							label: source?.defaultTimeField
+								? `Source default (${source.defaultTimeField})`
+								: "None",
+						},
+						...dateFields.map((f) => ({
+							value: f.name,
+							label: f.name,
+							group: "Dates",
+						})),
+						...otherFields.map((f) => ({
+							value: f.name,
+							label: f.name,
+							group: "Other fields",
+						})),
+					]}
+				/>
 				<span className={styles.settingsHint}>
 					The stamp shows the largest value this column takes,
 					ignoring the page filters.

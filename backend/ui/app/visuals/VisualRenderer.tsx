@@ -22,6 +22,7 @@ import {
 } from "./FilterWidgets";
 import { usePageFilters } from "./PageFilters";
 import { VisualFrame, VisualNotice } from "./VisualFrame";
+import { ErrorBoundary } from "../components/shared/ErrorBoundary";
 import { fieldMap, type SourceMeta } from "./types";
 import type { KpiGroup } from "../../lib/visuals/kpiGroups";
 import {
@@ -104,7 +105,28 @@ function displayTitle(visual: VisualSpec): string | null {
 	return slotTitles[visual.title] ?? visual.title;
 }
 
-export function VisualRenderer({
+// One visual's failure stays inside that visual.
+//
+// A page is a grid of independent definitions and any one of them can carry a
+// config the renderer does not survive: a field the source stopped defining, an
+// option of the wrong shape, a stale type. Without this the whole report goes
+// blank and nothing says which tile caused it.
+//
+// Keyed on the visual id, so editing a broken visual into a working one clears
+// the error without a reload.
+export function VisualRenderer(props: VisualRendererProps) {
+	return (
+		<ErrorBoundary
+			label={displayTitle(props.visual) ?? "This visual"}
+			resetKey={`${props.visual.visualId}:${props.visual.visualType}`}
+			inline
+		>
+			<VisualBody {...props} />
+		</ErrorBoundary>
+	);
+}
+
+function VisualBody({
 	visual,
 	sources,
 	reportId,

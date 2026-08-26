@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { sanitizeHtml, toPlainText } from "../../lib/visuals/sanitize";
 import { paletteTokens } from "../../lib/visuals/style";
 import { readThemeColors } from "./colors";
+import { Select } from "../components/shared/Select";
 import styles from "./TextPanel.module.css";
 
 // A text panel: a note, caveat or definition placed beside the numbers.
@@ -107,6 +108,14 @@ export function TextPanel({
 		if (!surface || !onChange) return;
 		onChange(sanitizeHtml(surface.innerHTML));
 	}, [onChange]);
+
+	// What the two toolbar dropdowns are showing. The native selects they
+	// replaced were uncontrolled with a default, so nothing tracked this and the
+	// control could disagree with the text under the cursor after an undo. It
+	// still does not follow the selection, which would need a selectionchange
+	// listener querying the document, but it now reflects what was last applied.
+	const [blockFormat, setBlockFormat] = useState("p");
+	const [fontSize, setFontSize] = useState("3");
 
 	const run = useCallback(
 		(command: string, value?: string) => {
@@ -285,32 +294,34 @@ export function TextPanel({
 				aria-label="Text formatting"
 			>
 				<div className={styles.group}>
-					<select
+					<Select
 						className={styles.select}
-						aria-label="Paragraph style"
-						onChange={(e) =>
-							run("formatBlock", `<${e.target.value}>`)
-						}
-						defaultValue="p"
-					>
-						{blockFormats.map((f) => (
-							<option key={f.value} value={f.value}>
-								{f.label}
-							</option>
-						))}
-					</select>
-					<select
+						bare
+						ariaLabel="Paragraph style"
+						value={blockFormat}
+						onChange={(v) => {
+							setBlockFormat(v);
+							run("formatBlock", `<${v}>`);
+						}}
+						options={blockFormats.map((f) => ({
+							value: f.value,
+							label: f.label,
+						}))}
+					/>
+					<Select
 						className={styles.select}
-						aria-label="Font size"
-						onChange={(e) => run("fontSize", e.target.value)}
-						defaultValue="3"
-					>
-						{fontSizes.map((f) => (
-							<option key={f.value} value={f.value}>
-								{f.label}
-							</option>
-						))}
-					</select>
+						bare
+						ariaLabel="Font size"
+						value={fontSize}
+						onChange={(v) => {
+							setFontSize(v);
+							run("fontSize", v);
+						}}
+						options={fontSizes.map((f) => ({
+							value: f.value,
+							label: f.label,
+						}))}
+					/>
 				</div>
 
 				<div className={styles.group}>

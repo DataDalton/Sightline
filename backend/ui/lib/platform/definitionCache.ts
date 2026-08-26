@@ -15,7 +15,7 @@
 // drops its own entry immediately, so an editor never sees their own change
 // lag. Another replica serves the previous definition for at most this long.
 
-const ttlMs = 30 * 1000;
+const ttlMs = 2 * 60 * 1000;
 
 interface Entry {
 	value: unknown;

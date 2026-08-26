@@ -12,8 +12,14 @@ import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { Select } from "../components/shared/Select";
 import { TabStrip } from "../components/shared/TabStrip";
+import { Toggle } from "../components/shared/Toggle";
+import { ErrorBoundary } from "../components/shared/ErrorBoundary";
 import { AccessSettings } from "./AccessSettings";
+import { AccessReviewPane } from "./AccessReviewPane";
+import { ActivityPane } from "./ActivityPane";
 import { AddSourceButton } from "./AddSource";
+import { EditSourceDialog } from "./EditSourceDialog";
+import { SyncFreshness } from "./SyncFreshness";
 import CategoriesPane from "./CategoriesPane";
 import PersonalPagesPane from "./PersonalPagesPane";
 import RolesPane from "./RolesPane";
@@ -92,12 +98,22 @@ interface PlatformResponse {
 	runtime: Record<string, unknown>;
 	replica: Record<string, unknown>;
 	settings: Record<string, unknown>;
+	lastSync?: {
+		runId: string;
+		startedBy: string;
+		startedOn: string;
+		finishedOn: string | null;
+		total: number;
+		completed: number;
+		error: string | null;
+	} | null;
 	sources: {
 		sourceKey: string;
 		title: string;
 		kind: string;
 		object: string;
 		hasRowFilter: boolean;
+		cacheTtlSeconds: number;
 		dimensions: number;
 		measures: number;
 	}[];
@@ -258,7 +274,18 @@ function Panes<T extends string>({
 					<h2 className={styles.paneTitle}>{current?.label}</h2>
 					<p className={styles.paneBlurb}>{current?.blurb}</p>
 				</header>
-				{children}
+				{/* Every pane reads a different endpoint, and any of them can
+				    answer with an error object where the pane expects a list.
+				    Reading a property off that throws during render, which
+				    without this takes the whole administration page including
+				    the nav that would let somebody open a pane that works.
+				    Keyed on the pane, so switching away and back retries. */}
+				<ErrorBoundary
+					label={current?.label ?? "This pane"}
+					resetKey={active}
+				>
+					{children}
+				</ErrorBoundary>
 			</div>
 		</div>
 	);
@@ -849,7 +876,13 @@ interface ConfigValues {
 	appLogoAdaptive: boolean;
 	warehouseId: string;
 	resultTtlSeconds: number;
+	resultMaxEntries: number;
+	resultMaxBytes: number;
+	staleWhileRevalidate: boolean;
+	refreshIntervalSeconds: number;
 	groupCacheTtlSeconds: number;
+	policyGraceSeconds: number;
+	telemetryEnabled: boolean;
 	editorGroups: string[];
 	adminGroups: string[];
 	accessModel: "catalog" | "grants";
@@ -909,6 +942,93 @@ function Field({
 			{children}
 			{hint && <span className={styles.fieldHint}>{hint}</span>}
 		</label>
+	);
+}
+
+// A named set of settings that govern one thing.
+//
+// The pane was a flat run of inputs in an auto-fitting grid, so how many sat on
+// a row depended on the window rather than on what they had to do with each
+// other, and finding the one you came for meant reading every label.
+function SettingGroup({
+	title,
+	blurb,
+	children,
+}: {
+	title: string;
+	blurb: string;
+	children: ReactNode;
+}) {
+	return (
+		<section className={styles.settingGroup}>
+			<div className={styles.settingGroupHead}>
+				<h3 className={styles.settingGroupTitle}>{title}</h3>
+				<p className={styles.settingGroupBlurb}>{blurb}</p>
+			</div>
+			{children}
+		</section>
+	);
+}
+
+// A number with the unit it is in.
+//
+// The unit sits inside the field rather than beside it, so a column of these
+// lines up on the input edge instead of on whatever the longest unit happened
+// to be.
+function NumberSetting({
+	label,
+	hint,
+	unit,
+	value,
+	onChange,
+}: {
+	label: string;
+	hint: string;
+	unit: string;
+	value: number;
+	onChange: (value: number) => void;
+}) {
+	return (
+		<label className={styles.numberSetting}>
+			<span className={styles.fieldLabel}>{label}</span>
+			<span className={styles.numberBox}>
+				<input
+					type="number"
+					className={styles.numberInput}
+					value={value}
+					onChange={(e) => onChange(Number(e.target.value))}
+				/>
+				<span className={styles.numberUnit}>{unit}</span>
+			</span>
+			<span className={styles.fieldHint}>{hint}</span>
+		</label>
+	);
+}
+
+// An on or off setting, laid out as a row rather than as a field.
+//
+// A switch in a column of number inputs reads as a field somebody forgot to
+// fill in. Given the full width with the control on the right, it reads as what
+// it is, and there is room for the sentence saying what turning it off costs.
+function SwitchSetting({
+	label,
+	hint,
+	checked,
+	onChange,
+}: {
+	label: string;
+	hint: string;
+	checked: boolean;
+	onChange: (checked: boolean) => void;
+}) {
+	return (
+		<div className={styles.switchSetting}>
+			<div className={styles.switchText}>
+				<span className={styles.fieldLabel}>{label}</span>
+				<span className={styles.fieldHint}>{hint}</span>
+			</div>
+			<Toggle checked={checked} onChange={onChange} />
+		</div>
 	);
 }
 
@@ -1229,49 +1349,102 @@ function ConfigurationSection() {
 
 				{group === "performance" && (
 					<>
-						<div className={styles.fieldRow}>
-							<Field
-								label="Result cache"
-								hint="Longer is cheaper and staler."
-							>
-								<div className={styles.withUnit}>
-									<input
-										type="number"
-										className={styles.input}
-										value={values.resultTtlSeconds}
-										onChange={(e) =>
-											set({
-												resultTtlSeconds: Number(
-													e.target.value,
-												),
-											})
-										}
-									/>
-									<span className={styles.unit}>seconds</span>
-								</div>
-							</Field>
+						{/* Grouped by what each number governs rather than laid out as
+						    one grid of inputs. Eight controls with no grouping meant
+						    reading every label to find the one you came for, and the
+						    two switches sat in a numeric layout looking like fields
+						    somebody had forgotten to fill in. */}
+						<SettingGroup
+							title="Query results"
+							blurb="How long an answer is reused, and how much is kept to reuse."
+						>
+							<div className={styles.settingGrid}>
+								<NumberSetting
+									label="Reuse an answer for"
+									hint="Longer is cheaper and staler."
+									unit="seconds"
+									value={values.resultTtlSeconds}
+									onChange={(v) =>
+										set({ resultTtlSeconds: v })
+									}
+								/>
+								<NumberSetting
+									label="Memory for results"
+									hint="The real bound. Results differ in size by orders of magnitude."
+									unit="MB"
+									value={values.resultMaxBytes}
+									onChange={(v) => set({ resultMaxBytes: v })}
+								/>
+								<NumberSetting
+									label="Most results kept"
+									hint="A ceiling on count, usually reached after the memory limit."
+									unit="entries"
+									value={values.resultMaxEntries}
+									onChange={(v) =>
+										set({ resultMaxEntries: v })
+									}
+								/>
+							</div>
 
-							<Field
-								label="Membership cache"
-								hint="Also how long a revoked grant keeps working."
-							>
-								<div className={styles.withUnit}>
-									<input
-										type="number"
-										className={styles.input}
-										value={values.groupCacheTtlSeconds}
-										onChange={(e) =>
-											set({
-												groupCacheTtlSeconds: Number(
-													e.target.value,
-												),
-											})
-										}
-									/>
-									<span className={styles.unit}>seconds</span>
-								</div>
-							</Field>
-						</div>
+							<SwitchSetting
+								label="Serve while refreshing"
+								hint="An expired answer goes out immediately and refreshes behind the request, so a cold cache costs one slow page rather than many."
+								checked={values.staleWhileRevalidate}
+								onChange={(v) =>
+									set({ staleWhileRevalidate: v })
+								}
+							/>
+						</SettingGroup>
+
+						<SettingGroup
+							title="Access"
+							blurb="How long a resolved membership is trusted. Both bound how long a withdrawn grant keeps working."
+						>
+							<div className={styles.settingGrid}>
+								<NumberSetting
+									label="Membership cache"
+									hint="How long a resolved membership and the access it confers are reused. Bounds how long a grant withdrawn here keeps working."
+									unit="seconds"
+									value={values.groupCacheTtlSeconds}
+									onChange={(v) =>
+										set({ groupCacheTtlSeconds: v })
+									}
+								/>
+								<NumberSetting
+									label="Grace when unavailable"
+									hint="How long a stored membership is still served while the lookup itself is failing."
+									unit="seconds"
+									value={values.policyGraceSeconds}
+									onChange={(v) =>
+										set({ policyGraceSeconds: v })
+									}
+								/>
+							</div>
+						</SettingGroup>
+
+						<SettingGroup
+							title="Background work"
+							blurb="What the app does on a timer rather than on a request."
+						>
+							<div className={styles.settingGrid}>
+								<NumberSetting
+									label="Source refresh"
+									hint="How often each replica rereads what is stored about every source. Registering or editing one applies immediately, so this is only for changes another replica made."
+									unit="seconds"
+									value={values.refreshIntervalSeconds}
+									onChange={(v) =>
+										set({ refreshIntervalSeconds: v })
+									}
+								/>
+							</div>
+
+							<SwitchSetting
+								label="Record usage"
+								hint="Turning this off empties the Usage tab and the export audit from that point on."
+								checked={values.telemetryEnabled}
+								onChange={(v) => set({ telemetryEnabled: v })}
+							/>
+						</SettingGroup>
 					</>
 				)}
 			</div>
@@ -1321,7 +1494,9 @@ function ConfigurationSection() {
 const accessViews = [
 	{ id: "roles", label: "Roles" },
 	{ id: "holders", label: "Who holds what" },
+	{ id: "review", label: "Review" },
 	{ id: "grants", label: "Direct grants" },
+	{ id: "activity", label: "Activity" },
 	{ id: "settings", label: "Settings" },
 ] as const;
 
@@ -1342,6 +1517,9 @@ function AccessPane() {
 	}>("/api/admin/roles");
 	const { data: grantData } =
 		useSWR<Partial<AccessResponse>>("/api/admin/access");
+	// The review needs a report list to choose from. The grants endpoint
+	// already assembles one for its own scope picker, and this reads the same
+	// key rather than asking for it a second time.
 
 	return (
 		<>
@@ -1361,11 +1539,13 @@ function AccessPane() {
 							label: "Who holds what",
 							count: roleData?.assignments?.length,
 						},
+						{ id: "review", label: "Review" },
 						{
 							id: "grants",
 							label: "Direct grants",
 							count: grantData?.grants?.length,
 						},
+						{ id: "activity", label: "Activity" },
 						{ id: "settings", label: "Settings" },
 					]}
 				/>
@@ -1373,7 +1553,11 @@ function AccessPane() {
 
 			{view === "roles" && <RolesPane show="roles" />}
 			{view === "holders" && <RolesPane show="assignments" />}
+			{view === "review" && (
+				<AccessReviewPane reports={grantData?.reports ?? []} />
+			)}
 			{view === "grants" && <AccessGrants />}
+			{view === "activity" && <ActivityPane />}
 			{view === "settings" && <AccessSettings />}
 		</>
 	);
@@ -1970,6 +2154,7 @@ function counterTiles(replica: Record<string, unknown>) {
 
 function PlatformSection({ data }: { data: PlatformResponse }) {
 	const [pane, setPane] = useState<PlatformPane>("health");
+	const [editingSource, setEditingSource] = useState<string | null>(null);
 
 	const loaded = (value: unknown) =>
 		typeof value === "number" && value > 0
@@ -1986,6 +2171,26 @@ function PlatformSection({ data }: { data: PlatformResponse }) {
 		>
 			{pane === "health" && (
 				<>
+					{/* Every counter below describes whichever instance
+					    answered this request, so two refreshes reporting two
+					    different ids is why the numbers moved. Without this a
+					    one-instance problem and an everything problem look
+					    identical. */}
+					<div className={styles.notice}>
+						<div>
+							<div className={styles.noticeTitle}>
+								Instance{" "}
+								{String(data.replica.instanceId ?? "?")}
+							</div>
+							<p className={styles.noticeBody}>
+								These counters are what this one process is
+								holding, not a total across the deployment.
+								Refreshing may land on a different instance and
+								report different numbers.
+							</p>
+						</div>
+					</div>
+
 					<div className={styles.tiles}>
 						{counterTiles(data.replica).map((tile) => (
 							<Tile
@@ -2014,6 +2219,17 @@ function PlatformSection({ data }: { data: PlatformResponse }) {
 				</>
 			)}
 
+			{editingSource && (
+				<EditSourceDialog
+					sourceKey={editingSource}
+					onClose={() => setEditingSource(null)}
+					onSaved={() => {
+						setEditingSource(null);
+						window.location.reload();
+					}}
+				/>
+			)}
+
 			{pane === "sources" && (
 				<>
 					<div className={styles.actionBar}>
@@ -2023,6 +2239,8 @@ function PlatformSection({ data }: { data: PlatformResponse }) {
 						/>
 						<SyncSources />
 					</div>
+
+					<SyncFreshness run={data.lastSync ?? null} />
 					<div className={styles.tableWrap}>
 						<table className={styles.table}>
 							<thead>
@@ -2031,7 +2249,9 @@ function PlatformSection({ data }: { data: PlatformResponse }) {
 									<th>Kind</th>
 									<th className={styles.numeric}>Fields</th>
 									<th>Filtered</th>
+									<th>Reuse for</th>
 									<th>Object</th>
+									<th />
 								</tr>
 							</thead>
 							<tbody>
@@ -2049,8 +2269,26 @@ function PlatformSection({ data }: { data: PlatformResponse }) {
 											{s.dimensions} + {s.measures}
 										</td>
 										<td>{s.hasRowFilter ? "yes" : "no"}</td>
+										<td>
+											{s.cacheTtlSeconds > 0
+												? `${s.cacheTtlSeconds}s`
+												: "platform default"}
+										</td>
 										<td className={styles.mono}>
 											{s.object}
+										</td>
+										<td>
+											<button
+												type="button"
+												className={styles.linkButton}
+												onClick={() =>
+													setEditingSource(
+														s.sourceKey,
+													)
+												}
+											>
+												Edit
+											</button>
 										</td>
 									</tr>
 								))}

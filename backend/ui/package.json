@@ -5,11 +5,10 @@
 	"scripts": {
 		"dev": "next dev -p 3000",
 		"build": "next build",
+		"//lint": "No lint script. next lint was removed in Next 16, and every ESLint path for a TypeScript project goes through typescript-eslint, which refuses to load against TypeScript 7 (typescript-eslint#10940). Until that lands, typecheck is the static check: it catches what the type system can see, and the tests cover the rest.",
 		"start": "next start",
-		"lint": "next lint",
 		"test": "tsc -p tsconfig.test.json && node --test ../../.test-build/**/*.test.js",
-		"typecheck": "tsc --noEmit -p tsconfig.json",
-		"build:scripts": "tsc lib/visuals/svgSanitize.ts lib/visuals/catalog.ts --ignoreConfig --outDir .script-build --module esnext --target es2022 --skipLibCheck && node scripts/emit.mjs"
+		"typecheck": "tsc --noEmit -p tsconfig.json"
 	},
 	"dependencies": {
 		"@databricks/sdk-experimental": "^0.17.0",

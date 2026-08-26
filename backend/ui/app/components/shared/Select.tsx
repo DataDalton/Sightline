@@ -45,6 +45,7 @@ export function Select({
 	id,
 	ariaLabel,
 	className,
+	bare,
 }: {
 	options: SelectOption[];
 	value: string;
@@ -57,6 +58,12 @@ export function Select({
 	id?: string;
 	ariaLabel?: string;
 	className?: string;
+	// Drops the field's own border and background.
+	//
+	// For a toolbar, where the strip is already a bordered surface in the same
+	// colour: a bordered field inside it reads as a box inside a box rather
+	// than as a control. The container supplies the edge instead.
+	bare?: boolean;
 }) {
 	const [open, setOpen] = useState(false);
 	const [active, setActive] = useState(-1);
@@ -244,7 +251,9 @@ export function Select({
 			<button
 				type="button"
 				id={id}
-				className={`${styles.trigger} ${open ? styles.triggerOpen : ""}`}
+				className={`${styles.trigger} ${bare ? styles.triggerBare : ""} ${
+					open ? styles.triggerOpen : ""
+				}`}
 				onClick={() => (open ? close() : setOpen(true))}
 				disabled={disabled}
 				role="combobox"
@@ -288,7 +297,13 @@ export function Select({
 						ref={listRef}
 						style={{
 							left: box.left,
-							width: box.width,
+							// The field's width is a floor, not a fixed size.
+							// Pinning the list to it meant a select in a narrow
+							// slot, such as the editor toolbar, opened a list too
+							// narrow to read its own options in, and every label
+							// arrived truncated.
+							minWidth: box.width,
+							maxWidth: `calc(100vw - ${box.left}px - 12px)`,
 							...(box.top !== undefined
 								? { top: box.top }
 								: { bottom: box.bottom }),

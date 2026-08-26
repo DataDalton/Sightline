@@ -1,0 +1,42 @@
+/* A mark beside the report's name, not a button in a toolbar.
+
+   Borderless: it sits next to a heading rather than among the view controls, so
+   a bordered box would read as another tool and compete with the title it is
+   marking. The hover state is what says it can be pressed. */
+.button {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	flex-shrink: 0;
+	border: none;
+	border-radius: var(--radius-md);
+	background: none;
+	color: var(--text-muted);
+	cursor: pointer;
+	transition:
+		color var(--transition-fast),
+		background var(--transition-fast);
+}
+
+.button:hover:not(:disabled) {
+	background: var(--state-hover);
+	color: var(--text-secondary);
+}
+
+.button:disabled {
+	cursor: not-allowed;
+}
+
+/* Gold once it is on. The palette is deliberately short of gold surfaces, so
+   the one filled star on a page reads as the reader's own mark rather than as
+   another piece of chrome. */
+.on {
+	color: var(--brand);
+}
+
+.on:hover:not(:disabled) {
+	background: var(--state-hover);
+	color: var(--brand-strong);
+}

@@ -1,6 +1,7 @@
 import type { Identity } from "../auth/identity";
 import { resolvePolicyClass, type PolicyClass } from "../auth/policy";
 import { warmSourceAccess } from "../auth/sourceAccess";
+import { warmForReader } from "../query/warm";
 import { warmUserSession } from "../data/userSession";
 import { getSource } from "../semantic/registry";
 import type { SemanticField } from "../semantic/types";
@@ -15,6 +16,7 @@ import {
 } from "./access";
 import { cachedDefinition } from "./definitionCache";
 import { sql } from "../data/lakebase";
+import { listFavourites } from "./search";
 import { getCategory, getReport } from "./reports";
 import { bootstrapReadyAt, ensureReadyOrDegrade } from "./bootstrap";
 import { appIdentity, isDatabricksApp } from "../runtime";
@@ -141,6 +143,11 @@ export interface NavigationPayload {
 		icon: string | null;
 		reportCount: number;
 	}[];
+	// Reports this reader marked, resolved to something openable. Carried with
+	// navigation rather than fetched separately because it is drawn in the same
+	// rail, and the seed that puts categories in the document should put these
+	// there too.
+	favourites: { reportId: string; slug: string; title: string }[];
 	degraded: boolean;
 }
 
@@ -154,6 +161,8 @@ interface CategoryRow {
 interface ReportRow {
 	report_id: string;
 	category_id: string | null;
+	slug: string;
+	title: string;
 }
 
 export async function navigationPayload(
@@ -180,7 +189,7 @@ export async function navigationPayload(
 					 ORDER BY sort_order, name`,
 				),
 				sql<ReportRow>(
-					`SELECT report_id, category_id
+					`SELECT report_id::text AS report_id, category_id, slug, title
 					 FROM reports
 					 WHERE is_active = TRUE AND is_personal = FALSE`,
 				),
@@ -209,6 +218,38 @@ export async function navigationPayload(
 		);
 	}
 
+	// Marked reports, filtered through the same resolver as everything else.
+	// A grant can be withdrawn after somebody marked a report, and the mark is
+	// not a grant, so this is checked on every read rather than at the point it
+	// was saved.
+	const marked = await listFavourites(context.email).catch(
+		() => [] as string[],
+	);
+	const byId = new Map(reportRows.map((row) => [row.report_id, row]));
+	const favourites: NavigationPayload["favourites"] = [];
+	for (const reportId of marked) {
+		const report = byId.get(reportId);
+		if (!report) continue;
+		const allowed = resolveReportAccess(
+			context.grants,
+			{
+				reportId: report.report_id,
+				categoryId: report.category_id,
+				isPersonal: false,
+				ownerEmail: null,
+			},
+			context.email,
+			"view",
+			context.baseline,
+		).allowed;
+		if (!allowed) continue;
+		favourites.push({
+			reportId: report.report_id,
+			slug: report.slug,
+			title: report.title,
+		});
+	}
+
 	return {
 		categories: rows
 			.filter(
@@ -226,6 +267,7 @@ export async function navigationPayload(
 				icon: row.icon,
 				reportCount: visiblePerCategory.get(row.category_id) ?? 0,
 			})),
+		favourites,
 		degraded: policy.degraded,
 	};
 }
@@ -345,6 +387,22 @@ export async function shellPayload(identity: Identity): Promise<{
 		userPayload(identity, policy),
 		navigationPayload(identity, policy),
 	]);
+
+	// Warms the reports this reader is most likely to open next, which warming
+	// did not previously reach: it ran only for the report somebody had already
+	// asked for, so the second report of the morning was as cold as the first.
+	//
+	// Their marked reports first, then what they opened recently. Started and
+	// not awaited, guarded inside so it runs once per policy class rather than
+	// once per page load, and the answers it leaves serve everybody who sees
+	// the same rows rather than only the reader who paid for them.
+	warmForReader(
+		identity,
+		navigation.favourites.map((f) => ({
+			reportId: f.reportId,
+			slug: f.slug,
+		})),
+	);
 
 	return { policy, user, navigation, info: infoPayload() };
 }

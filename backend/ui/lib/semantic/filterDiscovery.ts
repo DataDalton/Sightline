@@ -41,7 +41,11 @@ export interface DiscoveredGroups extends FilterGroups {
 // Cached because it walks the catalogue, which is slow and changes rarely.
 let cached: DiscoveredGroups | null = null;
 let cachedAt = 0;
-const ttlMs = 15 * 60 * 1000;
+// The walk is expensive and row filters are edited about as often as the
+// tables they sit on, which is to say hardly ever. Fifteen minutes meant
+// repeating an expensive catalogue read four times an hour to find the same
+// answer.
+const ttlMs = 60 * 60 * 1000;
 
 // The walk in progress, shared by everyone who asks while it runs.
 let walking: Promise<DiscoveredGroups> | null = null;

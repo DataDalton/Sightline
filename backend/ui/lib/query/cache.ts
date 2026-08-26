@@ -292,7 +292,16 @@ export async function cacheSet(
 	columns: string[],
 ): Promise<CacheEntry> {
 	const now = Date.now();
-	const ttlSeconds = source.cacheTtlSeconds || settings().resultTtlSeconds;
+	// A source may set its own, and zero means it does not.
+	//
+	// Every source row carried 300 by default and any positive number wins
+	// here, so the platform-wide setting was unreachable: changing it did
+	// nothing to any source, because every source had already answered the
+	// question with a value nobody chose.
+	const ttlSeconds =
+		source.cacheTtlSeconds > 0
+			? source.cacheTtlSeconds
+			: settings().resultTtlSeconds;
 	const entry: CacheEntry = {
 		rows,
 		columns,

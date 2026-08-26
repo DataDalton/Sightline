@@ -24,6 +24,31 @@
 	border-color: var(--border-strong);
 }
 
+/* Inside a container that already draws the edge.
+
+   Written as two classes so it beats .trigger on specificity rather than on
+   source order, and with the border shorthand rather than border-color, so
+   there is nothing of the field's own frame left to show through. */
+.trigger.triggerBare {
+	padding: var(--space-1) var(--space-2);
+	border: none;
+	background: none;
+	box-shadow: none;
+}
+
+.trigger.triggerBare:hover:not(:disabled) {
+	border: none;
+	background: var(--state-hover);
+}
+
+/* The group around it owns the focus ring, so the field does not draw a second
+   one inside the first. */
+.trigger.triggerBare:focus-visible,
+.trigger.triggerBare.triggerOpen {
+	border: none;
+	box-shadow: none;
+}
+
 .triggerOpen,
 .trigger:focus-visible {
 	outline: none;
@@ -76,7 +101,10 @@
 	box-shadow: var(--shadow-lg);
 }
 
+/* Options set the list's width when they are wider than the field. Without
+   this every label in a narrow field opened truncated. */
 .option {
+	white-space: nowrap;
 	display: flex;
 	align-items: center;
 	gap: var(--space-2);

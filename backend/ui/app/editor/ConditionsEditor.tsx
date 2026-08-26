@@ -13,6 +13,7 @@ import {
 	type VisualStyle,
 } from "../../lib/visuals/style";
 import { mix, readThemeColors } from "../visuals/colors";
+import { Select } from "../components/shared/Select";
 import styles from "./Editor.module.css";
 
 // Authoring conditional formatting.
@@ -55,7 +56,11 @@ function rampGradient(
 ): string {
 	const strength = asDataBar ? 0.25 : 0.7;
 	const base = colors.surface;
-	const high = mix(base, colors.resolve(ramp.high, colors.positive), strength);
+	const high = mix(
+		base,
+		colors.resolve(ramp.high, colors.positive),
+		strength,
+	);
 
 	if (ramp.kind === "sequential") {
 		return `linear-gradient(90deg, ${base}, ${high})`;
@@ -89,10 +94,7 @@ export function ConditionsEditor({
 	// what the table will look like, and reading a custom property per swatch
 	// would be a layout read per render.
 	const themeColors = useMemo(
-		() =>
-			typeof window === "undefined"
-				? null
-				: readThemeColors(),
+		() => (typeof window === "undefined" ? null : readThemeColors()),
 		[],
 	);
 
@@ -158,7 +160,9 @@ export function ConditionsEditor({
 	if (availableFields.length === 0) {
 		return (
 			<div className={styles.section}>
-				<div className={styles.sectionTitle}>Conditional formatting</div>
+				<div className={styles.sectionTitle}>
+					Conditional formatting
+				</div>
 				<p className={styles.guidance}>
 					Add a measure on the Data tab first. A rule needs a value to
 					test.
@@ -170,19 +174,20 @@ export function ConditionsEditor({
 	return (
 		<>
 			<div className={styles.section}>
-				<div className={styles.sectionTitle}>Conditional formatting</div>
+				<div className={styles.sectionTitle}>
+					Conditional formatting
+				</div>
 				<p className={styles.guidance}>
 					Rules are applied in order and later ones win, so put the
 					general rule first and the specific one after it.
 				</p>
 
 				{rules.map((rule, index) => (
-					<div
-						key={index}
-						className={styles.ruleCard}
-					>
+					<div key={index} className={styles.ruleCard}>
 						<div className={styles.ruleHeader}>
-							<span className={styles.ruleNumber}>{index + 1}</span>
+							<span className={styles.ruleNumber}>
+								{index + 1}
+							</span>
 							<button
 								type="button"
 								className={styles.chipRemove}
@@ -214,41 +219,41 @@ export function ConditionsEditor({
 
 						<div className={styles.field}>
 							<label className={styles.fieldLabel}>When</label>
-							<select
-								className={styles.select}
+							<Select
 								value={rule.field}
-								onChange={(e) => updateRule(index, { field: e.target.value })}
-							>
-								{availableFields.map((f) => (
-									<option key={f} value={f}>
-										{f}
-									</option>
-								))}
-							</select>
+								onChange={(v) =>
+									updateRule(index, { field: v })
+								}
+								ariaLabel="Field"
+								searchable={availableFields.length > 12}
+								options={availableFields.map((f) => ({
+									value: f,
+									label: f,
+								}))}
+							/>
 						</div>
 
 						<div className={styles.row}>
-							<select
-								className={styles.select}
+							<Select
 								value={rule.operator}
-								onChange={(e) =>
+								onChange={(v) =>
 									updateRule(index, {
-										operator: e.target.value as ConditionOperator,
+										operator: v as ConditionOperator,
 									})
 								}
-							>
-								{Object.entries(operatorLabels).map(([value, label]) => (
-									<option key={value} value={value}>
-										{label}
-									</option>
-								))}
-							</select>
+								ariaLabel="Operator"
+								options={Object.entries(operatorLabels).map(
+									([value, label]) => ({ value, label }),
+								)}
+							/>
 							<input
 								type="number"
 								className={styles.input}
 								value={rule.value ?? 0}
 								onChange={(e) =>
-									updateRule(index, { value: Number(e.target.value) })
+									updateRule(index, {
+										value: Number(e.target.value),
+									})
 								}
 								aria-label="Threshold"
 							/>
@@ -258,7 +263,9 @@ export function ConditionsEditor({
 									className={styles.input}
 									value={rule.value2 ?? 0}
 									onChange={(e) =>
-										updateRule(index, { value2: Number(e.target.value) })
+										updateRule(index, {
+											value2: Number(e.target.value),
+										})
 									}
 									aria-label="Upper bound"
 								/>
@@ -266,16 +273,27 @@ export function ConditionsEditor({
 						</div>
 
 						<div className={styles.field} style={{ marginTop: 8 }}>
-							<label className={styles.fieldLabel}>Text colour</label>
+							<label className={styles.fieldLabel}>
+								Text colour
+							</label>
 							<div className={styles.swatchGrid}>
 								<button
 									type="button"
 									className={`${styles.swatch} ${
-										!rule.textColor ? styles.swatchActive : ""
+										!rule.textColor
+											? styles.swatchActive
+											: ""
 									}`}
-									style={{ background: "transparent", borderStyle: "dashed" }}
+									style={{
+										background: "transparent",
+										borderStyle: "dashed",
+									}}
 									title="No colour"
-									onClick={() => updateRule(index, { textColor: undefined })}
+									onClick={() =>
+										updateRule(index, {
+											textColor: undefined,
+										})
+									}
 								/>
 								{swatches.map((s) => {
 									const active =
@@ -291,7 +309,9 @@ export function ConditionsEditor({
 											title={s.token}
 											onClick={() =>
 												updateRule(index, {
-													textColor: { token: s.token } as ColorSpec,
+													textColor: {
+														token: s.token,
+													} as ColorSpec,
 												})
 											}
 										/>
@@ -301,16 +321,27 @@ export function ConditionsEditor({
 						</div>
 
 						<div className={styles.field}>
-							<label className={styles.fieldLabel}>Background</label>
+							<label className={styles.fieldLabel}>
+								Background
+							</label>
 							<div className={styles.swatchGrid}>
 								<button
 									type="button"
 									className={`${styles.swatch} ${
-										!rule.background ? styles.swatchActive : ""
+										!rule.background
+											? styles.swatchActive
+											: ""
 									}`}
-									style={{ background: "transparent", borderStyle: "dashed" }}
+									style={{
+										background: "transparent",
+										borderStyle: "dashed",
+									}}
 									title="No background"
-									onClick={() => updateRule(index, { background: undefined })}
+									onClick={() =>
+										updateRule(index, {
+											background: undefined,
+										})
+									}
 								/>
 								{swatches.map((s) => {
 									const active =
@@ -326,7 +357,9 @@ export function ConditionsEditor({
 											title={s.token}
 											onClick={() =>
 												updateRule(index, {
-													background: { token: s.token } as ColorSpec,
+													background: {
+														token: s.token,
+													} as ColorSpec,
 												})
 											}
 										/>
@@ -356,7 +389,9 @@ export function ConditionsEditor({
 										key={m}
 										type="button"
 										className={styles.markerButton}
-										onClick={() => updateRule(index, { marker: m })}
+										onClick={() =>
+											updateRule(index, { marker: m })
+										}
 										aria-label={`Use ${m}`}
 									>
 										{m}
@@ -366,25 +401,36 @@ export function ConditionsEditor({
 							{/* Not a nag: colour alone disappears in greyscale and
 							    for a reader with colour vision deficiency, and
 							    this is the one place to catch it. */}
-							{(rule.textColor || rule.background) && !rule.marker && (
-								<p className={styles.guidance} style={{ marginTop: 6 }}>
-									This rule uses colour only. A marker keeps it
-									readable in print and for readers who cannot
-									distinguish the hue.
-								</p>
-							)}
+							{(rule.textColor || rule.background) &&
+								!rule.marker && (
+									<p
+										className={styles.guidance}
+										style={{ marginTop: 6 }}
+									>
+										This rule uses colour only. A marker
+										keeps it readable in print and for
+										readers who cannot distinguish the hue.
+									</p>
+								)}
 						</div>
 
 						<button
 							type="button"
 							className={styles.checkRow}
-							onClick={() => updateRule(index, { bold: !rule.bold })}
+							onClick={() =>
+								updateRule(index, { bold: !rule.bold })
+							}
 						>
 							<span
 								className={`${styles.checkbox} ${rule.bold ? styles.checked : ""}`}
 								aria-hidden="true"
 							>
-								<svg width="9" height="9" viewBox="0 0 16 16" fill="none">
+								<svg
+									width="9"
+									height="9"
+									viewBox="0 0 16 16"
+									fill="none"
+								>
 									<path
 										d="M3 8.5l3.5 3.5L13 5"
 										stroke="currentColor"
@@ -414,21 +460,25 @@ export function ConditionsEditor({
 					<div className={styles.sectionTitle}>Colour scale</div>
 					<p className={styles.guidance}>
 						A gradient across the column range, for finding extremes
-						rather than testing a threshold. A data bar compares more
-						precisely and reads without colour at all.
+						rather than testing a threshold. A data bar compares
+						more precisely and reads without colour at all.
 					</p>
 
 					{scales.map((scale, index) => (
 						<div key={index} className={styles.ruleCard}>
 							<div className={styles.ruleHeader}>
-								<span className={styles.ruleNumber}>{scale.field}</span>
+								<span className={styles.ruleNumber}>
+									{scale.field}
+								</span>
 								<div className={styles.spacer} />
 								<button
 									type="button"
 									className={styles.chipRemove}
 									onClick={() =>
 										onChange({
-											colorScales: scales.filter((_, i) => i !== index),
+											colorScales: scales.filter(
+												(_, i) => i !== index,
+											),
 										})
 									}
 									aria-label="Remove scale"
@@ -438,119 +488,164 @@ export function ConditionsEditor({
 							</div>
 
 							<div className={styles.field}>
-								<label className={styles.fieldLabel}>Column</label>
-								<select
-									className={styles.select}
+								<label className={styles.fieldLabel}>
+									Column
+								</label>
+								<Select
 									value={scale.field}
-									onChange={(e) =>
-										updateScale(index, { field: e.target.value })
+									onChange={(v) =>
+										updateScale(index, { field: v })
 									}
-								>
-									{availableFields.map((f) => (
-										<option key={f} value={f}>
-											{f}
-										</option>
-									))}
-								</select>
+									ariaLabel="Field"
+									searchable={availableFields.length > 12}
+									options={availableFields.map((f) => ({
+										value: f,
+										label: f,
+									}))}
+								/>
 							</div>
 
 							{themeColors &&
-								(["sequential", "diverging"] as const).map((kind) => {
-								const ramps = scaleRamps.filter((r) => r.kind === kind);
-								const active = rampFor(scale);
-								return (
-									<div key={kind} className={styles.field}>
-										<label className={styles.fieldLabel}>
-											{kind === "sequential"
-												? "Low to high"
-												: "Diverging from a midpoint"}
-										</label>
-										<div className={styles.rampGrid}>
-											{ramps.map((ramp) => (
-												<button
-													key={ramp.id}
-													type="button"
-													className={`${styles.ramp} ${
-														active?.id === ramp.id ? styles.rampActive : ""
-													}`}
-													title={ramp.note ?? ramp.label}
-													aria-pressed={active?.id === ramp.id}
-													onClick={() =>
-														updateScale(index, {
-															kind: ramp.kind,
-															low: ramp.low,
-															high: ramp.high,
-															// A diverging ramp needs a
-															// pivot; zero is what makes
-															// profit and loss read right.
-															midpoint:
-																ramp.kind === "diverging"
-																	? (scale.midpoint ?? 0)
-																	: undefined,
-														})
+								(["sequential", "diverging"] as const).map(
+									(kind) => {
+										const ramps = scaleRamps.filter(
+											(r) => r.kind === kind,
+										);
+										const active = rampFor(scale);
+										return (
+											<div
+												key={kind}
+												className={styles.field}
+											>
+												<label
+													className={
+														styles.fieldLabel
 													}
 												>
-													<span
-														className={styles.rampSwatch}
-														style={{
-															background: rampGradient(
-																ramp,
-																themeColors,
-																Boolean(scale.asDataBar),
-															),
-														}}
-														aria-hidden="true"
-													/>
-													<span className={styles.rampLabel}>
-														{ramp.label}
-													</span>
-												</button>
-											))}
-										</div>
-									</div>
-								);
-								})}
+													{kind === "sequential"
+														? "Low to high"
+														: "Diverging from a midpoint"}
+												</label>
+												<div
+													className={styles.rampGrid}
+												>
+													{ramps.map((ramp) => (
+														<button
+															key={ramp.id}
+															type="button"
+															className={`${styles.ramp} ${
+																active?.id ===
+																ramp.id
+																	? styles.rampActive
+																	: ""
+															}`}
+															title={
+																ramp.note ??
+																ramp.label
+															}
+															aria-pressed={
+																active?.id ===
+																ramp.id
+															}
+															onClick={() =>
+																updateScale(
+																	index,
+																	{
+																		kind: ramp.kind,
+																		low: ramp.low,
+																		high: ramp.high,
+																		// A diverging ramp needs a
+																		// pivot; zero is what makes
+																		// profit and loss read right.
+																		midpoint:
+																			ramp.kind ===
+																			"diverging"
+																				? (scale.midpoint ??
+																					0)
+																				: undefined,
+																	},
+																)
+															}
+														>
+															<span
+																className={
+																	styles.rampSwatch
+																}
+																style={{
+																	background:
+																		rampGradient(
+																			ramp,
+																			themeColors,
+																			Boolean(
+																				scale.asDataBar,
+																			),
+																		),
+																}}
+																aria-hidden="true"
+															/>
+															<span
+																className={
+																	styles.rampLabel
+																}
+															>
+																{ramp.label}
+															</span>
+														</button>
+													))}
+												</div>
+											</div>
+										);
+									},
+								)}
 
 							{themeColors && rampFor(scale)?.note && (
-								<p className={styles.guidance}>{rampFor(scale)?.note}</p>
+								<p className={styles.guidance}>
+									{rampFor(scale)?.note}
+								</p>
 							)}
 
 							{/* What the column will actually look like, at the
 							    width it will be read at. */}
 							{themeColors && (
-							<div className={styles.field}>
-								<label className={styles.fieldLabel}>Preview</label>
-								<div
-									className={styles.rampPreview}
-									style={{
-										background: rampGradient(
-											scale,
-											themeColors,
-											Boolean(scale.asDataBar),
-										),
-									}}
-									aria-hidden="true"
-								/>
-								<div className={styles.rampEnds}>
-									<span>Lowest</span>
-									{scale.kind === "diverging" && (
-										<span>{scale.midpoint ?? 0}</span>
-									)}
-									<span>Highest</span>
+								<div className={styles.field}>
+									<label className={styles.fieldLabel}>
+										Preview
+									</label>
+									<div
+										className={styles.rampPreview}
+										style={{
+											background: rampGradient(
+												scale,
+												themeColors,
+												Boolean(scale.asDataBar),
+											),
+										}}
+										aria-hidden="true"
+									/>
+									<div className={styles.rampEnds}>
+										<span>Lowest</span>
+										{scale.kind === "diverging" && (
+											<span>{scale.midpoint ?? 0}</span>
+										)}
+										<span>Highest</span>
+									</div>
 								</div>
-							</div>
 							)}
 
 							{scale.kind === "diverging" && (
 								<div className={styles.field}>
-									<label className={styles.fieldLabel}>Midpoint</label>
+									<label className={styles.fieldLabel}>
+										Midpoint
+									</label>
 									<input
 										type="number"
 										className={styles.input}
 										value={scale.midpoint ?? 0}
 										onChange={(e) =>
 											updateScale(index, {
-												midpoint: Number(e.target.value),
+												midpoint: Number(
+													e.target.value,
+												),
 											})
 										}
 									/>
@@ -561,14 +656,21 @@ export function ConditionsEditor({
 								type="button"
 								className={styles.checkRow}
 								onClick={() =>
-									updateScale(index, { asDataBar: !scale.asDataBar })
+									updateScale(index, {
+										asDataBar: !scale.asDataBar,
+									})
 								}
 							>
 								<span
 									className={`${styles.checkbox} ${scale.asDataBar ? styles.checked : ""}`}
 									aria-hidden="true"
 								>
-									<svg width="9" height="9" viewBox="0 0 16 16" fill="none">
+									<svg
+										width="9"
+										height="9"
+										viewBox="0 0 16 16"
+										fill="none"
+									>
 										<path
 											d="M3 8.5l3.5 3.5L13 5"
 											stroke="currentColor"

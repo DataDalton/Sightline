@@ -212,6 +212,142 @@ export async function reorderCategories(
 	invalidateDefinitions("navigation:");
 }
 
+// --- Placing a report --------------------------------------------------------
+
+// Where a report lives, and what it is called in a URL.
+//
+// The editor could already change a title and a description. It could not
+// change which category a report sits in or what its slug is, so a report filed
+// in the wrong place had to be deleted and rebuilt, which loses the URL, the
+// saved views built on it and its whole edit history. The only code that set
+// category_id after creation was the one that promotes a personal page.
+
+export interface PlacementInput {
+	categoryId?: string | null;
+	slug?: string;
+}
+
+export async function updateReportPlacement(
+	identity: Identity,
+	reportId: string,
+	input: PlacementInput,
+): Promise<{ slug: string }> {
+	const rows = await sql<{
+		slug: string;
+		category_id: string | null;
+		is_personal: boolean;
+	}>(
+		`SELECT slug, category_id, is_personal FROM reports
+		 WHERE report_id = $1 AND is_active = TRUE`,
+		[reportId],
+	);
+	const current = rows[0];
+	if (!current) throw new AuthoringError("That report does not exist.");
+	if (current.is_personal) {
+		throw new AuthoringError(
+			"A personal page is placed by publishing it, not by moving it.",
+		);
+	}
+
+	let slug = current.slug;
+	if (input.slug !== undefined) {
+		const wanted = slugify(input.slug);
+		if (!wanted) throw new AuthoringError("That is not a usable address.");
+		if (wanted !== current.slug) {
+			// Globally unique, so a collision is a real conflict rather than
+			// something to silently suffix. Told about rather than worked
+			// around: somebody choosing an address meant that one.
+			const clash = await sql<{ report_id: string }>(
+				`SELECT report_id::text AS report_id FROM reports
+				 WHERE slug = $1 AND report_id <> $2`,
+				[wanted, reportId],
+			);
+			if (clash.length > 0) {
+				throw new AuthoringError(
+					`Another report already uses the address "${wanted}".`,
+				);
+			}
+			slug = wanted;
+		}
+	}
+
+	if (input.categoryId !== undefined && input.categoryId !== null) {
+		const category = await sql<{ category_id: string }>(
+			`SELECT category_id FROM categories
+			 WHERE category_id = $1 AND is_active = TRUE`,
+			[input.categoryId],
+		);
+		if (category.length === 0) {
+			throw new AuthoringError("That category does not exist.");
+		}
+	}
+
+	// Placed at the end of wherever it lands, rather than keeping a position
+	// that meant something in the category it left.
+	const moving =
+		input.categoryId !== undefined &&
+		input.categoryId !== current.category_id;
+
+	await sql(
+		`UPDATE reports SET
+		   category_id = COALESCE($2, category_id),
+		   slug = $3,
+		   sort_order = CASE WHEN $4 THEN (
+		     SELECT COALESCE(MAX(sort_order), -1) + 1 FROM reports
+		     WHERE category_id = COALESCE($2, category_id) AND is_active = TRUE
+		   ) ELSE sort_order END,
+		   modified_by = $5,
+		   modified_on = now()
+		 WHERE report_id = $1`,
+		[reportId, input.categoryId ?? null, slug, moving, identity.email],
+	);
+
+	await insertLog({
+		recordType: "report",
+		recordId: reportId,
+		action: "move_report",
+		changedBy: identity.email,
+		oldValue: `${current.category_id ?? "none"}/${current.slug}`,
+		newValue: `${input.categoryId ?? current.category_id ?? "none"}/${slug}`,
+	});
+
+	invalidateDefinitions("navigation:");
+	invalidateDefinitions("report:");
+	invalidateDefinitions("search:");
+	return { slug };
+}
+
+// The order reports appear in inside one category.
+//
+// Categories have carried an order since the beginning and reports never did,
+// so a category listed alphabetically and the report a team opens every morning
+// sat wherever its title happened to fall.
+export async function reorderReports(
+	identity: Identity,
+	categoryId: string,
+	reportIds: string[],
+): Promise<void> {
+	await transaction(async (client) => {
+		for (let i = 0; i < reportIds.length; i++) {
+			await client.query(
+				`UPDATE reports SET sort_order = $2
+				 WHERE report_id = $1 AND category_id = $3`,
+				[reportIds[i], i, categoryId],
+			);
+		}
+	});
+	await insertLog({
+		recordType: "report",
+		recordId: "*",
+		action: "reorder_reports",
+		changedBy: identity.email,
+		newValue: `${categoryId}: ${reportIds.join(",")}`,
+	});
+	invalidateDefinitions("navigation:");
+	invalidateDefinitions("report:");
+	invalidateDefinitions("search:");
+}
+
 // --- Pages built from a template --------------------------------------------
 
 export interface TemplateChoice {
