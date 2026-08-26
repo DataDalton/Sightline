@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getIdentity } from "@/lib/auth/identity";
 import { resolvePolicyClass } from "@/lib/auth/policy";
-import { getReport } from "@/lib/platform/reports";
+import { reportPayload } from "@/lib/platform/pageData";
 import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
-import { getSource } from "@/lib/semantic/registry";
 import { record } from "@/lib/telemetry/usage";
 
 export async function GET(
@@ -24,50 +23,15 @@ export async function GET(
 
 	try {
 		const policy = await resolvePolicyClass(identity);
-		const report = await getReport(policy, identity, slug);
+		const payload = await reportPayload(identity, policy, slug);
 
-		if (!report) {
+		if (!payload) {
 			return NextResponse.json({ error: "Not found" }, { status: 404 });
 		}
-
-		// Field metadata for every source the report reads, so the client can
-		// label and format values without a second round trip per visual.
-		const sourceKeys = new Set<string>();
-		if (report.sourceKey) sourceKeys.add(report.sourceKey);
-		for (const page of report.pages) {
-			if (page.sourceKey) sourceKeys.add(page.sourceKey);
-			for (const visual of page.visuals) {
-				if (visual.sourceKey) sourceKeys.add(visual.sourceKey);
-			}
-		}
-
-		const sources: Record<string, unknown> = {};
-		for (const key of sourceKeys) {
-			const source = getSource(key);
-			if (!source) continue;
-			sources[key] = {
-				sourceKey: source.sourceKey,
-				title: source.title,
-				kind: source.kind,
-				defaultTimeField: source.defaultTimeField,
-				dimensions: source.dimensions.map((f) => ({
-					name: f.name,
-					displayName: f.displayName,
-					dataType: f.dataType,
-					formatHint: f.formatHint,
-					description: f.description,
-					tags: f.tags,
-				})),
-				measures: source.measures.map((f) => ({
-					name: f.name,
-					displayName: f.displayName,
-					dataType: f.dataType,
-					formatHint: f.formatHint,
-					description: f.description,
-					tags: f.tags,
-				})),
-			};
-		}
+		const report = payload.report as {
+			categoryId: string | null;
+			reportId: string;
+		};
 
 		record({
 			occurredOn: new Date().toISOString(),
@@ -79,7 +43,7 @@ export async function GET(
 			sessionId: request.headers.get("x-session-id"),
 		});
 
-		const response = NextResponse.json({ report, sources });
+		const response = NextResponse.json(payload);
 		response.headers.set("Cache-Control", "private, no-store");
 		return response;
 	} catch (error) {

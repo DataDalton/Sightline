@@ -106,6 +106,23 @@ milliseconds and up to 110KB of YAML each, so the tables they resolve to are
 written down and reused. The filters on those tables are re-read every walk,
 because that is the part that has to stay current.
 
+### What a page costs to open
+
+The document carries its own data. A page used to arrive, then its bundle, then
+React hydrated, and only then did the browser start asking who the reader was,
+what the navigation held and what the report contained. Four sequential trips
+before anything appeared, three of them spent discovering things the server
+already knew while it was rendering.
+
+Now the server component resolves them and hands them down as SWR fallback data,
+so the first paint has the shell, the navigation and the report definition
+already in it. The visuals still fetch their own rows, because those depend on
+filters the client owns.
+
+Seeding is bounded. A replica that is not warm yet renders the page without it
+and lets the client ask, because a shell with placeholders beats a blank browser
+waiting on a first database connection.
+
 ### Taking data out
 
 Export runs behind the request rather than inside it. Asking for one records a

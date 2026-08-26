@@ -1,23 +1,12 @@
 import { NextResponse } from "next/server";
-import { appIdentity, isDatabricksApp } from "@/lib/runtime";
-import { settings, settingsLoadedAt } from "@/lib/settings";
-import { registryLoadedAt } from "@/lib/semantic/registry";
+import { infoPayload } from "@/lib/platform/pageData";
 import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
 
+// The shell is rendered with this already in it, so on a first load this route
+// is a revalidation. It still has to exist: renaming the installation or
+// changing its mark takes effect without a reload, and that is this being
+// asked again.
 export async function GET() {
 	await ensureReadyOrDegrade();
-
-	const current = settings();
-	return NextResponse.json({
-		name: current.appName,
-		description: current.appDescription,
-		// Sanitised SVG markup, or null when no mark has been set and the
-		// header shows the one built into it. Rebuilt from an allow-list when
-		// it was stored, which is what makes it safe to put in the document.
-		logo: current.appLogo || null,
-		instance: appIdentity.name,
-		hosted: isDatabricksApp,
-		settingsLoadedAt: settingsLoadedAt() || null,
-		registryLoadedAt: registryLoadedAt() || null,
-	});
+	return NextResponse.json(infoPayload());
 }

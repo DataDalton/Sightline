@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getIdentity } from "@/lib/auth/identity";
 import { resolvePolicyClass } from "@/lib/auth/policy";
-import { getCategory } from "@/lib/platform/reports";
+import { categoryPayload } from "@/lib/platform/pageData";
 import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
 
 export async function GET(
@@ -22,7 +22,7 @@ export async function GET(
 
 	try {
 		const policy = await resolvePolicyClass(identity);
-		const category = await getCategory(policy, identity, categoryId);
+		const category = await categoryPayload(identity, policy, categoryId);
 
 		// A category the caller cannot open is reported as missing rather than
 		// forbidden, so the response does not confirm it exists.
