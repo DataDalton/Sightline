@@ -14,6 +14,13 @@ import {
 } from "../../lib/visuals/style";
 import { mix, readThemeColors } from "../visuals/colors";
 import { Select } from "../components/shared/Select";
+import {
+	ArrowDownIcon,
+	ArrowUpIcon,
+	CloseIcon,
+	Hint,
+	Section,
+} from "./PanelSection";
 import styles from "./Editor.module.css";
 
 // Authoring conditional formatting.
@@ -159,28 +166,33 @@ export function ConditionsEditor({
 
 	if (availableFields.length === 0) {
 		return (
-			<div className={styles.section}>
-				<div className={styles.sectionTitle}>
-					Conditional formatting
-				</div>
-				<p className={styles.guidance}>
+			<Section
+				id="visual-conditions"
+				title="Conditional formatting"
+				defaultOpen={false}
+			>
+				<Hint>
 					Add a measure on the Data tab first. A rule needs a value to
 					test.
-				</p>
-			</div>
+				</Hint>
+			</Section>
 		);
 	}
 
 	return (
 		<>
-			<div className={styles.section}>
-				<div className={styles.sectionTitle}>
-					Conditional formatting
-				</div>
-				<p className={styles.guidance}>
-					Rules are applied in order and later ones win, so put the
-					general rule first and the specific one after it.
-				</p>
+			<Section
+				id="visual-conditions"
+				title="Conditional formatting"
+				defaultOpen={false}
+				count={rules.length}
+			>
+				{rules.length > 1 && (
+					<Hint>
+						Applied in order and later ones win, so put the general
+						rule first and the specific one after it.
+					</Hint>
+				)}
 
 				{rules.map((rule, index) => (
 					<div key={index} className={styles.ruleCard}>
@@ -190,30 +202,30 @@ export function ConditionsEditor({
 							</span>
 							<button
 								type="button"
-								className={styles.chipRemove}
+								className={styles.iconButton}
 								onClick={() => moveRule(index, index - 1)}
 								disabled={index === 0}
 								aria-label="Move rule up"
 							>
-								↑
+								<ArrowUpIcon />
 							</button>
 							<button
 								type="button"
-								className={styles.chipRemove}
+								className={styles.iconButton}
 								onClick={() => moveRule(index, index + 1)}
 								disabled={index === rules.length - 1}
 								aria-label="Move rule down"
 							>
-								↓
+								<ArrowDownIcon />
 							</button>
 							<div className={styles.spacer} />
 							<button
 								type="button"
-								className={styles.chipRemove}
+								className={`${styles.iconButton} ${styles.iconRemove}`}
 								onClick={() => removeRule(index)}
 								aria-label="Remove rule"
 							>
-								✕
+								<CloseIcon />
 							</button>
 						</div>
 
@@ -403,14 +415,11 @@ export function ConditionsEditor({
 							    this is the one place to catch it. */}
 							{(rule.textColor || rule.background) &&
 								!rule.marker && (
-									<p
-										className={styles.guidance}
-										style={{ marginTop: 6 }}
-									>
+									<Hint>
 										This rule uses colour only. A marker
 										keeps it readable in print and for
 										readers who cannot distinguish the hue.
-									</p>
+									</Hint>
 								)}
 						</div>
 
@@ -447,22 +456,25 @@ export function ConditionsEditor({
 
 				<button
 					type="button"
-					className={styles.toolButton}
+					className={styles.addButton}
 					onClick={addRule}
-					style={{ width: "100%", justifyContent: "center" }}
 				>
-					+ Add rule
+					Add rule
 				</button>
-			</div>
+			</Section>
 
 			{allowScales && (
-				<div className={styles.section}>
-					<div className={styles.sectionTitle}>Colour scale</div>
-					<p className={styles.guidance}>
+				<Section
+					id="visual-scales"
+					title="Colour scale"
+					defaultOpen={false}
+					count={scales.length}
+				>
+					<Hint>
 						A gradient across the column range, for finding extremes
 						rather than testing a threshold. A data bar compares
 						more precisely and reads without colour at all.
-					</p>
+					</Hint>
 
 					{scales.map((scale, index) => (
 						<div key={index} className={styles.ruleCard}>
@@ -473,7 +485,7 @@ export function ConditionsEditor({
 								<div className={styles.spacer} />
 								<button
 									type="button"
-									className={styles.chipRemove}
+									className={`${styles.iconButton} ${styles.iconRemove}`}
 									onClick={() =>
 										onChange({
 											colorScales: scales.filter(
@@ -483,7 +495,7 @@ export function ConditionsEditor({
 									}
 									aria-label="Remove scale"
 								>
-									✕
+									<CloseIcon />
 								</button>
 							</div>
 
@@ -599,9 +611,7 @@ export function ConditionsEditor({
 								)}
 
 							{themeColors && rampFor(scale)?.note && (
-								<p className={styles.guidance}>
-									{rampFor(scale)?.note}
-								</p>
+								<Hint>{rampFor(scale)?.note}</Hint>
 							)}
 
 							{/* What the column will actually look like, at the
@@ -687,7 +697,7 @@ export function ConditionsEditor({
 
 					<button
 						type="button"
-						className={styles.toolButton}
+						className={styles.addButton}
 						onClick={() =>
 							onChange({
 								colorScales: [
@@ -704,11 +714,10 @@ export function ConditionsEditor({
 								],
 							})
 						}
-						style={{ width: "100%", justifyContent: "center" }}
 					>
-						+ Add colour scale
+						Add colour scale
 					</button>
-				</div>
+				</Section>
 			)}
 		</>
 	);

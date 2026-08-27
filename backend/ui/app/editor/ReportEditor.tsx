@@ -1,8 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { findFreeSlot, type Rect } from "../../lib/visuals/layout";
-import { visualByType } from "../../lib/visuals/catalog";
+import { findFreeSlot, gridColumns, type Rect } from "../../lib/visuals/layout";
+import {
+	isPageControl,
+	optionValue,
+	visualByType,
+} from "../../lib/visuals/catalog";
 import type { SourceMeta } from "../visuals/types";
 import type { AppliedVisual } from "../../lib/visuals/applyOps";
 import { EditorCanvas, previewWidths } from "./EditorCanvas";
@@ -12,6 +16,7 @@ import { NewPageDialog } from "../authoring/NewPage";
 import { PageStrip } from "./PageStrip";
 import { Select } from "../components/shared/Select";
 import { ReportPlacement } from "./ReportPlacement";
+import { Hint } from "./PanelSection";
 import { VisualPicker } from "./VisualPicker";
 import { PropertiesPanel } from "./PropertiesPanel";
 import type { EditableVisual } from "./types";
@@ -75,6 +80,7 @@ type PendingOp =
 	| { type: "addVisual"; visual: EditableVisual }
 	| { type: "updateVisual"; visualId: string }
 	| { type: "removeVisual"; visualId: string }
+	| { type: "reorderVisuals"; visualIds: string[] }
 	| { type: "updatePage" }
 	| { type: "updateReport" }
 	| { type: "addPage"; pageId: string; title: string }
@@ -108,6 +114,11 @@ export function ReportEditor({
 	const [conflict, setConflict] = useState<string | null>(null);
 	const [baseVersion, setBaseVersion] = useState(version);
 	const [pickerOpen, setPickerOpen] = useState(false);
+	// Set when the picker was opened from the filter strip, so it lands on the
+	// filters rather than on everything.
+	const [pickerCategory, setPickerCategory] = useState<"filter" | undefined>(
+		undefined,
+	);
 	const [addingPage, setAddingPage] = useState(false);
 	const [removing, setRemoving] = useState(false);
 	const [confirmingRemove, setConfirmingRemove] = useState(false);
@@ -289,7 +300,9 @@ export function ReportEditor({
 							? `page:${op.pageId}`
 							: op.type === "reorderPages"
 								? "pageOrder"
-								: op.visualId;
+								: op.type === "reorderVisuals"
+									? "visualOrder"
+									: op.visualId;
 		const existing = pendingRef.current.get(key);
 
 		// A visual added and then edited in the same session is still an
@@ -399,14 +412,127 @@ export function ReportEditor({
 		[visuals, sources, markPending],
 	);
 
-	const removeVisual = useCallback(
-		(visualId: string) => {
-			setVisuals((prev) => prev.filter((v) => v.visualId !== visualId));
-			markPending({ type: "removeVisual", visualId });
-			setSelectedId(null);
+	// Moving a control along the filter strip.
+	//
+	// A control is not on the grid, so there is no rectangle to drag: its place
+	// is its position in the page order. Swapping it with its neighbour writes
+	// the whole page order, which is what the operation takes, and leaves every
+	// placed visual where it was.
+	const moveControl = useCallback(
+		(visualId: string, delta: -1 | 1) => {
+			const controls = visuals.filter((v) => isPageControl(v.visualType));
+			const from = controls.findIndex((v) => v.visualId === visualId);
+			const to = from + delta;
+			if (from < 0 || to < 0 || to >= controls.length) return;
+
+			const next = [...visuals];
+			const a = next.indexOf(controls[from]);
+			const b = next.indexOf(controls[to]);
+			[next[a], next[b]] = [next[b], next[a]];
+
+			setVisuals(next);
+			// One operation whatever the order was changed to, keyed on the
+			// whole list rather than on a visual, so nudging a control three
+			// places along is still one write.
+			markPending({
+				type: "reorderVisuals",
+				visualIds: next.map((v) => v.visualId),
+			});
+			setDirty(true);
+		},
+		[visuals, markPending],
+	);
+
+	// The groups on this page, offered as somewhere to put a visual when
+	// dragging it there is not available: a visual already inside a group has
+	// nowhere on the canvas to be dragged out to.
+	const groups = useMemo(
+		() =>
+			visuals
+				.filter((v) => v.visualType === "group")
+				.map((v) => ({
+					visualId: v.visualId,
+					label: v.title?.trim() || "Untitled group",
+				})),
+		[visuals],
+	);
+
+	// A visual dropped onto a group, or taken out of one.
+	//
+	// Both halves are one write: what holds the visual and the rectangle it is
+	// measured by change together, and applying either alone renders the visual
+	// against the wrong box. It rides the existing update operation, since a
+	// parent is part of the config like anything else.
+	const reparent = useCallback(
+		(visualId: string, parentId: string | null, rect: Rect) => {
+			setVisuals((prev) =>
+				prev.map((v) =>
+					v.visualId === visualId
+						? {
+								...v,
+								layout: rect,
+								config: {
+									...v.config,
+									parentId: parentId ?? undefined,
+								},
+							}
+						: v,
+				),
+			);
+			markPending({ type: "updateVisual", visualId });
 			setDirty(true);
 		},
 		[markPending],
+	);
+
+	const removeVisual = useCallback(
+		(visualId: string) => {
+			// A group taken off the page lets go of what it held rather than
+			// taking it with it. Deleting one visual should never delete ten,
+			// and a child left naming a group that no longer exists is laid out
+			// against a box that is not there.
+			//
+			// The rectangles are the group's, not the page's, so each one is
+			// put back on the page at the position the group occupied. That is
+			// not where they were, but it is where the author was looking, and
+			// it is somewhere rather than piled on the origin.
+			const released = visuals.filter(
+				(v) => v.config.parentId === visualId,
+			);
+			const home = visuals.find((v) => v.visualId === visualId)?.layout;
+
+			setVisuals((prev) =>
+				prev
+					.filter((v) => v.visualId !== visualId)
+					.map((v) =>
+						v.config.parentId === visualId
+							? {
+									...v,
+									layout: {
+										...v.layout,
+										x: Math.min(
+											home?.x ?? 0,
+											gridColumns - v.layout.w,
+										),
+										y: home?.y ?? 0,
+									},
+									config: {
+										...v.config,
+										parentId: undefined,
+									},
+								}
+							: v,
+					),
+			);
+
+			markPending({ type: "removeVisual", visualId });
+			for (const child of released) {
+				markPending({ type: "updateVisual", visualId: child.visualId });
+			}
+			setSelectedId(null);
+			setDirty(true);
+		},
+		[visuals, markPending],
 	);
 
 	const save = useCallback(async () => {
@@ -469,6 +595,13 @@ export function ReportEditor({
 			}
 			if (op.type === "reorderPages") {
 				return { type: "reorderPages", pageIds: op.pageIds };
+			}
+			if (op.type === "reorderVisuals") {
+				return {
+					type: "reorderVisuals",
+					pageId,
+					visualIds: op.visualIds,
+				};
 			}
 			const v = visuals.find((x) => x.visualId === op.visualId);
 			return {
@@ -553,7 +686,12 @@ export function ReportEditor({
 				<button
 					type="button"
 					className={styles.toolButton}
-					onClick={() => setPickerOpen((v) => !v)}
+					onClick={() => {
+						// The toolbar asks for anything, so it clears whatever
+						// the filter strip may have narrowed the picker to.
+						setPickerCategory(undefined);
+						setPickerOpen((v) => !v);
+					}}
 					aria-expanded={pickerOpen}
 				>
 					+ Add visual
@@ -735,6 +873,7 @@ export function ReportEditor({
 
 			<VisualPicker
 				open={pickerOpen}
+				initialCategory={pickerCategory}
 				onPick={addVisual}
 				onClose={() => setPickerOpen(false)}
 			/>
@@ -824,6 +963,12 @@ export function ReportEditor({
 					onGestureEnd={endGesture}
 					remoteSelections={remoteSelections}
 					onContentChange={changeContent}
+					onMoveControl={moveControl}
+					onReparent={reparent}
+					onAddControl={() => {
+						setPickerCategory("filter");
+						setPickerOpen(true);
+					}}
 					previewWidth={
 						previewWidths.find((w) => w.id === preview)?.width ??
 						null
@@ -838,6 +983,8 @@ export function ReportEditor({
 					}
 					onChange={updateVisual}
 					onRemove={removeVisual}
+					onDeselect={() => setSelectedId(null)}
+					groups={groups}
 					pageSource={
 						pageSourceKey ? sources[pageSourceKey] : undefined
 					}
@@ -859,17 +1006,17 @@ export function ReportEditor({
 							    Done and Publish and was one slip from either.
 							    Down here it takes a deliberate trip into the
 							    settings panel, and still asks. */}
-							<div className={styles.settingsDanger}>
-								<span className={styles.settingsLabel}>
+							<div className={styles.dangerBlock}>
+								<span className={styles.fieldLabel}>
 									Delete this report
 								</span>
-								<span className={styles.settingsHint}>
+								<Hint>
 									Removes every page on it. Anyone who could
 									open it loses it.
-								</span>
+								</Hint>
 								<button
 									type="button"
-									className={styles.settingsRemove}
+									className={styles.dangerButton}
 									onClick={() => setConfirmingRemove(true)}
 									disabled={saving || removing}
 								>

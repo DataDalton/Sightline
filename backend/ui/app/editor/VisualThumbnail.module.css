@@ -1,0 +1,10 @@
+/* The card drawings in the picker.
+
+   Still. What a visual does is answered by the preview beside the card, drawn
+   at a size where the answer fits. A drawing forty pixels tall that moves is a
+   thing twitching at the edge of vision while somebody reads the one next to
+   it. */
+.thumb {
+	display: block;
+	width: 100%;
+}

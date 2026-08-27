@@ -1216,98 +1216,7 @@ export function DimensionSwitch({
 
 // --- The strip that holds them ---------------------------------------------
 
-// A named panel of controls, behind a button in the strip.
-//
-// A page can carry more controls than fit across the top of it, and most of
-// them are not the one the reader came to change. Putting the rest behind a
-// button keeps the strip to what is used often, which is what an author is
-// saying when they group them.
-//
-// The count on the button is not decoration. Hiding a control hides the fact
-// that it is set, and a reader looking at a narrowed page with no visible
-// reason will conclude the data is wrong rather than that it is filtered. So
-// the button says how many of the controls inside it are doing something, and
-// says it whether the panel is open or shut.
-function FilterPanel({
-	name,
-	activeCount,
-	children,
-}: {
-	name: string;
-	activeCount: number;
-	children: React.ReactNode;
-}) {
-	const [open, setOpen] = useState(false);
-	const wrapperRef = useRef<HTMLDivElement | null>(null);
-
-	useEffect(() => {
-		if (!open) return;
-		const onClick = (e: MouseEvent) => {
-			if (!wrapperRef.current?.contains(e.target as Node)) setOpen(false);
-		};
-		const onKey = (e: KeyboardEvent) => {
-			if (e.key === "Escape") setOpen(false);
-		};
-		document.addEventListener("mousedown", onClick);
-		document.addEventListener("keydown", onKey);
-		return () => {
-			document.removeEventListener("mousedown", onClick);
-			document.removeEventListener("keydown", onKey);
-		};
-	}, [open]);
-
-	return (
-		<div className={styles.widget} ref={wrapperRef}>
-			<span className={styles.label}>{name}</span>
-			<button
-				type="button"
-				className={`${styles.trigger} ${
-					activeCount > 0 ? styles.triggerActive : ""
-				}`}
-				onClick={() => setOpen((v) => !v)}
-				aria-expanded={open}
-				title={
-					activeCount > 0
-						? `${activeCount} of these is set`
-						: `Open ${name}`
-				}
-			>
-				<span className={styles.triggerText}>
-					{activeCount > 0 ? `${activeCount} set` : "Any"}
-				</span>
-				<span className={styles.chevron} aria-hidden="true">
-					▾
-				</span>
-			</button>
-
-			{open && (
-				<div
-					className={styles.groupPanel}
-					role="dialog"
-					aria-label={name}
-				>
-					{children}
-				</div>
-			)}
-		</div>
-	);
-}
-
-export interface FilterPanelSpec {
-	name: string;
-	// The ids of the controls inside, so the button can say how many of them
-	// are set without the panel being open.
-	visualIds: string[];
-	content: React.ReactNode;
-}
-
-export function FilterBar({
-	panels = [],
-	children,
-}: {
-	panels?: FilterPanelSpec[];
-	children: React.ReactNode;
-}) {
+export function FilterBar({ children }: { children: React.ReactNode }) {
 	const {
 		activeClauses,
 		clearAll,
@@ -1322,27 +1231,12 @@ export function FilterBar({
 	// fulfillment one: something that looked like a visual that had failed to
 	// load, and that could not be selected in the editor because it was not
 	// one.
-	const hasControls =
-		Children.toArray(children).some(Boolean) || panels.length > 0;
+	const hasControls = Children.toArray(children).some(Boolean);
 	if (!hasControls && !hasAnything) return null;
 
 	return (
 		<div className={styles.bar}>
 			{children}
-
-			{panels.map((panel) => (
-				<FilterPanel
-					key={panel.name}
-					name={panel.name}
-					activeCount={
-						panel.visualIds.filter(
-							(id) => (byWidget[id]?.length ?? 0) > 0,
-						).length
-					}
-				>
-					{panel.content}
-				</FilterPanel>
-			))}
 
 			{/* A selection made by clicking a chart is shown here as well, so
 			    a reader who cannot see the chart that produced it still knows

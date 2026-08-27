@@ -43,6 +43,13 @@ import styles from "./Visual.module.css";
 
 export interface VisualConfig {
 	slot?: string;
+	// The group this visual lives inside, if any.
+	//
+	// Held on the child rather than as a list on the group, so putting something
+	// into a group is one write to one visual and the existing update operation
+	// carries it. A child's layout rectangle is relative to the group's content
+	// box, which is what lets a group move without touching anything it holds.
+	parentId?: string;
 	dimensions?: string[];
 	measures?: string[];
 	filters?: unknown[];
@@ -582,6 +589,7 @@ function VisualBody({
 						: undefined
 				}
 			>
+				{note && <VisualNotice>{note}</VisualNotice>}
 				<Chart
 					visualType={visual.visualType}
 					sourceKey={sourceKey}

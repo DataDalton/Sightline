@@ -275,3 +275,62 @@ export function fillToViewport<T extends { rect: Rect; canFill?: boolean }>(
 		return { ...item, rect: { ...item.rect, h: rows } };
 	});
 }
+
+// --- Groups ----------------------------------------------------------------
+//
+// A group is a visual that holds other visuals. What it holds is stored on the
+// children, each naming its parent, and a child's rectangle is measured from
+// the group's content box rather than from the page. That is what lets a group
+// move without touching anything inside it: the children's numbers do not
+// change, only where the box they are measured from happens to be.
+//
+// A child is laid out on the same twelve columns as the page, measured across
+// the group's width. So a child six columns wide is half the group, whatever
+// size the group is, which is the same promise the page grid makes.
+
+export const groupPadding = 12;
+export const groupHeaderHeight = 30;
+
+export function groupContentBox(
+	outer: { width: number; height: number },
+	hasHeader: boolean,
+): { width: number; height: number } {
+	return {
+		width: Math.max(1, outer.width - groupPadding * 2),
+		height: Math.max(
+			0,
+			outer.height -
+				groupPadding * 2 -
+				(hasHeader ? groupHeaderHeight : 0),
+		),
+	};
+}
+
+// The lowest edge a set of rectangles reaches. What a group needs to be tall
+// enough for, and where the next thing dropped into one belongs.
+export function boundsRows(rects: Rect[]): number {
+	return rects.reduce((max, r) => Math.max(max, r.y + r.h), 0);
+}
+
+// Whether putting `child` inside `parent` would make a loop.
+//
+// A group can hold a group, so the chain has to be walked rather than just
+// checking the two ends. Without this, dropping a group into something it
+// already contains produces a page that renders until the stack runs out.
+export function wouldLoop(
+	childId: string,
+	parentId: string | null,
+	parentOf: (id: string) => string | null | undefined,
+): boolean {
+	if (!parentId) return false;
+	if (parentId === childId) return true;
+
+	const seen = new Set<string>([childId]);
+	let at: string | null | undefined = parentId;
+	while (at) {
+		if (seen.has(at)) return true;
+		seen.add(at);
+		at = parentOf(at);
+	}
+	return false;
+}
