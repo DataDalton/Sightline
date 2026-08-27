@@ -390,37 +390,6 @@
 	font-variant-numeric: tabular-nums;
 }
 
-/*
- * A panel of controls rather than a list of values.
- *
- * The dropdown panel above is a scrolling list and sizes itself to one. This
- * holds whole controls, each with its own label and its own popover, so it
- * lays them out in a column, sits wider, and does not clip: a dropdown opened
- * inside it has to be able to escape it.
- */
-.groupPanel {
-	position: absolute;
-	left: 0;
-	top: calc(100% + 4px);
-	z-index: 60;
-	min-width: 280px;
-	max-width: 420px;
-	display: flex;
-	flex-direction: column;
-	gap: var(--space-3);
-	padding: var(--space-4);
-	background: var(--surface-float);
-	border: 1px solid var(--border-strong);
-	border-radius: var(--radius-lg);
-	box-shadow: var(--shadow-lg);
-}
-
-/* Each control inside goes full width, since the panel is a column and a
-   control squeezed to its natural width in one reads as misaligned. */
-.groupPanel > * {
-	width: 100%;
-}
-
 /* Values as a row of buttons, for a field with few enough of them that a list
    is the slower way to read them. Wraps rather than scrolling, because a value
    pushed off the end of a segmented control is a value nobody knows is there. */

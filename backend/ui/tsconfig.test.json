@@ -58,6 +58,10 @@
 		"lib/visuals/brush.test.ts",
 		"lib/visuals/layout.ts",
 		"lib/visuals/layout.test.ts",
+		"lib/visuals/groups.test.ts",
+		"lib/visuals/previewBehaviour.ts",
+		"lib/visuals/previewBehaviour.test.ts",
+		"lib/visuals/renderCoverage.test.ts",
 		"lib/visuals/applyOps.ts",
 		"lib/visuals/applyOps.test.ts"
 	]

@@ -18,7 +18,8 @@ export type VisualCategory =
 	| "relationship"
 	| "detail"
 	| "filter"
-	| "text";
+	| "text"
+	| "layout";
 
 export interface EncodingRequirement {
 	// How many dimensions the visual needs, and the most it can use.
@@ -713,15 +714,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			measures: { min: 0, max: 0 },
 		},
 		supports: {},
-		options: [
-			{
-				key: "group",
-				label: "Show inside",
-				kind: "text",
-				placeholder: "Filters",
-				help: "Names a panel this control lives in, behind a button in the strip. Controls sharing a name share a panel. Left empty it sits in the strip itself.",
-			},
-		],
+		options: [],
 		defaultLayout: { w: 4, h: 1 },
 	},
 	{
@@ -735,15 +728,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			measures: { min: 0, max: 0 },
 		},
 		supports: {},
-		options: [
-			{
-				key: "group",
-				label: "Show inside",
-				kind: "text",
-				placeholder: "Filters",
-				help: "Names a panel this control lives in, behind a button in the strip. Controls sharing a name share a panel. Left empty it sits in the strip itself.",
-			},
-		],
+		options: [],
 		defaultLayout: { w: 4, h: 1 },
 	},
 	{
@@ -757,15 +742,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			measures: { min: 0, max: 0 },
 		},
 		supports: {},
-		options: [
-			{
-				key: "group",
-				label: "Show inside",
-				kind: "text",
-				placeholder: "Filters",
-				help: "Names a panel this control lives in, behind a button in the strip. Controls sharing a name share a panel. Left empty it sits in the strip itself.",
-			},
-		],
+		options: [],
 		defaultLayout: { w: 12, h: 1 },
 	},
 	{
@@ -780,13 +757,6 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		},
 		supports: {},
 		options: [
-			{
-				key: "group",
-				label: "Show inside",
-				kind: "text",
-				placeholder: "Filters",
-				help: "Names a panel this control lives in, behind a button in the strip. Controls sharing a name share a panel. Left empty it sits in the strip itself.",
-			},
 			{
 				key: "direction",
 				label: "Keeps rows",
@@ -841,13 +811,6 @@ export const visualCatalog: VisualTypeDefinition[] = [
 				help: "Buttons suit a field with a handful of values, where opening a list to see two options is more work than reading them.",
 			},
 			{
-				key: "group",
-				label: "Show inside",
-				kind: "text",
-				placeholder: "Filters",
-				help: "Names a panel this control lives in, behind a button in the strip. Controls sharing a name share a panel. Left empty it sits in the strip itself.",
-			},
-			{
 				key: "multiple",
 				label: "Allow several values",
 				kind: "toggle",
@@ -877,13 +840,6 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		supports: {},
 		options: [
 			{
-				key: "group",
-				label: "Show inside",
-				kind: "text",
-				placeholder: "Filters",
-				help: "Names a panel this control lives in, behind a button in the strip. Controls sharing a name share a panel. Left empty it sits in the strip itself.",
-			},
-			{
 				key: "placeholder",
 				label: "Placeholder",
 				kind: "text",
@@ -903,15 +859,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			measures: { min: 0, max: 0 },
 		},
 		supports: {},
-		options: [
-			{
-				key: "group",
-				label: "Show inside",
-				kind: "text",
-				placeholder: "Filters",
-				help: "Names a panel this control lives in, behind a button in the strip. Controls sharing a name share a panel. Left empty it sits in the strip itself.",
-			},
-		],
+		options: [],
 		defaultLayout: { w: 3, h: 2 },
 	},
 	{
@@ -925,13 +873,6 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		},
 		supports: {},
 		options: [
-			{
-				key: "group",
-				label: "Show inside",
-				kind: "text",
-				placeholder: "Filters",
-				help: "Names a panel this control lives in, behind a button in the strip. Controls sharing a name share a panel. Left empty it sits in the strip itself.",
-			},
 			{
 				key: "rangeMode",
 				label: "Presentation",
@@ -977,13 +918,6 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		supports: {},
 		options: [
 			{
-				key: "group",
-				label: "Show inside",
-				kind: "text",
-				placeholder: "Filters",
-				help: "Names a panel this control lives in, behind a button in the strip. Controls sharing a name share a panel. Left empty it sits in the strip itself.",
-			},
-			{
 				key: "rangeMode",
 				label: "Presentation",
 				kind: "select",
@@ -1025,13 +959,6 @@ export const visualCatalog: VisualTypeDefinition[] = [
 				fallback: false,
 				help: "A page whose whole subject is open orders should open on open orders, and ask the warehouse for less while it does.",
 			},
-			{
-				key: "group",
-				label: "Show inside",
-				kind: "text",
-				placeholder: "Filters",
-				help: "Names a panel this control lives in, behind a button in the strip. Controls sharing a name share a panel. Left empty it sits in the strip itself.",
-			},
 		],
 		defaultLayout: { w: 3, h: 1 },
 	},
@@ -1046,15 +973,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			measures: { min: 0, max: 0 },
 		},
 		supports: {},
-		options: [
-			{
-				key: "group",
-				label: "Show inside",
-				kind: "text",
-				placeholder: "Filters",
-				help: "Names a panel this control lives in, behind a button in the strip. Controls sharing a name share a panel. Left empty it sits in the strip itself.",
-			},
-		],
+		options: [],
 		defaultLayout: { w: 3, h: 1 },
 	},
 	{
@@ -1106,6 +1025,47 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		],
 		defaultLayout: { w: 12, h: 1 },
 	},
+	// --- Layout ------------------------------------------------------------
+	{
+		type: "group",
+		label: "Group",
+		category: "layout",
+		guidance:
+			"Holds other visuals. Drag anything onto it to put it inside, and the group carries them: move it and they move, and it can open from a button instead of sitting on the page.",
+		encoding: {
+			dimensions: { min: 0, max: 0 },
+			measures: { min: 0, max: 0 },
+		},
+		supports: {},
+		options: [
+			{
+				key: "presentation",
+				label: "Shown as",
+				kind: "select",
+				choices: [
+					{ value: "frame", label: "A box on the page" },
+					{ value: "popup", label: "A button that opens" },
+				],
+				fallback: "frame",
+				help: "A button suits a set of controls a reader changes now and then. Ten toggles laid out on the page is ten things to read past; behind a button it is one, and the button says how many are set.",
+			},
+			{
+				key: "openLabel",
+				label: "Button label",
+				kind: "text",
+				placeholder: "Uses the title",
+				help: "Only used when it opens from a button.",
+			},
+			{
+				key: "frame",
+				label: "Draw a border",
+				kind: "toggle",
+				fallback: true,
+				help: "Off makes it an invisible container, for grouping things that move together without a box around them.",
+			},
+		],
+		defaultLayout: { w: 6, h: 6 },
+	},
 	{
 		type: "textPanel",
 		label: "Text panel",
@@ -1156,6 +1116,33 @@ export function isPageControl(type: string): boolean {
 	);
 }
 
+// The order the picker groups its cards in.
+//
+// Kept here rather than in the picker because it is a fact about the
+// categories, and because the picker's own copy silently omitted whichever one
+// was added last: a category missing from that list is a category nothing can
+// be added from, and nothing said so. The check below makes it a compile
+// error instead.
+export const categoryOrder = [
+	"summary",
+	"comparison",
+	"trend",
+	"composition",
+	"distribution",
+	"relationship",
+	"detail",
+	"filter",
+	"layout",
+	"text",
+] as const satisfies readonly VisualCategory[];
+
+type MissingCategory = Exclude<VisualCategory, (typeof categoryOrder)[number]>;
+// Reads "every category is in the list above". Adding one to VisualCategory
+// without adding it here makes this line fail to compile.
+const _everyCategoryIsOrdered: MissingCategory extends never ? true : never =
+	true;
+void _everyCategoryIsOrdered;
+
 export const categoryLabels: Record<VisualCategory, string> = {
 	summary: "Summary",
 	comparison: "Comparison",
@@ -1166,6 +1153,7 @@ export const categoryLabels: Record<VisualCategory, string> = {
 	detail: "Detail",
 	filter: "Filters",
 	text: "Text",
+	layout: "Layout",
 };
 
 export interface EncodingProblem {

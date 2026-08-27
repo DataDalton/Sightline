@@ -1,13 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
 	categoryLabels,
+	categoryOrder,
 	visualCatalog,
 	type VisualCategory,
 	type VisualTypeDefinition,
 } from "../../lib/visuals/catalog";
 import { VisualThumbnail } from "./VisualThumbnail";
+import { VisualPreview } from "./VisualPreview";
 import styles from "./VisualPicker.module.css";
 
 // Choosing what to add.
@@ -25,32 +28,39 @@ interface VisualPickerProps {
 	open: boolean;
 	onPick: (type: string) => void;
 	onClose: () => void;
+	// Which category to open at. Set when the picker is reached from something
+	// that already knows what kind of thing is wanted, such as the filter
+	// strip, so the author is not asked the question twice.
+	initialCategory?: VisualCategory;
 }
 
-const categoryOrder: VisualCategory[] = [
-	"summary",
-	"comparison",
-	"trend",
-	"composition",
-	"distribution",
-	"relationship",
-	"detail",
-	"filter",
-	"text",
-];
-
-export function VisualPicker({ open, onPick, onClose }: VisualPickerProps) {
+export function VisualPicker({
+	open,
+	onPick,
+	onClose,
+	initialCategory,
+}: VisualPickerProps) {
 	const [search, setSearch] = useState("");
-	const [category, setCategory] = useState<VisualCategory | "all">("all");
+	const [category, setCategory] = useState<VisualCategory | "all">(
+		initialCategory ?? "all",
+	);
 	const [hovered, setHovered] = useState<VisualTypeDefinition | null>(null);
+	// Viewport coordinates of the preview, measured from the card it belongs
+	// to. Portalled and fixed, so the dialog cannot clip a preview anchored to
+	// a card in the last row.
+	const [previewAt, setPreviewAt] = useState<{
+		left: number;
+		top: number;
+	} | null>(null);
 	const inputRef = useRef<HTMLInputElement | null>(null);
 	const panelRef = useRef<HTMLDivElement | null>(null);
 
 	useEffect(() => {
 		if (!open) return;
 		setSearch("");
-		setCategory("all");
+		setCategory(initialCategory ?? "all");
 		setHovered(null);
+		setPreviewAt(null);
 		// Focus goes to the search box, so typing narrows immediately rather
 		// than requiring a click first.
 		const timer = setTimeout(() => inputRef.current?.focus(), 20);
@@ -63,12 +73,45 @@ export function VisualPicker({ open, onPick, onClose }: VisualPickerProps) {
 			clearTimeout(timer);
 			document.removeEventListener("keydown", onKey);
 		};
-	}, [open, onClose]);
+	}, [open, onClose, initialCategory]);
+
+	// Beside the card, or on its other side when there is no room. A preview
+	// half off the screen is worse than one on the left.
+	const place = useCallback((element: HTMLElement) => {
+		const card = element.getBoundingClientRect();
+		const width = 280;
+		const height = 380;
+		const gap = 10;
+
+		const right = card.right + gap;
+		const left =
+			right + width > window.innerWidth - 8
+				? Math.max(8, card.left - width - gap)
+				: right;
+
+		// Anchored to the top of the card, then pulled up only as far as it
+		// takes to fit, so the preview stays beside what it describes.
+		const top = Math.max(
+			8,
+			Math.min(card.top, window.innerHeight - height - 8),
+		);
+
+		setPreviewAt({ left, top });
+	}, []);
+
+	const show = useCallback(
+		(definition: VisualTypeDefinition, element: HTMLElement) => {
+			setHovered(definition);
+			place(element);
+		},
+		[place],
+	);
 
 	const grouped = useMemo(() => {
 		const term = search.trim().toLowerCase();
 		const matches = visualCatalog.filter((definition) => {
-			if (category !== "all" && definition.category !== category) return false;
+			if (category !== "all" && definition.category !== category)
+				return false;
 			if (term === "") return true;
 			// Guidance is searched as well as the label, so someone typing
 			// "over time" finds the line chart without knowing its name.
@@ -179,10 +222,25 @@ export function VisualPicker({ open, onPick, onClose }: VisualPickerProps) {
 											key={definition.type}
 											type="button"
 											className={styles.card}
-											onClick={() => onPick(definition.type)}
-											onMouseEnter={() => setHovered(definition)}
-											onFocus={() => setHovered(definition)}
-											onMouseLeave={() => setHovered(null)}
+											onClick={() =>
+												onPick(definition.type)
+											}
+											onMouseEnter={(e) =>
+												show(
+													definition,
+													e.currentTarget,
+												)
+											}
+											onFocus={(e) =>
+												show(
+													definition,
+													e.currentTarget,
+												)
+											}
+											onMouseLeave={() => {
+												setHovered(null);
+												setPreviewAt(null);
+											}}
 										>
 											<span className={styles.preview}>
 												<VisualThumbnail
@@ -204,26 +262,23 @@ export function VisualPicker({ open, onPick, onClose }: VisualPickerProps) {
 					)}
 				</div>
 
-				{/* The guidance sits in a fixed strip rather than inside each
-				    card, so the cards stay uniform and the advice has room to
-				    be a full sentence. */}
+				{/* The guidance used to be read from here. It is in the
+				    preview now, beside the drawing it describes, so this says
+				    the one thing the preview cannot: that there is a preview,
+				    and that the keyboard reaches it too. */}
 				<div className={styles.footer}>
-					{hovered ? (
-						<>
-							<strong className={styles.footerTitle}>
-								{hovered.label}
-							</strong>
-							<span className={styles.footerText}>
-								{hovered.guidance}
-							</span>
-						</>
-					) : (
-						<span className={styles.footerHint}>
-							Hover a visual to see when to use it.
-						</span>
-					)}
+					<span className={styles.footerHint}>
+						Point at a visual, or tab to it, to see what it does.
+					</span>
 				</div>
 			</div>
+
+			{hovered &&
+				previewAt &&
+				createPortal(
+					<VisualPreview definition={hovered} box={previewAt} />,
+					document.body,
+				)}
 		</div>
 	);
 }

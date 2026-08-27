@@ -53,11 +53,6 @@
 	border-color: var(--brand-strong);
 }
 
-.danger:hover:not(:disabled) {
-	border-color: var(--danger);
-	color: var(--danger);
-}
-
 .spacer {
 	flex: 1;
 }
@@ -168,27 +163,75 @@
 	box-shadow: var(--shadow-lg);
 }
 
+/* The group a visual would land in if the pointer were released now.
+
+   Said before the drop rather than after, because dropping into the wrong
+   group is only visible once the visual has been rewritten against that
+   group's box, and undoing that means finding it again inside something. */
+.itemDropTarget {
+	box-shadow: 0 0 0 2px var(--brand);
+	background: var(--state-selected);
+}
+
+/* What a group is doing, on the group itself: that it opens from a button for
+   readers, or that it is empty and how to fill it. Only in the editor, where
+   both are questions somebody is actively asking. */
+.groupNote {
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+	font-weight: 400;
+}
+
 .itemBody {
 	width: 100%;
 	height: 100%;
 	overflow: hidden;
 	border-radius: var(--radius-lg);
 	/* Interaction inside a visual is disabled while editing, so a click
-	   selects the visual rather than cross-filtering the page. */
+	   selects the visual rather than cross-filtering the page. Which is also
+	   what leaves the whole box free to be the drag target. */
 	pointer-events: none;
 }
 
-.dragHandle {
-	position: absolute;
-	inset: 0 0 auto 0;
-	height: 34px;
-	z-index: 3;
+/* Every visual except a text panel being typed into. The grips sit above this
+   and start their own gesture, so an edge still resizes. */
+.itemDraggable {
 	cursor: grab;
-	border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 }
 
-.dragHandle:active {
+.itemDraggable:active {
 	cursor: grabbing;
+}
+
+/* The one visual that keeps a handle: a selected text panel is a text field,
+   so its body cannot also be the thing you grab to move it.
+
+   Visible, unlike the invisible strip every visual used to carry. That one was
+   34 pixels along the top edge with no affordance at all, so the only way to
+   learn where it was, was to press somewhere and watch nothing happen. */
+.dragBar {
+	position: absolute;
+	inset: 0 0 auto 0;
+	z-index: 3;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 16px;
+	border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+	background: var(--surface-sunken);
+	border-bottom: 1px solid var(--border-subtle);
+	cursor: grab;
+}
+
+.dragBar:active {
+	cursor: grabbing;
+}
+
+.dragGrip {
+	width: 28px;
+	height: 3px;
+	border-radius: var(--radius-full);
+	background: var(--border-strong);
 }
 
 /* Resize grips. Corner and edge, so an author can change one dimension
@@ -280,67 +323,172 @@
 	overflow: hidden;
 }
 
-.panelTabs {
+/* What the panel is editing, above the tabs.
+
+   The tabs change identity with the selection: Data and Format for a visual,
+   Page and Report and History for the page. Reading only the tabs, an author
+   could not tell which of the two panels they were looking at, or which visual
+   the settings under them belonged to. */
+.panelHead {
 	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	padding: var(--space-3);
 	border-bottom: 1px solid var(--border-subtle);
 	background: var(--surface-sunken);
 }
 
-.panelTab {
-	flex: 1;
-	padding: var(--space-2);
-	font-size: var(--text-sm);
-	color: var(--text-secondary);
-	border-bottom: 2px solid transparent;
-	margin-bottom: -1px;
-}
-
-.panelTab:hover {
-	color: var(--text-primary);
-}
-
-.panelTabActive {
-	color: var(--text-primary);
+.panelKind {
+	flex-shrink: 0;
+	padding: 2px var(--space-2);
+	border-radius: var(--radius-full);
+	background: var(--state-hover);
+	color: var(--text-muted);
+	font-size: var(--text-xs);
 	font-weight: 600;
-	border-bottom-color: var(--brand);
+	letter-spacing: 0.02em;
+	white-space: nowrap;
+}
+
+.panelSubject {
+	flex: 1;
+	min-width: 0;
+	font-size: var(--text-sm);
+	font-weight: 600;
+	color: var(--text-primary);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.panelBack {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	flex-shrink: 0;
+	border: none;
+	border-radius: var(--radius-sm);
+	background: none;
+	color: var(--text-muted);
+	cursor: pointer;
+}
+
+.panelBack:hover {
+	background: var(--state-hover);
+	color: var(--text-primary);
 }
 
 .panelBody {
 	flex: 1;
+	min-height: 0;
 	overflow-y: auto;
 	padding: var(--space-3);
 }
 
-.panelEmpty {
-	padding: var(--space-6) var(--space-4);
-	text-align: center;
-	color: var(--text-muted);
-	font-size: var(--text-sm);
-	line-height: 1.5;
+/* A group of settings that collapses.
+
+   The header is the whole row, so the target is the width of the panel rather
+   than the twelve pixels of the chevron. */
+/* The rule goes between groups rather than under each, so the last group does
+   not draw a line and then the danger block below it draw a second one. */
+.section + .section {
+	border-top: 1px solid var(--border-subtle);
 }
 
-.section {
-	margin-bottom: var(--space-4);
+.sectionHead {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	width: 100%;
+	padding: var(--space-2) var(--space-1);
+	border: none;
+	background: none;
+	text-align: left;
+	cursor: pointer;
+}
+
+.sectionHead:hover .sectionTitle {
+	color: var(--text-primary);
 }
 
 .sectionTitle {
+	flex: 1;
+	min-width: 0;
 	font-size: var(--text-xs);
 	font-weight: 600;
 	letter-spacing: 0.04em;
 	text-transform: uppercase;
 	color: var(--text-muted);
-	margin-bottom: var(--space-2);
+}
+
+/* How many settings inside carry a value, so a closed group still says
+   whether anything in it was touched. */
+.sectionCount {
+	flex-shrink: 0;
+	min-width: 18px;
+	padding: 1px 6px;
+	border-radius: var(--radius-full);
+	background: var(--state-selected);
+	color: var(--text-primary);
+	font-size: 10px;
+	font-weight: 700;
+	text-align: center;
+}
+
+.chevron {
+	flex-shrink: 0;
+	color: var(--text-muted);
+	transition: transform var(--transition-fast);
+}
+
+.chevronOpen {
+	transform: rotate(90deg);
+}
+
+.sectionBody {
+	padding: 0 var(--space-1) var(--space-3);
 }
 
 .field {
 	margin-bottom: var(--space-3);
 }
 
+.field:last-child {
+	margin-bottom: 0;
+}
+
 .fieldLabel {
-	display: block;
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: var(--space-2);
 	font-size: var(--text-sm);
 	color: var(--text-secondary);
 	margin-bottom: var(--space-1);
+}
+
+/* The number beside a label: how many of a thing are chosen against how many
+   the visual takes, or where a slider currently sits. */
+.fieldCount {
+	flex-shrink: 0;
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+	font-variant-numeric: tabular-nums;
+}
+
+/* Explanation under a control.
+
+   The panel used to put every one of these in a bordered block with a coloured
+   rule down its left edge. One of those reads as a note; forty of them stacked
+   in a 320 pixel column read as the panel, and the controls become the thing
+   between the notes. */
+.hint {
+	margin-top: var(--space-1);
+	font-size: var(--text-xs);
+	line-height: 1.5;
+	color: var(--text-muted);
 }
 
 .input,
@@ -350,7 +498,14 @@
 	border: 1px solid var(--border-default);
 	border-radius: var(--radius-md);
 	background: var(--surface-base);
+	color: var(--text-primary);
+	font-family: inherit;
 	font-size: var(--text-sm);
+}
+
+textarea.input {
+	resize: vertical;
+	line-height: 1.5;
 }
 
 .input:focus,
@@ -358,6 +513,17 @@
 	outline: 2px solid var(--focus-ring);
 	outline-offset: -1px;
 	border-color: transparent;
+}
+
+/* A second input under the control it belongs to, such as the box that names a
+   new panel under the picker that asked for one. */
+.stackedInput {
+	margin-top: var(--space-2);
+}
+
+.range {
+	width: 100%;
+	accent-color: var(--brand);
 }
 
 .row {
@@ -370,13 +536,140 @@
 	display: flex;
 	align-items: center;
 	gap: var(--space-2);
-	padding: var(--space-1) 0;
+	padding: var(--space-1) var(--space-1);
+	border-radius: var(--radius-sm);
 	font-size: var(--text-sm);
 	width: 100%;
 	text-align: left;
 }
 
-.checkRow:hover {
+.checkRow:hover:not(:disabled) {
+	background: var(--state-hover);
+	color: var(--text-primary);
+}
+
+.checkRow:disabled {
+	opacity: 0.4;
+	cursor: not-allowed;
+}
+
+.checkLabel {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* The fields a source offers, in a box of their own.
+
+   A wide source puts a hundred and twenty rows in this column. Everything
+   below them, the drill path and the control that removes the visual included,
+   sat under all of it. */
+.fieldList {
+	max-height: 260px;
+	margin-top: var(--space-2);
+	overflow-y: auto;
+	/* No vertical padding: the headings stick to the top of this box, and any
+	   padding here is a gap the rows scroll through above them. */
+	padding: 0 var(--space-1) var(--space-1);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-md);
+	background: var(--surface-base);
+}
+
+.listHeading {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	padding: var(--space-2) var(--space-1) var(--space-1);
+	background: var(--surface-base);
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+
+.listEmpty {
+	padding: var(--space-3) var(--space-2);
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+	line-height: 1.5;
+}
+
+/* One chosen field, with the controls that move it and take it off.
+
+   Order is the encoding for most types, so moving a field is a first-class
+   action rather than something to redo by removing and re-adding. */
+.selectedRow {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	padding: 2px 2px 2px var(--space-2);
+	margin-bottom: 2px;
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-sm);
+	background: var(--surface-sunken);
+}
+
+.selectedName {
+	flex: 1;
+	min-width: 0;
+	font-size: var(--text-xs);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.iconButton {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	flex-shrink: 0;
+	border: none;
+	border-radius: var(--radius-sm);
+	background: none;
+	color: var(--text-muted);
+	cursor: pointer;
+}
+
+.iconButton:hover:not(:disabled) {
+	background: var(--state-hover);
+	color: var(--text-primary);
+}
+
+.iconButton:disabled {
+	opacity: 0.3;
+	cursor: not-allowed;
+}
+
+.iconRemove:hover:not(:disabled) {
+	color: var(--danger);
+}
+
+/* Adding one more of whatever the group holds. Full width and centred, since
+   it closes the list rather than sitting beside anything. */
+.addButton {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 100%;
+	padding: var(--space-2);
+	border: 1px dashed var(--border-default);
+	border-radius: var(--radius-md);
+	background: none;
+	color: var(--text-secondary);
+	font-family: inherit;
+	font-size: var(--text-sm);
+	cursor: pointer;
+}
+
+.addButton:hover {
+	border-color: var(--brand);
+	border-style: solid;
+	background: var(--state-hover);
 	color: var(--text-primary);
 }
 
@@ -398,34 +691,13 @@
 	color: var(--brand-contrast);
 }
 
-.chipList {
-	display: flex;
-	flex-wrap: wrap;
-	gap: var(--space-1);
-	margin-top: var(--space-2);
-}
+/* What this kind of visual is for, at the top of the panel.
 
-.chip {
-	display: flex;
-	align-items: center;
-	gap: var(--space-1);
-	padding: 2px var(--space-2);
-	border: 1px solid var(--border-default);
-	border-radius: var(--radius-full);
-	background: var(--surface-sunken);
-	font-size: var(--text-xs);
-}
-
-.chipRemove {
-	color: var(--text-muted);
-}
-
-.chipRemove:hover {
-	color: var(--danger);
-}
-
+   The one bordered note left, and it earns the border: it answers the question
+   an author has before any of the settings under it. Everything else that used
+   to be drawn this way is a .hint now. */
 .guidance {
-	padding: var(--space-2);
+	padding: var(--space-2) var(--space-3);
 	border-left: 2px solid var(--brand);
 	background: var(--surface-sunken);
 	border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
@@ -607,81 +879,11 @@
 
 /* Shrunk to a grip strip when the visual owns the space the handle normally
    covers, so a toolbar underneath still receives its clicks. */
-.dragHandleNarrow {
-	height: 10px;
-	right: 40px;
-}
+/* Waiting to be saved, and what went wrong trying.
 
-/* Page settings. Occupies the properties panel when nothing is selected, so
-   the panel is never an empty box telling the author to go and click
-   something. */
-.settingsPanel {
-	display: flex;
-	flex-direction: column;
-	gap: var(--space-3);
-	padding: var(--space-4);
-	/* The panel clips, so the settings have to scroll themselves. Without this
-	   everything past the fold was simply unreachable. */
-	min-height: 0;
-	overflow-y: auto;
-}
-
-.settingsIntro {
-	font-size: var(--text-sm);
-	color: var(--text-muted);
-	line-height: 1.5;
-}
-
-.settingsTitle {
-	font-size: var(--text-sm);
-	font-weight: 600;
-	color: var(--text-primary);
-}
-
-.settingsField {
-	display: flex;
-	flex-direction: column;
-	gap: var(--space-1);
-}
-
-.settingsLabel {
-	font-size: var(--text-xs);
-	font-weight: 600;
-	color: var(--text-secondary);
-}
-
-.settingsInput {
-	padding: var(--space-2);
-	border: 1px solid var(--border-default);
-	border-radius: var(--radius-sm);
-	background: var(--surface-raised);
-	color: var(--text-primary);
-	font-size: var(--text-sm);
-	font-family: inherit;
-}
-
-.settingsInput:focus-visible {
-	outline: 2px solid var(--focus-ring);
-	outline-offset: 1px;
-}
-
-.settingsHint {
-	font-size: var(--text-xs);
-	color: var(--text-muted);
-	line-height: 1.4;
-}
-
-/* A break between what the panel is editing. Page settings above it, report
-   settings below, because the two are saved by different paths: page settings
-   ride the editor's operation log, and moving the report is its own write that
-   can change the URL. */
-.settingsDivider {
-	margin: var(--space-2) 0;
-	border: none;
-	border-top: 1px solid var(--border-subtle);
-}
-
-.settingsError {
+   Only the placement group has these: everything else in the panel rides the
+   editor's own save. */
+.panelError {
 	padding: var(--space-2);
 	border-radius: var(--radius-sm);
 	background: var(--danger-subtle);
@@ -690,13 +892,14 @@
 	line-height: 1.4;
 }
 
-.settingsActions {
+.panelActions {
 	display: flex;
 	gap: var(--space-2);
 	align-items: center;
+	margin-top: var(--space-2);
 }
 
-.settingsSave {
+.saveButton {
 	padding: var(--space-2) var(--space-3);
 	border: 1px solid transparent;
 	border-radius: var(--radius-sm);
@@ -708,17 +911,17 @@
 	cursor: pointer;
 }
 
-.settingsSave:hover:not(:disabled) {
+.saveButton:hover:not(:disabled) {
 	background: var(--brand-strong);
 }
 
-.settingsSave:disabled {
+.saveButton:disabled {
 	opacity: 0.5;
 	cursor: not-allowed;
 }
 
-.settingsDiscard {
-	padding: var(--space-2) var(--space-2);
+.discardButton {
+	padding: var(--space-2);
 	border: none;
 	border-radius: var(--radius-sm);
 	background: none;
@@ -728,7 +931,7 @@
 	cursor: pointer;
 }
 
-.settingsDiscard:hover:not(:disabled) {
+.discardButton:hover:not(:disabled) {
 	background: var(--state-hover);
 	color: var(--text-primary);
 }
@@ -741,15 +944,94 @@
 	flex-shrink: 0;
 }
 
+/* What the bar is, above it.
+
+   The bar itself is the reader's filter strip at full width, and only the
+   slots inside it are selectable. Without a caption, an outline hugging one
+   small dropdown inside a wide bordered box reads as a selection that missed
+   the thing it was aimed at. */
+.stripCaption {
+	display: flex;
+	align-items: baseline;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+	margin-bottom: var(--space-1);
+	padding-left: var(--space-1);
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+
+.stripNote {
+	flex: 1;
+	min-width: 0;
+	font-weight: 400;
+	letter-spacing: 0;
+	text-transform: none;
+}
+
+/* Asking for a control from the place controls end up.
+
+   The toolbar could already add one, but nothing said that a filter picked
+   there would land off the grid, and with no controls yet there was no strip
+   to land in and no sign one existed. */
+.stripAdd {
+	flex-shrink: 0;
+	padding: var(--space-1) var(--space-2);
+	border: 1px dashed var(--border-default);
+	border-radius: var(--radius-sm);
+	background: none;
+	color: var(--text-secondary);
+	font-family: inherit;
+	font-size: var(--text-xs);
+	font-weight: 600;
+	letter-spacing: 0;
+	text-transform: none;
+	cursor: pointer;
+}
+
+.stripAdd:hover {
+	border-style: solid;
+	border-color: var(--brand);
+	background: var(--state-hover);
+	color: var(--text-primary);
+}
+
+/* Keeps an empty strip the height a full one would be, so adding the first
+   control does not make the page below it jump. */
+.stripEmpty {
+	padding: var(--space-2) 0;
+	color: var(--text-muted);
+	font-size: var(--text-sm);
+}
+
 .controlSlot {
 	position: relative;
 	display: flex;
 	flex-direction: column;
 	gap: var(--space-1);
 	padding: var(--space-2);
-	border: 1px dashed transparent;
+	border: 1px dashed var(--border-subtle);
 	border-radius: var(--radius-md);
 	cursor: pointer;
+}
+
+/* The slot's own row: what kind of control it is, and where it sits in the
+   strip. A control has no rectangle to drag, so moving it is moving it along
+   the order, and the two controls that do it live here. */
+.controlHead {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	min-height: 20px;
+}
+
+.controlMove {
+	display: flex;
+	align-items: center;
+	gap: 2px;
 }
 
 .controlSlot:hover {
@@ -961,22 +1243,30 @@
 	padding-top: var(--space-1);
 }
 
-/* Panel tabs. With nothing selected the panel is about the page, and so is the
-   history, so they share it rather than the history taking space in the
-   toolbar beside the arranging controls. */
+/* The panel's tabs, one set of rules for both of the panels that use them.
+
+   With nothing selected the panel is about the page, and so is the history, so
+   they share it rather than the history taking space in the toolbar beside the
+   arranging controls. A selected visual puts Data and Format here instead, and
+   used to bring its own second set of tab styles with it: same job, different
+   height, different weight, different underline. */
 .tabs {
 	display: flex;
 	gap: var(--space-1);
-	padding: var(--space-2) var(--space-3) 0;
+	padding: 0 var(--space-3);
 	border-bottom: 1px solid var(--border-subtle);
+	flex-shrink: 0;
 }
 
 .tab {
+	flex: 1;
 	padding: var(--space-2) var(--space-3);
+	margin-bottom: -1px;
 	border: none;
 	border-bottom: 2px solid transparent;
 	background: none;
 	color: var(--text-muted);
+	font-family: inherit;
 	font-size: var(--text-sm);
 	font-weight: 600;
 	cursor: pointer;
@@ -1271,20 +1561,23 @@
 	color: var(--text-primary);
 }
 
-/* The one destructive control in the panel, set apart from the settings above
-   it. Not styled red until pressed on: a permanently red block in a settings
-   panel reads as a warning about the panel rather than about the action. */
-.settingsDanger {
+/* Destructive controls, set apart from the settings above them and drawn the
+   same on both tabs, so removing a visual and deleting a report look like the
+   same kind of act wherever they are met.
+
+   Not styled red until pressed on: a permanently red block in a settings panel
+   reads as a warning about the panel rather than about the action. */
+.dangerBlock {
 	display: flex;
 	flex-direction: column;
 	gap: var(--space-1);
 	align-items: flex-start;
-	margin-top: var(--space-3);
-	padding-top: var(--space-3);
+	margin-top: var(--space-4);
+	padding: var(--space-3) var(--space-1) 0;
 	border-top: 1px solid var(--border-subtle);
 }
 
-.settingsRemove {
+.dangerButton {
 	margin-top: var(--space-1);
 	padding: var(--space-2) var(--space-3);
 	border: 1px solid var(--border-default);
@@ -1300,12 +1593,12 @@
 		border-color var(--transition-fast);
 }
 
-.settingsRemove:hover:not(:disabled) {
+.dangerButton:hover:not(:disabled) {
 	background: var(--danger-subtle);
 	border-color: var(--danger);
 }
 
-.settingsRemove:disabled {
+.dangerButton:disabled {
 	opacity: 0.5;
 	cursor: not-allowed;
 }

@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import {
 	visualByType,
 	checkEncoding,
+	isPageControl,
 	type VisualTypeDefinition,
 } from "../../lib/visuals/catalog";
 import {
@@ -16,12 +17,20 @@ import { readThemeColors } from "../visuals/colors";
 import { resolveKpiGroups, type KpiGroup } from "../../lib/visuals/kpiGroups";
 import { ConditionsEditor } from "./ConditionsEditor";
 import { Select } from "../components/shared/Select";
+import { Toggle } from "../components/shared/Toggle";
 import { HistoryPanel } from "./HistoryPanel";
 import { PageSettings } from "./PageSettings";
+import {
+	ArrowDownIcon,
+	ArrowUpIcon,
+	CloseIcon,
+	Hint,
+	Section,
+	SectionGroup,
+} from "./PanelSection";
 import type { PageConfig } from "./ReportEditor";
 import type { SourceMeta } from "../visuals/types";
 import type { EditableVisual } from "./types";
-import { SkeletonText } from "../components/shared/Skeleton";
 import styles from "./Editor.module.css";
 
 // Editing one visual: what it shows, and how it looks.
@@ -30,12 +39,23 @@ import styles from "./Editor.module.css";
 // pie chart is not offered an axis label and a table is not offered a fill
 // mode. Adding a type to the catalogue makes it configurable here without
 // touching this file.
+//
+// Two panels used to live in this box with nothing in common: page settings
+// drew their labels, inputs and tabs from one set of classes and a selected
+// visual drew its own from another, so the panel changed shape depending on
+// whether anything was selected. Both now use the same header, tabs, groups and
+// fields, and the header says which of the two is on screen.
 
 interface PropertiesPanelProps {
 	visual: EditableVisual | null;
 	source: SourceMeta | undefined;
 	onChange: (next: EditableVisual) => void;
 	onRemove: (visualId: string) => void;
+	// Back to the page without hunting for a bare patch of canvas to click.
+	onDeselect: () => void;
+	// The groups on this page, so a visual can be put into one without
+	// dragging it there.
+	groups: GroupChoice[];
 	// The page's own settings, shown here when no visual is selected.
 	pageSource: SourceMeta | undefined;
 	pageConfig: PageConfig;
@@ -57,11 +77,47 @@ interface PropertiesPanelProps {
 
 type Tab = "data" | "format";
 
+// A group a visual could be put into: what it is called, and whether putting
+// this visual in it would make a loop.
+export interface GroupChoice {
+	visualId: string;
+	label: string;
+}
+
+function PanelTabs<T extends string>({
+	tabs,
+	value,
+	onChange,
+}: {
+	tabs: readonly { id: T; label: string }[];
+	value: T;
+	onChange: (id: T) => void;
+}) {
+	return (
+		<div className={styles.tabs} role="tablist">
+			{tabs.map((tab) => (
+				<button
+					key={tab.id}
+					type="button"
+					role="tab"
+					aria-selected={value === tab.id}
+					className={`${styles.tab} ${value === tab.id ? styles.tabActive : ""}`}
+					onClick={() => onChange(tab.id)}
+				>
+					{tab.label}
+				</button>
+			))}
+		</div>
+	);
+}
+
 export function PropertiesPanel({
 	visual,
 	source,
 	onChange,
 	onRemove,
+	onDeselect,
+	groups,
 	pageSource,
 	pageConfig,
 	pageTitle,
@@ -84,40 +140,27 @@ export function PropertiesPanel({
 	if (!visual || !definition) {
 		return (
 			<div className={styles.panel}>
-				<div className={styles.tabs} role="tablist">
-					<button
-						type="button"
-						role="tab"
-						aria-selected={panelTab === "page"}
-						className={`${styles.tab} ${panelTab === "page" ? styles.tabActive : ""}`}
-						onClick={() => onPanelTab("page")}
-					>
-						Page
-					</button>
-					{/* Its own tab rather than a heading part way down the page
-					    settings. What a report is called, where it sits and
-					    whether it still exists are not properties of the page
-					    somebody happens to have open, and looking for them
-					    under "Page" means not finding them. */}
-					<button
-						type="button"
-						role="tab"
-						aria-selected={panelTab === "report"}
-						className={`${styles.tab} ${panelTab === "report" ? styles.tabActive : ""}`}
-						onClick={() => onPanelTab("report")}
-					>
-						Report
-					</button>
-					<button
-						type="button"
-						role="tab"
-						aria-selected={panelTab === "history"}
-						className={`${styles.tab} ${panelTab === "history" ? styles.tabActive : ""}`}
-						onClick={() => onPanelTab("history")}
-					>
-						History
-					</button>
+				<div className={styles.panelHead}>
+					<span className={styles.panelKind}>Page</span>
+					<span className={styles.panelSubject}>
+						{pageTitle.trim() || "Untitled page"}
+					</span>
 				</div>
+
+				<PanelTabs
+					tabs={[
+						{ id: "page" as const, label: "Page" },
+						// Its own tab rather than a heading part way down the
+						// page settings. What a report is called, where it sits
+						// and whether it still exists are not properties of the
+						// page somebody happens to have open, and looking for
+						// them under "Page" means not finding them.
+						{ id: "report" as const, label: "Report" },
+						{ id: "history" as const, label: "History" },
+					]}
+					value={panelTab}
+					onChange={onPanelTab}
+				/>
 
 				{panelTab === "history" ? (
 					<HistoryPanel
@@ -126,42 +169,48 @@ export function PropertiesPanel({
 						onRestored={onRestored}
 					/>
 				) : panelTab === "report" ? (
-					<div className={styles.settingsPanel}>
-						<div className={styles.settingsTitle}>
-							Report settings
-						</div>
-						<p className={styles.settingsIntro}>
-							These apply to every page of the report.
-						</p>
+					<div className={styles.panelBody}>
+						<SectionGroup>
+							<Section id="report-about" title="About">
+								<div className={styles.field}>
+									<label
+										className={styles.fieldLabel}
+										htmlFor="report-subtitle"
+									>
+										Subtitle
+									</label>
+									<textarea
+										id="report-subtitle"
+										className={styles.input}
+										rows={2}
+										placeholder="What this report is for"
+										value={reportDescription}
+										onChange={(e) =>
+											onDescriptionChange(e.target.value)
+										}
+									/>
+									<Hint>
+										The line under the report title, on
+										every page.
+									</Hint>
+								</div>
+							</Section>
 
-						<label className={styles.settingsField}>
-							<span className={styles.settingsLabel}>
-								Subtitle
-							</span>
-							<textarea
-								className={styles.settingsInput}
-								rows={2}
-								placeholder="What this report is for"
-								value={reportDescription}
-								onChange={(e) =>
-									onDescriptionChange(e.target.value)
-								}
-							/>
-							<span className={styles.settingsHint}>
-								The line under the report title.
-							</span>
-						</label>
-
-						{placement}
+							{placement}
+						</SectionGroup>
 					</div>
 				) : (
-					<PageSettings
-						source={pageSource}
-						config={pageConfig}
-						pageTitle={pageTitle}
-						onChange={onPageChange}
-						onPageTitleChange={onPageTitleChange}
-					/>
+					<div className={styles.panelBody}>
+						<SectionGroup>
+							<PageSettings
+								source={pageSource}
+								config={pageConfig}
+								pageTitle={pageTitle}
+								onChange={onPageChange}
+								onPageTitleChange={onPageTitleChange}
+							/>
+						</SectionGroup>
+					</div>
 				)}
 			</div>
 		);
@@ -182,52 +231,75 @@ export function PropertiesPanel({
 
 	return (
 		<div className={styles.panel}>
-			<div className={styles.panelTabs} role="tablist">
+			<div className={styles.panelHead}>
+				{/* The only way back to the page settings was to find an empty
+				    patch of canvas and click it, which on a full page there is
+				    not one of. */}
 				<button
 					type="button"
-					role="tab"
-					aria-selected={tab === "data"}
-					className={`${styles.panelTab} ${tab === "data" ? styles.panelTabActive : ""}`}
-					onClick={() => setTab("data")}
+					className={styles.panelBack}
+					onClick={onDeselect}
+					title="Back to page settings"
+					aria-label="Back to page settings"
 				>
-					Data
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						strokeWidth="2.5"
+						strokeLinecap="round"
+						strokeLinejoin="round"
+						aria-hidden="true"
+					>
+						<path d="M15 18l-6-6 6-6" />
+					</svg>
 				</button>
-				<button
-					type="button"
-					role="tab"
-					aria-selected={tab === "format"}
-					className={`${styles.panelTab} ${tab === "format" ? styles.panelTabActive : ""}`}
-					onClick={() => setTab("format")}
-				>
-					Format
-				</button>
+				<span className={styles.panelKind}>{definition.label}</span>
+				<span className={styles.panelSubject}>
+					{visual.title?.trim() || "Untitled"}
+				</span>
 			</div>
 
+			<PanelTabs
+				tabs={[
+					{ id: "data" as const, label: "Data" },
+					{ id: "format" as const, label: "Format" },
+				]}
+				value={tab}
+				onChange={setTab}
+			/>
+
 			<div className={styles.panelBody}>
-				{tab === "data" ? (
-					<DataTab
-						visual={visual}
-						definition={definition}
-						source={source}
-						dimensions={dimensions}
-						measures={measures}
-						fieldSearch={fieldSearch}
-						setFieldSearch={setFieldSearch}
-						update={update}
-						updateConfig={updateConfig}
-						onRemove={onRemove}
-					/>
-				) : (
-					<FormatTab
-						visual={visual}
-						definition={definition}
-						dimensions={dimensions}
-						measures={measures}
-						style={style}
-						updateStyle={updateStyle}
-						updateConfig={updateConfig}
-					/>
-				)}
+				<SectionGroup>
+					{tab === "data" ? (
+						<DataTab
+							visual={visual}
+							definition={definition}
+							source={source}
+							dimensions={dimensions}
+							measures={measures}
+							groups={groups}
+							fieldSearch={fieldSearch}
+							setFieldSearch={setFieldSearch}
+							update={update}
+							updateConfig={updateConfig}
+							onRemove={onRemove}
+						/>
+					) : (
+						<FormatTab
+							visual={visual}
+							definition={definition}
+							dimensions={dimensions}
+							measures={measures}
+							groups={groups}
+							style={style}
+							updateStyle={updateStyle}
+							updateConfig={updateConfig}
+						/>
+					)}
+				</SectionGroup>
 			</div>
 		</div>
 	);
@@ -239,6 +311,7 @@ function DataTab({
 	source,
 	dimensions,
 	measures,
+	groups,
 	fieldSearch,
 	setFieldSearch,
 	update,
@@ -250,6 +323,7 @@ function DataTab({
 	source: SourceMeta | undefined;
 	dimensions: string[];
 	measures: string[];
+	groups: GroupChoice[];
 	fieldSearch: string;
 	setFieldSearch: (v: string) => void;
 	update: (patch: Partial<EditableVisual>) => void;
@@ -288,8 +362,35 @@ function DataTab({
 		updateConfig({ [kind]: current });
 	};
 
+	const parentId =
+		typeof visual.config.parentId === "string"
+			? visual.config.parentId
+			: null;
+	// A group cannot hold itself. Deeper loops are refused where the change is
+	// applied, which is the only place that can see the whole chain.
+	const groupChoices = groups.filter((g) => g.visualId !== visual.visualId);
+
+	// A page control renders bare in the reader's filter strip and a text panel
+	// carries its own body, so neither has anywhere to put a note.
+	const showNote =
+		!isPageControl(visual.visualType) && visual.visualType !== "textPanel";
+	const isNotice = visual.visualType === "blockedNotice";
+	const noteValue =
+		typeof visual.config.options?.note === "string"
+			? visual.config.options.note
+			: "";
+
+	const showMeasures = definition.encoding.measures.max > 0;
+	const showDimensions = definition.encoding.dimensions.max > 0;
+	const nothingMatched =
+		(!showMeasures || filtered.measures.length === 0) &&
+		(!showDimensions || filtered.dimensions.length === 0);
+
 	return (
 		<>
+			{/* The one bordered note in the panel, and it earns the border:
+			    it says what this kind of visual is for, which is the question
+			    an author has before any of the settings below it. */}
 			<p className={styles.guidance}>{definition.guidance}</p>
 
 			{problem && (
@@ -298,57 +399,144 @@ function DataTab({
 				</div>
 			)}
 
-			<div className={styles.field}>
-				<label className={styles.fieldLabel} htmlFor="visual-title">
-					Title
-				</label>
-				<input
-					id="visual-title"
-					className={styles.input}
-					value={visual.title ?? ""}
-					placeholder="Untitled"
-					onChange={(e) => update({ title: e.target.value })}
-				/>
-			</div>
-
-			<div className={styles.field}>
-				<label className={styles.fieldLabel} htmlFor="visual-type">
-					Visual type
-				</label>
-				<Select
-					id="visual-type"
-					value={visual.visualType}
-					onChange={(v) => update({ visualType: v })}
-					searchable
-					options={Object.values(visualByType).map((d) => ({
-						value: d.type,
-						label: d.label,
-					}))}
-				/>
-			</div>
-
-			{/* Selected fields first, in order, because for most visuals the
-			    order is the encoding: the first dimension is the axis. */}
-			{(dimensions.length > 0 || measures.length > 0) && (
-				<div className={styles.section}>
-					<div className={styles.sectionTitle}>Selected</div>
-					<SelectedList
-						label="Dimensions"
-						items={dimensions}
-						onRemove={(name) => toggle(name, "dimensions")}
-						onMove={(from, to) => reorder("dimensions", from, to)}
+			<Section id="visual-basics" title="Basics">
+				<div className={styles.field}>
+					<label className={styles.fieldLabel} htmlFor="visual-title">
+						Title
+					</label>
+					<input
+						id="visual-title"
+						className={styles.input}
+						value={visual.title ?? ""}
+						placeholder="Untitled"
+						onChange={(e) => update({ title: e.target.value })}
 					/>
+				</div>
+
+				<div className={styles.field}>
+					<label className={styles.fieldLabel} htmlFor="visual-type">
+						Visual type
+					</label>
+					<Select
+						id="visual-type"
+						value={visual.visualType}
+						onChange={(v) => update({ visualType: v })}
+						searchable
+						options={Object.values(visualByType).map((d) => ({
+							value: d.type,
+							label: d.label,
+						}))}
+					/>
+				</div>
+
+				{/* Which group holds this, for the times dragging it there is
+				    not the easy gesture: a visual already inside a group has
+				    nowhere on the canvas to be dragged out to. */}
+				{groupChoices.length > 0 && (
+					<div className={styles.field}>
+						<label
+							className={styles.fieldLabel}
+							htmlFor="visual-group"
+						>
+							Inside group
+						</label>
+						<Select
+							id="visual-group"
+							value={parentId ?? ""}
+							onChange={(next) =>
+								updateConfig({ parentId: next || undefined })
+							}
+							options={[
+								{ value: "", label: "Not in a group" },
+								...groupChoices.map((choice) => ({
+									value: choice.visualId,
+									label: choice.label,
+								})),
+							]}
+						/>
+						<Hint>
+							Dragging a visual onto a group puts it inside. This
+							is how it comes back out.
+						</Hint>
+					</div>
+				)}
+
+				{/* The line under the title. Every framed visual has rendered
+				    one for as long as the renderer has read config.options.note,
+				    and no type in the catalogue declared it, so the panel never
+				    drew a control: a note put there by a template was on the
+				    page with no way to change it. */}
+				{showNote && (
+					<div className={styles.field}>
+						<label
+							className={styles.fieldLabel}
+							htmlFor="visual-note"
+						>
+							{isNotice ? "Message" : "Note"}
+						</label>
+						<textarea
+							id="visual-note"
+							className={styles.input}
+							rows={2}
+							placeholder={
+								isNotice
+									? "What this page is waiting on"
+									: "A caveat, a definition, what to read it as"
+							}
+							value={noteValue}
+							onChange={(e) =>
+								updateConfig({
+									options: {
+										...visual.config.options,
+										note: e.target.value || undefined,
+									},
+								})
+							}
+						/>
+						<Hint>
+							{isNotice
+								? "Shown in place of the visual."
+								: "Shown under the title, above the visual."}
+						</Hint>
+					</div>
+				)}
+			</Section>
+
+			{/* One group rather than two. Choosing a field and ordering the
+			    ones already chosen are the same job, and splitting them meant
+			    the list of what was selected scrolled away from the list it was
+			    selected from. */}
+			<Section
+				id="visual-fields"
+				title="Fields"
+				count={dimensions.length + measures.length}
+			>
+				{showMeasures && (
 					<SelectedList
 						label="Measures"
 						items={measures}
+						limit={definition.encoding.measures}
 						onRemove={(name) => toggle(name, "measures")}
 						onMove={(from, to) => reorder("measures", from, to)}
 					/>
-				</div>
-			)}
+				)}
+				{showDimensions && (
+					<SelectedList
+						label="Dimensions"
+						items={dimensions}
+						limit={definition.encoding.dimensions}
+						onRemove={(name) => toggle(name, "dimensions")}
+						onMove={(from, to) => reorder("dimensions", from, to)}
+					/>
+				)}
+				{dimensions.length + measures.length > 1 && (
+					<Hint>
+						Order is the encoding. The first dimension is the axis
+						and the first measure is the one anything ranked is
+						ranked by.
+					</Hint>
+				)}
 
-			<div className={styles.section}>
-				<div className={styles.sectionTitle}>Add fields</div>
 				<input
 					className={styles.input}
 					placeholder="Search fields"
@@ -356,60 +544,87 @@ function DataTab({
 					onChange={(e) => setFieldSearch(e.target.value)}
 				/>
 
-				{definition.encoding.measures.max > 0 &&
-					filtered.measures.length > 0 && (
+				{/* Scrolls itself. A wide source puts a hundred and twenty rows
+				    in this column, and everything below them, the drill path
+				    and the remove control included, sat under all of it. */}
+				<div className={styles.fieldList}>
+					{nothingMatched ? (
+						<p className={styles.listEmpty}>
+							{source
+								? `Nothing matches "${fieldSearch.trim()}".`
+								: "This visual has no source yet."}
+						</p>
+					) : (
 						<>
-							<div
-								className={styles.fieldLabel}
-								style={{ marginTop: 10 }}
-							>
-								Measures ({filtered.measures.length})
-							</div>
-							{filtered.measures.slice(0, 60).map((f) => (
-								<FieldRow
-									key={f.name}
-									name={f.name}
-									description={f.description}
-									selected={measures.includes(f.name)}
-									onToggle={() => toggle(f.name, "measures")}
-								/>
-							))}
-						</>
-					)}
+							{showMeasures && filtered.measures.length > 0 && (
+								<>
+									<div className={styles.listHeading}>
+										Measures ({filtered.measures.length})
+									</div>
+									{filtered.measures.slice(0, 60).map((f) => (
+										<FieldRow
+											key={f.name}
+											name={f.name}
+											description={f.description}
+											selected={measures.includes(f.name)}
+											full={
+												measures.length >=
+												definition.encoding.measures.max
+											}
+											onToggle={() =>
+												toggle(f.name, "measures")
+											}
+										/>
+									))}
+								</>
+							)}
 
-				{definition.encoding.dimensions.max > 0 &&
-					filtered.dimensions.length > 0 && (
-						<>
-							<div
-								className={styles.fieldLabel}
-								style={{ marginTop: 10 }}
-							>
-								Dimensions ({filtered.dimensions.length})
-							</div>
-							{filtered.dimensions.slice(0, 60).map((f) => (
-								<FieldRow
-									key={f.name}
-									name={f.name}
-									description={f.description}
-									selected={dimensions.includes(f.name)}
-									onToggle={() =>
-										toggle(f.name, "dimensions")
-									}
-								/>
-							))}
+							{showDimensions &&
+								filtered.dimensions.length > 0 && (
+									<>
+										<div className={styles.listHeading}>
+											Dimensions (
+											{filtered.dimensions.length})
+										</div>
+										{filtered.dimensions
+											.slice(0, 60)
+											.map((f) => (
+												<FieldRow
+													key={f.name}
+													name={f.name}
+													description={f.description}
+													selected={dimensions.includes(
+														f.name,
+													)}
+													full={
+														dimensions.length >=
+														definition.encoding
+															.dimensions.max
+													}
+													onToggle={() =>
+														toggle(
+															f.name,
+															"dimensions",
+														)
+													}
+												/>
+											))}
+									</>
+								)}
 						</>
 					)}
-			</div>
+				</div>
+			</Section>
 
 			{/* A drill hierarchy turns a click into a descent rather than a
 			    cross-filter, so it is only offered where that makes sense. */}
 			{definition.category !== "filter" && dimensions.length > 1 && (
-				<div className={styles.section}>
-					<div className={styles.sectionTitle}>Drill hierarchy</div>
-					<p className={styles.guidance}>
-						Clicking descends this hierarchy instead of
-						cross-filtering the page. Order it outermost first.
-					</p>
+				<Section
+					id="visual-drill"
+					title="Drill hierarchy"
+					defaultOpen={false}
+					count={visual.config.options?.drillFields ? 1 : 0}
+				>
 					<button
 						type="button"
 						className={styles.checkRow}
@@ -430,17 +645,27 @@ function DataTab({
 						/>
 						Use the selected dimensions as a drill path
 					</button>
-				</div>
+					<Hint>
+						Clicking descends the dimensions in the order above
+						instead of cross-filtering the page.
+					</Hint>
+				</Section>
 			)}
 
-			<div className={styles.section}>
+			{/* Set apart rather than stacked with the settings, and matching
+			    the delete control on the Report tab, so the one thing in the
+			    panel that cannot be undone looks the same wherever it is. */}
+			<div className={styles.dangerBlock}>
+				<span className={styles.fieldLabel}>Remove this visual</span>
+				<Hint>
+					It comes off this page. Nothing else on the page changes.
+				</Hint>
 				<button
 					type="button"
-					className={`${styles.toolButton} ${styles.danger}`}
+					className={styles.dangerButton}
 					onClick={() => onRemove(visual.visualId)}
-					style={{ width: "100%", justifyContent: "center" }}
 				>
-					Remove this visual
+					Remove visual
 				</button>
 			</div>
 		</>
@@ -450,55 +675,69 @@ function DataTab({
 function SelectedList({
 	label,
 	items,
+	limit,
 	onRemove,
 	onMove,
 }: {
 	label: string;
 	items: string[];
+	limit: { min: number; max: number };
 	onRemove: (name: string) => void;
 	onMove: (from: number, to: number) => void;
 }) {
-	if (items.length === 0) return null;
 	return (
 		<div className={styles.field}>
-			<span className={styles.fieldLabel}>{label}</span>
-			{items.map((name, i) => (
-				<div
-					key={name}
-					className={styles.row}
-					style={{ marginBottom: 4 }}
-				>
-					<span className={styles.chip} style={{ flex: 1 }}>
-						{name}
-					</span>
-					<button
-						type="button"
-						className={styles.chipRemove}
-						onClick={() => onMove(i, i - 1)}
-						disabled={i === 0}
-						aria-label={`Move ${name} up`}
-					>
-						↑
-					</button>
-					<button
-						type="button"
-						className={styles.chipRemove}
-						onClick={() => onMove(i, i + 1)}
-						disabled={i === items.length - 1}
-						aria-label={`Move ${name} down`}
-					>
-						↓
-					</button>
-					<button
-						type="button"
-						className={styles.chipRemove}
-						onClick={() => onRemove(name)}
-						aria-label={`Remove ${name}`}
-					>
-						✕
-					</button>
-				</div>
-			))}
+			<span className={styles.fieldLabel}>
+				{label}
+				{/* What the type will take. The panel used to accept a seventh
+				    measure silently and leave the author to work out from the
+				    complaint below the chart which of the seven was one too
+				    many. */}
+				<span className={styles.fieldCount}>
+					{items.length} of {limit.max}
+				</span>
+			</span>
+			{items.length === 0 ? (
+				<p className={styles.listEmpty}>
+					{limit.min > 0
+						? `Needs at least ${limit.min}.`
+						: "None chosen."}
+				</p>
+			) : (
+				items.map((name, i) => (
+					<div key={name} className={styles.selectedRow}>
+						<span className={styles.selectedName} title={name}>
+							{name}
+						</span>
+						<button
+							type="button"
+							className={styles.iconButton}
+							onClick={() => onMove(i, i - 1)}
+							disabled={i === 0}
+							aria-label={`Move ${name} up`}
+						>
+							<ArrowUpIcon />
+						</button>
+						<button
+							type="button"
+							className={styles.iconButton}
+							onClick={() => onMove(i, i + 1)}
+							disabled={i === items.length - 1}
+							aria-label={`Move ${name} down`}
+						>
+							<ArrowDownIcon />
+						</button>
+						<button
+							type="button"
+							className={`${styles.iconButton} ${styles.iconRemove}`}
+							onClick={() => onRemove(name)}
+							aria-label={`Remove ${name}`}
+						>
+							<CloseIcon />
+						</button>
+					</div>
+				))
+			)}
 		</div>
 	);
 }
@@ -507,27 +746,35 @@ function FieldRow({
 	name,
 	description,
 	selected,
+	full,
 	onToggle,
 }: {
 	name: string;
 	description: string | null;
 	selected: boolean;
+	// The type will not take another of this kind. Still clickable when it is
+	// already on, since taking one off is how an author makes room.
+	full: boolean;
 	onToggle: () => void;
 }) {
+	const blocked = full && !selected;
 	return (
 		<button
 			type="button"
 			className={styles.checkRow}
 			onClick={onToggle}
+			disabled={blocked}
 			aria-pressed={selected}
 			// The catalogue description is the tooltip, so an author sees the
 			// same definition a reader will.
-			title={description ?? name}
+			title={
+				blocked
+					? "Remove one first. This visual takes no more of these."
+					: (description ?? name)
+			}
 		>
 			<Check on={selected} />
-			<span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-				{name}
-			</span>
+			<span className={styles.checkLabel}>{name}</span>
 		</button>
 	);
 }
@@ -564,12 +811,14 @@ function VisualOptions({
 	definition,
 	dimensions,
 	measures,
+	groups,
 	updateConfig,
 }: {
 	visual: EditableVisual;
 	definition: VisualTypeDefinition;
 	dimensions: string[];
 	measures: string[];
+	groups: GroupChoice[];
 	updateConfig: (patch: Record<string, unknown>) => void;
 }) {
 	const declared = definition.options ?? [];
@@ -585,10 +834,12 @@ function VisualOptions({
 	// tell a deliberate choice from a fallback.
 	const stored = (key: string): unknown => visual.config.options?.[key];
 
-	return (
-		<div className={styles.section}>
-			<div className={styles.sectionTitle}>Options</div>
+	const chosen = declared.filter(
+		(option) => stored(option.key) !== undefined,
+	).length;
 
+	return (
+		<Section id="visual-options" title="Options" count={chosen}>
 			{declared.map((option) => {
 				const value = stored(option.key);
 
@@ -610,9 +861,7 @@ function VisualOptions({
 									label: choice.label,
 								}))}
 							/>
-							{option.help && (
-								<p className={styles.guidance}>{option.help}</p>
-							)}
+							{option.help && <Hint>{option.help}</Hint>}
 						</div>
 					);
 				}
@@ -620,24 +869,16 @@ function VisualOptions({
 				if (option.kind === "toggle") {
 					return (
 						<div key={option.key} className={styles.field}>
-							<label className={styles.checkRow}>
-								<input
-									type="checkbox"
-									className={styles.checkbox}
-									checked={
-										typeof value === "boolean"
-											? value
-											: option.fallback
-									}
-									onChange={(e) =>
-										set(option.key, e.target.checked)
-									}
-								/>
-								{option.label}
-							</label>
-							{option.help && (
-								<p className={styles.guidance}>{option.help}</p>
-							)}
+							<Toggle
+								checked={
+									typeof value === "boolean"
+										? value
+										: option.fallback
+								}
+								onChange={(next) => set(option.key, next)}
+								label={option.label}
+							/>
+							{option.help && <Hint>{option.help}</Hint>}
 						</div>
 					);
 				}
@@ -667,9 +908,7 @@ function VisualOptions({
 									)
 								}
 							/>
-							{option.help && (
-								<p className={styles.guidance}>{option.help}</p>
-							)}
+							{option.help && <Hint>{option.help}</Hint>}
 						</div>
 					);
 				}
@@ -694,9 +933,7 @@ function VisualOptions({
 									)
 								}
 							/>
-							{option.help && (
-								<p className={styles.guidance}>{option.help}</p>
-							)}
+							{option.help && <Hint>{option.help}</Hint>}
 						</div>
 					);
 				}
@@ -741,16 +978,20 @@ function VisualOptions({
 								})),
 							]}
 						/>
-						{option.help && (
-							<p className={styles.guidance}>{option.help}</p>
-						)}
+						{option.help && <Hint>{option.help}</Hint>}
 					</div>
 				);
 			})}
-		</div>
+		</Section>
 	);
 }
 
+// Which panel a control sits behind.
+//
+// A panel is named by whichever control is put into it first, so this is a list
+// of what is already named plus a way to name a new one. It used to be a bare
+// text box: the first control worked, and the second joined it only if the name
+// was retyped exactly, with a second panel appearing silently when it was not.
 // Splitting the measures into labelled bands.
 //
 // Shown as the measures themselves with a break between them, rather than as
@@ -827,9 +1068,7 @@ function MeasureBands({
 		return (
 			<div className={styles.field}>
 				<label className={styles.fieldLabel}>{option.label}</label>
-				<p className={styles.guidance}>
-					Add measures first, then split them into bands.
-				</p>
+				<Hint>Add measures first, then split them into bands.</Hint>
 			</div>
 		);
 	}
@@ -878,7 +1117,7 @@ function MeasureBands({
 				);
 			})}
 
-			{option.help && <p className={styles.guidance}>{option.help}</p>}
+			{option.help && <Hint>{option.help}</Hint>}
 		</div>
 	);
 }
@@ -888,6 +1127,7 @@ function FormatTab({
 	definition,
 	dimensions,
 	measures,
+	groups,
 	style,
 	updateStyle,
 	updateConfig,
@@ -896,6 +1136,7 @@ function FormatTab({
 	definition: VisualTypeDefinition;
 	dimensions: string[];
 	measures: string[];
+	groups: GroupChoice[];
 	style: VisualStyle;
 	updateStyle: (patch: Partial<VisualStyle>) => void;
 	updateConfig: (patch: Record<string, unknown>) => void;
@@ -930,51 +1171,32 @@ function FormatTab({
 		updateStyle({ series: next });
 	};
 
+	// What each group carries, so a closed group still says whether anything
+	// inside it was touched.
+	const appearanceCount = [
+		style.cornerRadius !== undefined,
+		style.stripedRows !== undefined,
+		style.loadingAnimation !== undefined,
+		visual.config.options?.fillHeight !== undefined,
+	].filter(Boolean).length;
+	const axesCount = [
+		Boolean(style.yAxis?.label),
+		style.yAxis?.beginAtZero === false,
+	].filter(Boolean).length;
+	const chromeCount = [
+		style.legend?.show === false,
+		Boolean(style.tooltip?.mode) && style.tooltip?.mode !== "axis",
+		Boolean(style.tooltip?.showShare),
+	].filter(Boolean).length;
+
 	return (
 		<>
-			{supports.fillHeight && (
-				<div className={styles.section}>
-					<div className={styles.sectionTitle}>Size</div>
-					<label className={styles.checkRow}>
-						<input
-							type="checkbox"
-							checked={
-								visual.config.options?.fillHeight !== false
-							}
-							onChange={(e) =>
-								updateConfig({
-									options: {
-										...visual.config.options,
-										fillHeight: e.target.checked,
-									},
-								})
-							}
-						/>
-						<span>
-							Fill the rest of the screen when it is last on the
-							page
-						</span>
-					</label>
-					<p className={styles.guidance}>
-						On by default. A reader works inside a table rather than
-						glancing at it, so a short box inside a tall screen
-						makes them scroll through a window when the room was
-						already there. Turn it off where the table is
-						deliberately a preview. The canvas shows the height a
-						reader will get.
-					</p>
-				</div>
-			)}
-
 			{visual.visualType === "textPanel" && (
-				<div className={styles.section}>
-					<div className={styles.sectionTitle}>Content</div>
-					<p className={styles.guidance}>
-						Select the panel on the canvas and type into it. The
-						formatting toolbar appears with it, and the styling is
-						kept with the text.
-					</p>
-				</div>
+				<p className={styles.guidance}>
+					Select the panel on the canvas and type into it. The
+					formatting toolbar appears with it, and the styling is kept
+					with the text.
+				</p>
 			)}
 
 			<VisualOptions
@@ -982,15 +1204,21 @@ function FormatTab({
 				definition={definition}
 				dimensions={dimensions}
 				measures={measures}
+				groups={groups}
 				updateConfig={updateConfig}
 			/>
 
 			{supports.color && measures.length > 0 && (
-				<div className={styles.section}>
-					<div className={styles.sectionTitle}>Series</div>
-
+				<Section
+					id="visual-series"
+					title="Series"
+					count={(style.series ?? []).length}
+				>
 					{measures.length > 1 && (
 						<div className={styles.field}>
+							<label className={styles.fieldLabel}>
+								Series to style
+							</label>
 							<Select
 								value={String(seriesIndex)}
 								onChange={(v) => setSeriesIndex(Number(v))}
@@ -1057,15 +1285,18 @@ function FormatTab({
 								seriesEntry.fill !== "none" && (
 									<div className={styles.field}>
 										<label className={styles.fieldLabel}>
-											Fill opacity{" "}
-											{Math.round(
-												(seriesEntry.fillOpacity ??
-													0.25) * 100,
-											)}
-											%
+											Fill opacity
+											<span className={styles.fieldCount}>
+												{Math.round(
+													(seriesEntry.fillOpacity ??
+														0.25) * 100,
+												)}
+												%
+											</span>
 										</label>
 										<input
 											type="range"
+											className={styles.range}
 											min={5}
 											max={100}
 											step={5}
@@ -1080,7 +1311,6 @@ function FormatTab({
 														100,
 												})
 											}
-											style={{ width: "100%" }}
 										/>
 									</div>
 								)}
@@ -1121,12 +1351,16 @@ function FormatTab({
 							Stack this series
 						</button>
 					)}
-				</div>
+				</Section>
 			)}
 
 			{supports.axes && (
-				<div className={styles.section}>
-					<div className={styles.sectionTitle}>Axes</div>
+				<Section
+					id="visual-axes"
+					title="Axes"
+					defaultOpen={false}
+					count={axesCount}
+				>
 					<div className={styles.field}>
 						<label className={styles.fieldLabel}>
 							Value axis label
@@ -1161,29 +1395,59 @@ function FormatTab({
 						Start the axis at zero
 					</button>
 					{style.yAxis?.beginAtZero === false && (
-						<p className={styles.guidance}>
+						<Hint>
 							A truncated axis makes small differences look large.
 							Worth a note on the visual saying so.
-						</p>
+						</Hint>
 					)}
-				</div>
+				</Section>
 			)}
 
-			{/* Two settings the renderers have always honoured and nothing could
-			    set: a chart drew its bars with a two pixel corner because that
-			    is what the fallback said, and a grid striped its rows because
-			    the same. Both were reachable only by writing the style object
-			    by hand. */}
-			<div className={styles.section}>
-				<div className={styles.sectionTitle}>Appearance</div>
+			{/* Corner rounding and row shading are two settings the renderers
+			    have always honoured and nothing could set: a chart drew its
+			    bars with a two pixel corner because that is what the fallback
+			    said, and a grid striped its rows because the same. */}
+			<Section
+				id="visual-appearance"
+				title="Appearance"
+				defaultOpen={false}
+				count={appearanceCount}
+			>
+				{supports.fillHeight && (
+					<div className={styles.field}>
+						<Toggle
+							checked={
+								visual.config.options?.fillHeight !== false
+							}
+							onChange={(next) =>
+								updateConfig({
+									options: {
+										...visual.config.options,
+										fillHeight: next,
+									},
+								})
+							}
+							label="Fill the screen when it is last on the page"
+						/>
+						<Hint>
+							On by default. Turn it off where the table is
+							deliberately a preview. The canvas shows the height
+							a reader will get.
+						</Hint>
+					</div>
+				)}
 
 				{(supports.fill || supports.stacking) && (
 					<div className={styles.field}>
 						<label className={styles.fieldLabel}>
 							Corner rounding
+							<span className={styles.fieldCount}>
+								{style.cornerRadius ?? 2}
+							</span>
 						</label>
 						<input
 							type="range"
+							className={styles.range}
 							min={0}
 							max={12}
 							step={1}
@@ -1194,32 +1458,26 @@ function FormatTab({
 								})
 							}
 						/>
-						<p className={styles.guidance}>
-							Zero is square. Past about six a bar stops reading
-							as a length, which is the thing it is measuring.
-						</p>
+						<Hint>
+							Past about six a bar stops reading as a length,
+							which is the thing it is measuring.
+						</Hint>
 					</div>
 				)}
 
 				{supports.conditionalFormat && (
 					<div className={styles.field}>
-						<label className={styles.checkRow}>
-							<input
-								type="checkbox"
-								className={styles.checkbox}
-								checked={style.stripedRows !== false}
-								onChange={(e) =>
-									updateStyle({
-										stripedRows: e.target.checked,
-									})
-								}
-							/>
-							Shade alternate rows
-						</label>
-						<p className={styles.guidance}>
+						<Toggle
+							checked={style.stripedRows !== false}
+							onChange={(next) =>
+								updateStyle({ stripedRows: next })
+							}
+							label="Shade alternate rows"
+						/>
+						<Hint>
 							Reading across a wide row is where a grid loses
-							people, and a stripe is the cheapest fix.
-						</p>
+							people.
+						</Hint>
 					</div>
 				)}
 
@@ -1246,73 +1504,84 @@ function FormatTab({
 						]}
 					/>
 				</div>
-			</div>
+			</Section>
 
-			{supports.legend && (
-				<div className={styles.section}>
-					<div className={styles.sectionTitle}>Legend</div>
-					<button
-						type="button"
-						className={styles.checkRow}
-						onClick={() =>
-							updateStyle({
-								legend: {
-									...style.legend,
-									show: style.legend?.show === false,
-								},
-							})
-						}
-					>
-						<Check on={style.legend?.show !== false} />
-						Show the legend
-					</button>
-				</div>
-			)}
-
-			{supports.tooltip && (
-				<div className={styles.section}>
-					<div className={styles.sectionTitle}>Tooltip</div>
-					<div className={styles.field}>
-						<label className={styles.fieldLabel}>Mode</label>
-						<Select
-							value={style.tooltip?.mode ?? "axis"}
-							onChange={(v) =>
+			{/* One group for the two smallest: a legend is a single switch and
+			    a tooltip is a switch and a choice, and each as its own titled
+			    group cost more height in headings than in controls. */}
+			{(supports.legend || supports.tooltip) && (
+				<Section
+					id="visual-chrome"
+					title="Legend and tooltip"
+					defaultOpen={false}
+					count={chromeCount}
+				>
+					{supports.legend && (
+						<button
+							type="button"
+							className={styles.checkRow}
+							onClick={() =>
 								updateStyle({
-									tooltip: {
-										...style.tooltip,
-										mode: v as "single" | "axis",
+									legend: {
+										...style.legend,
+										show: style.legend?.show === false,
 									},
 								})
 							}
-							ariaLabel="Tooltip mode"
-							options={[
-								{
-									value: "axis",
-									label: "Every series at that point",
-								},
-								{
-									value: "single",
-									label: "Just the hovered point",
-								},
-							]}
-						/>
-					</div>
-					<button
-						type="button"
-						className={styles.checkRow}
-						onClick={() =>
-							updateStyle({
-								tooltip: {
-									...style.tooltip,
-									showShare: !style.tooltip?.showShare,
-								},
-							})
-						}
-					>
-						<Check on={Boolean(style.tooltip?.showShare)} />
-						Show each value as a share of the total
-					</button>
-				</div>
+						>
+							<Check on={style.legend?.show !== false} />
+							Show the legend
+						</button>
+					)}
+
+					{supports.tooltip && (
+						<>
+							<div className={styles.field}>
+								<label className={styles.fieldLabel}>
+									Tooltip shows
+								</label>
+								<Select
+									value={style.tooltip?.mode ?? "axis"}
+									onChange={(v) =>
+										updateStyle({
+											tooltip: {
+												...style.tooltip,
+												mode: v as "single" | "axis",
+											},
+										})
+									}
+									ariaLabel="Tooltip mode"
+									options={[
+										{
+											value: "axis",
+											label: "Every series at that point",
+										},
+										{
+											value: "single",
+											label: "Just the hovered point",
+										},
+									]}
+								/>
+							</div>
+							<button
+								type="button"
+								className={styles.checkRow}
+								onClick={() =>
+									updateStyle({
+										tooltip: {
+											...style.tooltip,
+											showShare:
+												!style.tooltip?.showShare,
+										},
+									})
+								}
+							>
+								<Check on={Boolean(style.tooltip?.showShare)} />
+								Show each value as a share of the total
+							</button>
+						</>
+					)}
+				</Section>
 			)}
 
 			{supports.conditionalFormat && (

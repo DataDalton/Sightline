@@ -197,17 +197,6 @@
 	min-height: 58px;
 }
 
-.footerTitle {
-	font-size: var(--text-sm);
-	flex-shrink: 0;
-}
-
-.footerText {
-	font-size: var(--text-sm);
-	color: var(--text-secondary);
-	line-height: 1.5;
-}
-
 .footerHint {
 	font-size: var(--text-sm);
 	color: var(--text-muted);
