@@ -185,6 +185,25 @@ export function EditorCanvas({
 	// How much of the canvas viewport is left below the grid, so a visual set
 	// to fill can be shown filling it here rather than only once published.
 	const [viewportHeight, setViewportHeight] = useState(0);
+
+	// The page's own height before zoom: the filter strip plus the grid. The
+	// strip is sized by what is in it, so it is measured rather than worked
+	// out. A transform does not change layout, which is why offsetHeight here
+	// is the unscaled figure the sizer needs.
+	// Held in state rather than a ref, so the measuring runs when the element
+	// arrives. A page with nothing on it renders a different tree and has no
+	// stage at all, and a ref would still be empty by the time the effect for
+	// the render that created one had already run.
+	const [stage, setStage] = useState<HTMLDivElement | null>(null);
+	const [stageHeight, setStageHeight] = useState(0);
+	useLayoutEffect(() => {
+		if (!stage) return;
+		const measure = () => setStageHeight(stage.offsetHeight);
+		measure();
+		const observer = new ResizeObserver(measure);
+		observer.observe(stage);
+		return () => observer.disconnect();
+	}, [stage]);
 	// A preview pins the width instead of measuring it, so the grid is laid out
 	// for the screen being checked rather than for the editor window.
 	const layoutWidth = previewWidth ?? width / zoom;
@@ -441,108 +460,132 @@ export function EditorCanvas({
 					if (e.target === e.currentTarget) onSelect(null);
 				}}
 			>
-				{/* Drawn even with nothing in it.
+				{/* One scaled page, holding the filter strip and the grid.
+
+				    Both used to scale themselves, the strip with CSS zoom and
+				    the grid with a transform, which are different things: one
+				    changes layout and the other does not. They drifted apart
+				    at every zoom but 100% and the grid had to carry margins to
+				    make up the space its transform did not take.
+
+				    Scaled once here instead. The sizer around it is the page's
+				    real size on screen, so the scrollbars are right without
+				    any correction and auto margins centre it in the viewport,
+				    which is where a page being zoomed should stay. */}
+				<div
+					className={styles.stageSizer}
+					style={{
+						width: metrics.width * zoom,
+						height: stageHeight * zoom,
+					}}
+				>
+					<div
+						className={styles.stage}
+						ref={setStage}
+						style={{
+							width: metrics.width,
+							transform: `scale(${zoom})`,
+						}}
+					>
+						{/* Drawn even with nothing in it.
 
 			    It used to appear only once a control existed, and the only way
 			    to make one exist was to know that a filter added from the
 			    toolbar would land somewhere other than the grid. An empty
 			    strip that says what it is for is how an author finds out. */}
-				{(controls.length > 0 || (onAddControl && !readOnly)) && (
-					// Sized by its contents rather than by the grid, exactly as
-					// the reader will see it, and scaled with the canvas so zoom
-					// applies to the whole page rather than to half of it.
-					<div
-						className={styles.controlStrip}
-						style={{
-							width: metrics.width,
-							// CSS zoom rather than a transform, so the strip's real
-							// height changes with it. A transform would leave the
-							// original box behind and the canvas would slide under
-							// the strip at anything but 100%.
-							zoom,
-						}}
-					>
-						{/* Says what the bar is. The bar is the reader's filter
+						{(controls.length > 0 ||
+							(onAddControl && !readOnly)) && (
+							// Sized by its contents rather than by the grid, exactly as
+							// the reader will see it, and scaled with the canvas so zoom
+							// applies to the whole page rather than to half of it.
+							<div
+								className={styles.controlStrip}
+								style={{ width: metrics.width }}
+							>
+								{/* Says what the bar is. The bar is the reader's filter
 					    strip drawn at full width, and the controls inside it
 					    are the parts an author can select, so without this the
 					    outline hugging one small dropdown inside a wide box
 					    reads as a selection that missed. */}
-						<div className={styles.stripCaption}>
-							Filter strip
-							<span className={styles.stripNote}>
-								{controls.length === 0
-									? "Nothing here yet. A filter added here sits above the page rather than on the grid."
-									: "Above the page, ordered along the strip. Controls do not respond here, so a click selects one instead of filtering the page. To put several behind one button, add a Group and drag them onto it."}
-							</span>
-							{onAddControl && !readOnly && (
-								<button
-									type="button"
-									className={styles.stripAdd}
-									onClick={onAddControl}
-								>
-									Add a filter
-								</button>
-							)}
-						</div>
+								<div className={styles.stripCaption}>
+									Filter strip
+									<span className={styles.stripNote}>
+										{controls.length === 0
+											? "Nothing here yet. A filter added here sits above the page rather than on the grid."
+											: "Above the page, ordered along the strip. Controls do not respond here, so a click selects one instead of filtering the page. To put several behind one button, add a Group and drag them onto it."}
+									</span>
+									{onAddControl && !readOnly && (
+										<button
+											type="button"
+											className={styles.stripAdd}
+											onClick={onAddControl}
+										>
+											Add a filter
+										</button>
+									)}
+								</div>
 
-						<FilterBar>
-							{controls.length === 0 && (
-								<span className={styles.stripEmpty}>
-									No page controls
-								</span>
-							)}
-							{controls.map((visual, index) => (
-								<ControlSlot
+								<FilterBar>
+									{controls.length === 0 && (
+										<span className={styles.stripEmpty}>
+											No page controls
+										</span>
+									)}
+									{controls.map((visual, index) => (
+										<ControlSlot
+											key={visual.visualId}
+											visual={visual}
+											index={index}
+											total={controls.length}
+											selectedId={selectedId}
+											sources={sources}
+											remoteBy={remoteSelections?.get(
+												visual.visualId,
+											)}
+											onSelect={onSelect}
+											onMoveControl={onMoveControl}
+										/>
+									))}
+								</FilterBar>
+							</div>
+						)}
+
+						<div
+							className={`${styles.canvas} ${state ? "" : styles.canvasQuiet} ${
+								previewWidth !== null
+									? styles.canvasPreview
+									: ""
+							}`}
+							style={{
+								width: metrics.width,
+								height: canvasHeight,
+								backgroundSize: `${metrics.columnWidth + gridGap}px ${rowHeight + gridGap}px`,
+							}}
+						>
+							{placed.map((visual) => (
+								<CanvasItem
 									key={visual.visualId}
 									visual={visual}
-									index={index}
-									total={controls.length}
-									selectedId={selectedId}
-									sources={sources}
-									remoteBy={remoteSelections?.get(
-										visual.visualId,
+									rect={rectFor(visual)}
+									pixels={rectToPixels(
+										displayRectFor(visual),
+										metrics,
 									)}
-									onSelect={onSelect}
-									onMoveControl={onMoveControl}
+									metrics={metrics}
+									clashes={placed.some(
+										(other) =>
+											other.visualId !==
+												visual.visualId &&
+											overlaps(
+												rectFor(visual),
+												rectFor(other),
+											),
+									)}
+									ctx={itemContext}
 								/>
 							))}
-						</FilterBar>
+						</div>
 					</div>
-				)}
-
-				<div
-					className={`${styles.canvas} ${state ? "" : styles.canvasQuiet} ${
-						previewWidth !== null ? styles.canvasPreview : ""
-					}`}
-					style={{
-						width: metrics.width,
-						height: canvasHeight,
-						transform: `scale(${zoom})`,
-						// The scaled canvas still has to reserve its unscaled space
-						// in the scroller, or the scrollbars would be wrong.
-						marginBottom: canvasHeight * (zoom - 1),
-						marginRight: metrics.width * (zoom - 1),
-						backgroundSize: `${metrics.columnWidth + gridGap}px ${rowHeight + gridGap}px`,
-					}}
-				>
-					{placed.map((visual) => (
-						<CanvasItem
-							key={visual.visualId}
-							visual={visual}
-							rect={rectFor(visual)}
-							pixels={rectToPixels(
-								displayRectFor(visual),
-								metrics,
-							)}
-							metrics={metrics}
-							clashes={placed.some(
-								(other) =>
-									other.visualId !== visual.visualId &&
-									overlaps(rectFor(visual), rectFor(other)),
-							)}
-							ctx={itemContext}
-						/>
-					))}
 				</div>
 			</div>
 		</PageFilterProvider>

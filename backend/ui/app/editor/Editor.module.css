@@ -333,9 +333,29 @@
 	padding: var(--space-4);
 }
 
+/* The page's real size on screen once zoom has been applied.
+
+   A transform does not change layout, so the element it is on still takes up
+   its unscaled room. This wrapper is the scaled figure, which is what makes
+   the scrollbars right at any zoom, and the auto margins keep the page in the
+   middle of the viewport instead of pinned to a corner while it grows. */
+.stageSizer {
+	position: relative;
+	margin: 0 auto;
+	flex-shrink: 0;
+}
+
+/* Scaled once, for the filter strip and the grid together. Anchored at the
+   top left of the sizer, which is measuring the same corner. */
+.stage {
+	position: absolute;
+	top: 0;
+	left: 0;
+	transform-origin: top left;
+}
+
 .canvas {
 	position: relative;
-	transform-origin: top left;
 	/* The grid is drawn behind the visuals so an author can see what they are
 	   snapping to. */
 	background-image:
@@ -1593,9 +1613,9 @@ textarea.input {
 
 /* A preview is centred and edged, so the width being checked is visible as a
    width rather than as the canvas having shrunk for no reason. */
+/* The edge of the screen being checked. Centring is the sizer's job, so this
+   is only the line. */
 .canvasPreview {
-	margin-left: auto;
-	margin-right: auto;
 	outline: 1px dashed var(--border-strong);
 	outline-offset: 12px;
 }
