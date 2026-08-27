@@ -774,11 +774,131 @@ textarea.input {
 	cursor: not-allowed;
 }
 
-.checkLabel {
+/* --- one list of fields ------------------------------------------------
+
+   Chosen at the top in the order the visual reads them, everything else after
+   a line, all in one scrolling box. A grid rather than a flex row, so the
+   handle, the tick, the name and the kind each own a column and none of them
+   can land on top of another whatever length the name is. */
+
+.fields {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+
+.fieldRow {
+	display: grid;
+	grid-template-columns: 18px 1fr;
+	align-items: center;
+	border-radius: var(--radius-sm);
+}
+
+/* A field the visual reads. Marked on the edge rather than by a fill, so the
+   rows above and below the line still read as one list. */
+.fieldOn {
+	background: var(--surface-raised);
+	box-shadow: inset 2px 0 0 var(--brand);
+}
+
+.fieldMoving {
+	background: var(--surface-active);
+	box-shadow:
+		inset 2px 0 0 var(--brand),
+		var(--shadow-sm);
+}
+
+/* The line between what is read and what is not. A rule on the first row below
+   it rather than a heading, which would make it two lists again. */
+.fieldSplit {
+	margin-top: var(--space-2);
+	border-top: 1px solid var(--border-subtle);
+	padding-top: var(--space-2);
+}
+
+/* Named apart from the canvas resize grips above, which are absolutely
+   positioned. Sharing the name put this one out of the row's flow and pinned
+   it to the panel, so the dots stayed put while the list scrolled under
+   them. */
+.fieldGrip,
+.fieldGripSlot {
+	grid-column: 1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 100%;
+}
+
+.fieldGrip {
+	padding: 0;
+	border: none;
+	background: none;
+	color: var(--border-strong);
+	cursor: grab;
+	touch-action: none;
+}
+
+.fieldGrip:hover {
+	color: var(--text-secondary);
+}
+
+.fieldGrip:active {
+	cursor: grabbing;
+}
+
+.fieldMoving .fieldGrip {
+	color: var(--brand-strong);
+}
+
+/* The row itself. A button, because pressing it is what puts the field in or
+   takes it out. */
+.fieldBody {
+	grid-column: 2;
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	min-width: 0;
+	padding: var(--space-1) var(--space-2) var(--space-1) 0;
+	border: none;
+	background: none;
+	color: var(--text-secondary);
+	font: inherit;
+	font-size: var(--text-sm);
+	text-align: left;
+	cursor: pointer;
+}
+
+.fieldBody:hover:not(:disabled) {
+	color: var(--text-primary);
+}
+
+.fieldRow:not(.fieldOn):hover {
+	background: var(--state-hover);
+}
+
+.fieldBody:disabled {
+	opacity: 0.4;
+	cursor: not-allowed;
+}
+
+.fieldName {
+	flex: 1;
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+/* Which of the two a field is. The list is one list, and losing the
+   distinction would lose what the order means: the first dimension is the axis
+   and the first measure is what a ranking ranks by. */
+.kindTag {
+	flex-shrink: 0;
+	font-size: 10px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--text-muted);
 }
 
 /* The fields a source offers, in a box of their own.
@@ -787,28 +907,23 @@ textarea.input {
    below them, the drill path and the control that removes the visual included,
    sat under all of it. */
 .fieldList {
-	max-height: 260px;
-	margin-top: var(--space-2);
+	max-height: 340px;
 	overflow-y: auto;
-	/* No vertical padding: the headings stick to the top of this box, and any
-	   padding here is a gap the rows scroll through above them. */
-	padding: 0 var(--space-1) var(--space-1);
+	/* The drag reads pointer positions against this box, so it has to be the
+	   thing that scrolls rather than a parent of it. */
+	overscroll-behavior: contain;
+	padding: var(--space-1);
 	border: 1px solid var(--border-subtle);
 	border-radius: var(--radius-md);
 	background: var(--surface-base);
 }
 
-.listHeading {
-	position: sticky;
-	top: 0;
-	z-index: 1;
-	padding: var(--space-2) var(--space-1) var(--space-1);
-	background: var(--surface-base);
-	color: var(--text-muted);
-	font-size: var(--text-xs);
-	font-weight: 600;
-	letter-spacing: 0.04em;
-	text-transform: uppercase;
+/* Held during a drag. Without it the pointer moving over the rows selects
+   their names, and the field being carried ends up dragging a blue smear of
+   text with it. */
+.listDragging {
+	user-select: none;
+	cursor: grabbing;
 }
 
 .listEmpty {
@@ -816,30 +931,6 @@ textarea.input {
 	color: var(--text-muted);
 	font-size: var(--text-xs);
 	line-height: 1.5;
-}
-
-/* One chosen field, with the controls that move it and take it off.
-
-   Order is the encoding for most types, so moving a field is a first-class
-   action rather than something to redo by removing and re-adding. */
-.selectedRow {
-	display: flex;
-	align-items: center;
-	gap: 2px;
-	padding: 2px 2px 2px var(--space-2);
-	margin-bottom: 2px;
-	border: 1px solid var(--border-subtle);
-	border-radius: var(--radius-sm);
-	background: var(--surface-sunken);
-}
-
-.selectedName {
-	flex: 1;
-	min-width: 0;
-	font-size: var(--text-xs);
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
 }
 
 .iconButton {
@@ -1078,15 +1169,6 @@ textarea.input {
 /* A page control on the canvas. In the reader view these render bare as part
    of the chrome, so on the canvas they need a frame to read as a placed
    element with a position rather than as loose controls on the grid. */
-.controlKind {
-	font-size: var(--text-xs);
-	font-weight: 600;
-	letter-spacing: 0.04em;
-	text-transform: uppercase;
-	color: var(--text-muted);
-	flex-shrink: 0;
-}
-
 /* The one place interaction is allowed through on the canvas. A text panel
    that cannot be typed into is not an editor, and its toolbar needs real
    clicks to work. */
@@ -1239,14 +1321,15 @@ textarea.input {
 	cursor: pointer;
 }
 
-/* The slot's own row: what kind of control it is, and where it sits in the
-   strip. A control has no rectangle to drag, so moving it is moving it along
-   the order, and the two controls that do it live here. */
+/* Where the selected control sits in the strip. A control has no rectangle to
+   drag, so moving it along the strip is what moving one is. Present only while
+   it is selected, since an empty band above every control reads as a gap
+   nobody put there. */
 .controlHead {
 	display: flex;
 	align-items: center;
+	justify-content: flex-end;
 	gap: var(--space-2);
-	min-height: 20px;
 }
 
 .controlMove {
