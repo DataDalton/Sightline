@@ -6,7 +6,12 @@ import { cacheStats } from "@/lib/query/cache";
 import { telemetryStats } from "@/lib/telemetry/usage";
 import { listSources, registryLoadedAt } from "@/lib/semantic/registry";
 import { settingsLoadedAt } from "@/lib/settings";
-import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
+import {
+	bootstrapLastError,
+	bootstrapReadyAt,
+	ensureReadyOrDegrade,
+} from "@/lib/platform/bootstrap";
+import { schemaStatus } from "@/lib/platform/schema";
 
 // Operational health of one replica. Each replica reports its own counters,
 // since caches and pools are per-process.
@@ -15,7 +20,10 @@ export async function GET(request: NextRequest) {
 
 	const identity = getIdentity(request);
 	if (!identity) {
-		return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+		return NextResponse.json(
+			{ error: "Not authenticated" },
+			{ status: 401 },
+		);
 	}
 
 	const response = NextResponse.json({
@@ -31,6 +39,15 @@ export async function GET(request: NextRequest) {
 			sourceCount: listSources().length,
 		},
 		settingsLoadedAt: settingsLoadedAt() || null,
+		// Whether this replica finished starting, and what stopped it if not.
+		// A replica that is serving an empty navigation because its schema is
+		// half applied reads identically to one with nothing to show, and this
+		// is the difference.
+		bootstrap: {
+			readyAt: bootstrapReadyAt() || null,
+			lastError: bootstrapLastError(),
+		},
+		schema: schemaStatus(),
 	});
 	response.headers.set("Cache-Control", "no-store");
 	return response;
