@@ -48,7 +48,11 @@ const refreshing = new Set<string>();
 // an entry may be served and on its own removes nothing, so without a ceiling
 // the map grows with everybody who has ever signed in rather than with whoever
 // is signed in now.
-const maxReaders = 20000;
+//
+// Sized from the expected population rather than a constant.
+function maxReaders(): number {
+	return Math.max(1000, settings().expectedReaders);
+}
 
 // Swept on write rather than on a timer, so a replica nobody is asking stops
 // doing work.
@@ -67,13 +71,14 @@ function remember(email: string, entry: Entry): void {
 		}
 	}
 
-	if (memory.size <= maxReaders) return;
+	const ceiling = maxReaders();
+	if (memory.size <= ceiling) return;
 	// Oldest first. A dropped answer costs its reader one round trip, which is
 	// what they would have paid had they not visited recently.
 	const byAge = Array.from(memory.entries()).sort(
 		(a, b) => a[1].computedAt - b[1].computedAt,
 	);
-	for (const [key] of byAge.slice(0, memory.size - maxReaders)) {
+	for (const [key] of byAge.slice(0, memory.size - ceiling)) {
 		memory.delete(key);
 	}
 }
@@ -115,6 +120,8 @@ async function probe(identity: Identity): Promise<Set<string>> {
 			`SELECT table_schema, table_name
 			 FROM ${catalog}.information_schema.tables
 			 WHERE table_schema IN (${list})`,
+			undefined,
+			identity.email.toLowerCase(),
 		);
 		for (const row of rows) {
 			visible.add(

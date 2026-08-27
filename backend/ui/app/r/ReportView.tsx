@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { describeFetchError } from "../../lib/swr";
+import { primeBatchCache } from "../hooks/queryBatch";
 import { SkeletonReport } from "../components/shared/Skeleton";
 import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { titleSeparator, usePageTitle } from "../hooks/usePageTitle";
@@ -82,6 +83,9 @@ interface ReportDetail {
 interface ReportResponse {
 	report: ReportDetail;
 	sources: Record<string, SourceMeta>;
+	// Answers the server already had for this page's opening visuals, keyed the
+	// same way the client asks for them.
+	seeded?: Record<string, unknown>;
 }
 
 // initial is the definition the server resolved while rendering the document.
@@ -103,6 +107,15 @@ export default function ReportView({
 		{ fallbackData: initial },
 	);
 	const { user } = useUser();
+
+	// Handed to the batcher before anything renders, so a visual whose answer
+	// came with the document never issues a request for it. Done during render
+	// rather than in an effect: an effect runs after the visuals have already
+	// mounted and asked, which is the round trip this exists to remove.
+	if (initial?.seeded) {
+		primeBatchCache(initial.seeded);
+		initial.seeded = undefined;
+	}
 
 	// Read off the navigation rather than fetched here. It carries the marked
 	// list already, is seeded into the document, and is the thing this button

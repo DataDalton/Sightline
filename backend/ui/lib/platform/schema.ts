@@ -522,6 +522,81 @@ const statements: string[] = [
 	// No foreign key to reports, so removing a report does not have to know
 	// this table exists. A favourite pointing at something gone is filtered by
 	// the join that reads it.
+	// Usage, pre-aggregated by day.
+	//
+	// The raw events are kept for ever: they are the audit record, and an
+	// aggregate cannot answer a question nobody thought to aggregate for. What
+	// they cannot do is answer the administration screens, which count and rank
+	// over a window and would end up scanning tens of millions of rows to draw
+	// a summary.
+	//
+	// So the reads move and the writes do not. One row per day per reader per
+	// report per source, which collapses a day of events by three or four
+	// orders of magnitude while still supporting every question those screens
+	// ask: totals by summing, distinct readers by counting rows rather than
+	// summing counts, and averages from a sum and a count held side by side.
+	`CREATE TABLE IF NOT EXISTS usage_daily (
+		day          DATE NOT NULL,
+		event_type   TEXT NOT NULL,
+		user_email   TEXT NOT NULL,
+		report_id    UUID,
+		source_key   TEXT,
+		events       BIGINT NOT NULL DEFAULT 0,
+		cache_hits   BIGINT NOT NULL DEFAULT 0,
+		cacheable    BIGINT NOT NULL DEFAULT 0,
+		duration_sum BIGINT NOT NULL DEFAULT 0,
+		duration_n   BIGINT NOT NULL DEFAULT 0,
+		query_ms_sum BIGINT NOT NULL DEFAULT 0,
+		query_ms_n   BIGINT NOT NULL DEFAULT 0,
+		query_ms_max BIGINT NOT NULL DEFAULT 0,
+		rows_sum     BIGINT NOT NULL DEFAULT 0,
+		-- Kept so "first seen" and "last seen" stay times rather than dates.
+		first_event  TIMESTAMPTZ,
+		last_event   TIMESTAMPTZ,
+		-- No primary key, because the natural one is not a list of columns:
+		-- report and source are absent on most events and a key cannot be
+		-- written over an expression. The unique index below says the same
+		-- thing in the form Postgres accepts.
+		created_on   TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
+	// One row per day per reader per report per source, with absent report and
+	// source folded to a fixed value so two rows that mean the same thing
+	// cannot both exist. Also the index the reads use, so it earns its keep
+	// twice.
+	`CREATE UNIQUE INDEX IF NOT EXISTS usage_daily_key_idx ON usage_daily (
+		day, event_type, user_email,
+		coalesce(report_id, '00000000-0000-0000-0000-000000000000'::uuid),
+		coalesce(source_key, '')
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS usage_daily_day_idx ON usage_daily (day DESC)`,
+	`CREATE INDEX IF NOT EXISTS usage_daily_report_idx
+		ON usage_daily (report_id, day DESC)`,
+
+	// Latency needs its own shape, because a percentile is the one figure that
+	// cannot be recovered from sums and counts. Computed per day, where it is
+	// exact, and combined across a window as a weighted reading, which the
+	// screen labels as covering the window rather than any single day.
+	`CREATE TABLE IF NOT EXISTS usage_daily_latency (
+		day        DATE NOT NULL,
+		source_key TEXT NOT NULL DEFAULT '',
+		samples    BIGINT NOT NULL DEFAULT 0,
+		p50_ms     DOUBLE PRECISION,
+		p95_ms     DOUBLE PRECISION,
+		max_ms     BIGINT,
+		PRIMARY KEY (day, source_key)
+	)`,
+
+	// How far the rollup has been built, so a run knows what to redo rather
+	// than rebuilding history every time.
+	`CREATE TABLE IF NOT EXISTS usage_rollup_state (
+		id          BOOLEAN PRIMARY KEY DEFAULT TRUE,
+		built_to    DATE,
+		ran_on      TIMESTAMPTZ,
+		CONSTRAINT usage_rollup_state_single CHECK (id)
+	)`,
+
 	`CREATE TABLE IF NOT EXISTS favourites (
 		user_email TEXT NOT NULL,
 		report_id  UUID NOT NULL,
@@ -612,6 +687,14 @@ const migrations: string[] = [
 	// value somebody set deliberately and the old default are indistinguishable
 	// from here: they are changed per source under Platform, Sources, Edit.
 	`ALTER TABLE data_sources ALTER COLUMN cache_ttl_seconds SET DEFAULT 0`,
+
+	// When a sync last reported progress.
+	//
+	// Whether a run is still going cannot be read from its start time: a walk
+	// of a large catalogue legitimately takes a while, and a walk whose replica
+	// died stopped instantly. Silence is the signal, which is the same reading
+	// the export jobs use, and it needs a timestamp that moves.
+	`ALTER TABLE sync_runs ADD COLUMN IF NOT EXISTS progress_on TIMESTAMPTZ`,
 ];
 
 // Creates anything missing. Safe to run on every startup.
@@ -795,6 +878,19 @@ export async function sweepExpired(): Promise<void> {
 	// Silence is the signal, not elapsed time. A job that has written a batch
 	// recently is working however long it has been going, and one that has
 	// written nothing for ten minutes is not coming back.
+	// A sync whose replica went away mid-walk is otherwise "running" for ever,
+	// and the administration page says so on every visit. Same reading as the
+	// export jobs above: silence rather than elapsed time, because a large
+	// catalogue takes a while and a dead run stopped the moment it died.
+	await sql(
+		`UPDATE sync_runs
+		 SET finished_on = now(),
+		     current = NULL,
+		     error = 'The sync stopped before it finished.'
+		 WHERE finished_on IS NULL
+		   AND coalesce(progress_on, started_on) < now() - interval '10 minutes'`,
+	);
+
 	await sql(
 		`UPDATE export_jobs
 		 SET status = 'failed',

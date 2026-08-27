@@ -12,7 +12,9 @@ import { formatValue, type FormatHint } from "../../lib/format";
 import type { VisualStyle } from "../../lib/visuals/style";
 import { VisualError } from "./VisualFrame";
 import { VisualLoadingState } from "./LoadingState";
-import { createResultMemo, resultMaxAgeMs } from "./resultMemo";
+import { createResultMemo, resultMaxAge } from "./resultMemo";
+import { canonical } from "../hooks/canonicalKey";
+import { runBatchedQuery } from "../hooks/queryBatch";
 import type { FieldMeta } from "./types";
 import styles from "./Matrix.module.css";
 
@@ -75,7 +77,7 @@ interface TopLevel {
 	columnValues: string[];
 }
 
-const topLevels = createResultMemo<TopLevel>(40, resultMaxAgeMs);
+const topLevels = createResultMemo<TopLevel>(40, resultMaxAge);
 
 export function MatrixTable({
 	sourceKey,
@@ -116,10 +118,8 @@ export function MatrixTable({
 				})),
 			];
 
-			const response = await fetch("/api/query", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
+			const data = await runBatchedQuery(
+				canonical({
 					sourceKey,
 					dimensions: columnDimension
 						? [dimension, columnDimension]
@@ -129,18 +129,8 @@ export function MatrixTable({
 					sort: [{ field: dimension, direction: "asc" }],
 					limit: 2000,
 				}),
-			});
+			);
 
-			if (!response.ok) {
-				const detail = await response.json().catch(() => null);
-				const err: Error & { status?: number } = new Error(
-					detail?.error ?? `Query failed (${response.status})`,
-				);
-				err.status = response.status;
-				throw err;
-			}
-
-			const data = await response.json();
 			const raw: Record<string, unknown>[] = data.rows ?? [];
 
 			// Collapse the pivoted dimension into one row per row-value, with

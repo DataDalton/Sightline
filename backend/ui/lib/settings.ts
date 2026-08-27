@@ -41,6 +41,10 @@ export interface PlatformSettings {
 	// counting entries prices a one row scorecard the same as a fifty thousand
 	// row extract and is reached either far too early or never.
 	resultMaxBytes: number;
+	// How many people the deployment expects to serve. The per reader caches
+	// are sized from this rather than from a constant, because the right size
+	// is a property of the installation.
+	expectedReaders: number;
 	// Serve an expired entry immediately and refresh behind the request, so a
 	// cold policy class costs one slow request rather than many.
 	staleWhileRevalidate: boolean;
@@ -108,6 +112,7 @@ export const defaultSettings: PlatformSettings = {
 	resultTtlSeconds: 3600,
 	resultMaxEntries: 2000,
 	resultMaxBytes: 256,
+	expectedReaders: 25000,
 	staleWhileRevalidate: true,
 
 	refreshIntervalSeconds: 3600,
@@ -270,6 +275,7 @@ export const writableSettings = [
 	"resultTtlSeconds",
 	"resultMaxEntries",
 	"resultMaxBytes",
+	"expectedReaders",
 	"staleWhileRevalidate",
 	"refreshIntervalSeconds",
 	"groupCacheTtlSeconds",

@@ -179,6 +179,16 @@ interface CacheRow {
 	expires_on: string;
 }
 
+function toEntry(row: CacheRow): CacheEntry {
+	return {
+		rows: row.payload.rows ?? [],
+		columns: row.payload.columns ?? [],
+		rowCount: row.row_count,
+		computedAt: new Date(row.created_on).getTime(),
+		expiresAt: new Date(row.expires_on).getTime(),
+	};
+}
+
 async function sharedGet(
 	key: string,
 ): Promise<{ entry: CacheEntry; bytes: number } | null> {
@@ -192,13 +202,7 @@ async function sharedGet(
 		const row = rows[0];
 		if (!row) return null;
 
-		const entry: CacheEntry = {
-			rows: row.payload.rows ?? [],
-			columns: row.payload.columns ?? [],
-			rowCount: row.row_count,
-			computedAt: new Date(row.created_on).getTime(),
-			expiresAt: new Date(row.expires_on).getTime(),
-		};
+		const entry = toEntry(row);
 
 		// Estimated rather than measured. Serializing it back to weigh it would
 		// cost as much as the read did, and the estimate only has to be close
@@ -210,6 +214,83 @@ async function sharedGet(
 		console.warn("Shared cache read failed:", error);
 		return null;
 	}
+}
+
+// Reads several keys as one question.
+//
+// A page asks one query per visual, and each of those used to check the shared
+// tier on its own connection. Twenty visuals meant twenty round trips to
+// Postgres before any of them could decide whether it needed the warehouse, and
+// the pool holds ten connections, so half of them queued behind the others
+// while holding a request open.
+//
+// Memory is consulted first and only what is missing is asked for, so a warm
+// replica does no database work at all.
+export async function cacheGetMany(
+	keys: string[],
+): Promise<Map<string, CacheLookup>> {
+	const now = Date.now();
+	const allowStale = settings().staleWhileRevalidate;
+	const found = new Map<string, CacheLookup>();
+
+	// Deduplicated, because two visuals on a page regularly ask the same
+	// question and the answer is one row either way.
+	const wanted = Array.from(new Set(keys));
+	const missing: string[] = [];
+
+	for (const key of wanted) {
+		const local = memoryGet(key);
+		if (local && local.expiresAt > now) {
+			found.set(key, { entry: local, tier: "l1", stale: false });
+			continue;
+		}
+		if (local && allowStale) {
+			found.set(key, { entry: local, tier: "l1", stale: true });
+			continue;
+		}
+		missing.push(key);
+	}
+
+	if (missing.length > 0) {
+		try {
+			const rows = await sql<CacheRow & { cache_key: string }>(
+				`SELECT cache_key, payload, row_count, created_on, expires_on
+				 FROM result_cache
+				 WHERE cache_key = ANY($1)`,
+				[missing],
+			);
+			for (const row of rows) {
+				const entry = toEntry(row);
+				// Promoted, so a second page asking the same question on this
+				// replica does no database work.
+				memorySet(row.cache_key, entry, estimateJsonBytes(entry));
+				if (entry.expiresAt > now) {
+					found.set(row.cache_key, {
+						entry,
+						tier: "l2",
+						stale: false,
+					});
+				} else if (allowStale) {
+					found.set(row.cache_key, {
+						entry,
+						tier: "l2",
+						stale: true,
+					});
+				}
+			}
+		} catch (error) {
+			// A failed read is a miss for everything it covered, never an error
+			// the caller sees.
+			console.warn("Shared cache batch read failed:", error);
+		}
+	}
+
+	for (const key of wanted) {
+		if (!found.has(key)) {
+			found.set(key, { entry: null, tier: null, stale: false });
+		}
+	}
+	return found;
 }
 
 // Weight without serializing. Samples the first rows rather than walking every

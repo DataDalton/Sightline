@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { maxExportRows } from "../../lib/query/exportLimits";
-import { createResultMemo, resultMaxAgeMs } from "./resultMemo";
+import { createResultMemo, resultMaxAge } from "./resultMemo";
+import { canonical } from "../hooks/canonicalKey";
+import { runBatchedQuery } from "../hooks/queryBatch";
 import { useExport } from "../hooks/useExport";
 import {
 	formatValue,
@@ -103,7 +105,7 @@ interface FirstPage {
 	hasMore: boolean;
 }
 
-const firstPages = createResultMemo<FirstPage>(40, resultMaxAgeMs);
+const firstPages = createResultMemo<FirstPage>(40, resultMaxAge);
 
 export function DataGrid({
 	sourceKey,
@@ -228,10 +230,8 @@ export function DataGrid({
 			setError(null);
 
 			try {
-				const response = await fetch("/api/query", {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({
+				const data = await runBatchedQuery(
+					canonical({
 						sourceKey,
 						dimensions,
 						measures,
@@ -242,18 +242,8 @@ export function DataGrid({
 						limit: pageSize,
 						offset,
 					}),
-				});
+				);
 
-				if (!response.ok) {
-					const detail = await response.json().catch(() => null);
-					const err: Error & { status?: number } = new Error(
-						detail?.error ?? `Query failed (${response.status})`,
-					);
-					err.status = response.status;
-					throw err;
-				}
-
-				const data = await response.json();
 				// A newer request has since been issued, so this result is
 				// already obsolete.
 				if (token !== requestRef.current) return;

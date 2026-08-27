@@ -84,7 +84,7 @@ export default function CategoryView({
 				// reader got a diagnosis on one screen and a shrug on the next.
 				<div className={styles.state}>
 					{user?.policy.degraded
-						? "Your group membership could not be resolved, so nothing here can be shown. This is usually a missing permission on the SQL warehouse rather than on the data. It retries on its own."
+						? "Your group membership could not be resolved, so nothing here can be shown. This is usually a missing permission on the SQL warehouse rather than on the data. Please wait a moment or try again."
 						: user && !user.canQueryAsUser
 							? "No user token was forwarded to the app, so nothing here can be opened. Enable user authorization with the sql scope on the app."
 							: "No reports in this category yet, or none that you can open."}

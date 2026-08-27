@@ -21,6 +21,10 @@ export interface SyncRun {
 	completed: number;
 	current: string | null;
 	error: string | null;
+	// True where the run has neither finished nor reported progress recently.
+	// Every caller was left to work this out and none of them did, so an
+	// abandoned run read as a running one indefinitely.
+	abandoned: boolean;
 }
 
 interface Row {
@@ -32,7 +36,12 @@ interface Row {
 	completed: number;
 	current: string | null;
 	error: string | null;
+	stalled: boolean;
 }
+
+// How long a run may say nothing before it is taken to have stopped. A walk of
+// nineteen sources finishes in about a minute, so this is generous.
+const silenceMs = 10 * 60 * 1000;
 
 function toRun(row: Row): SyncRun {
 	return {
@@ -44,6 +53,7 @@ function toRun(row: Row): SyncRun {
 		completed: Number(row.completed) || 0,
 		current: row.current,
 		error: row.error,
+		abandoned: row.finished_on === null && row.stalled === true,
 	};
 }
 
@@ -53,7 +63,8 @@ export async function startSyncRun(
 ): Promise<string | null> {
 	try {
 		const rows = await sql<{ run_id: string }>(
-			`INSERT INTO sync_runs (started_by, total) VALUES ($1, $2)
+			`INSERT INTO sync_runs (started_by, total, progress_on)
+			 VALUES ($1, $2, now())
 			 RETURNING run_id`,
 			[startedBy, total],
 		);
@@ -73,7 +84,8 @@ export async function noteSyncProgress(
 	if (!runId) return;
 	try {
 		await sql(
-			`UPDATE sync_runs SET completed = $2, current = $3 WHERE run_id = $1`,
+			`UPDATE sync_runs SET completed = $2, current = $3, progress_on = now()
+			 WHERE run_id = $1`,
 			[runId, completed, current],
 		);
 	} catch {
@@ -107,10 +119,13 @@ export async function latestSyncRun(): Promise<SyncRun | null> {
 	try {
 		const rows = await sql<Row>(
 			`SELECT run_id, started_by, started_on, finished_on, total,
-			        completed, current, error
+			        completed, current, error,
+			        coalesce(progress_on, started_on) < now() - make_interval(secs => $1)
+			          AS stalled
 			 FROM sync_runs
 			 ORDER BY started_on DESC
 			 LIMIT 1`,
+			[silenceMs / 1000],
 		);
 		return rows[0] ? toRun(rows[0]) : null;
 	} catch (error) {

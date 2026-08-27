@@ -130,6 +130,7 @@ export async function getFieldRange(
 							identity.userToken,
 							compiled.sql,
 							compiled.params,
+							identity.email.toLowerCase(),
 						)
 					: !isDatabricksApp
 						? await (
