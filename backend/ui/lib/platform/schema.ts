@@ -36,7 +36,10 @@ const statements: string[] = [
 		-- the cache key, so it is enforced rather than informational: a
 		-- filtered source is never cached without its policy class.
 		has_row_filter    BOOLEAN NOT NULL DEFAULT FALSE,
-		cache_ttl_seconds INTEGER NOT NULL DEFAULT 300,
+		-- Zero means inherit the platform setting rather than do not cache.
+		-- The migration below says the same thing to a table that already
+		-- exists, and the two agree so a fresh install never starts out pinned.
+		cache_ttl_seconds INTEGER NOT NULL DEFAULT 0,
 		default_time_field TEXT,
 		is_active         BOOLEAN NOT NULL DEFAULT TRUE,
 		created_by        TEXT,

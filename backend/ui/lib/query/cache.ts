@@ -284,6 +284,46 @@ export async function cacheGet(key: string): Promise<CacheLookup> {
 	return { entry: null, tier: null, stale: false };
 }
 
+// Which of these keys already hold a fresh answer.
+//
+// Asked as one question rather than one per key. Warming decides what is worth
+// a warehouse query by checking every spec a report would make, and a key that
+// is not in memory costs a round trip to Postgres to rule out, so checking a
+// hundred specs one at a time spent a hundred round trips deciding what not to
+// do. That cost is what kept the warmer looking at five reports.
+//
+// Nothing is promoted into memory here. The caller wants to know what to skip,
+// not to read the rows, and pulling a payload it will not use would trade the
+// round trips this removes for the bytes it does not need.
+export async function cacheFresh(keys: string[]): Promise<Set<string>> {
+	const now = Date.now();
+	const fresh = new Set<string>();
+	const unknown: string[] = [];
+
+	for (const key of keys) {
+		const held = memory.get(key);
+		if (held && held.value.expiresAt > now) fresh.add(key);
+		else unknown.push(key);
+	}
+
+	if (unknown.length === 0) return fresh;
+
+	try {
+		const rows = await sql<{ cache_key: string }>(
+			`SELECT cache_key FROM result_cache
+			 WHERE cache_key = ANY($1) AND expires_on > now()`,
+			[unknown],
+		);
+		for (const row of rows) fresh.add(row.cache_key);
+	} catch (error) {
+		// A failed check means warming does more work than it needed to, never
+		// that it does the wrong work.
+		console.warn("Bulk cache check failed:", error);
+	}
+
+	return fresh;
+}
+
 export async function cacheSet(
 	key: string,
 	policy: PolicyClass,
