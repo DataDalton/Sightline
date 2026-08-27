@@ -2,7 +2,7 @@ import type { Identity } from "../auth/identity";
 import { resolvePolicyClass } from "../auth/policy";
 import { getSource } from "../semantic/registry";
 import { isDatabricksApp } from "../runtime";
-import { buildCacheKey, cacheGet, isShareable } from "./cache";
+import { buildCacheKey, cacheFresh, isShareable } from "./cache";
 import { executeQuery } from "./execute";
 import { parseQuerySpec } from "./spec";
 import { initialQueryForVisual } from "./visualSpec";
@@ -37,10 +37,13 @@ import { openingBreakdown, openingFilters } from "../visuals/pageDefaults";
 // also the shape that failed when the reachability probe tried it.
 const maxConcurrent = 4;
 
-// The most queries one request will warm. A report with many pages is exactly
-// the case worth warming and also the case where warming everything would cost
-// more than the reader saves.
-const maxQueries = 24;
+// The most warehouse queries one walk will spend.
+//
+// This is the real budget now that checking what is already warm costs one
+// round trip rather than one per spec. Coverage is bounded by what warming
+// spends, not by how many reports it is willing to look at, which is the right
+// way round: looking is nearly free and querying is not.
+const maxQueries = 60;
 
 interface WarmableVisual {
 	visualId?: string;
@@ -163,19 +166,36 @@ async function onlyCold(
 	specs: unknown[],
 	policy: Awaited<ReturnType<typeof resolvePolicyClass>>,
 ): Promise<unknown[]> {
-	const cold: unknown[] = [];
+	// Every spec resolved to its cache key first, then one question asked about
+	// all of them. This used to ask per spec and await each answer, so the walk
+	// spent a Postgres round trip per visual deciding what not to warm, which is
+	// why it could only afford to look at a handful of reports.
+	const keyed: { spec: unknown; key: string }[] = [];
 	for (const spec of specs) {
-		if (cold.length >= maxQueries) break;
 		try {
 			const parsed = parseQuerySpec(spec);
 			const source = getSource(parsed.sourceKey);
 			if (!source) continue;
-			const found = await cacheGet(buildCacheKey(source, parsed, policy));
-			if (!found.entry || found.stale) cold.push(spec);
+			keyed.push({ spec, key: buildCacheKey(source, parsed, policy) });
 		} catch {
 			// A spec that will not parse is one the renderer would not send
 			// either. Dropped rather than warmed.
 		}
+	}
+
+	const fresh = await cacheFresh(keyed.map((entry) => entry.key));
+
+	const cold: unknown[] = [];
+	const taken = new Set<string>();
+	for (const entry of keyed) {
+		if (cold.length >= maxQueries) break;
+		if (fresh.has(entry.key)) continue;
+		// Two visuals asking the same question are one warehouse query. The
+		// per-spec walk could not see that, so a page with a scorecard and a
+		// chart over the same figures warmed it twice.
+		if (taken.has(entry.key)) continue;
+		taken.add(entry.key);
+		cold.push(entry.spec);
 	}
 	return cold;
 }
@@ -228,8 +248,14 @@ const warmedClasses = new Map<string, number>();
 // the same entries repeatedly for a reader who never opened them.
 const classWarmIntervalMs = 10 * 60 * 1000;
 
-// How many unopened reports one walk will touch, and how much of each.
-const maxReports = 5;
+// How many unopened reports one walk will consider.
+//
+// Was five, which is where the per-spec cache check pinned it: a reader with
+// more than a handful of reports found everything past the fifth as cold as if
+// warming did not run. Looking at a report costs a definition read that is
+// already cached and a walk of its landing page, so the number can be generous
+// while maxQueries keeps the warehouse spend bounded.
+const maxReports = 25;
 
 export interface WarmCandidate {
 	reportId: string;
@@ -265,9 +291,10 @@ export function warmForReader(
 			// Appended after the guard, so this query runs at most once per
 			// class per interval rather than on every page load.
 			const { recentReportTargets } = await import("../platform/search");
-			const recent = await recentReportTargets(identity.email).catch(
-				() => [],
-			);
+			const recent = await recentReportTargets(
+				identity.email,
+				maxReports,
+			).catch(() => []);
 
 			// Marked first, then recently opened. A mark is a statement of
 			// intent and a visit is only evidence, so the two are not ranked
