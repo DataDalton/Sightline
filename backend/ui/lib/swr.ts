@@ -17,6 +17,31 @@ export async function fetcher<T = any>(url: string): Promise<T> {
 	return res.json();
 }
 
+// What to tell somebody when a fetch failed.
+//
+// A refusal and an outage reach SWR the same way: both populate the error
+// channel, and reading that channel alone cannot tell them apart. Every screen
+// used to report both as a refusal, which during an incident tells people they
+// have lost access. That sends them to ask for access rather than to report the
+// outage, and points whoever is debugging at the permission model instead of at
+// the failure.
+//
+// The routes answer 404 for a resource the caller may not open as well as for
+// one that is not there, deliberately, so that asking for a report is not a way
+// to learn it exists. That is the one status where "not available to you" is
+// the honest answer.
+export function describeFetchError(error: unknown, subject: string): string {
+	const status = (error as { status?: number } | null)?.status;
+
+	if (status === 404 || status === 403) {
+		return `This ${subject} is not available to you.`;
+	}
+	if (status === 401) {
+		return "Your session has ended. Reload the page to sign in again.";
+	}
+	return `This ${subject} could not be loaded. Something went wrong at our end rather than with your access, so trying again shortly is worth it.`;
+}
+
 export const swrDefaults = {
 	fetcher,
 	revalidateOnFocus: false,

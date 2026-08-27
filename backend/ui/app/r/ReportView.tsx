@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
+import { describeFetchError } from "../../lib/swr";
 import { SkeletonReport } from "../components/shared/Skeleton";
 import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { titleSeparator, usePageTitle } from "../hooks/usePageTitle";
@@ -178,7 +179,7 @@ export default function ReportView({
 		return (
 			<div className={styles.page}>
 				<div className={styles.state}>
-					This report is not available to you.
+					{describeFetchError(error, "report")}
 				</div>
 			</div>
 		);

@@ -8,6 +8,7 @@ import {
 	initialQueryForVisual,
 	queryForVisual,
 } from "./visualSpec";
+import { openingBreakdown } from "../visuals/pageDefaults";
 
 // Warming is only worth anything if the query it runs is the query the page
 // then asks for. Both go through parseQuerySpec and are keyed on
@@ -244,4 +245,129 @@ test("the warmed top N is the one the page asks for", () => {
 	});
 	assert.ok(warmed && asked);
 	assert.equal(keyFor(warmed), keyFor(asked));
+});
+
+// The breakdown switcher.
+//
+// DimensionSwitch selects its first option in a mount effect, so a page
+// carrying one opens with a breakdown already chosen and every visual reading
+// "<selected>" groups by it from the first render. The server used to drop the
+// placeholder instead, on the reading that a page opens with nothing chosen,
+// which made the warm key and the asked key differ on exactly the pages the
+// switcher exists for.
+
+const switcher = {
+	visualId: "switch-1",
+	visualType: "dimensionSwitch",
+	config: { dimensions: ["region", "orderDate"] },
+};
+
+test("a page with a switcher opens on its first option", () => {
+	assert.deepEqual(openingBreakdown([switcher]), {
+		selected: "region",
+		grain: null,
+	});
+});
+
+test("a page with no switcher opens on nothing", () => {
+	assert.deepEqual(
+		openingBreakdown([
+			{
+				visualId: "t",
+				visualType: "table",
+				config: { dimensions: ["region"] },
+			},
+		]),
+		{ selected: null, grain: null },
+	);
+});
+
+test("what is warmed for a breakdown chart is what the page asks for", () => {
+	const chart = {
+		visualId: "chart-1",
+		visualType: "barChart",
+		config: { dimensions: ["<selected>"], measures: ["revenue"] },
+	};
+	const breakdown = openingBreakdown([switcher, chart]);
+
+	// The server, walking the stored page before anything is rendered.
+	const warmed = initialQueryForVisual(
+		chart,
+		"orders",
+		source,
+		[],
+		breakdown,
+	);
+
+	// The browser, after DimensionSwitch has set the breakdown on mount and
+	// VisualRenderer has resolved the placeholder against it.
+	const resolved = chart.config.dimensions.map((d) =>
+		d === "<selected>" ? breakdown.selected! : d,
+	);
+	const asked = queryForVisual("barChart", {
+		sourceKey: "orders",
+		dimensions: resolved,
+		measures: chart.config.measures,
+	});
+
+	assert.deepEqual(warmed?.dimensions, ["region"]);
+	assert.equal(keyFor(warmed), keyFor(asked));
+});
+
+test("a placeholder with no switcher to resolve it is still dropped", () => {
+	const warmed = initialQueryForVisual(
+		{
+			visualType: "barChart",
+			config: { dimensions: ["<selected>"], measures: ["revenue"] },
+		},
+		"orders",
+		source,
+		[],
+		{ selected: null, grain: null },
+	);
+	assert.deepEqual(warmed?.dimensions, []);
+});
+
+test("a grain placeholder resolves from the period switcher", () => {
+	const breakdown = openingBreakdown([
+		{
+			visualId: "period-1",
+			visualType: "periodSwitch",
+			config: { dimensions: ["orderDate"] },
+		},
+	]);
+	const warmed = initialQueryForVisual(
+		{
+			visualType: "barChart",
+			config: { dimensions: ["<grain>"], measures: ["revenue"] },
+		},
+		"orders",
+		source,
+		[],
+		breakdown,
+	);
+	assert.deepEqual(warmed?.dimensions, ["orderDate"]);
+});
+
+test("a switcher offering a field the source dropped resolves to nothing", () => {
+	const breakdown = openingBreakdown([
+		{
+			visualId: "switch-2",
+			visualType: "dimensionSwitch",
+			config: { dimensions: ["retiredField", "region"] },
+		},
+	]);
+	const warmed = initialQueryForVisual(
+		{
+			visualType: "barChart",
+			config: { dimensions: ["<selected>"], measures: ["revenue"] },
+		},
+		"orders",
+		source,
+		[],
+		breakdown,
+	);
+	// The renderer filters the resolved name against the source too, so both
+	// sides drop it and neither asks the warehouse for a field that is gone.
+	assert.deepEqual(warmed?.dimensions, []);
 });
