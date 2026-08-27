@@ -30,6 +30,12 @@ interface PageStripProps {
 	// answers rather than the question.
 	onAdd: () => void;
 	onRemove: (pageId: string) => void;
+	// False where the page is locked against deletion. The cross is not
+	// drawn at all rather than drawn and refused, and the editor's lock
+	// notice says why it is missing.
+	canRemove?: boolean;
+	// False where the report is locked against new pages.
+	canAdd?: boolean;
 	// The whole list in its new order. Sent whole rather than as a pair of
 	// positions, so the server does not have to work out what moved.
 	onReorder: (pageIds: string[]) => void;
@@ -42,6 +48,8 @@ export function PageStrip({
 	onSelect,
 	onAdd,
 	onRemove,
+	canRemove = true,
+	canAdd = true,
 	onReorder,
 }: PageStripProps) {
 	// Offered on the active tab only, matching removal. A nudge control on
@@ -85,7 +93,7 @@ export function PageStrip({
 							{/* Only the page being edited offers removal, so a
 							    stray click on a tab cannot delete a page the
 							    author is not even looking at. */}
-							{on && pages.length > 1 && (
+							{on && canRemove && pages.length > 1 && (
 								<>
 									<button
 										type="button"
@@ -127,14 +135,16 @@ export function PageStrip({
 					);
 				})}
 
-				<button
-					type="button"
-					className={styles.pageAddButton}
-					onClick={onAdd}
-					title="Add a page to this report"
-				>
-					+ Page
-				</button>
+				{canAdd && (
+					<button
+						type="button"
+						className={styles.pageAddButton}
+						onClick={onAdd}
+						title="Add a page to this report"
+					>
+						+ Page
+					</button>
+				)}
 			</div>
 
 			{dirty && (

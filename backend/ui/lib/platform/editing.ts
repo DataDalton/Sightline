@@ -2,6 +2,14 @@ import { sql, transaction } from "../data/lakebase";
 import type { PolicyClass } from "../auth/policy";
 import { insertLog } from "../activityLog";
 import { invalidateDefinitions } from "./definitionCache";
+import {
+	effective,
+	refuse,
+	refuseAddPage,
+	unprotected,
+	type PageProtection,
+	type ReportProtection,
+} from "./pageProtection";
 import { record } from "../telemetry/usage";
 import { getExplicitContext, resolveReportAccess } from "./access";
 import { getSource } from "../semantic/registry";
@@ -172,6 +180,118 @@ export async function assertCanEdit(
 // Runs before the transaction opens. A refusal should not have taken a row lock
 // on the report first, and the reads here are of the semantic registry, which
 // is already in memory.
+// Refuses operations against a page an administrator has locked.
+//
+// Enforced here rather than in the editor, because a lock the editor honours
+// and the write path does not is a lock anybody can lift by sending the
+// operation themselves. This runs before the transaction opens, so a refused
+// batch changes nothing at all rather than being half applied.
+//
+// A page an operation names by visual has to be looked up: removing a visual
+// says which visual, not which page it is on, and that is exactly the operation
+// a lock is there to stop.
+async function assertPagesAreUnlocked(
+	reportId: string,
+	operations: EditOperation[],
+): Promise<void> {
+	const named = new Set<string>();
+	const byVisual: string[] = [];
+	let addsAPage = false;
+
+	for (const op of operations) {
+		// A page being created cannot already be locked, but the report it is
+		// being added to can refuse it.
+		if (op.type === "addPage") {
+			addsAPage = true;
+			continue;
+		}
+		if ("pageId" in op && typeof op.pageId === "string") {
+			named.add(op.pageId);
+			continue;
+		}
+		if (op.type === "updateVisual" || op.type === "removeVisual") {
+			byVisual.push(op.visualId);
+		}
+	}
+
+	const pageOfVisual = new Map<string, string>();
+	if (byVisual.length > 0) {
+		const rows = await sql<{ visual_id: string; page_id: string }>(
+			`SELECT visual_id::text AS visual_id, page_id::text AS page_id
+			 FROM report_visuals WHERE visual_id = ANY($1::uuid[])`,
+			[byVisual],
+		);
+		for (const row of rows) {
+			pageOfVisual.set(row.visual_id, row.page_id);
+			named.add(row.page_id);
+		}
+	}
+
+	if (named.size === 0 && !addsAPage) return;
+
+	// A report can be locked as a whole. Combined with each page's own pair
+	// rather than overriding it, so locking a report cannot quietly lift a
+	// lock somebody put on one page of it.
+	const reportRows = await sql<{
+		protect_delete: boolean;
+		protect_edit: boolean;
+		protect_add_page: boolean;
+	}>(
+		`SELECT protect_delete, protect_edit, protect_add_page
+		   FROM reports WHERE report_id = $1`,
+		[reportId],
+	);
+	const reportLocks: ReportProtection = {
+		protectDelete: reportRows[0]?.protect_delete === true,
+		protectEdit: reportRows[0]?.protect_edit === true,
+		protectAddPage: reportRows[0]?.protect_add_page === true,
+	};
+
+	if (addsAPage) {
+		const said = refuseAddPage("addPage", reportLocks);
+		if (said) throw new EditRejectedError(said.reason);
+	}
+
+	if (named.size === 0) return;
+
+	const rows = await sql<{
+		page_id: string;
+		protect_delete: boolean;
+		protect_edit: boolean;
+	}>(
+		`SELECT page_id::text AS page_id, protect_delete, protect_edit
+		 FROM report_pages WHERE page_id = ANY($1::uuid[])`,
+		[Array.from(named)],
+	);
+
+	const locks = new Map<string, PageProtection>(
+		rows.map((row) => [
+			row.page_id,
+			{
+				protectDelete: row.protect_delete,
+				protectEdit: row.protect_edit,
+			},
+		]),
+	);
+
+	for (const op of operations) {
+		if (op.type === "addPage") continue;
+		const pageId =
+			"pageId" in op && typeof op.pageId === "string"
+				? op.pageId
+				: op.type === "updateVisual" || op.type === "removeVisual"
+					? pageOfVisual.get(op.visualId)
+					: undefined;
+		if (!pageId) continue;
+
+		const said = refuse(
+			op.type,
+			effective(reportLocks, locks.get(pageId) ?? unprotected),
+		);
+		if (said) throw new EditRejectedError(said.reason);
+	}
+}
+
 async function assertDefinitionsAreDrawable(
 	operations: EditOperation[],
 ): Promise<void> {
@@ -270,6 +390,7 @@ export async function applyEdits(
 	}
 
 	await assertDefinitionsAreDrawable(request.operations);
+	await assertPagesAreUnlocked(request.reportId, request.operations);
 
 	return transaction(async (client) => {
 		// Locking the report row serializes concurrent edits to it. Without

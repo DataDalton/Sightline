@@ -57,6 +57,10 @@ export const capabilities = [
 	// Navigation structure.
 	"category.create",
 	"category.manage",
+	// Locking a page against deletion or against change. Its own capability
+	// rather than part of editing, because the point of a lock is that the
+	// people who edit a page cannot lift it.
+	"page.protect",
 	// Administering the platform itself.
 	"access.grant",
 	"semantic.sync",

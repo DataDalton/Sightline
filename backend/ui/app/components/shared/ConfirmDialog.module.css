@@ -33,12 +33,16 @@
 
 /* Coloured for what it does, so the destructive button is not the same shape
    as the one beside it. */
+/* Filled, so it takes the solid destructive colour rather than the one
+   destructive text is written in. Those are the same value on a light theme
+   and deliberately not on a dark one, where the text colour is light enough to
+   read on a dark ground and left white text on pale pink. */
 .confirm {
 	padding: var(--space-2) var(--space-4);
-	border: 1px solid var(--danger);
+	border: 1px solid var(--danger-solid);
 	border-radius: var(--radius-md);
-	background: var(--danger);
-	color: #fff;
+	background: var(--danger-solid);
+	color: var(--danger-on-solid);
 	font-size: var(--text-sm);
 	font-weight: 600;
 	font-family: inherit;

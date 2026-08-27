@@ -76,6 +76,17 @@
 	--warning-subtle: #fdf1dd;
 	--danger: #c22b2b;
 	--danger-subtle: #fdeaea;
+	/* A filled destructive control, which is a different job from the
+	   colour destructive text is written in. On a dark theme the text
+	   colour is light so that it reads on a dark ground, and filling a
+	   button with it left white text on pale pink at 2.98:1. */
+	--danger-solid: #c22b2b;
+	--danger-on-solid: #ffffff;
+	/* Text written on top of a chart colour, such as an initial in a
+	   presence avatar. The series colours are dark on a light theme and
+	   light on a dark one, so what reads on them flips with the theme:
+	   white on the dark theme's amber was 1.67:1. */
+	--chart-contrast: #ffffff;
 	--info: #0b5cd5;
 	--info-subtle: #e6f0fd;
 
@@ -189,6 +200,9 @@
 		--warning-subtle: #35270d;
 		--danger: #f26a6a;
 		--danger-subtle: #3a1717;
+		--danger-solid: #c73434;
+		--danger-on-solid: #ffffff;
+		--chart-contrast: #16181d;
 		--info: #6ba3f5;
 		--info-subtle: #14243c;
 
@@ -259,6 +273,9 @@
 	--warning-subtle: #35270d;
 	--danger: #f26a6a;
 	--danger-subtle: #3a1717;
+	--danger-solid: #c73434;
+	--danger-on-solid: #ffffff;
+	--chart-contrast: #16181d;
 	--info: #6ba3f5;
 	--info-subtle: #14243c;
 
