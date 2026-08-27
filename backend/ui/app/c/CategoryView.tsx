@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import useSWR from "swr";
+import { describeFetchError } from "../../lib/swr";
 import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { useUser } from "../context/UserContext";
@@ -54,7 +55,7 @@ export default function CategoryView({
 		return (
 			<div className={styles.page}>
 				<div className={styles.state}>
-					This category is not available to you.
+					{describeFetchError(error, "category")}
 				</div>
 			</div>
 		);

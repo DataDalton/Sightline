@@ -178,10 +178,27 @@ export function queryForVisual(
 
 // Placeholders a page resolves from its own controls.
 //
-// A page opens with no breakdown and no grain chosen, and an unresolved
-// placeholder is dropped rather than sent to the warehouse. So in the state a
-// page opens in, these simply are not there.
+// "<selected>" is whatever the page's breakdown switcher is set to and
+// "<grain>" is whatever its period switcher is set to. A page carrying neither
+// resolves neither, and an unresolved placeholder is dropped rather than sent
+// to the warehouse as a field name.
+//
+// These used to be dropped unconditionally here, on the reading that a page
+// opens with nothing chosen. It does not: DimensionSwitch selects its first
+// option in a mount effect, so a page with a switcher opens with a breakdown
+// already set. Dropping it meant the warmer asked one question and the page
+// asked another, which is two cache keys, so every warmed switcher page still
+// waited on the warehouse and the warm query bought nothing.
 const placeholders = new Set(["<selected>", "<grain>"]);
+
+// What the page's switchers are set to as it opens. Null means the page has no
+// such control, which is the only case where a placeholder is dropped.
+export interface OpeningBreakdown {
+	selected: string | null;
+	grain: string | null;
+}
+
+const noBreakdown: OpeningBreakdown = { selected: null, grain: null };
 
 interface SourceFields {
 	dimensions: { name: string }[];
@@ -206,13 +223,26 @@ interface VisualDefinition {
 export function fieldsForVisual(
 	config: { dimensions?: string[]; measures?: string[] },
 	source: SourceFields,
+	// What the page's switchers are set to as it opens. Resolved here rather
+	// than by the caller so this and the renderer read a placeholder the same
+	// way, which is the whole point of the module.
+	breakdown: OpeningBreakdown = noBreakdown,
 ): { dimensions: string[]; measures: string[] } {
 	const knownDimensions = new Set(source.dimensions.map((f) => f.name));
 	const knownMeasures = new Set(source.measures.map((f) => f.name));
 
+	const resolve = (name: string): string | null => {
+		if (name === "<selected>") return breakdown.selected;
+		if (name === "<grain>") return breakdown.grain;
+		return name;
+	};
+
 	return {
 		dimensions: (config.dimensions ?? [])
-			.filter((d) => !placeholders.has(d))
+			.map(resolve)
+			// An unresolved placeholder is dropped, exactly as the renderer
+			// drops one on a page carrying no switcher.
+			.filter((d): d is string => d !== null && !placeholders.has(d))
 			.filter((d) => knownDimensions.has(d)),
 		measures: (config.measures ?? []).filter((m) => knownMeasures.has(m)),
 	};
@@ -234,8 +264,14 @@ export function initialQueryForVisual(
 	// one that opens on everything, and warming the second is warming a key
 	// nobody reads.
 	pageFilters: unknown[] = [],
+	// What its switchers are set to, for the same reason.
+	breakdown: OpeningBreakdown = noBreakdown,
 ): VisualQueryShape | null {
-	const { dimensions, measures } = fieldsForVisual(visual.config, source);
+	const { dimensions, measures } = fieldsForVisual(
+		visual.config,
+		source,
+		breakdown,
+	);
 
 	const drillFields = Array.isArray(visual.config.options?.drillFields)
 		? (visual.config.options.drillFields as string[])

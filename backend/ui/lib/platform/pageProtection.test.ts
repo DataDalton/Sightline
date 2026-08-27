@@ -7,6 +7,7 @@ import {
 	refuse,
 	sourceOf,
 	refuseAddPage,
+	refuseReportDelete,
 	unprotected,
 	unprotectedReport,
 	type PageProtection,
@@ -221,4 +222,35 @@ test("the other two locks do not stop a page being added", () => {
 test("what a report refuses includes the add lock", () => {
 	assert.equal(describe(addLocked).length, 1);
 	assert.equal(describe({ ...bothLocked, protectAddPage: true }).length, 3);
+});
+
+// Deleting the report itself.
+//
+// The page lock and the report lock are enforced on different writes, so until
+// removeReport consulted this a report locked against deletion was deleted by
+// anybody holding the capability, while every locked page inside it survived.
+
+test("a report locked against deletion refuses to be deleted", () => {
+	const said = refuseReportDelete("removeReport", deleteLocked);
+	assert.notEqual(said, null);
+	assert.match(said!.reason, /protected against deletion/);
+});
+
+test("an unlocked report is deleted", () => {
+	assert.equal(refuseReportDelete("removeReport", unprotected), null);
+});
+
+test("the edit lock alone does not stop a report being deleted", () => {
+	assert.equal(refuseReportDelete("removeReport", editLocked), null);
+});
+
+test("the delete lock stops deletion and nothing else", () => {
+	for (const operation of everyOperation) {
+		if (operation === "removeReport") continue;
+		assert.equal(
+			refuseReportDelete(operation, bothLocked),
+			null,
+			`${operation} is not a report deletion and must not be refused as one`,
+		);
+	}
 });

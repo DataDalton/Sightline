@@ -128,6 +128,41 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<AccessContext>>();
+
+// Two entries accumulate per person, and each holds their whole reachable
+// catalogue: catalogGrants puts a grant in the map for every report built on a
+// source they can read. Expiry decides whether an entry may be served and on
+// its own removes nothing, so without this the map grows with the number of
+// people who have ever used the replica rather than with the number using it
+// now.
+const maxCacheEntries = 20000;
+
+// Swept on write rather than on a timer, so a replica that stops being asked
+// stops doing work. The interval is what keeps a walk of the map off every
+// insert.
+const sweepIntervalMs = 60 * 1000;
+let sweptAt = 0;
+
+function evictIfNeeded(now: number): void {
+	if (now - sweptAt >= sweepIntervalMs) {
+		sweptAt = now;
+		for (const [key, held] of cache) {
+			if (held.expiresAt <= now) cache.delete(key);
+		}
+	}
+
+	// Expired entries are usually enough. A burst of distinct callers inside
+	// one interval is not, and past the ceiling the map is holding more than it
+	// is allowed to, so the oldest go regardless of whether they are still
+	// live. A dropped entry costs its owner one resolution.
+	if (cache.size <= maxCacheEntries) return;
+	const byExpiry = Array.from(cache.entries()).sort(
+		(a, b) => a[1].expiresAt - b[1].expiresAt,
+	);
+	for (const [key] of byExpiry.slice(0, cache.size - maxCacheEntries)) {
+		cache.delete(key);
+	}
+}
 // How long a resolved access context is reused.
 //
 // The same setting the membership probe uses, rather than a second number
@@ -258,6 +293,7 @@ async function cached(
 		try {
 			const context = await load();
 			cache.set(key, { context, expiresAt: now + contextTtlMs() });
+			evictIfNeeded(Date.now());
 			return context;
 		} catch (error) {
 			console.error(

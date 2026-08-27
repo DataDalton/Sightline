@@ -6,7 +6,7 @@ import { buildCacheKey, cacheGet, isShareable } from "./cache";
 import { executeQuery } from "./execute";
 import { parseQuerySpec } from "./spec";
 import { initialQueryForVisual } from "./visualSpec";
-import { openingFilters } from "../visuals/pageDefaults";
+import { openingBreakdown, openingFilters } from "../visuals/pageDefaults";
 
 // Filling a cache partition before somebody waits on it.
 //
@@ -92,6 +92,18 @@ function queriesFor(
 		);
 		const pageFilters = Object.values(opening).flat();
 
+		// What the page's breakdown and period switchers are set to as it
+		// opens. A visual reading "<selected>" groups by this from the first
+		// render, so warming without it keys the entry on a query the page
+		// never makes.
+		const breakdown = openingBreakdown(
+			page.visuals.map((v, i) => ({
+				visualId: v.visualId ?? `w${i}`,
+				visualType: v.visualType,
+				config: v.config,
+			})),
+		);
+
 		for (const visual of page.visuals) {
 			const sourceKey =
 				visual.sourceKey ?? page.sourceKey ?? report.sourceKey;
@@ -110,6 +122,7 @@ function queriesFor(
 				sourceKey,
 				source,
 				pageFilters,
+				breakdown,
 			);
 			if (shape) specs.push(shape);
 		}

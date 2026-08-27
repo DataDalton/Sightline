@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import useSWR from "swr";
+import { describeFetchError } from "../../lib/swr";
 import { formatCompact } from "../../lib/format";
 import {
 	Skeleton,
@@ -153,7 +154,7 @@ export default function AdminView() {
 		return (
 			<div className={styles.page}>
 				<div className={styles.state}>
-					This section is not available to you.
+					{describeFetchError(error, "section")}
 				</div>
 			</div>
 		);

@@ -44,6 +44,40 @@ const memory = new Map<string, Entry>();
 const inflight = new Map<string, Promise<Set<string>>>();
 const refreshing = new Set<string>();
 
+// One entry per reader who has ever asked on this replica. Age decides whether
+// an entry may be served and on its own removes nothing, so without a ceiling
+// the map grows with everybody who has ever signed in rather than with whoever
+// is signed in now.
+const maxReaders = 20000;
+
+// Swept on write rather than on a timer, so a replica nobody is asking stops
+// doing work.
+const sweepIntervalMs = 5 * 60 * 1000;
+let sweptAt = 0;
+
+// Holds an answer, dropping whatever is past serving to make room.
+function remember(email: string, entry: Entry): void {
+	memory.set(email, entry);
+
+	const now = Date.now();
+	if (now - sweptAt >= sweepIntervalMs) {
+		sweptAt = now;
+		for (const [key, held] of memory) {
+			if (now - held.computedAt >= hardTtlMs) memory.delete(key);
+		}
+	}
+
+	if (memory.size <= maxReaders) return;
+	// Oldest first. A dropped answer costs its reader one round trip, which is
+	// what they would have paid had they not visited recently.
+	const byAge = Array.from(memory.entries()).sort(
+		(a, b) => a[1].computedAt - b[1].computedAt,
+	);
+	for (const [key] of byAge.slice(0, memory.size - maxReaders)) {
+		memory.delete(key);
+	}
+}
+
 // Asked as one statement.
 //
 // This used to test each source with its own SELECT, nineteen of them at once.
@@ -142,7 +176,7 @@ async function resolve(
 	identity: Identity,
 ): Promise<Set<string>> {
 	const readable = await probe(identity);
-	memory.set(email, { readable, computedAt: Date.now() });
+	remember(email, { readable, computedAt: Date.now() });
 	await writeStored(email, readable);
 	return readable;
 }
@@ -176,10 +210,18 @@ export async function readableSources(
 
 	const held = memory.get(email);
 	if (held && now - held.computedAt < softTtlMs) return held.readable;
-	if (held) {
+	if (held && now - held.computedAt < hardTtlMs) {
 		refreshBehind(email, identity);
 		return held.readable;
 	}
+	// Past the hard ceiling the answer is not served at all, which is what the
+	// ceiling was always documented to mean. Refreshing behind the request only
+	// helps while the refresh is succeeding, and when the catalogue is
+	// unreachable the refresh is the call that is failing: serving on regardless
+	// meant a day-old answer was served indefinitely, so a withdrawn grant kept
+	// working for as long as the outage lasted. Dropped instead, which falls
+	// through to the stored answer and then to a fresh probe.
+	if (held) memory.delete(email);
 
 	// One resolution per reader, however many requests arrive at once.
 	const existing = inflight.get(email);
@@ -189,7 +231,7 @@ export async function readableSources(
 		try {
 			const stored = await readStored(email);
 			if (stored) {
-				memory.set(email, stored);
+				remember(email, stored);
 				if (now - stored.computedAt >= softTtlMs) {
 					refreshBehind(email, identity);
 				}
