@@ -3,6 +3,7 @@ import type { PolicyClass } from "../auth/policy";
 import { assertCanEdit } from "./editing";
 import { insertLog } from "../activityLog";
 import { diffSnapshots, type Change, type Snapshot } from "./versionDiff";
+import { diffVersions, type VersionDiff } from "./versionDetail";
 
 // The edit history of a report, and putting a version back.
 //
@@ -72,6 +73,65 @@ export async function listHistory(
 		});
 	}
 	return entries;
+}
+
+// A version number nobody wrote. Named rather than generic so the route can
+// answer 404 instead of reporting an internal failure for a link that simply
+// points at a version this report never had.
+export class VersionNotFoundError extends Error {}
+
+// One version set against another, property by property.
+//
+// Read on demand rather than folded into listHistory, because a snapshot is the
+// whole report and sixty of them is not a list, it is the report sixty times
+// over. The comparison someone actually opens is one at a time.
+export async function versionComparison(
+	reportId: string,
+	version: number,
+	against?: number,
+): Promise<VersionDiff> {
+	const snapshotAt = async (wanted: number): Promise<Snapshot | null> => {
+		const rows = await sql<{ snapshot: Snapshot }>(
+			`SELECT snapshot FROM report_versions
+			 WHERE report_id = $1 AND version = $2`,
+			[reportId, wanted],
+		);
+		return rows[0]?.snapshot ?? null;
+	};
+
+	// Nothing named to compare against means the version before this one, which
+	// is what the history list is already describing.
+	let base = against;
+	if (base === undefined) {
+		const rows = await sql<{ version: string | number }>(
+			`SELECT version FROM report_versions
+			 WHERE report_id = $1 AND version < $2
+			 ORDER BY version DESC LIMIT 1`,
+			[reportId, version],
+		);
+		base = rows[0] === undefined ? undefined : Number(rows[0].version);
+	}
+
+	// Older on the left whichever way round they were asked for, so the
+	// columns always read as before and after rather than reversing under
+	// someone who picked the newer one first.
+	const [from, to] =
+		base !== undefined && base > version
+			? [version, base]
+			: [base, version];
+
+	const previous = from === undefined ? null : await snapshotAt(from);
+	// A version that was asked for by name and is not there is a wrong number,
+	// not an empty left hand side. Reading it as nothing to compare against
+	// would report the whole report as newly added.
+	if (from !== undefined && !previous) {
+		throw new VersionNotFoundError(`Version ${from} does not exist`);
+	}
+
+	const next = await snapshotAt(to);
+	if (!next) throw new VersionNotFoundError(`Version ${to} does not exist`);
+
+	return diffVersions(previous, next, from ?? null, to);
 }
 
 export interface RestoreResult {
@@ -180,7 +240,11 @@ export async function restoreVersion(
 				`UPDATE reports SET title = COALESCE($2, title),
 				                    description = $3
 				 WHERE report_id = $1`,
-				[reportId, snapshot.report.title ?? null, snapshot.report.description ?? null],
+				[
+					reportId,
+					snapshot.report.title ?? null,
+					snapshot.report.description ?? null,
+				],
 			);
 		}
 
@@ -230,7 +294,10 @@ export async function restoreVersion(
 			recordId: reportId,
 			action: "restore_version",
 			changedBy: email,
-			newValue: JSON.stringify({ restoredFrom: version, version: nextVersion }),
+			newValue: JSON.stringify({
+				restoredFrom: version,
+				version: nextVersion,
+			}),
 		});
 
 		return {

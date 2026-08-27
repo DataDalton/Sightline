@@ -1,0 +1,430 @@
+/* The report before, and the report after.
+
+   Two copies of the page, side by side, and nothing between them. Each is laid
+   out at a desktop width and scaled into its half of the panel, so both show
+   the arrangement a reader gets rather than the one column the grid collapses
+   to under nine hundred pixels.
+
+   The frame carries the scaled height. A transform leaves the original box
+   behind in the flow, so without it everything below would sit under a gap the
+   size of the unscaled page. */
+
+.body {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-4);
+}
+
+.pick {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+}
+
+.pickLabel {
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+}
+
+.select {
+	padding: 5px var(--space-2);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-sm);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font-size: var(--text-sm);
+	font-family: inherit;
+}
+
+/* The report's pages, as the report has them.
+
+   A page one version does not have is the only change two copies of a page
+   cannot show by themselves, so the strip carries it: green for a page this
+   save created, red for one it deleted, a dot for a page whose contents moved.
+   It is also how a report with eight pages stays readable, since only the open
+   one is drawn. */
+.tabs {
+	display: flex;
+	gap: var(--space-1);
+	flex-wrap: wrap;
+	padding-bottom: var(--space-2);
+	border-bottom: 1px solid var(--border-subtle);
+}
+
+.tab {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px var(--space-3);
+	border: 1px solid transparent;
+	border-radius: var(--radius-full);
+	background: transparent;
+	color: var(--text-secondary);
+	font: inherit;
+	font-size: var(--text-sm);
+	cursor: pointer;
+}
+
+.tab:hover {
+	background: var(--state-hover);
+	color: var(--text-primary);
+}
+
+.tabOpen {
+	background: var(--surface-active);
+	color: var(--text-primary);
+	font-weight: 600;
+}
+
+.tabAdded {
+	border-color: var(--success);
+	color: var(--success);
+}
+
+.tabGone {
+	border-color: var(--danger);
+	color: var(--danger);
+	text-decoration: line-through;
+}
+
+/* Something on this page is not the same on both sides. */
+.tabDot {
+	width: 6px;
+	height: 6px;
+	border-radius: var(--radius-full);
+	background: var(--success);
+}
+
+/* A margin, the two pages, a margin.
+
+   Old values sit to the left of the older page and new values to the right of
+   the newer one, so each margin belongs to the version it is standing next to
+   and the two never have to be told apart. */
+.spread {
+	display: grid;
+	grid-template-columns: 190px 1fr 1fr 190px;
+	gap: var(--space-3);
+	align-items: start;
+}
+
+.copy {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	min-width: 0;
+}
+
+.caption {
+	display: flex;
+	align-items: baseline;
+	gap: var(--space-2);
+	flex-wrap: wrap;
+}
+
+.captionSide {
+	font-size: var(--text-sm);
+	font-weight: 600;
+	color: var(--text-primary);
+}
+
+/* The page's name on this side. Shown only where the report has more than one
+   page, and it is what makes a rename visible: two captions, two names. */
+.captionPage {
+	font-size: var(--text-sm);
+	color: var(--text-secondary);
+}
+
+.captionByline {
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+}
+
+.frame {
+	position: relative;
+	overflow: hidden;
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-md);
+	background: var(--surface-base);
+}
+
+/* Laid out at its own width and shrunk by the transform, so the grid inside
+   sees a real page and every visual lands where it lands on one. Inert: this
+   is the page being looked at, not used. */
+/* Laid out at its own width and shrunk by the transform, so the grid inside
+   sees a real page and every visual lands where it lands on one.
+
+   Pressing a visual opens it rather than filtering the page, which is what the
+   grid's still mode arranges. The controls in the strip are inert outright,
+   since a dropdown is the one thing that would swallow the press and change a
+   version nobody is reading. */
+.page {
+	position: absolute;
+	top: 0;
+	left: 0;
+	transform-origin: top left;
+	padding: var(--space-4);
+	background: var(--surface-base);
+}
+
+.strip * {
+	pointer-events: none;
+}
+
+.strip {
+	margin-bottom: var(--space-4);
+}
+
+/* --- the margins ------------------------------------------------------ */
+
+.margin {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	/* Level with the top of the frame beside it, under the caption. */
+	padding-top: 28px;
+	min-width: 0;
+}
+
+/* One visual's changes, held level with the visual itself. Reaches down to
+   where the next note starts, so a long note pushes what follows rather than
+   sitting on top of it. */
+.note {
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	gap: 3px;
+	padding: var(--space-2);
+	border: 1px solid var(--border-subtle);
+	border-left: 3px solid var(--info);
+	border-radius: var(--radius-sm);
+	background: var(--surface-raised);
+	color: var(--text-secondary);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.note:hover {
+	border-color: var(--border-strong);
+	border-left-color: var(--info);
+}
+
+.noteOpen {
+	box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.noteAdded {
+	border-left-color: var(--success);
+}
+
+.noteGone {
+	border-left-color: var(--danger);
+}
+
+.noteName {
+	font-size: var(--text-xs);
+	font-weight: 600;
+	color: var(--text-primary);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.noteWord {
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+}
+
+.change {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+}
+
+.changeLabel {
+	font-size: 10px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--text-muted);
+}
+
+.changeValue {
+	font-size: var(--text-xs);
+	line-height: 1.45;
+	overflow-wrap: anywhere;
+}
+
+/* The words this version does not have, and the ones only it has. Marked
+   inside the sentence so the note still reads as the note. */
+.gone {
+	background: var(--danger-subtle);
+	color: var(--danger);
+	text-decoration: line-through;
+	border-radius: 2px;
+}
+
+.fresh {
+	background: var(--success-subtle);
+	color: var(--success);
+	border-radius: 2px;
+}
+
+.nothing {
+	color: var(--text-muted);
+	font-style: italic;
+}
+
+/* --- one visual, opened ----------------------------------------------- */
+
+.opened {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+}
+
+.openHead {
+	display: flex;
+	align-items: baseline;
+	gap: var(--space-3);
+}
+
+.back {
+	padding: 3px var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-full);
+	background: var(--surface-raised);
+	color: var(--text-secondary);
+	font: inherit;
+	font-size: var(--text-sm);
+	cursor: pointer;
+}
+
+.back:hover {
+	color: var(--text-primary);
+	border-color: var(--text-secondary);
+}
+
+.openName {
+	font-size: var(--text-md);
+	font-weight: 600;
+	color: var(--text-primary);
+}
+
+.openType {
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+}
+
+.openCopies {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: var(--space-4);
+	align-items: start;
+}
+
+.openSide {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	min-width: 0;
+}
+
+/* At its own height rather than scaled, which is the point of opening it. */
+.openFrame {
+	display: flex;
+	overflow: hidden;
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-md);
+	background: var(--surface-base);
+}
+
+.openBody {
+	display: flex;
+	width: 100%;
+	min-width: 0;
+}
+
+.openBody > * {
+	width: 100%;
+}
+
+.openChanges {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+
+.openChanges .changeValue {
+	font-size: var(--text-sm);
+}
+
+/* The page is not in this version at all. Sized by its own text rather than by
+   a page it does not have, and outlined rather than framed, because there is
+   nothing here to put a frame around. */
+.frameAbsent {
+	border-style: dashed;
+	background: transparent;
+}
+
+.blank {
+	margin: 0;
+	padding: var(--space-7) var(--space-4);
+	font-size: var(--text-md);
+	color: var(--text-muted);
+	text-align: center;
+}
+
+/* A page control that is not the same on both sides. The grid marks its own
+   visuals, and these sit above it rather than inside it. */
+.controlChanged {
+	border-radius: var(--radius-md);
+	box-shadow: 0 0 0 2px var(--success);
+}
+
+.controlGone {
+	border-radius: var(--radius-md);
+	box-shadow: 0 0 0 2px var(--danger);
+}
+
+.failure {
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid var(--danger);
+	border-radius: var(--radius-md);
+	background: var(--surface-sunken);
+	color: var(--danger);
+	font-size: var(--text-sm);
+}
+
+/* Too narrow to put two pages beside each other, so they stack, before above
+   after. */
+@media (max-width: 1100px) {
+	/* No room for margins beside the pages, so they go under the page they
+	   belong to, in the same left to right order. */
+	.spread {
+		grid-template-columns: 1fr 1fr;
+	}
+
+	.margin {
+		padding-top: 0;
+	}
+
+	.margin:first-child {
+		order: 3;
+	}
+
+	.margin:last-child {
+		order: 4;
+	}
+
+	.note {
+		margin-top: 0 !important;
+		min-height: 0 !important;
+	}
+}
+
+@media (max-width: 760px) {
+	.spread,
+	.openCopies {
+		grid-template-columns: 1fr;
+	}
+}
