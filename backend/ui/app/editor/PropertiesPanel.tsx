@@ -20,14 +20,8 @@ import { Select } from "../components/shared/Select";
 import { Toggle } from "../components/shared/Toggle";
 import { HistoryPanel } from "./HistoryPanel";
 import { PageSettings } from "./PageSettings";
-import {
-	ArrowDownIcon,
-	ArrowUpIcon,
-	CloseIcon,
-	Hint,
-	Section,
-	SectionGroup,
-} from "./PanelSection";
+import { Check, FieldList } from "./FieldList";
+import { Hint, Section, SectionGroup } from "./PanelSection";
 import type { PageConfig } from "./ReportEditor";
 import type { SourceMeta } from "../visuals/types";
 import type { EditableVisual } from "./types";
@@ -349,16 +343,6 @@ function DataTab({
 }) {
 	const problem = checkEncoding(visual.visualType, dimensions, measures);
 
-	const filtered = useMemo(() => {
-		const term = fieldSearch.trim().toLowerCase();
-		const match = (name: string) =>
-			term === "" || name.toLowerCase().includes(term);
-		return {
-			dimensions: (source?.dimensions ?? []).filter((f) => match(f.name)),
-			measures: (source?.measures ?? []).filter((f) => match(f.name)),
-		};
-	}, [source, fieldSearch]);
-
 	const toggle = (name: string, kind: "dimensions" | "measures") => {
 		const current = kind === "dimensions" ? dimensions : measures;
 		const next = current.includes(name)
@@ -399,9 +383,6 @@ function DataTab({
 
 	const showMeasures = definition.encoding.measures.max > 0;
 	const showDimensions = definition.encoding.dimensions.max > 0;
-	const nothingMatched =
-		(!showMeasures || filtered.measures.length === 0) &&
-		(!showDimensions || filtered.dimensions.length === 0);
 
 	return (
 		<>
@@ -519,118 +500,31 @@ function DataTab({
 				)}
 			</Section>
 
-			{/* One group rather than two. Choosing a field and ordering the
-			    ones already chosen are the same job, and splitting them meant
-			    the list of what was selected scrolled away from the list it was
-			    selected from. */}
+			{/* One list rather than four.
+
+			    It used to be a chosen list per kind above an available list per
+			    kind, which asked an author to hold four places at once and put
+			    measures above dimensions in the panel while the table renders
+			    dimensions first. One list, chosen at the top in the order the
+			    visual uses them, is the same information in the order it
+			    actually comes out in. */}
 			<Section
 				id="visual-fields"
 				title="Fields"
 				count={dimensions.length + measures.length}
 			>
-				{showMeasures && (
-					<SelectedList
-						label="Measures"
-						items={measures}
-						limit={definition.encoding.measures}
-						onRemove={(name) => toggle(name, "measures")}
-						onMove={(from, to) => reorder("measures", from, to)}
-					/>
-				)}
-				{showDimensions && (
-					<SelectedList
-						label="Dimensions"
-						items={dimensions}
-						limit={definition.encoding.dimensions}
-						onRemove={(name) => toggle(name, "dimensions")}
-						onMove={(from, to) => reorder("dimensions", from, to)}
-					/>
-				)}
-				{dimensions.length + measures.length > 1 && (
-					<Hint>
-						Order is the encoding. The first dimension is the axis
-						and the first measure is the one anything ranked is
-						ranked by.
-					</Hint>
-				)}
-
-				<input
-					className={styles.input}
-					placeholder="Search fields"
-					value={fieldSearch}
-					onChange={(e) => setFieldSearch(e.target.value)}
+				<FieldList
+					source={source}
+					dimensions={dimensions}
+					measures={measures}
+					encoding={definition.encoding}
+					showDimensions={showDimensions}
+					showMeasures={showMeasures}
+					search={fieldSearch}
+					onSearch={setFieldSearch}
+					onToggle={toggle}
+					onMove={reorder}
 				/>
-
-				{/* Scrolls itself. A wide source puts a hundred and twenty rows
-				    in this column, and everything below them, the drill path
-				    and the remove control included, sat under all of it. */}
-				<div className={styles.fieldList}>
-					{nothingMatched ? (
-						<p className={styles.listEmpty}>
-							{source
-								? `Nothing matches "${fieldSearch.trim()}".`
-								: "This visual has no source yet."}
-						</p>
-					) : (
-						<>
-							{showMeasures && filtered.measures.length > 0 && (
-								<>
-									<div className={styles.listHeading}>
-										Measures ({filtered.measures.length})
-									</div>
-									{filtered.measures.slice(0, 60).map((f) => (
-										<FieldRow
-											key={f.name}
-											name={f.name}
-											description={f.description}
-											selected={measures.includes(f.name)}
-											full={
-												measures.length >=
-												definition.encoding.measures.max
-											}
-											onToggle={() =>
-												toggle(f.name, "measures")
-											}
-										/>
-									))}
-								</>
-							)}
-
-							{showDimensions &&
-								filtered.dimensions.length > 0 && (
-									<>
-										<div className={styles.listHeading}>
-											Dimensions (
-											{filtered.dimensions.length})
-										</div>
-										{filtered.dimensions
-											.slice(0, 60)
-											.map((f) => (
-												<FieldRow
-													key={f.name}
-													name={f.name}
-													description={f.description}
-													selected={dimensions.includes(
-														f.name,
-													)}
-													full={
-														dimensions.length >=
-														definition.encoding
-															.dimensions.max
-													}
-													onToggle={() =>
-														toggle(
-															f.name,
-															"dimensions",
-														)
-													}
-												/>
-											))}
-									</>
-								)}
-						</>
-					)}
-				</div>
 			</Section>
 
 			{/* A drill hierarchy turns a click into a descent rather than a
@@ -686,132 +580,6 @@ function DataTab({
 				</button>
 			</div>
 		</>
-	);
-}
-
-function SelectedList({
-	label,
-	items,
-	limit,
-	onRemove,
-	onMove,
-}: {
-	label: string;
-	items: string[];
-	limit: { min: number; max: number };
-	onRemove: (name: string) => void;
-	onMove: (from: number, to: number) => void;
-}) {
-	return (
-		<div className={styles.field}>
-			<span className={styles.fieldLabel}>
-				{label}
-				{/* What the type will take. The panel used to accept a seventh
-				    measure silently and leave the author to work out from the
-				    complaint below the chart which of the seven was one too
-				    many. */}
-				<span className={styles.fieldCount}>
-					{items.length} of {limit.max}
-				</span>
-			</span>
-			{items.length === 0 ? (
-				<p className={styles.listEmpty}>
-					{limit.min > 0
-						? `Needs at least ${limit.min}.`
-						: "None chosen."}
-				</p>
-			) : (
-				items.map((name, i) => (
-					<div key={name} className={styles.selectedRow}>
-						<span className={styles.selectedName} title={name}>
-							{name}
-						</span>
-						<button
-							type="button"
-							className={styles.iconButton}
-							onClick={() => onMove(i, i - 1)}
-							disabled={i === 0}
-							aria-label={`Move ${name} up`}
-						>
-							<ArrowUpIcon />
-						</button>
-						<button
-							type="button"
-							className={styles.iconButton}
-							onClick={() => onMove(i, i + 1)}
-							disabled={i === items.length - 1}
-							aria-label={`Move ${name} down`}
-						>
-							<ArrowDownIcon />
-						</button>
-						<button
-							type="button"
-							className={`${styles.iconButton} ${styles.iconRemove}`}
-							onClick={() => onRemove(name)}
-							aria-label={`Remove ${name}`}
-						>
-							<CloseIcon />
-						</button>
-					</div>
-				))
-			)}
-		</div>
-	);
-}
-
-function FieldRow({
-	name,
-	description,
-	selected,
-	full,
-	onToggle,
-}: {
-	name: string;
-	description: string | null;
-	selected: boolean;
-	// The type will not take another of this kind. Still clickable when it is
-	// already on, since taking one off is how an author makes room.
-	full: boolean;
-	onToggle: () => void;
-}) {
-	const blocked = full && !selected;
-	return (
-		<button
-			type="button"
-			className={styles.checkRow}
-			onClick={onToggle}
-			disabled={blocked}
-			aria-pressed={selected}
-			// The catalogue description is the tooltip, so an author sees the
-			// same definition a reader will.
-			title={
-				blocked
-					? "Remove one first. This visual takes no more of these."
-					: (description ?? name)
-			}
-		>
-			<Check on={selected} />
-			<span className={styles.checkLabel}>{name}</span>
-		</button>
-	);
-}
-
-function Check({ on }: { on: boolean }) {
-	return (
-		<span
-			className={`${styles.checkbox} ${on ? styles.checked : ""}`}
-			aria-hidden="true"
-		>
-			<svg width="9" height="9" viewBox="0 0 16 16" fill="none">
-				<path
-					d="M3 8.5l3.5 3.5L13 5"
-					stroke="currentColor"
-					strokeWidth="2.5"
-					strokeLinecap="round"
-					strokeLinejoin="round"
-				/>
-			</svg>
-		</span>
 	);
 }
 

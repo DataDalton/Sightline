@@ -885,12 +885,19 @@ function ControlSlot({
 			aria-pressed={isSelected}
 			aria-label={`Edit ${label}`}
 		>
-			<div className={styles.controlHead}>
-				<span className={styles.controlKind}>{label}</span>
-				{/* Only on the selected control, and only where there is
-				    somewhere to go. A control cannot be dragged, so this is
-				    what moving one is. */}
-				{isSelected && onMoveControl && (
+			{/* Only on the selected control, and only where there is somewhere
+			    to go. A control cannot be dragged, so this is what moving one
+			    is.
+
+			    The slot used to name the kind of control above the control
+			    itself. Nothing else on the canvas announces its type, a chart
+			    does not caption itself "bar chart", and every widget already
+			    draws its own title, so on anything called after what it is the
+			    slot read as the same word twice. The type is on the control's
+			    own panel, which is where somebody asking what it is has just
+			    clicked. */}
+			{isSelected && onMoveControl && (
+				<div className={styles.controlHead}>
 					<span className={styles.controlMove}>
 						<button
 							type="button"
@@ -939,8 +946,8 @@ function ControlSlot({
 							</svg>
 						</button>
 					</span>
-				)}
-			</div>
+				</div>
+			)}
 			{remoteBy && <span className={styles.remoteBadge}>{remoteBy}</span>}
 			{/* Interaction is off while editing, so a click selects the
 			    control rather than filtering the page underneath. */}
