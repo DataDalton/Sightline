@@ -299,6 +299,31 @@
 	user-select: none;
 }
 
+/* Marked in a version comparison: this visual is not the same as it was on the
+   other side. A ring around the visual it belongs to rather than a label
+   beside it, so the page still reads as the page. */
+.gridItemChanged {
+	box-shadow: 0 0 0 2px var(--success);
+	border-radius: var(--radius-lg);
+}
+
+/* Only ever on the older side, where a visual the newer one no longer has is
+   still standing. */
+.gridItemGone {
+	box-shadow: 0 0 0 2px var(--danger);
+	border-radius: var(--radius-lg);
+}
+
+/* A still page can be asked about, one visual at a time. */
+.gridItemAskable {
+	cursor: pointer;
+}
+
+.gridItemOpened {
+	box-shadow: 0 0 0 3px var(--focus-ring);
+	border-radius: var(--radius-lg);
+}
+
 .readerGrip {
 	position: absolute;
 	z-index: 4;

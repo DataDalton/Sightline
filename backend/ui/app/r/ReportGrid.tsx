@@ -58,6 +58,21 @@ interface ReportGridProps {
 		columnOrder: string[];
 		pinnedColumns: string[];
 	}) => void;
+	// A page to look at rather than to use.
+	//
+	// The version comparison draws two of these, and both have to be the page
+	// as it stands rather than a drawing of it, so it renders through here and
+	// turns off the three things that belong to a reader rather than to the
+	// report: growing the last visual into the window, the sizes this
+	// particular reader has dragged to, and the gestures that set them.
+	still?: boolean;
+	// Marked as changed, per visual. Only read in still mode.
+	highlight?: Record<string, "changed" | "removed">;
+	// Which visual the comparison has open, and how to ask for another. Only
+	// read in still mode: on a page being used, a press means what it already
+	// meant.
+	opened?: string | null;
+	onOpen?: (visualId: string) => void;
 }
 
 // Below this a twelve column grid stops being readable and the page stacks.
@@ -71,6 +86,10 @@ export function ReportGrid({
 	columnOrder,
 	pinnedColumns,
 	onColumnLayout,
+	still = false,
+	highlight,
+	opened,
+	onOpen,
 }: ReportGridProps) {
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const [width, setWidth] = useState(1200);
@@ -108,6 +127,13 @@ export function ReportGrid({
 
 		const measure = () => {
 			setWidth(Math.max(320, element.clientWidth));
+			// A still page is not the thing filling the window, so the last
+			// visual has no screen to grow into. Zero makes fillToViewport a
+			// no-op rather than measuring a modal against the desktop.
+			if (still) {
+				setAvailable(0);
+				return;
+			}
 			const top = element.getBoundingClientRect().top;
 			// A little room at the foot, so the page does not end flush
 			// against the edge of the window.
@@ -122,7 +148,7 @@ export function ReportGrid({
 			observer.disconnect();
 			window.removeEventListener("resize", measure);
 		};
-	}, []);
+	}, [still]);
 
 	const narrow = width < stackBelow;
 	const metrics = measureCanvas(width);
@@ -178,9 +204,12 @@ export function ReportGrid({
 			};
 
 			// A size the reader dragged to is in the same columns and rows the
-			// author arranged in, so it takes part in the same layout.
-			const override = sizeFor(visual.visualId);
-			const live = state?.id === visual.visualId ? state.rect : null;
+			// author arranged in, so it takes part in the same layout. Not in
+			// a still page: what one reader dragged to is not what the version
+			// being looked at says.
+			const override = still ? undefined : sizeFor(visual.visualId);
+			const live =
+				!still && state?.id === visual.visualId ? state.rect : null;
 
 			const sized: Rect = live
 				? // Mid-gesture the live rectangle wins, so the box follows the
@@ -211,7 +240,7 @@ export function ReportGrid({
 		// screen with the last visual would only push everything else off it.
 		if (narrow) return stackForNarrow(items.map((i) => ({ ...i })));
 		return fillToViewport(resolveVerticalOverlaps(items), available);
-	}, [topLevel, narrow, sizeFor, available, state]);
+	}, [topLevel, narrow, sizeFor, available, state, still]);
 
 	const byId = useMemo(
 		() => new Map(visuals.map((v) => [v.visualId, v])),
@@ -289,19 +318,41 @@ export function ReportGrid({
 				const isSelected = selected === item.id;
 				const resized = Boolean(sizeFor(item.id));
 
+				const marked = still ? highlight?.[item.id] : undefined;
+				const isOpen = still && opened === item.id;
+
 				return (
 					<div
 						key={item.id}
+						// Named in the markup so a still page can be annotated
+						// beside itself: the version comparison lines its notes
+						// up with the visual each one is about, and where a
+						// visual ends up is decided in here, after overlap
+						// resolution, not by the rectangle it started as.
+						data-visual-id={item.id}
 						className={`${styles.gridItem} ${
 							isSelected ? styles.gridItemSelected : ""
-						} ${state?.id === item.id ? styles.gridItemResizing : ""}`}
+						} ${state?.id === item.id ? styles.gridItemResizing : ""} ${
+							marked === "changed"
+								? styles.gridItemChanged
+								: marked === "removed"
+									? styles.gridItemGone
+									: ""
+						} ${isOpen ? styles.gridItemOpened : ""} ${
+							still && onOpen ? styles.gridItemAskable : ""
+						}`}
 						style={{
 							left: pixels.left,
 							top: pixels.top,
 							width: pixels.width,
 							height: pixels.height,
 						}}
-						onPointerDown={() => setSelected(item.id)}
+						onPointerDown={
+							still ? undefined : () => setSelected(item.id)
+						}
+						onClick={
+							still && onOpen ? () => onOpen(item.id) : undefined
+						}
 					>
 						<div className={styles.gridBody}>
 							{visual.visualType === "group" ? (
@@ -327,8 +378,9 @@ export function ReportGrid({
 						</div>
 
 						{/* Stacked layouts are one column wide and scroll, so
-						    resizing them means nothing. */}
-						{!narrow && (
+						    resizing them means nothing, and neither does
+						    resizing a page nobody is reading. */}
+						{!narrow && !still && (
 							<>
 								{(
 									[
