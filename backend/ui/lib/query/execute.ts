@@ -8,6 +8,7 @@ import { compileQuery } from "./builder";
 import {
 	buildCacheKey,
 	cacheGet,
+	cacheGetMany,
 	cacheSet,
 	isShareable,
 	type CacheEntry,
@@ -175,6 +176,7 @@ async function runAndCache(
 			identity.userToken,
 			compiled.sql,
 			compiled.params,
+			identity.email.toLowerCase(),
 		);
 	} else if (!isDatabricksApp) {
 		// Development only. Runs as the local Databricks credentials, so row
@@ -203,4 +205,185 @@ async function runAndCache(
 	}
 
 	return cacheSet(key, policy, source, rows, compiled.columns);
+}
+
+// --- Several queries at once ------------------------------------------------
+
+// How many warehouse queries one batch will start at the same time.
+//
+// A batch is one page, and a page that misses on everything should not open
+// twenty statements against one warehouse session. The rest queue behind these
+// and the reader waits the same total either way, with far less pressure on the
+// session.
+const maxBatchConcurrency = 6;
+
+export interface BatchOutcome {
+	result?: QueryResult;
+	error?: string;
+	// Set where the caller should treat the failure as a refusal rather than a
+	// fault, matching the status the single query endpoint would have answered.
+	status?: number;
+}
+
+// Runs a page's worth of queries together.
+//
+// Identical to calling executeQuery for each, with two differences that matter
+// at the size a real page reaches: the caller's policy class is resolved once
+// rather than per query, and the shared cache is asked about every key in one
+// round trip rather than one per visual. Everything after that is the same code
+// path, so a batched query and a single one produce the same entry under the
+// same key.
+export async function executeQueries(
+	identity: Identity,
+	specs: QuerySpec[],
+): Promise<BatchOutcome[]> {
+	const startedAt = Date.now();
+
+	const policy = await resolvePolicyClass(identity);
+	if (policy.degraded) {
+		return specs.map(() => ({
+			error: "Access could not be verified. Group membership is temporarily unavailable.",
+			status: 403,
+		}));
+	}
+
+	// Resolved once per spec and kept, so nothing is recomputed below.
+	const prepared = specs.map((spec) => {
+		const source = getSource(spec.sourceKey);
+		if (!source) return null;
+		return {
+			spec,
+			source,
+			shareable: isShareable(source),
+			key: buildCacheKey(source, spec, policy),
+		};
+	});
+
+	// Only the shareable ones have a key worth asking about. An unshareable
+	// source is answered from the warehouse every time by construction.
+	const lookups = await cacheGetMany(
+		prepared
+			.filter((p) => p !== null && p.shareable)
+			.map((p) => (p as NonNullable<typeof p>).key),
+	);
+
+	const outcomes: BatchOutcome[] = new Array(specs.length);
+	const pending: number[] = [];
+
+	prepared.forEach((entry, index) => {
+		if (!entry) {
+			outcomes[index] = {
+				error: `Unknown source "${specs[index].sourceKey}"`,
+				status: 400,
+			};
+			return;
+		}
+
+		const lookup = entry.shareable
+			? (lookups.get(entry.key) ?? {
+					entry: null,
+					tier: null,
+					stale: false,
+				})
+			: { entry: null, tier: null, stale: false };
+
+		if (lookup.entry && !lookup.stale) {
+			outcomes[index] = {
+				result: toResult(
+					lookup.entry,
+					lookup.tier ?? "l1",
+					false,
+					null,
+					startedAt,
+				),
+			};
+			return;
+		}
+
+		if (lookup.entry && lookup.stale) {
+			// Served now, refreshed behind the response, exactly as the single
+			// query path does it.
+			if (!revalidating.has(entry.key)) {
+				revalidating.add(entry.key);
+				void runAndCache(
+					identity,
+					entry.source,
+					entry.spec,
+					policy,
+					entry.key,
+				)
+					.catch((error) => {
+						console.warn(
+							`Background refresh failed for ${entry.key}:`,
+							error,
+						);
+					})
+					.finally(() => revalidating.delete(entry.key));
+			}
+			outcomes[index] = {
+				result: toResult(
+					lookup.entry,
+					lookup.tier ?? "l1",
+					true,
+					null,
+					startedAt,
+				),
+			};
+			return;
+		}
+
+		pending.push(index);
+	});
+
+	if (pending.length === 0) return outcomes;
+
+	// The cold ones, a few at a time.
+	let next = 0;
+	const worker = async (): Promise<void> => {
+		for (;;) {
+			const slot = next++;
+			if (slot >= pending.length) return;
+			const index = pending[slot];
+			const entry = prepared[index];
+			if (!entry) continue;
+
+			const queryStartedAt = Date.now();
+			try {
+				const answered = await shareInflight(entry.key, () =>
+					runAndCache(
+						identity,
+						entry.source,
+						entry.spec,
+						policy,
+						entry.key,
+					),
+				);
+				outcomes[index] = {
+					result: toResult(
+						answered,
+						"warehouse",
+						false,
+						Date.now() - queryStartedAt,
+						startedAt,
+					),
+				};
+			} catch (error) {
+				const message =
+					error instanceof Error ? error.message : "Query failed";
+				outcomes[index] = {
+					error: message,
+					status: error instanceof QueryAccessError ? 403 : 500,
+				};
+			}
+		}
+	};
+
+	await Promise.all(
+		Array.from(
+			{ length: Math.min(maxBatchConcurrency, pending.length) },
+			worker,
+		),
+	);
+
+	return outcomes;
 }

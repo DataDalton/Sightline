@@ -6,6 +6,7 @@ import {
 	getAccessContext,
 	resolveCategoryAccess,
 	resolveReportAccess,
+	type AccessContext,
 } from "./access";
 import type { Capability } from "./accessRules";
 
@@ -140,6 +141,29 @@ export async function searchTargets(
 			]),
 	);
 
+	// Built once per reader rather than on every keystroke that reaches the
+	// server.
+	//
+	// The rows are shared and cached above; deciding which of them this reader
+	// may open is per reader and was redone on every search. That is one
+	// resolver call per active report and category, per request, and search is
+	// the one endpoint a person hits repeatedly in a few seconds.
+	//
+	// Carried under the search prefix so publishing or removing content drops
+	// it with the rows it came from.
+	return await cachedDefinition(
+		`search:targets:${policy.id}|${email}`,
+		async () => buildTargets(context, policy, email, reports, categories),
+	);
+}
+
+async function buildTargets(
+	context: AccessContext,
+	policy: PolicyClass,
+	email: string,
+	reports: ReportRow[],
+	categories: CategoryRow[],
+): Promise<SearchTarget[]> {
 	const categoryNames = new Map(
 		categories.map((row) => [row.category_id, row.name]),
 	);

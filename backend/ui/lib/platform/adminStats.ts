@@ -57,7 +57,24 @@ function windowClause(days: number): string {
 	return `occurred_on > now() - interval '${Math.max(1, Math.min(days, 365))} days'`;
 }
 
+// The same window against the daily rollup.
+//
+// Whole days, because that is what the rollup holds. A window asked for in days
+// and answered in days is also the more honest reading: "the last seven days"
+// meaning seven calendar days rather than the last hundred and sixty eight
+// hours is what somebody choosing 7 expects to see.
+function rolledWindow(days: number): string {
+	return `day > current_date - ${Math.max(1, Math.min(days, 365))}`;
+}
+
 export async function getUsageSummary(days = 7): Promise<UsageSummary> {
+	// Read from the daily rollup rather than from the events themselves.
+	//
+	// Every figure here is a count or a ratio over a window, which is exactly
+	// what an aggregate answers, and the raw table is the one thing in the
+	// schema that grows without bound by design. Distinct readers are counted
+	// as rows rather than summed, because a reader active on three days is one
+	// reader.
 	const rows = await sql<{
 		active_users: string;
 		page_views: string;
@@ -66,23 +83,32 @@ export async function getUsageSummary(days = 7): Promise<UsageSummary> {
 		errors: string;
 		cache_hits: string;
 		cacheable: string;
+	}>(
+		`SELECT
+		   count(DISTINCT user_email)::text AS active_users,
+		   coalesce(sum(events) FILTER (WHERE event_type = 'page_view'), 0)::text AS page_views,
+		   coalesce(sum(events) FILTER (WHERE event_type = 'query'), 0)::text AS queries,
+		   coalesce(sum(events) FILTER (WHERE event_type = 'export'), 0)::text AS exports,
+		   coalesce(sum(events) FILTER (WHERE event_type = 'error'), 0)::text AS errors,
+		   coalesce(sum(cache_hits), 0)::text AS cache_hits,
+		   coalesce(sum(cacheable), 0)::text AS cacheable
+		 FROM usage_daily
+		 WHERE ${rolledWindow(days)}`,
+	);
+
+	// Latency weighted by how many samples each day contributed, so a quiet day
+	// does not count as much as a busy one. Exact within a day and a reading
+	// across the window rather than a true percentile of it, which is the
+	// trade a rollup makes and the reason it is stated here.
+	const latency = await sql<{
 		median_ms: string | null;
 		p95_ms: string | null;
 	}>(
 		`SELECT
-		   count(DISTINCT user_email)::text AS active_users,
-		   count(*) FILTER (WHERE event_type = 'page_view')::text AS page_views,
-		   count(*) FILTER (WHERE event_type = 'query')::text AS queries,
-		   count(*) FILTER (WHERE event_type = 'export')::text AS exports,
-		   count(*) FILTER (WHERE event_type = 'error')::text AS errors,
-		   count(*) FILTER (WHERE cache_hit IS TRUE)::text AS cache_hits,
-		   count(*) FILTER (WHERE cache_hit IS NOT NULL)::text AS cacheable,
-		   percentile_cont(0.5) WITHIN GROUP (ORDER BY query_ms)
-		     FILTER (WHERE query_ms IS NOT NULL)::text AS median_ms,
-		   percentile_cont(0.95) WITHIN GROUP (ORDER BY query_ms)
-		     FILTER (WHERE query_ms IS NOT NULL)::text AS p95_ms
-		 FROM usage_events
-		 WHERE ${windowClause(days)}`,
+		   (sum(p50_ms * samples) / nullif(sum(samples), 0))::text AS median_ms,
+		   (sum(p95_ms * samples) / nullif(sum(samples), 0))::text AS p95_ms
+		 FROM usage_daily_latency
+		 WHERE ${rolledWindow(days)}`,
 	);
 
 	const row = rows[0];
@@ -96,8 +122,8 @@ export async function getUsageSummary(days = 7): Promise<UsageSummary> {
 		exports: Number(row?.exports ?? 0),
 		errors: Number(row?.errors ?? 0),
 		cacheHitRate: cacheable > 0 ? (cacheHits / cacheable) * 100 : 0,
-		medianQueryMs: Math.round(Number(row?.median_ms ?? 0)),
-		p95QueryMs: Math.round(Number(row?.p95_ms ?? 0)),
+		medianQueryMs: Math.round(Number(latency[0]?.median_ms ?? 0)),
+		p95QueryMs: Math.round(Number(latency[0]?.p95_ms ?? 0)),
 	};
 }
 
@@ -114,18 +140,18 @@ export async function getReportUsage(
 		avg_duration: string | null;
 		last_viewed: string | null;
 	}>(
-		`SELECT e.report_id,
+		`SELECT e.report_id::text AS report_id,
 		        r.title,
 		        r.category_id,
-		        count(*)::text AS views,
+		        sum(e.events)::text AS views,
 		        count(DISTINCT e.user_email)::text AS distinct_users,
-		        avg(e.duration_ms)::text AS avg_duration,
-		        max(e.occurred_on)::text AS last_viewed
-		 FROM usage_events e
+		        (sum(e.duration_sum) / nullif(sum(e.duration_n), 0))::text AS avg_duration,
+		        max(e.last_event)::text AS last_viewed
+		 FROM usage_daily e
 		 LEFT JOIN reports r ON r.report_id = e.report_id
-		 WHERE ${windowClause(days)} AND e.report_id IS NOT NULL
+		 WHERE ${rolledWindow(days)} AND e.report_id IS NOT NULL
 		 GROUP BY e.report_id, r.title, r.category_id
-		 ORDER BY count(*) DESC
+		 ORDER BY sum(e.events) DESC
 		 LIMIT $1`,
 		[limit],
 	);
@@ -150,14 +176,14 @@ export async function getUserUsage(days = 7, limit = 25): Promise<UserUsage[]> {
 		last_seen: string;
 	}>(
 		`SELECT user_email,
-		        count(*)::text AS events,
+		        sum(events)::text AS events,
 		        count(DISTINCT report_id)::text AS reports,
-		        count(*) FILTER (WHERE event_type = 'export')::text AS exports,
-		        max(occurred_on)::text AS last_seen
-		 FROM usage_events
-		 WHERE ${windowClause(days)}
+		        coalesce(sum(events) FILTER (WHERE event_type = 'export'), 0)::text AS exports,
+		        max(last_event)::text AS last_seen
+		 FROM usage_daily
+		 WHERE ${rolledWindow(days)}
 		 GROUP BY user_email
-		 ORDER BY count(*) DESC
+		 ORDER BY sum(events) DESC
 		 LIMIT $1`,
 		[limit],
 	);
@@ -183,15 +209,15 @@ export async function getSlowSources(days = 7): Promise<SlowQuery[]> {
 		total: string;
 	}>(
 		`SELECT source_key,
-		        count(*)::text AS queries,
-		        avg(query_ms)::text AS avg_ms,
-		        max(query_ms)::text AS max_ms,
-		        count(*) FILTER (WHERE cache_hit IS TRUE)::text AS hits,
-		        count(*) FILTER (WHERE cache_hit IS NOT NULL)::text AS total
-		 FROM usage_events
-		 WHERE ${windowClause(days)} AND event_type = 'query'
+		        sum(events)::text AS queries,
+		        (sum(query_ms_sum) / nullif(sum(query_ms_n), 0))::text AS avg_ms,
+		        max(query_ms_max)::text AS max_ms,
+		        coalesce(sum(cache_hits), 0)::text AS hits,
+		        coalesce(sum(cacheable), 0)::text AS total
+		 FROM usage_daily
+		 WHERE ${rolledWindow(days)} AND event_type = 'query'
 		 GROUP BY source_key
-		 ORDER BY avg(query_ms) DESC NULLS LAST
+		 ORDER BY (sum(query_ms_sum) / nullif(sum(query_ms_n), 0)) DESC NULLS LAST
 		 LIMIT 20`,
 	);
 
@@ -245,11 +271,11 @@ export async function getDailyActivity(
 	days = 30,
 ): Promise<{ day: string; events: number; users: number }[]> {
 	const rows = await sql<{ day: string; events: string; users: string }>(
-		`SELECT date_trunc('day', occurred_on)::date::text AS day,
-		        count(*)::text AS events,
+		`SELECT day::text AS day,
+		        sum(events)::text AS events,
 		        count(DISTINCT user_email)::text AS users
-		 FROM usage_events
-		 WHERE ${windowClause(days)}
+		 FROM usage_daily
+		 WHERE ${rolledWindow(days)}
 		 GROUP BY 1
 		 ORDER BY 1`,
 	);
@@ -293,17 +319,17 @@ export async function getReportViewers(
 		avg_duration: string | null;
 	}>(
 		`SELECT user_email,
-		        count(*) FILTER (WHERE event_type = 'page_view')::text AS views,
-		        count(*) FILTER (WHERE event_type = 'export')::text AS exports,
-		        count(*) FILTER (WHERE event_type = 'error')::text AS errors,
-		        min(occurred_on)::text AS first_viewed,
-		        max(occurred_on)::text AS last_viewed,
-		        avg(duration_ms)::text AS avg_duration
-		 FROM usage_events
-		 WHERE report_id = $1 AND ${windowClause(days)}
+		        coalesce(sum(events) FILTER (WHERE event_type = 'page_view'), 0)::text AS views,
+		        coalesce(sum(events) FILTER (WHERE event_type = 'export'), 0)::text AS exports,
+		        coalesce(sum(events) FILTER (WHERE event_type = 'error'), 0)::text AS errors,
+		        min(first_event)::text AS first_viewed,
+		        max(last_event)::text AS last_viewed,
+		        (sum(duration_sum) / nullif(sum(duration_n), 0))::text AS avg_duration
+		 FROM usage_daily
+		 WHERE report_id = $1 AND ${rolledWindow(days)}
 		 GROUP BY user_email
-		 ORDER BY count(*) FILTER (WHERE event_type = 'page_view') DESC,
-		          max(occurred_on) DESC
+		 ORDER BY coalesce(sum(events) FILTER (WHERE event_type = 'page_view'), 0) DESC,
+		          max(last_event) DESC
 		 LIMIT $2`,
 		[reportId, limit],
 	);

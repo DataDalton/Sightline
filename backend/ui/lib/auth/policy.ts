@@ -263,7 +263,12 @@ async function probeGrants(identity: Identity): Promise<string[]> {
 	// Development falls back to local credentials, which resolve membership for
 	// whoever those credentials belong to rather than for the caller.
 	const rows = identity.userToken
-		? await queryAsUser(identity.userToken, `SELECT ${selects}`, params)
+		? await queryAsUser(
+				identity.userToken,
+				`SELECT ${selects}`,
+				params,
+				identity.email.toLowerCase(),
+			)
 		: await (
 				await import("../data/localSession")
 			).queryLocally(`SELECT ${selects}`, params);

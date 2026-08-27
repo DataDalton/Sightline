@@ -132,10 +132,14 @@ const inflight = new Map<string, Promise<AccessContext>>();
 // Two entries accumulate per person, and each holds their whole reachable
 // catalogue: catalogGrants puts a grant in the map for every report built on a
 // source they can read. Expiry decides whether an entry may be served and on
-// its own removes nothing, so without this the map grows with the number of
-// people who have ever used the replica rather than with the number using it
-// now.
-const maxCacheEntries = 20000;
+// its own removes nothing, so without a ceiling the map grows with everybody
+// who has ever used the replica rather than with whoever is using it now.
+//
+// Sized from the expected population rather than a constant, because a number
+// that is generous for one installation is a permanent thrash for another.
+function maxCacheEntries(): number {
+	return Math.max(1000, settings().expectedReaders * 2);
+}
 
 // Swept on write rather than on a timer, so a replica that stops being asked
 // stops doing work. The interval is what keeps a walk of the map off every
@@ -155,14 +159,16 @@ function evictIfNeeded(now: number): void {
 	// one interval is not, and past the ceiling the map is holding more than it
 	// is allowed to, so the oldest go regardless of whether they are still
 	// live. A dropped entry costs its owner one resolution.
-	if (cache.size <= maxCacheEntries) return;
+	const ceiling = maxCacheEntries();
+	if (cache.size <= ceiling) return;
 	const byExpiry = Array.from(cache.entries()).sort(
 		(a, b) => a[1].expiresAt - b[1].expiresAt,
 	);
-	for (const [key] of byExpiry.slice(0, cache.size - maxCacheEntries)) {
+	for (const [key] of byExpiry.slice(0, cache.size - ceiling)) {
 		cache.delete(key);
 	}
 }
+
 // How long a resolved access context is reused.
 //
 // The same setting the membership probe uses, rather than a second number

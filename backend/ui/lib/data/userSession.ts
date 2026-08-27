@@ -31,10 +31,24 @@ const pool = new Map<string, PooledSession>();
 const idleTimeoutMs = 5 * 60 * 1000;
 const maxPooledSessions = 200;
 
-// Sessions are keyed by the token itself. A hash was considered and rejected:
-// a collision would hand one user a warehouse session opened with another
-// user token, which is a direct identity-confusion bug. The key never leaves
-// this module and is never logged.
+// The share of the pool speculative warming may fill. Past this, slots are kept
+// for readers who are actually querying.
+const warmHeadroom = 0.75;
+
+// Sessions are keyed by the caller's own address rather than by their token.
+//
+// The token was the obvious key and it is the wrong one, because it changes
+// while the person does not. A forwarded token rotates, and every rotation
+// orphaned a perfectly good session and opened another, so a reader who stayed
+// all morning kept paying to connect. At any size where the pool is contended
+// that turns it from a cache into a queue of connects.
+//
+// A hash of the token was considered and rejected, and this is not that: a
+// hash can collide and hand one person a session opened under somebody else's
+// token, while an address cannot collide with a different person's. The token
+// is still what opens the session and still what the warehouse evaluates
+// is_member against, so nothing about whose rows come back changes. The key
+// never leaves this module and is never logged.
 
 async function closeEntry(key: string, entry: PooledSession): Promise<void> {
 	pool.delete(key);
@@ -95,13 +109,13 @@ function enforceCeiling(): void {
 	sweepIdle();
 }
 
-function acquire(token: string): PooledSession {
+function acquire(key: string, token: string): PooledSession {
 	ensureSweeping();
 
-	let entry = pool.get(token);
+	let entry = pool.get(key);
 	if (!entry) {
 		entry = openSession(token);
-		pool.set(token, entry);
+		pool.set(key, entry);
 		enforceCeiling();
 	}
 	entry.lastUsed = Date.now();
@@ -142,13 +156,16 @@ export async function queryAsUser(
 	userToken: string,
 	sql: string,
 	params?: QueryParams,
+	// Who is asking. Sessions are pooled against this rather than the token, so
+	// a rotated token reuses the session the same person already has.
+	sessionKey?: string,
 ): Promise<Row[]> {
 	if (!userToken) {
 		throw new Error("A user token is required to query user-facing data.");
 	}
 
-	const key = userToken;
-	const entry = acquire(userToken);
+	const key = sessionKey ?? userToken;
+	const entry = acquire(key, userToken);
 
 	const namedParameters = params as
 		| Record<string, DBSQLParameterValue>
@@ -188,13 +205,14 @@ export async function queryAsUserBatches(
 	params: QueryParams | undefined,
 	batchSize: number,
 	onBatch: (rows: Row[]) => Promise<void>,
+	sessionKey?: string,
 ): Promise<number> {
 	if (!userToken) {
 		throw new Error("A user token is required to query user-facing data.");
 	}
 
-	const key = userToken;
-	const entry = acquire(userToken);
+	const key = sessionKey ?? userToken;
+	const entry = acquire(key, userToken);
 
 	const namedParameters = params as
 		| Record<string, DBSQLParameterValue>
@@ -246,23 +264,42 @@ export async function queryAsUserBatches(
 //
 // Errors are swallowed on purpose. This is an optimisation, and the query that
 // actually needs the session is the one that should report a failure.
-export function warmUserSession(userToken: string | null): void {
+export function warmUserSession(
+	userToken: string | null,
+	sessionKey?: string,
+): void {
 	if (!userToken) return;
 	ensureSweeping();
 
-	const existing = pool.get(userToken);
+	const key = sessionKey ?? userToken;
+	const existing = pool.get(key);
 	if (existing) {
 		existing.lastUsed = Date.now();
 		return;
 	}
 
+	// Only while the pool has room to spare.
+	//
+	// This runs for every reader the shell renders for, and a session is a real
+	// warehouse connection held against a fixed number of slots. With more
+	// readers than slots that turns an optimisation into its opposite: each
+	// arrival opens a session, evicts somebody else's, and the evicted reader
+	// opens another when their next query lands. The pool stops being a cache
+	// and becomes a queue of connects.
+	//
+	// Speculative work is the first thing to give up when the resource it
+	// speculates on is contended. A reader who is skipped here is not slower
+	// than they would have been without any warming at all: their first query
+	// opens the session, which is what it always did.
+	if (pool.size >= maxPooledSessions * warmHeadroom) return;
+
 	const entry = openSession(userToken);
-	pool.set(userToken, entry);
+	pool.set(key, entry);
 	enforceCeiling();
 	void entry.session.catch(() => {
 		// A session that will not open is dropped, so the next caller tries
 		// again rather than awaiting a promise that already rejected.
-		void closeEntry(userToken, entry);
+		void closeEntry(key, entry);
 	});
 }
 

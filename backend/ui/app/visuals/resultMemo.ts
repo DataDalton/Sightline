@@ -25,7 +25,9 @@ interface Held<T> {
 
 export function createResultMemo<T>(
 	maxEntries: number,
-	maxAgeMs: number,
+	// A function rather than a number, so a memo built at module scope still
+	// sees a lifetime the server supplies later.
+	maxAgeMs: () => number,
 ): ResultMemo<T> {
 	const held = new Map<string, Held<T>>();
 
@@ -33,7 +35,7 @@ export function createResultMemo<T>(
 		get(key) {
 			const found = held.get(key);
 			if (!found) return null;
-			if (Date.now() - found.at > maxAgeMs) {
+			if (Date.now() - found.at > maxAgeMs()) {
 				held.delete(key);
 				return null;
 			}
@@ -58,6 +60,25 @@ export function createResultMemo<T>(
 	};
 }
 
-// Matches the lifetime the server gives a cached result, so a page held here is
-// never older than one the server would hand back anyway.
-export const resultMaxAgeMs = 5 * 60 * 1000;
+// How long a held result may be shown.
+//
+// This is meant to match the lifetime the server gives an answer, so a page
+// held here is never older than one the server would hand back anyway. It was a
+// constant mirroring another constant, which stayed true only while nobody
+// changed either: the source lifetime moved from five minutes to an hour and
+// this kept throwing away rows the server would still have served.
+//
+// Read from the server instead, with the old value as the floor for a client
+// that has not been told yet.
+let serverTtlMs = 5 * 60 * 1000;
+
+export function resultMaxAge(): number {
+	return serverTtlMs;
+}
+
+// Called once the branding payload arrives, which carries the setting.
+export function setResultMaxAge(seconds: number): void {
+	if (Number.isFinite(seconds) && seconds > 0) {
+		serverTtlMs = seconds * 1000;
+	}
+}

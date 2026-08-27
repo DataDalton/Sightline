@@ -25,8 +25,10 @@ export async function register() {
 	const { startTelemetryFlushing, stopTelemetryFlushing } =
 		await import("@/lib/telemetry/usage");
 	const { pruneOps } = await import("@/lib/platform/editing");
+	const { rollupUsage } = await import("@/lib/telemetry/rollup");
 	const { closePool } = await import("@/lib/data/lakebase");
 	const { closeAllUserSessions } = await import("@/lib/data/userSession");
+	const { onShutdown } = await import("@/lib/platform/shutdown");
 
 	// Named before anything is attempted, because "LAKEBASE_INSTANCE is not
 	// set" is a fixable sentence and a connection timeout is not.
@@ -97,20 +99,42 @@ export async function register() {
 	);
 	sweepTimer.unref?.();
 
+	// Usage rolled into its daily shape.
+	//
+	// On its own schedule rather than the sweep's, because it is the one piece
+	// of periodic work that costs real time as the events accumulate, and it is
+	// not urgent: the administration screens read whole days, so nothing they
+	// show changes between one run and the next.
+	//
+	// Every replica runs it and an advisory lock decides which one actually
+	// does the work.
+	const rollupTimer = setInterval(
+		() => {
+			void rollupUsage().catch((error) => {
+				console.warn("Usage rollup failed:", error);
+			});
+		},
+		10 * 60 * 1000,
+	);
+	rollupTimer.unref?.();
+
+	// Once shortly after start, so a fresh deployment does not show empty
+	// administration screens until the first interval comes round.
+	const firstRollup = setTimeout(() => {
+		void rollupUsage().catch(() => {});
+	}, 30 * 1000);
+	firstRollup.unref?.();
+
 	// Shutting down.
 	//
 	// The teardown functions were all written and none was called, because
 	// nothing listened for the signal. The telemetry flush is the one that
 	// costs something: events buffer for fifteen seconds, so without a final
 	// flush every replica drops up to that much usage on every deploy.
-	//
-	// Registered once, and it does not stop the process itself: the runtime
-	// owns that, and exiting here would cut off whatever else is listening.
-	let stopping = false;
-	const shutdown = async () => {
-		if (stopping) return;
-		stopping = true;
+	onShutdown(async () => {
 		clearInterval(sweepTimer);
+		clearInterval(rollupTimer);
+		clearTimeout(firstRollup);
 		stopSettingsPolling();
 		stopRegistryPolling();
 		// Awaited, and first among the closers, because it writes through the
@@ -118,10 +142,7 @@ export async function register() {
 		await stopTelemetryFlushing().catch(() => {});
 		await closeAllUserSessions().catch(() => {});
 		await closePool().catch(() => {});
-	};
-
-	process.once("SIGTERM", () => void shutdown());
-	process.once("SIGINT", () => void shutdown());
+	});
 
 	console.log(`${appIdentity.name} started`);
 }

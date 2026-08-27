@@ -18,6 +18,9 @@ interface Run {
 	total: number;
 	completed: number;
 	error: string | null;
+	// Neither finished nor heard from recently, so its replica went away
+	// mid-walk. Reported by the server rather than guessed at from timestamps.
+	abandoned?: boolean;
 }
 
 // Past this, the list on screen is old enough that somebody should be told
@@ -67,6 +70,31 @@ export function SyncFreshness({ run }: { run: Run | null }) {
 						{run.error} It reached {run.completed} of {run.total}{" "}
 						sources, so some of the list below may be current and
 						some may not.
+					</p>
+				</div>
+			</div>
+		);
+	}
+
+	// Stopped rather than running.
+	//
+	// A run is only under way while it is still saying so. Reading an unfinished
+	// row as a running one meant a sync whose replica died two days ago was
+	// still announced as in progress on every visit, with the count frozen
+	// wherever it stopped, and nothing on the page suggested running another.
+	if (!run.finishedOn && run.abandoned) {
+		return (
+			<div className={`${styles.notice} ${styles.noticeWarn}`}>
+				<div>
+					<div className={styles.noticeTitle}>
+						The last sync stopped before it finished
+					</div>
+					<p className={styles.noticeBody}>
+						It reached {run.completed} of {run.total} sources{" "}
+						{describe(run.startedOn)} and has not reported since, so
+						some of the list below may be current and some may not.
+						Running it again picks up from the catalogue as it
+						stands now.
 					</p>
 				</div>
 			</div>

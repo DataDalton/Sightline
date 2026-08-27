@@ -126,8 +126,8 @@ export default function Home() {
 						</div>
 						<p className={styles.noticeBody}>
 							Your group membership could not be resolved, so
-							reports are hidden until it recovers. This retries
-							automatically.
+							reports are hidden. Please wait a moment or try
+							again.
 						</p>
 					</div>
 				</div>
@@ -146,9 +146,9 @@ export default function Home() {
 					</div>
 					<p className={styles.emptyBody}>
 						{membershipUnresolved
-							? "Your group membership could not be resolved, so no report can be shown. This is usually a missing permission on the SQL warehouse rather than on the data: ask an administrator to grant your group CAN USE on it. It retries on its own once that is in place."
+							? "Your group membership could not be resolved, so no report can be shown. This is usually a missing permission on the SQL warehouse rather than on the data. Ask an administrator to grant your group CAN USE on it, then try again."
 							: navigationDegraded
-								? "The app could not load the list of reports. This is a problem with the app rather than with your access, and it retries on its own. An administrator can see the reason under Administration."
+								? "The app could not load the list of reports. This is a fault in the app rather than in your access. Please wait a moment or try again. An administrator can see the reason under Administration."
 								: "No report categories are available to you. Once datasets are registered and you are granted access, they appear here."}
 					</p>
 				</div>
