@@ -553,6 +553,11 @@ const migrations: string[] = [
 	`ALTER TABLE source_fields ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '{}'::jsonb`,
 	`ALTER TABLE source_fields ADD COLUMN IF NOT EXISTS display_name TEXT`,
 	`ALTER TABLE report_pages ADD COLUMN IF NOT EXISTS config JSONB NOT NULL DEFAULT '{}'::jsonb`,
+	// Locks an administrator has put on a page. Two, because a page that has
+	// been signed off usually needs to survive deletion while still being
+	// correctable, and a page that is quoted elsewhere needs the opposite.
+	`ALTER TABLE report_pages ADD COLUMN IF NOT EXISTS protect_delete BOOLEAN NOT NULL DEFAULT FALSE`,
+	`ALTER TABLE report_pages ADD COLUMN IF NOT EXISTS protect_edit BOOLEAN NOT NULL DEFAULT FALSE`,
 
 	// Marks a report somebody built for themselves rather than for the
 	// catalogue. Personal reports are exempt from every implicit grant: a
@@ -565,6 +570,14 @@ const migrations: string[] = [
 	// Defaulting to FALSE means the rule is inert for everything that came
 	// before it, and true only for what the personal path creates.
 	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS is_personal BOOLEAN NOT NULL DEFAULT FALSE`,
+	// Locks that apply to every page of a report at once. A page carries its own
+	// pair as well; the two are combined rather than one overriding the other, so
+	// locking the report cannot quietly unlock a page somebody locked on purpose.
+	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS protect_delete BOOLEAN NOT NULL DEFAULT FALSE`,
+	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS protect_edit BOOLEAN NOT NULL DEFAULT FALSE`,
+	// Whether pages may be added. Report level only: a page cannot stop a page
+	// that does not exist yet from being created.
+	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS protect_add_page BOOLEAN NOT NULL DEFAULT FALSE`,
 
 	`CREATE INDEX IF NOT EXISTS reports_owner_idx
 		ON reports (owner_email, is_personal) WHERE is_personal = TRUE`,

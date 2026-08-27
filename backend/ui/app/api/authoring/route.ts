@@ -14,6 +14,8 @@ import {
 	reorderReports,
 	updateCategory,
 	updateReportPlacement,
+	setPageProtection,
+	setReportProtection,
 } from "@/lib/platform/authoring";
 import { assertCanEdit } from "@/lib/platform/editing";
 import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
@@ -323,6 +325,49 @@ export async function POST(request: NextRequest) {
 						: String(body.slug ?? ""),
 			});
 			return NextResponse.json(placed);
+		}
+
+		if (action === "protectReport") {
+			if (!(await canDo(policy, identity, "page.protect"))) {
+				return refused;
+			}
+
+			const reportId = String(body.reportId ?? "").trim();
+			if (!reportId) {
+				return NextResponse.json(
+					{ error: "A report is required." },
+					{ status: 400 },
+				);
+			}
+
+			const locked = await setReportProtection(identity.email, reportId, {
+				protectDelete: body.protectDelete === true,
+				protectEdit: body.protectEdit === true,
+				protectAddPage: body.protectAddPage === true,
+			});
+			return NextResponse.json(locked);
+		}
+
+		if (action === "protectPage") {
+			// Its own capability, so an editor cannot lift a lock on a page
+			// they are otherwise free to rewrite.
+			if (!(await canDo(policy, identity, "page.protect"))) {
+				return refused;
+			}
+
+			const pageId = String(body.pageId ?? "").trim();
+			if (!pageId) {
+				return NextResponse.json(
+					{ error: "A page is required." },
+					{ status: 400 },
+				);
+			}
+
+			const locked = await setPageProtection(identity.email, pageId, {
+				protectDelete: body.protectDelete === true,
+				protectEdit: body.protectEdit === true,
+			});
+			return NextResponse.json(locked);
 		}
 
 		if (action === "reorderReports") {

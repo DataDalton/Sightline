@@ -53,6 +53,10 @@ interface PropertiesPanelProps {
 	onRemove: (visualId: string) => void;
 	// Back to the page without hunting for a bare patch of canvas to click.
 	onDeselect: () => void;
+	// The page is locked against changes. The panel still opens, because
+	// reading how a visual is put together is not a change, but its controls
+	// stop accepting edits that the server would refuse.
+	readOnly?: boolean;
 	// The groups on this page, so a visual can be put into one without
 	// dragging it there.
 	groups: GroupChoice[];
@@ -117,6 +121,7 @@ export function PropertiesPanel({
 	onChange,
 	onRemove,
 	onDeselect,
+	readOnly = false,
 	groups,
 	pageSource,
 	pageConfig,
@@ -200,7 +205,9 @@ export function PropertiesPanel({
 						</SectionGroup>
 					</div>
 				) : (
-					<div className={styles.panelBody}>
+					<div
+						className={`${styles.panelBody} ${readOnly ? styles.panelReadOnly : ""}`}
+					>
 						<SectionGroup>
 							<PageSettings
 								source={pageSource}
@@ -271,7 +278,9 @@ export function PropertiesPanel({
 				onChange={setTab}
 			/>
 
-			<div className={styles.panelBody}>
+			<div
+				className={`${styles.panelBody} ${readOnly ? styles.panelReadOnly : ""}`}
+			>
 				<SectionGroup>
 					{tab === "data" ? (
 						<DataTab

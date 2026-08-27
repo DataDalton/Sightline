@@ -52,6 +52,10 @@ interface PageDefinition {
 		[key: string]: unknown;
 	};
 	visuals: StoredVisual[];
+	// Locks an administrator has put on the page. The editor stops offering
+	// what they refuse; the refusal itself is the server's.
+	protectDelete?: boolean;
+	protectEdit?: boolean;
 }
 
 interface ReportDetail {
@@ -67,6 +71,10 @@ interface ReportDetail {
 	isPersonal: boolean;
 	ownerEmail: string;
 	version: number;
+	// Locks that reach every page in the report.
+	protectDelete?: boolean;
+	protectEdit?: boolean;
+	protectAddPage?: boolean;
 	pages: PageDefinition[];
 }
 
@@ -335,6 +343,24 @@ export default function ReportView({
 					pages={report.pages.map((p) => ({
 						pageId: p.pageId,
 						title: p.title,
+					}))}
+					// Already combined, so the editor never has to work out
+					// which lock applies before deciding what to offer.
+					protectDelete={
+						report.protectDelete === true ||
+						page.protectDelete === true
+					}
+					protectEdit={
+						report.protectEdit === true || page.protectEdit === true
+					}
+					reportProtectDelete={report.protectDelete === true}
+					reportProtectEdit={report.protectEdit === true}
+					reportProtectAddPage={report.protectAddPage === true}
+					pageLocks={report.pages.map((p) => ({
+						pageId: p.pageId,
+						title: p.title,
+						protectDelete: p.protectDelete === true,
+						protectEdit: p.protectEdit === true,
 					}))}
 					onSelectPage={openPage}
 					onExit={() => {

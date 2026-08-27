@@ -62,11 +62,21 @@ export interface PageDefinition {
 		[key: string]: unknown;
 	};
 	sortOrder: number;
+	// Locks an administrator has put on this page. Carried to the client so the
+	// editor can show what is locked and stop offering what would be refused;
+	// the refusal itself is the server's, in applyEdits.
+	protectDelete: boolean;
+	protectEdit: boolean;
 	visuals: VisualDefinition[];
 }
 
 export interface ReportDetail extends ReportSummary {
 	version: number;
+	// Locks that apply to every page in the report. A page carries its own pair
+	// as well, and the two combine.
+	protectDelete: boolean;
+	protectEdit: boolean;
+	protectAddPage: boolean;
 	pages: PageDefinition[];
 }
 
@@ -85,12 +95,18 @@ interface ReportRow {
 	// it were curated.
 	is_personal: boolean;
 	owner_email: string | null;
+	// Locks that reach every page in the report, plus whether pages may be
+	// added at all, which is the report's own business.
+	protect_delete: boolean;
+	protect_edit: boolean;
+	protect_add_page: boolean;
 }
 
 // The columns every access decision about a report needs.
 const reportColumns = `report_id, category_id, slug, title, description,
 	        source_key, visibility, version, modified_on,
-	        is_personal, owner_email`;
+	        is_personal, owner_email, protect_delete, protect_edit,
+	        protect_add_page`;
 
 export async function listReports(
 	policy: PolicyClass,
@@ -292,8 +308,11 @@ export async function getReport(
 					source_key: string | null;
 					config: PageDefinition["config"] | null;
 					sort_order: number;
+					protect_delete: boolean;
+					protect_edit: boolean;
 				}>(
-					`SELECT page_id, slug, title, template, source_key, config, sort_order
+					`SELECT page_id, slug, title, template, source_key, config, sort_order,
+					        protect_delete, protect_edit
 					 FROM report_pages
 					 WHERE report_id = $1 AND is_active = TRUE
 					 ORDER BY sort_order, title`,
@@ -357,6 +376,9 @@ export async function getReport(
 		modifiedOn: report.modified_on,
 		permission: access.permission,
 		version: Number(report.version),
+		protectDelete: report.protect_delete === true,
+		protectEdit: report.protect_edit === true,
+		protectAddPage: report.protect_add_page === true,
 		pages: pageRows.map((p) => ({
 			pageId: p.page_id,
 			slug: p.slug,
@@ -364,6 +386,8 @@ export async function getReport(
 			template: p.template,
 			sourceKey: p.source_key,
 			config: p.config ?? {},
+			protectDelete: p.protect_delete === true,
+			protectEdit: p.protect_edit === true,
 			sortOrder: p.sort_order,
 			visuals: visualsByPage.get(p.page_id) ?? [],
 		})),
