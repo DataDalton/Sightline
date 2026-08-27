@@ -11,11 +11,7 @@ import { VisualRenderer, type VisualSpec } from "../visuals/VisualRenderer";
 import { PageFilterProvider } from "../visuals/PageFilters";
 import { openingFilters } from "../../lib/visuals/pageDefaults";
 import { FilterBar } from "../visuals/FilterWidgets";
-import {
-	isPageControl,
-	optionValue,
-	visualByType,
-} from "../../lib/visuals/catalog";
+import { isPageControl, visualByType } from "../../lib/visuals/catalog";
 import { ReportEditor } from "./editorEntry";
 import { PageActions } from "../authoring/PageActions";
 import type { EditableVisual } from "../editor/types";
@@ -233,28 +229,20 @@ export default function ReportView({
 	// The dimension switcher sits with the filters: it changes what the whole
 	// page is broken down by, which is page chrome rather than a panel in the
 	// reading order.
-	const filterWidgets = allVisuals.filter((v) => isPageControl(v.visualType));
+	// Controls the page lifts into the strip above the content.
+	//
+	// One inside a group is not among them: a group lays out what it holds, and
+	// a control lifted out of its group into the strip would appear twice, once
+	// where the author put it and once above the page.
+	const heldByGroup = new Set(
+		allVisuals
+			.filter((v) => typeof v.config.parentId === "string")
+			.map((v) => v.visualId),
+	);
+	const filterWidgets = allVisuals.filter(
+		(v) => isPageControl(v.visualType) && !heldByGroup.has(v.visualId),
+	);
 
-	// Controls an author put behind a named button, and the rest, which stay in
-	// the strip. Order is the order they were placed, so a panel appears where
-	// its first control would have.
-	const panelNames: string[] = [];
-	const panelled = new Map<string, typeof filterWidgets>();
-	const inlineWidgets: typeof filterWidgets = [];
-	for (const widget of filterWidgets) {
-		const group = (
-			optionValue<string>(widget.visualType, widget.config, "group") ?? ""
-		).trim();
-		if (!group) {
-			inlineWidgets.push(widget);
-			continue;
-		}
-		if (!panelled.has(group)) {
-			panelled.set(group, []);
-			panelNames.push(group);
-		}
-		panelled.get(group)?.push(widget);
-	}
 	const visuals = allVisuals
 		.filter((v) => !isPageControl(v.visualType))
 		.map((v) =>
@@ -562,26 +550,8 @@ export default function ReportView({
 										: ""
 								}`}
 							>
-								<FilterBar
-									panels={panelNames.map((name) => ({
-										name,
-										visualIds: (
-											panelled.get(name) ?? []
-										).map((v) => v.visualId),
-										content: (panelled.get(name) ?? []).map(
-											(visual) => (
-												<VisualRenderer
-													key={visual.visualId}
-													visual={visual}
-													sources={sources}
-													reportId={report.reportId}
-													pageId={page?.pageId}
-												/>
-											),
-										),
-									}))}
-								>
-									{inlineWidgets.map((visual) => (
+								<FilterBar>
+									{filterWidgets.map((visual) => (
 										<VisualRenderer
 											key={visual.visualId}
 											visual={visual}

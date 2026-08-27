@@ -29,6 +29,13 @@ interface Gesture {
 	startX: number;
 	startY: number;
 	startRect: Rect;
+	// The grid this gesture is measured against.
+	//
+	// Carried per gesture rather than taken from the hook, because a visual
+	// inside a group is laid out across the group's width, not the page's. A
+	// single set of metrics dragged those at the page's column pitch, so a
+	// child crossed twice the cells the pointer did.
+	metrics: CanvasMetrics;
 }
 
 export interface DragState {
@@ -48,6 +55,11 @@ interface Options {
 
 export function useDragResize({ metrics, zoom, onCommit }: Options) {
 	const gestureRef = useRef<Gesture | null>(null);
+	// Read inside begin, which is deliberately not re-created per render: a new
+	// begin on every metrics change would restart nothing but would churn every
+	// item that takes it as a prop.
+	const metricsRef = useRef(metrics);
+	metricsRef.current = metrics;
 	const [state, setState] = useState<DragState | null>(null);
 	// The rectangle as the gesture currently stands, kept alongside the state.
 	//
@@ -64,6 +76,9 @@ export function useDragResize({ metrics, zoom, onCommit }: Options) {
 			kind: GestureKind,
 			id: string,
 			rect: Rect,
+			// Defaults to the page grid, which is what everything not inside a
+			// group is measured against.
+			gridMetrics?: CanvasMetrics,
 		) => {
 			// Only the primary button starts a gesture, so a right click can
 			// still open a context menu.
@@ -80,6 +95,7 @@ export function useDragResize({ metrics, zoom, onCommit }: Options) {
 				startX: event.clientX,
 				startY: event.clientY,
 				startRect: rect,
+				metrics: gridMetrics ?? metricsRef.current,
 			};
 			liveRectRef.current = rect;
 			setState({ id, kind, rect });
@@ -97,14 +113,17 @@ export function useDragResize({ metrics, zoom, onCommit }: Options) {
 			const dx = (event.clientX - gesture.startX) / zoom;
 			const dy = (event.clientY - gesture.startY) / zoom;
 
-			const startPixels = rectToPixels(gesture.startRect, metrics);
+			const startPixels = rectToPixels(
+				gesture.startRect,
+				gesture.metrics,
+			);
 			let next: Rect;
 
 			if (gesture.kind === "move") {
 				const cell = pixelsToCell(
 					startPixels.left + dx,
 					startPixels.top + dy,
-					metrics,
+					gesture.metrics,
 				);
 				next = { ...gesture.startRect, x: cell.x, y: cell.y };
 			} else {
@@ -116,7 +135,7 @@ export function useDragResize({ metrics, zoom, onCommit }: Options) {
 					gesture.kind === "resize-e"
 						? startPixels.height
 						: startPixels.height + dy;
-				const span = pixelsToSpan(width, height, metrics);
+				const span = pixelsToSpan(width, height, gesture.metrics);
 				next = { ...gesture.startRect, w: span.w, h: span.h };
 			}
 
@@ -132,7 +151,7 @@ export function useDragResize({ metrics, zoom, onCommit }: Options) {
 					: { id: gesture.id, kind: gesture.kind, rect: clamped },
 			);
 		},
-		[metrics, zoom],
+		[zoom],
 	);
 
 	const end = useCallback(

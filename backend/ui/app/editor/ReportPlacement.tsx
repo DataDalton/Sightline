@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import useSWR, { useSWRConfig } from "swr";
 import { Select } from "../components/shared/Select";
 import { useUser } from "../context/UserContext";
+import { Hint, Section } from "./PanelSection";
 import styles from "./Editor.module.css";
 
 // Where this report sits, changed from the report.
@@ -16,7 +17,8 @@ import styles from "./Editor.module.css";
 // Saved on its own rather than through the editor's operation log. The op log
 // carries changes to what is on a page and replays them into other sessions;
 // this changes where the page lives and can change the URL under the person
-// making it, which is a navigation rather than an edit.
+// making it, which is a navigation rather than an edit. That is why it keeps
+// its own Save, and why the group says so.
 
 interface Category {
 	categoryId: string;
@@ -104,10 +106,17 @@ export function ReportPlacement({
 	};
 
 	return (
-		<>
+		<Section
+			id="report-placement"
+			title="Placement"
+			// Not a count of what is set, since both of these always are.
+			// One when there is something waiting to be saved, which is the
+			// thing worth seeing from a closed group.
+			count={changed ? 1 : 0}
+		>
 			{canManage && (
-				<label className={styles.settingsField}>
-					<span className={styles.settingsLabel}>Category</span>
+				<div className={styles.field}>
+					<label className={styles.fieldLabel}>Category</label>
 					<Select
 						value={draftCategory}
 						onChange={setDraftCategory}
@@ -119,66 +128,70 @@ export function ReportPlacement({
 							label: c.name,
 						}))}
 					/>
-					<span className={styles.settingsHint}>
+					<Hint>
 						Which section of the navigation this sits in. Moving it
 						puts it last in the category it lands in.
-					</span>
-				</label>
+					</Hint>
+				</div>
 			)}
 
-			<label className={styles.settingsField}>
-				<span className={styles.settingsLabel}>Address</span>
+			<div className={styles.field}>
+				<label className={styles.fieldLabel} htmlFor="report-address">
+					Address
+				</label>
 				<input
+					id="report-address"
 					type="text"
-					className={styles.settingsInput}
+					className={styles.input}
 					value={draftSlug}
 					disabled={busy}
 					onChange={(e) => setDraftSlug(e.target.value)}
 				/>
-				<span className={styles.settingsHint}>
+				<Hint>
 					/r/{draftSlug.trim() || slug}. Changing this breaks existing
 					links and any bookmark somebody kept.
-				</span>
-			</label>
+				</Hint>
+			</div>
 
-			{failure && <div className={styles.settingsError}>{failure}</div>}
+			{failure && <div className={styles.panelError}>{failure}</div>}
 
 			{changed && (
-				<div className={styles.settingsActions}>
-					<button
-						type="button"
-						className={styles.settingsSave}
-						onClick={save}
-						disabled={busy || dirty || !draftSlug.trim()}
-						title={
-							dirty
-								? "Save or discard the changes on this page first."
-								: undefined
-						}
-					>
-						{busy ? "Moving" : "Move report"}
-					</button>
-					<button
-						type="button"
-						className={styles.settingsDiscard}
-						onClick={() => {
-							setDraftCategory(categoryId ?? "");
-							setDraftSlug(slug);
-							setFailure(null);
-						}}
-						disabled={busy}
-					>
-						Discard
-					</button>
-				</div>
+				<>
+					<div className={styles.panelActions}>
+						<button
+							type="button"
+							className={styles.saveButton}
+							onClick={save}
+							disabled={busy || dirty || !draftSlug.trim()}
+							title={
+								dirty
+									? "Save or discard the changes on this page first."
+									: undefined
+							}
+						>
+							{busy ? "Moving" : "Move report"}
+						</button>
+						<button
+							type="button"
+							className={styles.discardButton}
+							onClick={() => {
+								setDraftCategory(categoryId ?? "");
+								setDraftSlug(slug);
+								setFailure(null);
+							}}
+							disabled={busy}
+						>
+							Discard
+						</button>
+					</div>
+					{dirty && (
+						<Hint>
+							Save the changes on this page first. Moving the
+							report reloads it.
+						</Hint>
+					)}
+				</>
 			)}
-
-			{changed && dirty && (
-				<span className={styles.settingsHint}>
-					Save the changes on this page first. Moving the report
-					reloads it.
-				</span>
-			)}
-		</>
+		</Section>
 	);
 }

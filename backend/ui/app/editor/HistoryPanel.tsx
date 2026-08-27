@@ -5,6 +5,7 @@ import useSWR from "swr";
 import type { Change } from "../../lib/platform/versionDiff";
 import { SkeletonText } from "../components/shared/Skeleton";
 import { useDeferredLoading } from "../hooks/useDeferredLoading";
+import { Hint } from "./PanelSection";
 import styles from "./Editor.module.css";
 
 // Who changed what, and putting a version back.
@@ -111,20 +112,20 @@ export function HistoryPanel({
 
 	return (
 		<div className={styles.historyPanel}>
-			<p className={styles.guidance}>
+			<Hint>
 				Every save, and what it changed. Restoring applies an old
 				version as a new one, so nothing is lost and a restore can
 				itself be undone.
-			</p>
+			</Hint>
 
 			{failure && <div className={styles.historyError}>{failure}</div>}
 
 			{showSkeleton && <SkeletonText lines={4} />}
 
 			{!isLoading && entries.length === 0 && (
-				<div className={styles.guidance}>
+				<p className={styles.listEmpty}>
 					No saves recorded yet. The history starts at the next one.
-				</div>
+				</p>
 			)}
 
 			<ol className={styles.historyList}>
@@ -186,7 +187,7 @@ export function HistoryPanel({
 							<div className={styles.historyActions}>
 								{confirming === entry.version ? (
 									<>
-										<span className={styles.guidance}>
+										<span className={styles.hint}>
 											Put the report back to this?
 										</span>
 										<button
