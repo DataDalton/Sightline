@@ -18,11 +18,15 @@ export async function register() {
 	const { bootstrapRoleAssignments, syncBuiltinRoles } =
 		await import("@/lib/platform/roles");
 	const { migrateExplorations } = await import("@/lib/platform/personal");
-	const { loadSettings, startSettingsPolling } =
+	const { loadSettings, startSettingsPolling, stopSettingsPolling } =
 		await import("@/lib/settings");
-	const { loadRegistry, startRegistryPolling } =
+	const { loadRegistry, startRegistryPolling, stopRegistryPolling } =
 		await import("@/lib/semantic/registry");
-	const { startTelemetryFlushing } = await import("@/lib/telemetry/usage");
+	const { startTelemetryFlushing, stopTelemetryFlushing } =
+		await import("@/lib/telemetry/usage");
+	const { pruneOps } = await import("@/lib/platform/editing");
+	const { closePool } = await import("@/lib/data/lakebase");
+	const { closeAllUserSessions } = await import("@/lib/data/userSession");
 
 	// Named before anything is attempted, because "LAKEBASE_INSTANCE is not
 	// set" is a fixable sentence and a connection timeout is not.
@@ -77,13 +81,47 @@ export async function register() {
 
 	// Expired presence and cache rows accumulate otherwise. Every replica runs
 	// this; the deletes are idempotent so overlap is harmless.
+	//
+	// The op log goes with them. It is the live sync buffer rather than a
+	// record: a version snapshot holds the history, so ops only have to cover
+	// the window a disconnected session might have missed. It had no caller at
+	// all, so a table that needs two days of rows was keeping every edit ever
+	// made. Nothing else in here is pruned on purpose, because usage, activity
+	// and versions are records and a deleted record cannot be reconstructed.
 	const sweepTimer = setInterval(
 		() => {
 			void sweepExpired().catch(() => {});
+			void pruneOps().catch(() => {});
 		},
 		5 * 60 * 1000,
 	);
 	sweepTimer.unref?.();
+
+	// Shutting down.
+	//
+	// The teardown functions were all written and none was called, because
+	// nothing listened for the signal. The telemetry flush is the one that
+	// costs something: events buffer for fifteen seconds, so without a final
+	// flush every replica drops up to that much usage on every deploy.
+	//
+	// Registered once, and it does not stop the process itself: the runtime
+	// owns that, and exiting here would cut off whatever else is listening.
+	let stopping = false;
+	const shutdown = async () => {
+		if (stopping) return;
+		stopping = true;
+		clearInterval(sweepTimer);
+		stopSettingsPolling();
+		stopRegistryPolling();
+		// Awaited, and first among the closers, because it writes through the
+		// pool the next line shuts.
+		await stopTelemetryFlushing().catch(() => {});
+		await closeAllUserSessions().catch(() => {});
+		await closePool().catch(() => {});
+	};
+
+	process.once("SIGTERM", () => void shutdown());
+	process.once("SIGINT", () => void shutdown());
 
 	console.log(`${appIdentity.name} started`);
 }

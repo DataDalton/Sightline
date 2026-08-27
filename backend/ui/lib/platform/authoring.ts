@@ -13,6 +13,7 @@ import {
 	validateVisual,
 } from "../visuals/validate";
 import { invalidateDefinitions } from "./definitionCache";
+import { refuseAddPage, refuseReportDelete } from "./pageProtection";
 
 // Creating the things the editor could only ever add to.
 //
@@ -588,12 +589,32 @@ export async function removeReport(
 	identity: Identity,
 	reportId: string,
 ): Promise<void> {
-	const rows = await sql<{ slug: string; title: string }>(
-		`UPDATE reports SET is_active = FALSE, modified_by = $2, modified_on = now()
-		 WHERE report_id = $1 AND is_active = TRUE
-		 RETURNING slug, title`,
-		[reportId, identity.email],
-	);
+	// The lock is read and the row deactivated in one transaction, so a report
+	// locked while this was in flight is not deleted by a check that ran before
+	// the lock landed.
+	const rows = await transaction(async (client) => {
+		const locked = await client.query<{ protect_delete: boolean }>(
+			`SELECT protect_delete FROM reports
+			 WHERE report_id = $1 AND is_active = TRUE
+			 FOR UPDATE`,
+			[reportId],
+		);
+		if (locked.rows.length === 0) return [];
+
+		const said = refuseReportDelete("removeReport", {
+			protectDelete: locked.rows[0].protect_delete === true,
+			protectEdit: false,
+		});
+		if (said) throw new AuthoringError(said.reason);
+
+		const updated = await client.query<{ slug: string; title: string }>(
+			`UPDATE reports SET is_active = FALSE, modified_by = $2, modified_on = now()
+			 WHERE report_id = $1 AND is_active = TRUE
+			 RETURNING slug, title`,
+			[reportId, identity.email],
+		);
+		return updated.rows;
+	});
 	if (rows.length === 0) throw new AuthoringError("That report is gone.");
 
 	// The shares made on it granted view to named people. Left active they
@@ -643,13 +664,29 @@ export async function addTemplatePage(
 	const pageId = await transaction(async (client) => {
 		// Locked for the same reason an edit locks it: two people adding a page
 		// at once must not both take the same sort order or version.
-		const current = await client.query<{ version: string }>(
-			`SELECT version FROM reports WHERE report_id = $1 FOR UPDATE`,
+		const current = await client.query<{
+			version: string;
+			protect_add_page: boolean;
+		}>(
+			`SELECT version, protect_add_page FROM reports
+			 WHERE report_id = $1 FOR UPDATE`,
 			[input.reportId],
 		);
 		if (current.rows.length === 0) {
 			throw new AuthoringError("Report not found.");
 		}
+
+		// The same lock applyEdits consults for its own addPage op. This is the
+		// other way a page is created, and until this check existed choosing a
+		// template instead of a blank page walked past a lock an administrator
+		// had set. Read inside the transaction that already holds the row, so
+		// the answer cannot be stale by the time the insert runs.
+		const said = refuseAddPage("addPage", {
+			protectDelete: false,
+			protectEdit: false,
+			protectAddPage: current.rows[0].protect_add_page === true,
+		});
+		if (said) throw new AuthoringError(said.reason);
 
 		const next = await client.query<{ sort_order: number; count: string }>(
 			`SELECT coalesce(max(sort_order), -1) + 1 AS sort_order,

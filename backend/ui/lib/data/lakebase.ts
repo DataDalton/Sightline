@@ -162,47 +162,6 @@ export async function transaction<T>(
 	}
 }
 
-// Opens a dedicated connection for LISTEN. Kept outside the pool because a
-// listening connection is long-lived and must not be handed to another caller.
-//
-// Lakebase closes idle connections when it scales down, which destroys session
-// state including LISTEN registrations. Callers must therefore treat a
-// notification as a latency optimization and never as the delivery guarantee:
-// the durable op sequence is what guarantees delivery, and a dropped
-// notification self-heals on the next poll. onDrop fires so the caller can
-// reconnect and resync from its last seen sequence.
-export async function listen(
-	channel: string,
-	onNotify: (payload: string) => void,
-	onDrop: () => void,
-): Promise<() => Promise<void>> {
-	const pool = await getPool();
-	const client = await pool.connect();
-
-	const handleNotification = (msg: { channel: string; payload?: string }) => {
-		if (msg.channel === channel) onNotify(msg.payload ?? "");
-	};
-
-	client.on("notification", handleNotification);
-	client.on("error", () => onDrop());
-	client.on("end", () => onDrop());
-
-	// Channel names cannot be bound as parameters, so the identifier is quoted
-	// rather than interpolated raw.
-	const quoted = `"${channel.replace(/"/g, '""')}"`;
-	await client.query(`LISTEN ${quoted}`);
-
-	return async () => {
-		client.removeListener("notification", handleNotification);
-		try {
-			await client.query(`UNLISTEN ${quoted}`);
-		} catch {
-			// The connection is already gone, which is the same outcome.
-		}
-		client.release();
-	};
-}
-
 export async function closePool(): Promise<void> {
 	if (!poolPromise) return;
 	const pool = await poolPromise;

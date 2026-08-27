@@ -183,3 +183,46 @@ export function openingFilters(
 
 	return opening;
 }
+
+// What the breakdown and period switchers are set to before anybody touches
+// them.
+//
+// The other controls on a page contribute filters, and the note at the top of
+// this file explains why their defaults have to be known here rather than
+// applied in an effect. The switchers are the exception that was missed: they
+// do not narrow rows, they decide which field a visual groups by, and they do
+// apply their default in an effect after mount. DimensionSwitch selects its
+// first option the moment it renders.
+//
+// So a page carrying a switcher opens with a breakdown chosen, and the server
+// believed it opened with none. Every visual reading "<selected>" was warmed
+// without that dimension and asked for with it, which is two different queries
+// and therefore two different cache keys: the warm entry was never read, and
+// the reader still waited on the warehouse.
+//
+// The first option wins because that is what the control does. Taken from the
+// switcher's stored dimensions unfiltered, because that is the list the control
+// is handed.
+export function openingBreakdown(visuals: WidgetVisual[]): {
+	selected: string | null;
+	grain: string | null;
+} {
+	let selected: string | null = null;
+	let grain: string | null = null;
+
+	for (const visual of visuals) {
+		const first = visual.config.dimensions?.[0] ?? null;
+		if (!first) continue;
+		// First one on the page wins, matching a reader's single selection: two
+		// switchers of the same scope share one piece of page state, and the
+		// one that mounts first is the one that sets it.
+		if (visual.visualType === "dimensionSwitch" && selected === null) {
+			selected = first;
+		}
+		if (visual.visualType === "periodSwitch" && grain === null) {
+			grain = first;
+		}
+	}
+
+	return { selected, grain };
+}

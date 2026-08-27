@@ -51,6 +51,10 @@ const deletesPage = new Set(["removePage"]);
 
 const addsPage = new Set(["addPage"]);
 
+// Operations that remove the whole report. Named the same way the others are,
+// so an operation added later is unprotected until somebody decides otherwise.
+const deletesReport = new Set(["removeReport"]);
+
 export interface Refusal {
 	operation: string;
 	reason: string;
@@ -120,6 +124,27 @@ export function refuseAddPage(
 		return {
 			operation,
 			reason: "This report is protected against new pages. An administrator can lift that.",
+		};
+	}
+	return null;
+}
+
+// Why a report cannot be deleted, or nothing.
+//
+// A report carries the same delete lock its pages do, and until this existed
+// nothing consulted it: removeReport deactivated the row on its own, so a
+// report locked against deletion was deleted by anybody holding the capability
+// while each of its locked pages survived. The two locks are consulted in
+// different places because they are enforced on different writes, and both are
+// decided here so neither can be enforced without the other being visible.
+export function refuseReportDelete(
+	operation: string,
+	protection: PageProtection,
+): Refusal | null {
+	if (protection.protectDelete && deletesReport.has(operation)) {
+		return {
+			operation,
+			reason: "This report is protected against deletion. An administrator can lift that.",
 		};
 	}
 	return null;
