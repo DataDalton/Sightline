@@ -162,6 +162,35 @@ export async function transaction<T>(
 	}
 }
 
+// Runs work while holding a named lock, shared by every process and replica
+// pointed at this database.
+//
+// Postgres advisory locks are held by a session rather than by a transaction
+// here, so the work inside runs on its own pooled connections and is free to
+// fail and carry on. The lock only decides who is allowed to be doing it.
+//
+// Released in a finally, and released explicitly rather than left to the
+// connection closing, because the connection goes back to the pool rather than
+// away and would carry the lock with it.
+export async function withAdvisoryLock<T>(
+	key: number,
+	fn: () => Promise<T>,
+): Promise<T> {
+	const pool = await getPool();
+	const client = await pool.connect();
+	try {
+		await client.query("SELECT pg_advisory_lock($1)", [key]);
+		return await fn();
+	} finally {
+		try {
+			await client.query("SELECT pg_advisory_unlock($1)", [key]);
+		} catch {
+			// The session is already gone, which drops the lock anyway.
+		}
+		client.release();
+	}
+}
+
 export async function closePool(): Promise<void> {
 	if (!poolPromise) return;
 	const pool = await poolPromise;

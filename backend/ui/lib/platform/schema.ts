@@ -1,4 +1,4 @@
-import { sql } from "../data/lakebase";
+import { sql, withAdvisoryLock } from "../data/lakebase";
 
 // Transactional schema, in Lakebase Postgres.
 //
@@ -677,6 +677,7 @@ function firstLine(statement: string): string {
 // be rather than as complete as it got to.
 async function applyAll(kind: string, all: string[]): Promise<void> {
 	const failures: string[] = [];
+	lastFailures = lastFailures.filter((f) => f.kind !== kind);
 
 	for (const statement of all) {
 		try {
@@ -691,6 +692,9 @@ async function applyAll(kind: string, all: string[]): Promise<void> {
 	}
 
 	if (failures.length > 0) {
+		lastFailures.push(
+			...failures.map((statement) => ({ kind, statement })),
+		);
 		console.error(
 			`${failures.length} of ${all.length} schema ${kind} statements ` +
 				`did not apply. The app is running against an incomplete ` +
@@ -699,23 +703,76 @@ async function applyAll(kind: string, all: string[]): Promise<void> {
 	}
 }
 
+// What did not apply on the last pass, so an administrator can read the reason
+// rather than only the symptom.
+//
+// A partial schema is the failure that reads as everything being broken with
+// nothing to explain it: reports do not load, navigation is empty, and the only
+// record was a console line on whichever replica lost the race. Kept in memory
+// per replica, which is the same scope as everything else the diagnostics
+// endpoint reports.
+let lastFailures: { kind: string; statement: string }[] = [];
+let lastAppliedAt = 0;
+
+export function schemaStatus(): {
+	appliedAt: number | null;
+	failures: { kind: string; statement: string }[];
+} {
+	return {
+		appliedAt: lastAppliedAt || null,
+		failures: lastFailures,
+	};
+}
+
+// Identifies the schema lock. Any fixed number works as long as every process
+// agrees on it, so it is written here once rather than derived from anything
+// that could differ between builds.
+const schemaLockKey = 8577402;
+
 export async function initPlatformSchema(): Promise<void> {
-	await applyAll("setup", statements);
-
-	// Between the two, because a migration is an ALTER TABLE and that is the
-	// statement ownership gates. A table this identity created a moment ago is
-	// already its own, so this is for the ones an earlier identity created.
+	// One initialiser at a time, across every process and every replica.
 	//
-	// Not allowed to stop the migrations either. Ownership is about who may
-	// alter a table later, and failing to adopt one is not a reason to skip
-	// adding a column to every other table.
-	try {
-		await adoptSchemaOwner();
-	} catch (error) {
-		console.error("Schema ownership could not be adopted:", error);
-	}
+	// Two callers run this in each process, because Next bundles instrumentation
+	// separately from the route handlers and module state does not cross that
+	// line, and every replica runs both. Nothing coordinated them.
+	//
+	// CREATE TABLE IF NOT EXISTS is not atomic: two sessions both find the table
+	// missing and both create it, and one fails on the unique index behind the
+	// type name. ADD COLUMN IF NOT EXISTS and ALTER TABLE OWNER TO race the same
+	// way, as tuple concurrently updated and as a deadlock. applyAll logs each
+	// failure and carries on by design, so the loser of the race did not fail to
+	// start, it started against half a schema, and every read after that failed
+	// with nothing to say why. That is the shape of having to start the app
+	// several times before it works.
+	//
+	// Waiting rather than skipping: the cost is one initialiser at a time on a
+	// path that runs once per module instance, and skipping would let a caller
+	// carry on against a schema still being built.
+	await withAdvisoryLock(schemaLockKey, async () => {
+		// One cheap statement before fifty nine expensive ones. An unreachable
+		// store fails every statement in turn otherwise, which logs the same
+		// fault sixty times, takes sixty round trips to conclude, and repeats on
+		// the next request because the memo is cleared on failure.
+		await sql("SELECT 1");
 
-	await applyAll("migration", migrations);
+		await applyAll("setup", statements);
+
+		// Between the two, because a migration is an ALTER TABLE and that is the
+		// statement ownership gates. A table this identity created a moment ago is
+		// already its own, so this is for the ones an earlier identity created.
+		//
+		// Not allowed to stop the migrations either. Ownership is about who may
+		// alter a table later, and failing to adopt one is not a reason to skip
+		// adding a column to every other table.
+		try {
+			await adoptSchemaOwner();
+		} catch (error) {
+			console.error("Schema ownership could not be adopted:", error);
+		}
+
+		await applyAll("migration", migrations);
+		lastAppliedAt = Date.now();
+	});
 }
 
 // Removes expired presence and cache rows. Cheap, and called on a timer

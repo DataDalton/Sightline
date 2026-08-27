@@ -18,6 +18,14 @@ import { startTelemetryFlushing } from "../telemetry/usage";
 let readyPromise: Promise<void> | null = null;
 let readyAt = 0;
 
+// Why the last attempt failed, and when.
+//
+// Initialization failures are reported to the console and nowhere else, so a
+// replica serving an empty navigation looked identical to one with nothing to
+// show. The home page tells a reader an administrator can see the reason, which
+// was not true of anything the app exposed.
+let lastError: { message: string; at: number } | null = null;
+
 async function initialize(): Promise<void> {
 	// A deployment missing its connection targets fails here, naming them,
 	// rather than further in with something that reads as a network fault.
@@ -65,10 +73,19 @@ async function initialize(): Promise<void> {
 // rather than pinning the process to a broken state.
 export function ensureReady(): Promise<void> {
 	if (!readyPromise) {
-		readyPromise = initialize().catch((error) => {
-			readyPromise = null;
-			throw error;
-		});
+		readyPromise = initialize()
+			.then(() => {
+				lastError = null;
+			})
+			.catch((error) => {
+				readyPromise = null;
+				lastError = {
+					message:
+						error instanceof Error ? error.message : String(error),
+					at: Date.now(),
+				};
+				throw error;
+			});
 	}
 	return readyPromise;
 }
@@ -87,4 +104,10 @@ export async function ensureReadyOrDegrade(): Promise<boolean> {
 
 export function bootstrapReadyAt(): number {
 	return readyAt;
+}
+
+// The last initialization failure on this replica, or null if the last attempt
+// succeeded.
+export function bootstrapLastError(): { message: string; at: number } | null {
+	return lastError;
 }
