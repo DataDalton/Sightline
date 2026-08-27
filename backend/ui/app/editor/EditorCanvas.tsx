@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
 	canvasRows,
 	fillToViewport,
@@ -17,6 +17,8 @@ import {
 } from "../../lib/visuals/layout";
 import { VisualRenderer } from "../visuals/VisualRenderer";
 import { FilterBar } from "../visuals/FilterWidgets";
+import { PageFilterProvider } from "../visuals/PageFilters";
+import { openingFilters } from "../../lib/visuals/pageDefaults";
 import {
 	fillsHeight,
 	isPageControl,
@@ -315,6 +317,27 @@ export function EditorCanvas({
 		childrenOf.set(parent, held);
 	}
 
+	// What the page's filter widgets are set to before anybody touches them,
+	// derived the same way the published page derives them. The canvas draws
+	// real data, so it has to start from the same place a reader does or the
+	// author is arranging a page nobody will see.
+	const opening = useMemo(
+		() =>
+			openingFilters(
+				visuals.map((v) => ({
+					visualId: v.visualId,
+					visualType: v.visualType,
+					config: v.config as {
+						dimensions?: string[];
+						measures?: string[];
+						options?: Record<string, unknown>;
+					},
+				})),
+				new Date(),
+			),
+		[visuals],
+	);
+
 	// Controls come out of the grid entirely and sit in a strip, in the
 	// reading order an author gave them. One inside a group is laid out by the
 	// group instead, which is what a group of filters is.
@@ -408,116 +431,121 @@ export function EditorCanvas({
 	}
 
 	return (
-		<div
-			className={styles.canvasScroll}
-			ref={scrollRef}
-			// A click on the canvas background clears the selection, which is
-			// how an author gets back to the page-level panel.
-			onPointerDown={(e) => {
-				if (e.target === e.currentTarget) onSelect(null);
-			}}
-		>
-			{/* Drawn even with nothing in it.
+		<PageFilterProvider opening={opening}>
+			<div
+				className={styles.canvasScroll}
+				ref={scrollRef}
+				// A click on the canvas background clears the selection, which
+				// is how an author gets back to the page-level panel.
+				onPointerDown={(e) => {
+					if (e.target === e.currentTarget) onSelect(null);
+				}}
+			>
+				{/* Drawn even with nothing in it.
 
 			    It used to appear only once a control existed, and the only way
 			    to make one exist was to know that a filter added from the
 			    toolbar would land somewhere other than the grid. An empty
 			    strip that says what it is for is how an author finds out. */}
-			{(controls.length > 0 || (onAddControl && !readOnly)) && (
-				// Sized by its contents rather than by the grid, exactly as
-				// the reader will see it, and scaled with the canvas so zoom
-				// applies to the whole page rather than to half of it.
-				<div
-					className={styles.controlStrip}
-					style={{
-						width: metrics.width,
-						// CSS zoom rather than a transform, so the strip's real
-						// height changes with it. A transform would leave the
-						// original box behind and the canvas would slide under
-						// the strip at anything but 100%.
-						zoom,
-					}}
-				>
-					{/* Says what the bar is. The bar is the reader's filter
+				{(controls.length > 0 || (onAddControl && !readOnly)) && (
+					// Sized by its contents rather than by the grid, exactly as
+					// the reader will see it, and scaled with the canvas so zoom
+					// applies to the whole page rather than to half of it.
+					<div
+						className={styles.controlStrip}
+						style={{
+							width: metrics.width,
+							// CSS zoom rather than a transform, so the strip's real
+							// height changes with it. A transform would leave the
+							// original box behind and the canvas would slide under
+							// the strip at anything but 100%.
+							zoom,
+						}}
+					>
+						{/* Says what the bar is. The bar is the reader's filter
 					    strip drawn at full width, and the controls inside it
 					    are the parts an author can select, so without this the
 					    outline hugging one small dropdown inside a wide box
 					    reads as a selection that missed. */}
-					<div className={styles.stripCaption}>
-						Filter strip
-						<span className={styles.stripNote}>
-							{controls.length === 0
-								? "Nothing here yet. A filter added here sits above the page rather than on the grid."
-								: "Above the page, ordered along the strip. Controls do not respond here, so a click selects one instead of filtering the page. To put several behind one button, add a Group and drag them onto it."}
-						</span>
-						{onAddControl && !readOnly && (
-							<button
-								type="button"
-								className={styles.stripAdd}
-								onClick={onAddControl}
-							>
-								Add a filter
-							</button>
-						)}
-					</div>
-
-					<FilterBar>
-						{controls.length === 0 && (
-							<span className={styles.stripEmpty}>
-								No page controls
+						<div className={styles.stripCaption}>
+							Filter strip
+							<span className={styles.stripNote}>
+								{controls.length === 0
+									? "Nothing here yet. A filter added here sits above the page rather than on the grid."
+									: "Above the page, ordered along the strip. Controls do not respond here, so a click selects one instead of filtering the page. To put several behind one button, add a Group and drag them onto it."}
 							</span>
-						)}
-						{controls.map((visual, index) => (
-							<ControlSlot
-								key={visual.visualId}
-								visual={visual}
-								index={index}
-								total={controls.length}
-								selectedId={selectedId}
-								sources={sources}
-								remoteBy={remoteSelections?.get(
-									visual.visualId,
-								)}
-								onSelect={onSelect}
-								onMoveControl={onMoveControl}
-							/>
-						))}
-					</FilterBar>
-				</div>
-			)}
+							{onAddControl && !readOnly && (
+								<button
+									type="button"
+									className={styles.stripAdd}
+									onClick={onAddControl}
+								>
+									Add a filter
+								</button>
+							)}
+						</div>
 
-			<div
-				className={`${styles.canvas} ${state ? "" : styles.canvasQuiet} ${
-					previewWidth !== null ? styles.canvasPreview : ""
-				}`}
-				style={{
-					width: metrics.width,
-					height: canvasHeight,
-					transform: `scale(${zoom})`,
-					// The scaled canvas still has to reserve its unscaled space
-					// in the scroller, or the scrollbars would be wrong.
-					marginBottom: canvasHeight * (zoom - 1),
-					marginRight: metrics.width * (zoom - 1),
-					backgroundSize: `${metrics.columnWidth + gridGap}px ${rowHeight + gridGap}px`,
-				}}
-			>
-				{placed.map((visual) => (
-					<CanvasItem
-						key={visual.visualId}
-						visual={visual}
-						rect={rectFor(visual)}
-						pixels={rectToPixels(displayRectFor(visual), metrics)}
-						metrics={metrics}
-						clashes={placed.some(
-							(other) =>
-								other.visualId !== visual.visualId &&
-								overlaps(rectFor(visual), rectFor(other)),
-						)}
-						ctx={itemContext}
-					/>
-				))}
+						<FilterBar>
+							{controls.length === 0 && (
+								<span className={styles.stripEmpty}>
+									No page controls
+								</span>
+							)}
+							{controls.map((visual, index) => (
+								<ControlSlot
+									key={visual.visualId}
+									visual={visual}
+									index={index}
+									total={controls.length}
+									selectedId={selectedId}
+									sources={sources}
+									remoteBy={remoteSelections?.get(
+										visual.visualId,
+									)}
+									onSelect={onSelect}
+									onMoveControl={onMoveControl}
+								/>
+							))}
+						</FilterBar>
+					</div>
+				)}
+
+				<div
+					className={`${styles.canvas} ${state ? "" : styles.canvasQuiet} ${
+						previewWidth !== null ? styles.canvasPreview : ""
+					}`}
+					style={{
+						width: metrics.width,
+						height: canvasHeight,
+						transform: `scale(${zoom})`,
+						// The scaled canvas still has to reserve its unscaled space
+						// in the scroller, or the scrollbars would be wrong.
+						marginBottom: canvasHeight * (zoom - 1),
+						marginRight: metrics.width * (zoom - 1),
+						backgroundSize: `${metrics.columnWidth + gridGap}px ${rowHeight + gridGap}px`,
+					}}
+				>
+					{placed.map((visual) => (
+						<CanvasItem
+							key={visual.visualId}
+							visual={visual}
+							rect={rectFor(visual)}
+							pixels={rectToPixels(
+								displayRectFor(visual),
+								metrics,
+							)}
+							metrics={metrics}
+							clashes={placed.some(
+								(other) =>
+									other.visualId !== visual.visualId &&
+									overlaps(rectFor(visual), rectFor(other)),
+							)}
+							ctx={itemContext}
+						/>
+					))}
+				</div>
 			</div>
-		</div>
+		</PageFilterProvider>
 	);
 }
 

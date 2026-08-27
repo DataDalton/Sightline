@@ -1543,6 +1543,8 @@ export function ReportEditor({
 					}
 				/>
 				<PropertiesPanel
+					reportId={reportId}
+					sources={sources}
 					visual={selected}
 					source={
 						selected?.sourceKey

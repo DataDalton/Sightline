@@ -3,8 +3,11 @@
 import { useState } from "react";
 import useSWR from "swr";
 import type { Change } from "../../lib/platform/versionDiff";
+import type { SourceMeta } from "../visuals/types";
+import { Modal } from "../components/shared/Modal";
 import { SkeletonText } from "../components/shared/Skeleton";
 import { useDeferredLoading } from "../hooks/useDeferredLoading";
+import { CompareVersions } from "./CompareVersions";
 import { Hint } from "./PanelSection";
 import styles from "./Editor.module.css";
 
@@ -16,6 +19,17 @@ import styles from "./Editor.module.css";
 //
 // Restoring never rewrites the past. The version being undone stays in the
 // list, and the restore appears as its own entry, so it can be undone in turn.
+//
+// The summary answers whether to roll a version back. Comparing answers what
+// exactly it did, which is the question that follows, and it opens over the
+// canvas rather than in this panel because two versions of a definition need
+// the width.
+//
+// Restoring asks in a dialog rather than in the entry. It rewrites every page
+// of the report, which is the largest single thing this panel can do, and a
+// confirmation that appears inside a scrolling list can be agreed to without
+// being read. The dialog also has room to say what a restore actually does,
+// which is the part that stops it feeling irreversible.
 
 interface HistoryEntry {
 	version: number;
@@ -28,6 +42,10 @@ interface HistoryEntry {
 
 interface HistoryPanelProps {
 	slug: string;
+	// Handed through to the comparison, which draws both versions of the page
+	// with the renderer a reader gets rather than describing them.
+	reportId: string;
+	sources: Record<string, SourceMeta>;
 	// Bumped by the editor after a save, so the list picks the new version up
 	// without the author having to close and reopen it.
 	refreshKey: number;
@@ -63,8 +81,94 @@ const kindMarks: Record<Change["kind"], string> = {
 	renamed: "✎",
 };
 
+// Putting the report back to an earlier version.
+//
+// Says what a restore does before asking, because "restore" reads as throwing
+// the newer work away and it does not: the version being undone stays in the
+// list, the restore lands as a new version of its own, and undoing the undo is
+// the same two clicks. Somebody who knows that presses the button. Somebody who
+// does not goes and asks a colleague first.
+function RestoreDialog({
+	entry,
+	version,
+	busy,
+	failure,
+	onConfirm,
+	onClose,
+}: {
+	entry: HistoryEntry | undefined;
+	version: number;
+	busy: boolean;
+	failure: string | null;
+	onConfirm: () => void;
+	onClose: () => void;
+}) {
+	return (
+		<Modal
+			isOpen
+			onClose={onClose}
+			title={`Restore version ${version}`}
+			width="440px"
+		>
+			<div className={styles.restoreBody}>
+				<p className={styles.restoreLead}>
+					Every page goes back to how it stood
+					{entry
+						? ` when ${personFor(entry.author)} saved it ${when(entry.createdOn)}`
+						: ""}
+					.
+				</p>
+
+				{entry && entry.changes.length > 0 && (
+					<ul className={styles.restoreChanges}>
+						{entry.changes.slice(0, 4).map((change, i) => (
+							<li key={i}>{change.text}</li>
+						))}
+						{entry.changes.length > 4 && (
+							<li className={styles.restoreMore}>
+								and {entry.changes.length - 4} more
+							</li>
+						)}
+					</ul>
+				)}
+
+				<Hint>
+					Nothing is lost. The version you are on now stays in the
+					history, the restore is recorded as its own version, and it
+					can be undone the same way.
+				</Hint>
+
+				{failure && (
+					<div className={styles.historyError}>{failure}</div>
+				)}
+
+				<div className={styles.protectActions}>
+					<button
+						type="button"
+						className={styles.discardButton}
+						onClick={onClose}
+						disabled={busy}
+					>
+						Cancel
+					</button>
+					<button
+						type="button"
+						className={styles.saveButton}
+						onClick={onConfirm}
+						disabled={busy}
+					>
+						{busy ? "Restoring" : `Restore version ${version}`}
+					</button>
+				</div>
+			</div>
+		</Modal>
+	);
+}
+
 export function HistoryPanel({
 	slug,
+	reportId,
+	sources,
 	refreshKey,
 	onRestored,
 }: HistoryPanelProps) {
@@ -77,6 +181,7 @@ export function HistoryPanel({
 
 	const [restoring, setRestoring] = useState<number | null>(null);
 	const [confirming, setConfirming] = useState<number | null>(null);
+	const [comparing, setComparing] = useState<number | null>(null);
 	const [failure, setFailure] = useState<string | null>(null);
 
 	const restore = async (version: number) => {
@@ -118,7 +223,9 @@ export function HistoryPanel({
 				itself be undone.
 			</Hint>
 
-			{failure && <div className={styles.historyError}>{failure}</div>}
+			{failure && confirming === null && (
+				<div className={styles.historyError}>{failure}</div>
+			)}
 
 			{showSkeleton && <SkeletonText lines={4} />}
 
@@ -183,49 +290,62 @@ export function HistoryPanel({
 							))}
 						</ul>
 
-						{data?.canRestore && !entry.isCurrent && (
-							<div className={styles.historyActions}>
-								{confirming === entry.version ? (
-									<>
-										<span className={styles.hint}>
-											Put the report back to this?
-										</span>
-										<button
-											type="button"
-											className={`${styles.toolButton} ${styles.primary}`}
-											onClick={() =>
-												restore(entry.version)
-											}
-											disabled={restoring !== null}
-										>
-											{restoring === entry.version
-												? "Restoring"
-												: "Restore"}
-										</button>
-										<button
-											type="button"
-											className={styles.toolButton}
-											onClick={() => setConfirming(null)}
-										>
-											Cancel
-										</button>
-									</>
-								) : (
-									<button
-										type="button"
-										className={styles.toolButton}
-										onClick={() =>
-											setConfirming(entry.version)
-										}
-									>
-										Restore this version
-									</button>
-								)}
-							</div>
-						)}
+						<div className={styles.historyActions}>
+							{/* Offered on the current version too. What the
+							    last save did is the comparison people reach
+							    for most. */}
+							<button
+								type="button"
+								className={styles.toolButton}
+								onClick={() => setComparing(entry.version)}
+							>
+								Compare
+							</button>
+							{data?.canRestore && !entry.isCurrent && (
+								<button
+									type="button"
+									className={styles.toolButton}
+									onClick={() => {
+										setFailure(null);
+										setConfirming(entry.version);
+									}}
+								>
+									Restore this version
+								</button>
+							)}
+						</div>
 					</li>
 				))}
 			</ol>
+
+			{confirming !== null && (
+				<RestoreDialog
+					entry={entries.find((e) => e.version === confirming)}
+					version={confirming}
+					busy={restoring === confirming}
+					failure={failure}
+					onConfirm={() => restore(confirming)}
+					onClose={() => {
+						setConfirming(null);
+						setFailure(null);
+					}}
+				/>
+			)}
+
+			{comparing !== null && (
+				<CompareVersions
+					slug={slug}
+					reportId={reportId}
+					sources={sources}
+					version={comparing}
+					versions={entries.map((entry) => ({
+						version: entry.version,
+						author: entry.author,
+						createdOn: entry.createdOn,
+					}))}
+					onClose={() => setComparing(null)}
+				/>
+			)}
 		</div>
 	);
 }

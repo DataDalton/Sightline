@@ -76,6 +76,10 @@ interface PropertiesPanelProps {
 	onPanelTab: (tab: "page" | "report" | "history") => void;
 	historySlug: string;
 	historyKey: number;
+	// The history's comparison draws both versions of the page, so it needs
+	// every source on it rather than the one the selected visual reads.
+	reportId: string;
+	sources: Record<string, SourceMeta>;
 	onRestored: () => void;
 }
 
@@ -135,6 +139,8 @@ export function PropertiesPanel({
 	onPanelTab,
 	historySlug,
 	historyKey,
+	reportId,
+	sources,
 	onRestored,
 }: PropertiesPanelProps) {
 	const [tab, setTab] = useState<Tab>("data");
@@ -170,6 +176,8 @@ export function PropertiesPanel({
 				{panelTab === "history" ? (
 					<HistoryPanel
 						slug={historySlug}
+						reportId={reportId}
+						sources={sources}
 						refreshKey={historyKey}
 						onRestored={onRestored}
 					/>

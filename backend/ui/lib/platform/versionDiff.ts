@@ -30,6 +30,11 @@ export interface SnapshotPage {
 	title?: string | null;
 	config?: Record<string, unknown> | null;
 	is_active?: boolean | null;
+	// Written into every snapshot alongside the rest. The summary has no use
+	// for them, the property level comparison in versionDetail does.
+	slug?: string | null;
+	source_key?: string | null;
+	sort_order?: number | null;
 }
 
 export interface Snapshot {
@@ -62,7 +67,10 @@ function readableType(type: string | null | undefined): string {
 	return `the ${spaced}`;
 }
 
-function fieldList(config: Record<string, unknown> | null | undefined, key: string): string[] {
+function fieldList(
+	config: Record<string, unknown> | null | undefined,
+	key: string,
+): string[] {
 	const value = config?.[key];
 	return Array.isArray(value) ? value.map(String) : [];
 }
@@ -191,7 +199,11 @@ export function diffSnapshots(
 				visualId: id,
 			});
 		} else if (movedTo) {
-			changes.push({ kind: "moved", text: `Moved ${label(now)}`, visualId: id });
+			changes.push({
+				kind: "moved",
+				text: `Moved ${label(now)}`,
+				visualId: id,
+			});
 		} else if (resized) {
 			changes.push({
 				kind: "moved",
@@ -241,9 +253,13 @@ export function diffSnapshots(
 			});
 		}
 		if (
-			JSON.stringify(was.config ?? null) !== JSON.stringify(page.config ?? null)
+			JSON.stringify(was.config ?? null) !==
+			JSON.stringify(page.config ?? null)
 		) {
-			changes.push({ kind: "changed", text: "Changed the page settings" });
+			changes.push({
+				kind: "changed",
+				text: "Changed the page settings",
+			});
 		}
 	}
 
@@ -256,7 +272,9 @@ export function diffSnapshots(
 				text: `Renamed the report to "${reportAfter.title}"`,
 			});
 		}
-		if ((reportBefore.description ?? "") !== (reportAfter.description ?? "")) {
+		if (
+			(reportBefore.description ?? "") !== (reportAfter.description ?? "")
+		) {
 			changes.push({ kind: "changed", text: "Changed the subtitle" });
 		}
 	}
