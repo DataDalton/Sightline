@@ -122,6 +122,11 @@ interface EditorCanvasProps {
 	// Opens the picker at the filter category. The strip is where controls end
 	// up, so it is where asking for one belongs.
 	onAddControl?: () => void;
+	// The page is locked against changes. Selecting still works, because
+	// reading a visual's settings is not a change; moving, resizing and typing
+	// do not, because the server would refuse them and a visual that follows
+	// the pointer and then snaps back explains nothing.
+	readOnly?: boolean;
 	// A visual dropped onto a group, or taken out of one. Reported apart from a
 	// plain move because it changes what holds the visual as well as where it
 	// sits, and the two have to be written together or the page renders a
@@ -150,6 +155,7 @@ export function EditorCanvas({
 	onMoveControl,
 	onAddControl,
 	onReparent,
+	readOnly = false,
 	previewWidth = null,
 }: EditorCanvasProps) {
 	const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -267,6 +273,7 @@ export function EditorCanvas({
 		rect: Rect,
 		gridMetrics: CanvasMetrics,
 	) => {
+		if (readOnly) return;
 		onGestureStart?.(id);
 		begin(event, kind, id, rect, gridMetrics);
 	};
@@ -359,6 +366,7 @@ export function EditorCanvas({
 			: null;
 
 	const itemContext: ItemContext = {
+		readOnly,
 		selectedId,
 		sources,
 		draggingId: state?.id ?? null,
@@ -415,7 +423,7 @@ export function EditorCanvas({
 			    to make one exist was to know that a filter added from the
 			    toolbar would land somewhere other than the grid. An empty
 			    strip that says what it is for is how an author finds out. */}
-			{(controls.length > 0 || onAddControl) && (
+			{(controls.length > 0 || (onAddControl && !readOnly)) && (
 				// Sized by its contents rather than by the grid, exactly as
 				// the reader will see it, and scaled with the canvas so zoom
 				// applies to the whole page rather than to half of it.
@@ -442,7 +450,7 @@ export function EditorCanvas({
 								? "Nothing here yet. A filter added here sits above the page rather than on the grid."
 								: "Above the page, ordered along the strip. Controls do not respond here, so a click selects one instead of filtering the page. To put several behind one button, add a Group and drag them onto it."}
 						</span>
-						{onAddControl && (
+						{onAddControl && !readOnly && (
 							<button
 								type="button"
 								className={styles.stripAdd}
@@ -517,6 +525,7 @@ export function EditorCanvas({
 // threaded through as a dozen props. An item inside a group is the same
 // component as one on the page, so both are handed the same thing.
 interface ItemContext {
+	readOnly: boolean;
 	selectedId: string | null;
 	sources: Record<string, SourceMeta>;
 	draggingId: string | null;
@@ -571,7 +580,10 @@ function CanvasItem({
 
 	// A selected text panel is a text field: its body takes real clicks, so it
 	// cannot also be the drag target and keeps a bar of its own at the head.
-	const editingText = visual.visualType === "textPanel" && isSelected;
+	// A locked page's text panel is read-only too, so it is rendered rather than
+	// edited in place.
+	const editingText =
+		!ctx.readOnly && visual.visualType === "textPanel" && isSelected;
 
 	const held = ctx.childrenOf.get(visual.visualId) ?? [];
 	const remoteBy = ctx.remoteSelections?.get(visual.visualId);
@@ -580,7 +592,7 @@ function CanvasItem({
 		<div
 			className={`${styles.item} ${isSelected ? styles.itemSelected : ""} ${
 				isDragging ? styles.itemDragging : ""
-			} ${editingText ? "" : styles.itemDraggable} ${
+			} ${editingText || ctx.readOnly ? "" : styles.itemDraggable} ${
 				isDropTarget ? styles.itemDropTarget : ""
 			}`}
 			style={{
@@ -721,6 +733,7 @@ function CanvasItem({
 			)}
 
 			{isSelected &&
+				!ctx.readOnly &&
 				(["resize-e", "resize-s", "resize-se"] as const).map((kind) => (
 					<div
 						key={kind}

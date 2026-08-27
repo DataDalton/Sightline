@@ -726,3 +726,125 @@ export async function addTemplatePage(
 
 	return { pageId, visuals: built.visuals };
 }
+
+// Locking a page, or lifting a lock.
+//
+// Separate from editing a page on purpose: the point of a lock is that the
+// people who can edit the page cannot take it off, so it is gated on its own
+// capability and written outside the editor's operation batch. It does not
+// touch the report version, because nothing about the page's content changed
+// and bumping it would reject every editor's pending work.
+export async function setPageProtection(
+	email: string,
+	pageId: string,
+	protection: { protectDelete: boolean; protectEdit: boolean },
+): Promise<{ pageId: string; protectDelete: boolean; protectEdit: boolean }> {
+	const rows = await sql<{
+		page_id: string;
+		report_id: string;
+		title: string;
+	}>(
+		`UPDATE report_pages
+		    SET protect_delete = $2, protect_edit = $3
+		  WHERE page_id = $1 AND is_active = TRUE
+		  RETURNING page_id::text AS page_id, report_id::text AS report_id, title`,
+		[pageId, protection.protectDelete, protection.protectEdit],
+	);
+
+	const page = rows[0];
+	if (!page) throw new Error("That page does not exist.");
+
+	const locks = [
+		protection.protectDelete ? "deletion" : null,
+		protection.protectEdit ? "changes" : null,
+	].filter(Boolean);
+
+	await insertLog({
+		recordType: "page",
+		recordId: page.page_id,
+		action: "protect_page",
+		changedBy: email,
+		newValue: locks.length > 0 ? locks.join(" and ") : "unlocked",
+		notes: page.title,
+	});
+
+	// Two cache entries, and a page's locks live in the second one.
+	//
+	// The report row is cached under report:<slug>; its pages and visuals under
+	// report-body:<reportId>, which is a different key rather than a longer one
+	// under the same prefix, so dropping "report:" does not touch it. Missing
+	// this is why a page lock was written and then never seen: the row changed
+	// and every read kept answering from the body taken before it.
+	invalidateDefinitions(`report-body:${page.report_id}`);
+	invalidateDefinitions("report:");
+
+	return {
+		pageId: page.page_id,
+		protectDelete: protection.protectDelete,
+		protectEdit: protection.protectEdit,
+	};
+}
+
+// Locking a whole report, which reaches every page in it.
+//
+// Its own row rather than writing the same pair onto every page, so a page
+// added later inherits the lock instead of arriving unprotected, and so
+// unlocking the report does not have to guess which pages were locked on their
+// own account and must stay that way.
+export async function setReportProtection(
+	email: string,
+	reportId: string,
+	protection: {
+		protectDelete: boolean;
+		protectEdit: boolean;
+		protectAddPage: boolean;
+	},
+): Promise<{
+	reportId: string;
+	protectDelete: boolean;
+	protectEdit: boolean;
+	protectAddPage: boolean;
+}> {
+	const rows = await sql<{ report_id: string; title: string }>(
+		`UPDATE reports
+		    SET protect_delete = $2, protect_edit = $3, protect_add_page = $4
+		  WHERE report_id = $1 AND is_active = TRUE
+		  RETURNING report_id::text AS report_id, title`,
+		[
+			reportId,
+			protection.protectDelete,
+			protection.protectEdit,
+			protection.protectAddPage,
+		],
+	);
+
+	const report = rows[0];
+	if (!report) throw new Error("That report does not exist.");
+
+	const locks = [
+		protection.protectDelete ? "deletion" : null,
+		protection.protectEdit ? "changes" : null,
+		protection.protectAddPage ? "new pages" : null,
+	].filter(Boolean);
+
+	await insertLog({
+		recordType: "report",
+		recordId: report.report_id,
+		action: "protect_report",
+		changedBy: email,
+		newValue: locks.length > 0 ? locks.join(" and ") : "unlocked",
+		notes: report.title,
+	});
+
+	// The locks are on the report row, but a reader picks them up alongside the
+	// pages, so both entries go.
+	invalidateDefinitions(`report-body:${report.report_id}`);
+	invalidateDefinitions("report:");
+
+	return {
+		reportId: report.report_id,
+		protectDelete: protection.protectDelete,
+		protectEdit: protection.protectEdit,
+		protectAddPage: protection.protectAddPage,
+	};
+}
