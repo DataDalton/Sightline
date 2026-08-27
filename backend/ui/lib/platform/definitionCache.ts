@@ -32,11 +32,38 @@ const inflight = new Map<string, Promise<unknown>>();
 const sweepIntervalMs = 60 * 1000;
 let sweptAt = 0;
 
+// A ceiling as well as a sweep.
+//
+// The sweep drops what has expired, which is enough while every key is a report
+// and an installation has hundreds. Per caller keys changed that: navigation is
+// memoised per policy class and reader, so the number of live keys follows the
+// number of people using the app rather than the number of reports.
+const maxEntries = 50000;
+
 function sweep(now: number): void {
-	if (now - sweptAt < sweepIntervalMs) return;
+	// The interval bounds the expiry walk. The ceiling below is checked every
+	// time, because a burst of distinct callers can cross it inside one
+	// interval and the point of a ceiling is that it is not crossed.
+	if (now - sweptAt < sweepIntervalMs) {
+		if (entries.size > maxEntries) trim();
+		return;
+	}
 	sweptAt = now;
 	for (const [key, held] of entries) {
 		if (held.expiresAt <= now) entries.delete(key);
+	}
+
+	trim();
+}
+
+function trim(): void {
+	if (entries.size <= maxEntries) return;
+	// Oldest expiry first. A dropped entry costs one caller one recomputation.
+	const byExpiry = Array.from(entries.entries()).sort(
+		(a, b) => a[1].expiresAt - b[1].expiresAt,
+	);
+	for (const [key] of byExpiry.slice(0, entries.size - maxEntries)) {
+		entries.delete(key);
 	}
 }
 

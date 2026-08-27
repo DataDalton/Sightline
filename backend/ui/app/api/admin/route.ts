@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { getIdentity } from "@/lib/auth/identity";
 import { resolvePolicyClass } from "@/lib/auth/policy";
 import { canAdminister } from "@/lib/platform/access";
-import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
+import {
+	bootstrapLastError,
+	bootstrapReadyAt,
+	ensureReadyOrDegrade,
+} from "@/lib/platform/bootstrap";
+import { schemaStatus } from "@/lib/platform/schema";
 import {
 	activityRecordTypes,
 	getActivityLog,
@@ -242,6 +247,17 @@ export async function GET(request: NextRequest) {
 					warehouseSessions: userSessionStats(),
 					settingsLoadedAt: settingsLoadedAt() || null,
 					registryLoadedAt: registryLoadedAt() || null,
+					// Why this replica is not serving, when it is not.
+					//
+					// Two screens tell a reader an administrator can see the
+					// reason here, and until this was carried they could not:
+					// the reason was a console line on whichever replica hit
+					// it. Flattened to plain values because this block is
+					// rendered as a list of them.
+					bootstrapReadyAt: bootstrapReadyAt() || null,
+					bootstrapError: bootstrapLastError()?.message ?? null,
+					schemaAppliedAt: schemaStatus().appliedAt,
+					schemaFailures: schemaStatus().failures.length,
 				},
 				settings: current,
 				// The last catalogue walk, so a source list nobody has synced

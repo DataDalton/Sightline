@@ -48,7 +48,12 @@ export async function runCatalogQuery(
 ): Promise<Record<string, unknown>[]> {
 	if (identity?.userToken) {
 		const { queryAsUser } = await import("../data/userSession");
-		return queryAsUser(identity.userToken, statement, params);
+		return queryAsUser(
+			identity.userToken,
+			statement,
+			params,
+			identity.email.toLowerCase(),
+		);
 	}
 	if (!isDatabricksApp) {
 		const { queryLocally } = await import("../data/localSession");

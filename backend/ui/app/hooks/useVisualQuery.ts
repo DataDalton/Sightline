@@ -1,6 +1,8 @@
 "use client";
 
 import useSWR from "swr";
+import { canonical } from "./canonicalKey";
+import { runBatchedQuery } from "./queryBatch";
 
 // Runs one visual's query. Every visual on a page calls this, so the request
 // body is the cache key: two visuals asking for the same shape share one
@@ -30,32 +32,16 @@ export interface VisualQuery {
 	offset?: number;
 }
 
-async function postQuery(body: string): Promise<QueryResponse> {
-	const response = await fetch("/api/query", {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body,
-	});
-
-	if (!response.ok) {
-		const detail = await response.json().catch(() => null);
-		const error: Error & { status?: number } = new Error(
-			detail?.error ?? `Query failed (${response.status})`,
-		);
-		error.status = response.status;
-		throw error;
-	}
-	return response.json();
-}
-
 export function useVisualQuery(query: VisualQuery | null) {
-	// Serializing the query makes it the SWR key, so identical requests
-	// deduplicate across every visual on the page.
-	const key = query ? JSON.stringify(query) : null;
+	// The canonical form of the query is the SWR key, so identical requests
+	// deduplicate across every visual on the page however the object was
+	// spelled. Plain stringify made the key depend on property order, which two
+	// components writing the same query eventually disagree on.
+	const key = query ? canonical(query) : null;
 
 	const { data, error, isLoading, mutate } = useSWR<QueryResponse>(
 		key,
-		postQuery,
+		runBatchedQuery,
 		{
 			revalidateOnFocus: false,
 			// The server already caches by policy class, so a client-side

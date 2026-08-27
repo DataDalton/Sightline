@@ -2,9 +2,10 @@ import type { Identity } from "../auth/identity";
 import { resolvePolicyClass } from "../auth/policy";
 import { getSource } from "../semantic/registry";
 import { isDatabricksApp } from "../runtime";
-import { buildCacheKey, cacheFresh, isShareable } from "./cache";
+import { buildCacheKey, cacheFresh, cacheGetMany, isShareable } from "./cache";
 import { executeQuery } from "./execute";
 import { parseQuerySpec } from "./spec";
+import { canonicalRequest } from "./requestKey";
 import { initialQueryForVisual } from "./visualSpec";
 import { openingBreakdown, openingFilters } from "../visuals/pageDefaults";
 
@@ -338,4 +339,89 @@ export function warmForReader(
 			console.warn("Reader warming failed:", error);
 		}
 	})();
+}
+
+// --- What a page can be handed already answered --------------------------
+
+// The opening queries of one page, with whatever is already cached.
+//
+// The document already carries the report definition, so a reader no longer
+// waits a round trip to find out what is on the page. They still wait one to
+// find out what it says: every visual issues its own request after the bundle
+// has downloaded and React has hydrated, which is the last waterfall left on a
+// first paint.
+//
+// The opening state is known here, because warming already computes it, and the
+// answers are frequently already in the cache. Handing those down with the
+// document removes the round trip for every visual that was going to hit.
+//
+// Only what is already cached. A miss is left to the client exactly as before:
+// running it here would put warehouse latency inside the document render, which
+// is the one place a slow answer costs a blank page rather than a spinner.
+export async function seedPageQueries(
+	identity: Identity,
+	report: WarmableReport,
+	pageId: string | null,
+): Promise<Record<string, unknown>> {
+	if (!identity.userToken && isDatabricksApp) return {};
+
+	try {
+		const policy = await resolvePolicyClass(identity);
+		if (policy.degraded) return {};
+
+		const page =
+			report.pages.find((p) => p.pageId === pageId) ?? report.pages[0];
+		if (!page) return {};
+
+		const specs = queriesFor({ ...report, pages: [page] }, new Date());
+		if (specs.length === 0) return {};
+
+		// Keyed twice on purpose. buildCacheKey answers what the server holds
+		// and is built from the parsed spec; the seed has to land under what
+		// the client will ask with, which is the canonical form of the shape
+		// itself, before parsing fills in defaults the client never sends.
+		const keyed: { shape: unknown; key: string }[] = [];
+		for (const raw of specs.slice(0, maxQueries)) {
+			try {
+				const spec = parseQuerySpec(raw);
+				const source = getSource(spec.sourceKey);
+				if (!source || !isShareable(source)) continue;
+				keyed.push({
+					shape: raw,
+					key: buildCacheKey(source, spec, policy),
+				});
+			} catch {
+				// A spec the renderer would not send either.
+			}
+		}
+		if (keyed.length === 0) return {};
+
+		const found = await cacheGetMany(keyed.map((k) => k.key));
+
+		const seeded: Record<string, unknown> = {};
+		for (const held of keyed) {
+			const lookup = found.get(held.key);
+			// Stale entries are left out. Seeding one would show the reader an
+			// old answer with nothing scheduled to replace it, where asking
+			// normally serves the same rows and starts the refresh.
+			if (!lookup?.entry || lookup.stale) continue;
+			seeded[canonicalRequest(held.shape)] = {
+				rows: lookup.entry.rows,
+				columns: lookup.entry.columns,
+				rowCount: lookup.entry.rowCount,
+				meta: {
+					source: lookup.tier ?? "l1",
+					stale: false,
+					computedAt: lookup.entry.computedAt,
+					durationMs: 0,
+				},
+			};
+		}
+		return seeded;
+	} catch (error) {
+		// Seeding is an optimisation. A failure costs the round trip it would
+		// have saved and nothing else.
+		console.warn("Page seeding failed:", error);
+		return {};
+	}
 }

@@ -107,9 +107,11 @@ async function createPool(): Promise<Pool> {
 		// up without recycling the pool.
 		password: getToken,
 		ssl: { rejectUnauthorized: true },
-		// Modest on purpose: every replica holds its own pool, so the real
-		// ceiling is this number times the replica count.
-		max: 10,
+		// Every replica holds its own pool, so the real ceiling is this number
+		// times the replica count and the instance has its own limit. Set with
+		// PGPOOLMAX rather than guessed, because the right number is a property
+		// of the deployment.
+		max: lakebase.poolMax,
 		idleTimeoutMillis: 30000,
 		connectionTimeoutMillis: 15000,
 	});

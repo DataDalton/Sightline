@@ -12,6 +12,7 @@ import {
 	isEditor,
 	resolveCategoryAccess,
 	resolveReportAccess,
+	type AccessContext,
 	type Capability,
 } from "./access";
 import { cachedDefinition } from "./definitionCache";
@@ -165,6 +166,38 @@ interface ReportRow {
 	title: string;
 }
 
+// How many reports in each category this reader may open.
+//
+// Held apart from navigationPayload so the walk has one place to live and the
+// memo above has something to call.
+function visibleCounts(
+	context: AccessContext,
+	reportRows: ReportRow[],
+): Map<string, number> {
+	const counts = new Map<string, number>();
+	for (const report of reportRows) {
+		if (!report.category_id) continue;
+		const allowed = resolveReportAccess(
+			context.grants,
+			{
+				reportId: report.report_id,
+				categoryId: report.category_id,
+				isPersonal: false,
+				ownerEmail: null,
+			},
+			context.email,
+			"view",
+			context.baseline,
+		).allowed;
+		if (!allowed) continue;
+		counts.set(
+			report.category_id,
+			(counts.get(report.category_id) ?? 0) + 1,
+		);
+	}
+	return counts;
+}
+
 export async function navigationPayload(
 	identity: Identity,
 	policy: PolicyClass,
@@ -196,27 +229,21 @@ export async function navigationPayload(
 			]),
 	);
 
-	const visiblePerCategory = new Map<string, number>();
-	for (const report of reportRows) {
-		if (!report.category_id) continue;
-		const allowed = resolveReportAccess(
-			context.grants,
-			{
-				reportId: report.report_id,
-				categoryId: report.category_id,
-				isPersonal: false,
-				ownerEmail: null,
-			},
-			context.email,
-			"view",
-			context.baseline,
-		).allowed;
-		if (!allowed) continue;
-		visiblePerCategory.set(
-			report.category_id,
-			(visiblePerCategory.get(report.category_id) ?? 0) + 1,
-		);
-	}
+	// Resolved once per reader rather than on every render.
+	//
+	// The rows are the same for everybody and are cached above. Deciding which
+	// of them this reader may open is not, and it was redone on every document
+	// request: one resolveReportAccess per active report, per page load. At a
+	// few dozen reports that is invisible and at a few thousand it is the most
+	// expensive thing the shell does, multiplied by everyone arriving at once.
+	//
+	// Keyed by policy class and reader because a grant can name either, and
+	// carried under the navigation prefix so publishing or removing a report
+	// drops it along with the rows it was derived from.
+	const visiblePerCategory = await cachedDefinition(
+		`navigation:visible:${policy.id}|${context.email.toLowerCase()}`,
+		async () => visibleCounts(context, reportRows),
+	);
 
 	// Marked reports, filtered through the same resolver as everything else.
 	// A grant can be withdrawn after somebody marked a report, and the mark is
@@ -332,6 +359,10 @@ export interface InfoPayload {
 	hosted: boolean;
 	settingsLoadedAt: number | null;
 	registryLoadedAt: number | null;
+	// How long the server keeps an answer. The grid and the matrix hold their
+	// own rows outside SWR and used a constant that mirrored this, which was
+	// only ever right while both happened to be the same number.
+	resultTtlSeconds: number;
 }
 
 // What the installation calls itself. No identity in it, but the header cannot
@@ -350,6 +381,7 @@ export function infoPayload(): InfoPayload {
 		hosted: isDatabricksApp,
 		settingsLoadedAt: settingsLoadedAt() || null,
 		registryLoadedAt: registryLoadedAt() || null,
+		resultTtlSeconds: current.resultTtlSeconds,
 	};
 }
 
@@ -379,7 +411,7 @@ export async function shellPayload(identity: Identity): Promise<{
 	// the queries that do will find them ready instead of opening a warehouse
 	// session and probing the catalogue after the page has already drawn.
 	warmSourceAccess(identity);
-	warmUserSession(identity.userToken);
+	warmUserSession(identity.userToken, identity.email.toLowerCase());
 
 	// Concurrent because both resolve the caller's access, and the second finds
 	// the first already in flight rather than repeating it.

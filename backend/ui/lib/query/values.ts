@@ -173,6 +173,7 @@ export async function getDistinctValues(
 						identity.userToken,
 						compiled.sql,
 						compiled.params,
+						identity.email.toLowerCase(),
 					)
 				: !isDatabricksApp
 					? await (

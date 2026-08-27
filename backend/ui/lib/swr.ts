@@ -30,16 +30,36 @@ export async function fetcher<T = any>(url: string): Promise<T> {
 // one that is not there, deliberately, so that asking for a report is not a way
 // to learn it exists. That is the one status where "not available to you" is
 // the honest answer.
+//
+// Everything else says what happened and stops. The status is the useful part,
+// because it separates an app that answered badly from one that was not
+// reached, and those have different people fixing them. Guessing at a cause and
+// promising a retry adds length without adding anything a reader can use.
 export function describeFetchError(error: unknown, subject: string): string {
 	const status = (error as { status?: number } | null)?.status;
 
 	if (status === 404 || status === 403) {
 		return `This ${subject} is not available to you.`;
 	}
+
 	if (status === 401) {
-		return "Your session has ended. Reload the page to sign in again.";
+		return "Your session has ended. Reload to sign in again.";
 	}
-	return `This ${subject} could not be loaded. Something went wrong at our end rather than with your access, so trying again shortly is worth it.`;
+
+	if (status === 429) {
+		return "Too many requests. Please wait a moment and try again.";
+	}
+
+	if (status && status >= 500) {
+		return `The app returned ${status} loading this ${subject}. An administrator can see the reason under Administration.`;
+	}
+
+	if (status) {
+		return `The app returned ${status} loading this ${subject}.`;
+	}
+
+	// No status at all means the response never arrived.
+	return "The app could not be reached. Please wait a moment or try again.";
 }
 
 export const swrDefaults = {

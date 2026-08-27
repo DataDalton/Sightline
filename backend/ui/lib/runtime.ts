@@ -105,6 +105,15 @@ export const lakebase = {
 	// valid token is still refused, because there is nothing to log in as.
 	user: env("PGUSER", appIdentity.clientId),
 	sslMode: env("PGSSLMODE", "require"),
+	// Connections this replica may hold.
+	//
+	// The real ceiling is this times the replica count, and the instance has its
+	// own limit, so raising it is a deployment decision rather than a default
+	// worth guessing. Ten is comfortable for a handful of readers and is the
+	// first thing to bind once a page misses memory: every miss needs a
+	// connection to read the shared tier, and past the pool size those requests
+	// queue while holding a request open.
+	poolMax: Math.max(1, parseInt(env("PGPOOLMAX", "20"), 10) || 20),
 	// Local development escape hatch: a plain connection string bypasses the
 	// Databricks OAuth flow so the app runs against any Postgres.
 	localUrl: env("DATABASE_URL"),

@@ -12,6 +12,7 @@ import {
 	ensureReadyOrDegrade,
 } from "@/lib/platform/bootstrap";
 import { schemaStatus } from "@/lib/platform/schema";
+import { rollupState } from "@/lib/telemetry/rollup";
 
 // Operational health of one replica. Each replica reports its own counters,
 // since caches and pools are per-process.
@@ -48,6 +49,8 @@ export async function GET(request: NextRequest) {
 			lastError: bootstrapLastError(),
 		},
 		schema: schemaStatus(),
+		// How current the aggregates the administration screens read are.
+		usageRollup: await rollupState(),
 	});
 	response.headers.set("Cache-Control", "no-store");
 	return response;

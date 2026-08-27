@@ -6,7 +6,11 @@ import {
 	reportPayload,
 	withinSeedBudget,
 } from "../../../lib/platform/pageData";
-import { warmReport, type WarmableReport } from "../../../lib/query/warm";
+import {
+	seedPageQueries,
+	warmReport,
+	type WarmableReport,
+} from "../../../lib/query/warm";
 
 // The report definition, resolved while the document is being rendered.
 //
@@ -40,7 +44,22 @@ async function definitionFor(slug: string) {
 		// second tab does not wait on the warehouse for it.
 		warmReport(identity, payload.report as WarmableReport);
 
-		return payload;
+		// What the opening page already has an answer for.
+		//
+		// The definition above stops a reader waiting to find out what is on
+		// the page. This stops them waiting to find out what it says: a visual
+		// whose answer is already cached is handed it with the document rather
+		// than issuing a request once the bundle has hydrated.
+		//
+		// Cached answers only, so this cannot make the document slower than the
+		// budget it already runs under.
+		const seeded = await seedPageQueries(
+			identity,
+			payload.report as WarmableReport,
+			null,
+		);
+
+		return { ...payload, seeded };
 	}, undefined);
 }
 
