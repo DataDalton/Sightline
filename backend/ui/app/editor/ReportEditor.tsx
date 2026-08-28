@@ -1,7 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { findFreeSlot, gridColumns, type Rect } from "../../lib/visuals/layout";
+import {
+	alignRects,
+	clampRect,
+	distributeRects,
+	findFreeSlot,
+	gridColumns,
+	tidyLayout,
+	type AlignMode,
+	type Rect,
+} from "../../lib/visuals/layout";
 import {
 	isPageControl,
 	optionValue,
@@ -20,6 +29,8 @@ import { Select } from "../components/shared/Select";
 import { ReportPlacement } from "./ReportPlacement";
 import { Hint, Section } from "./PanelSection";
 import { VisualPicker } from "./VisualPicker";
+import { AlignTools } from "./AlignTools";
+import type { VisualPreset } from "../../lib/visuals/presets";
 import { PropertiesPanel } from "./PropertiesPanel";
 import { ProtectDialog, type PageLock } from "./ProtectPageDialog";
 import { useUser } from "../context/UserContext";
@@ -137,6 +148,54 @@ export function ReportEditor({
 }: ReportEditorProps) {
 	const [visuals, setVisuals] = useState<EditableVisual[]>(initialVisuals);
 	const [selectedId, setSelectedId] = useState<string | null>(null);
+	// Everything else the author has added to the selection.
+	//
+	// Held apart from selectedId rather than replacing it with a set, because
+	// the two answer different questions: selectedId is the one visual the
+	// properties panel is about, and this is the rest of the group an alignment
+	// acts on. Collapsing them would mean every reader of the selection deciding
+	// for itself which member it meant.
+	const [extraSelected, setExtraSelected] = useState<string[]>([]);
+
+	// The whole selection, anchor first.
+	const selection = useMemo(
+		() => (selectedId ? [selectedId, ...extraSelected] : []),
+		[selectedId, extraSelected],
+	);
+
+	// Clicking selects one thing. Holding a modifier adds to what is already
+	// selected, or takes something back out of it, which is the gesture every
+	// canvas uses and the only one that does not need a mode.
+	const selectVisual = useCallback(
+		(visualId: string | null, additive = false) => {
+			if (!visualId) {
+				setSelectedId(null);
+				setExtraSelected([]);
+				return;
+			}
+			if (!additive || selectedId === null) {
+				setSelectedId(visualId);
+				setExtraSelected([]);
+				return;
+			}
+
+			if (selectedId === visualId) {
+				// Taking the anchor back out promotes the next member, so the
+				// panel keeps showing something for as long as anything is
+				// selected.
+				setSelectedId(extraSelected[0] ?? null);
+				setExtraSelected(extraSelected.slice(1));
+				return;
+			}
+
+			setExtraSelected(
+				extraSelected.includes(visualId)
+					? extraSelected.filter((id) => id !== visualId)
+					: [...extraSelected, visualId],
+			);
+		},
+		[selectedId, extraSelected],
+	);
 	const [zoom, setZoom] = useState(1);
 	const [dirty, setDirty] = useState(false);
 	const [saving, setSaving] = useState(false);
@@ -543,7 +602,7 @@ export function ReportEditor({
 	);
 
 	const addVisual = useCallback(
-		(type: string) => {
+		(type: string, preset?: VisualPreset) => {
 			if (locks.protectEdit) return;
 			const definition = visualByType[type];
 			if (!definition) return;
@@ -568,20 +627,30 @@ export function ReportEditor({
 						? crypto.randomUUID()
 						: `new-${Date.now()}`,
 				visualType: type,
-				title: definition.label,
+				// A preset's own name, since that is what was chosen. The type's
+				// label would say "Horizontal bar" for something the author
+				// picked as "Top ten, ranked".
+				title: preset?.label ?? definition.label,
 				sourceKey: inheritedSource,
-				config: { dimensions: [], measures: [], filters: [], sort: [] },
+				config: {
+					dimensions: [],
+					measures: [],
+					filters: [],
+					sort: [],
+					...(preset?.options ? { options: preset.options } : {}),
+					...(preset?.style ? { style: preset.style } : {}),
+				},
 				layout: slot,
 				isNew: true,
 			};
 
 			setVisuals((prev) => [...prev, visual]);
 			markPending({ type: "addVisual", visual });
-			setSelectedId(visual.visualId);
+			selectVisual(visual.visualId);
 			setPickerOpen(false);
 			setDirty(true);
 		},
-		[visuals, sources, markPending, record],
+		[visuals, sources, markPending, record, selectVisual],
 	);
 
 	// Moving a control along the filter strip.
@@ -705,69 +774,402 @@ export function ReportEditor({
 			for (const child of released) {
 				markPending({ type: "updateVisual", visualId: child.visualId });
 			}
-			setSelectedId(null);
+			selectVisual(null);
 			setDirty(true);
 		},
-		[visuals, markPending, record],
+		[visuals, markPending, record, selectVisual],
 	);
 
-	// A visual copied from the canvas.
+	// Taking everything selected off the page.
 	//
-	// Held here rather than on the system clipboard. What is copied is a
-	// definition, not text, and putting it on the system clipboard would mean
-	// either pasting unreadable JSON into whatever the author next focuses or
-	// reading arbitrary text back in and trusting it.
-	const clipboardRef = useRef<EditableVisual | null>(null);
+	// Its own function rather than calling removeVisual once per selected
+	// visual: that would record a snapshot each time, so undoing a delete of
+	// four would take four presses, and each call would read the list as it was
+	// before the previous one finished.
+	const removeSelection = useCallback(() => {
+		if (locks.protectEdit) return;
+
+		const doomed = new Set(selection);
+		if (doomed.size === 0) return;
+
+		const current = visualsRef.current;
+
+		// A group taken off the page lets go of what it held rather than
+		// taking it with it. Deleting one visual should never delete ten, and
+		// a child left naming a group that no longer exists is laid out
+		// against a box that is not there.
+		//
+		// The rectangles are the group's, not the page's, so each released
+		// child is put back at the position its group occupied. That is not
+		// where it was, but it is where the author was looking, and it is
+		// somewhere rather than piled on the origin.
+		const homes = new Map(
+			current
+				.filter((v) => doomed.has(v.visualId))
+				.map((v) => [v.visualId, v.layout] as const),
+		);
+		const released = current.filter((v) => {
+			const parent =
+				typeof v.config.parentId === "string"
+					? v.config.parentId
+					: null;
+			// A child that is itself being deleted needs no releasing.
+			return (
+				parent !== null && doomed.has(parent) && !doomed.has(v.visualId)
+			);
+		});
+
+		record();
+		setVisuals((prev) =>
+			prev
+				.filter((v) => !doomed.has(v.visualId))
+				.map((v) => {
+					const parent =
+						typeof v.config.parentId === "string"
+							? v.config.parentId
+							: null;
+					if (!parent || !doomed.has(parent)) return v;
+
+					const home = homes.get(parent);
+					return {
+						...v,
+						layout: {
+							...v.layout,
+							x: Math.min(home?.x ?? 0, gridColumns - v.layout.w),
+							y: home?.y ?? 0,
+						},
+						config: { ...v.config, parentId: undefined },
+					};
+				}),
+		);
+
+		for (const visualId of doomed) {
+			markPending({ type: "removeVisual", visualId });
+		}
+		for (const child of released) {
+			markPending({ type: "updateVisual", visualId: child.visualId });
+		}
+		selectVisual(null);
+		setDirty(true);
+	}, [locks.protectEdit, selection, markPending, record, selectVisual]);
+
+	// Straightening the whole page in one press.
+	//
+	// The canvas allows overlap on purpose, because an author part way through
+	// rearranging is making a judgement and a reflow running under them would
+	// fight it. So this is a thing the author asks for, and it lands as one
+	// snapshot: whatever it moves, a single undo puts back.
+	//
+	// Controls are left out because they are not on the grid at all. They sit in
+	// the filter strip in page order, so they have no rectangle to straighten.
+	const tidy = useCallback(() => {
+		if (locks.protectEdit) return;
+
+		// One container at a time. A group's children are measured from the
+		// group's own origin, so tidying them in the same pass as the top level
+		// would read two coordinate spaces as one and move every child.
+		const containers = new Map<string, EditableVisual[]>();
+		for (const visual of visualsRef.current) {
+			if (isPageControl(visual.visualType)) continue;
+			const parentId =
+				typeof visual.config.parentId === "string"
+					? visual.config.parentId
+					: "";
+			const bucket = containers.get(parentId);
+			if (bucket) bucket.push(visual);
+			else containers.set(parentId, [visual]);
+		}
+
+		// Unchanged rectangles come back by reference, which is what tells the
+		// save which visuals actually moved.
+		const rects = new Map<string, Rect>();
+		let moved = 0;
+		for (const members of containers.values()) {
+			const result = tidyLayout(
+				members.map((v) => ({ id: v.visualId, rect: v.layout })),
+			);
+			moved += result.moved;
+			for (const item of result.items) rects.set(item.id, item.rect);
+		}
+
+		// Nothing was out of place, so there is nothing to undo either.
+		if (moved === 0) return;
+
+		record();
+		setVisuals((prev) =>
+			prev.map((v) => {
+				const rect = rects.get(v.visualId);
+				return rect && rect !== v.layout ? { ...v, layout: rect } : v;
+			}),
+		);
+		for (const visual of visualsRef.current) {
+			const rect = rects.get(visual.visualId);
+			if (rect && rect !== visual.layout) {
+				markPending({
+					type: "updateVisual",
+					visualId: visual.visualId,
+				});
+			}
+		}
+		setDirty(true);
+	}, [locks.protectEdit, markPending, record]);
+
+	// Committing a batch of moved rectangles as one edit.
+	//
+	// Shared by aligning, distributing and nudging, because all three are the
+	// same shape underneath: work out new rectangles for part of the selection,
+	// take one snapshot, and mark one operation per visual that actually moved.
+	// Writing that three times is how two of them end up recording a step for an
+	// edit that changed nothing.
+	const applyRects = useCallback(
+		(next: Map<string, Rect>, coalesceKey?: string) => {
+			const current = visualsRef.current;
+			const changed = current.filter((visual) => {
+				const rect = next.get(visual.visualId);
+				if (!rect) return false;
+				const was = visual.layout;
+				return (
+					rect.x !== was.x ||
+					rect.y !== was.y ||
+					rect.w !== was.w ||
+					rect.h !== was.h
+				);
+			});
+			if (changed.length === 0) return;
+
+			record(coalesceKey);
+			setVisuals((prev) =>
+				prev.map((v) => {
+					const rect = next.get(v.visualId);
+					return rect ? { ...v, layout: rect } : v;
+				}),
+			);
+			for (const visual of changed) {
+				markPending({
+					type: "updateVisual",
+					visualId: visual.visualId,
+				});
+			}
+			setDirty(true);
+		},
+		[markPending, record],
+	);
+
+	// The part of the selection an arrangement can act on.
+	//
+	// Controls are dropped because they have no rectangle, and anything in a
+	// different container from the anchor is dropped because its coordinates are
+	// measured from somewhere else: aligning a group's child against a
+	// top-level visual would compare two different origins and move it
+	// somewhere neither of them is.
+	const arrangeable = useCallback((): EditableVisual[] => {
+		const byId = new Map(
+			visualsRef.current.map((v) => [v.visualId, v] as const),
+		);
+		const anchor = selectedId ? byId.get(selectedId) : undefined;
+		if (!anchor) return [];
+		const parentOf = (v: EditableVisual) =>
+			typeof v.config.parentId === "string" ? v.config.parentId : null;
+		const container = parentOf(anchor);
+
+		return selection
+			.map((id) => byId.get(id))
+			.filter((v): v is EditableVisual => v !== undefined)
+			.filter(
+				(v) =>
+					!isPageControl(v.visualType) && parentOf(v) === container,
+			);
+	}, [selectedId, selection]);
+
+	const alignSelection = useCallback(
+		(mode: AlignMode) => {
+			if (locks.protectEdit) return;
+			const members = arrangeable();
+			if (members.length < 2) return;
+
+			const aligned = alignRects(
+				members.map((v) => ({ id: v.visualId, rect: v.layout })),
+				mode,
+			);
+			applyRects(new Map(aligned.map((i) => [i.id, i.rect])));
+		},
+		[locks.protectEdit, arrangeable, applyRects],
+	);
+
+	const distributeSelection = useCallback(
+		(axis: "x" | "y") => {
+			if (locks.protectEdit) return;
+			const members = arrangeable();
+			if (members.length < 3) return;
+
+			const spread = distributeRects(
+				members.map((v) => ({ id: v.visualId, rect: v.layout })),
+				axis,
+			);
+			applyRects(new Map(spread.map((i) => [i.id, i.rect])));
+		},
+		[locks.protectEdit, arrangeable, applyRects],
+	);
+
+	// Arrow keys move the selection a cell at a time, and with shift held they
+	// resize it instead.
+	//
+	// A run of presses coalesces into one step, so holding an arrow down and
+	// then undoing goes back to where the visual started rather than unwinding
+	// one cell per press.
+	const nudgeSelection = useCallback(
+		(dx: number, dy: number, resize: boolean) => {
+			if (locks.protectEdit) return;
+			const members = arrangeable();
+			if (members.length === 0) return;
+
+			const next = new Map<string, Rect>();
+			for (const visual of members) {
+				const r = visual.layout;
+				next.set(
+					visual.visualId,
+					clampRect(
+						resize
+							? { ...r, w: r.w + dx, h: r.h + dy }
+							: { ...r, x: r.x + dx, y: Math.max(0, r.y + dy) },
+					),
+				);
+			}
+			applyRects(next, resize ? "nudge-resize" : "nudge-move");
+		},
+		[locks.protectEdit, arrangeable, applyRects],
+	);
+
+	// Where a copied visual waits.
+	//
+	// Not the system clipboard. What is copied is a definition rather than
+	// text, and putting it there would mean either pasting unreadable JSON
+	// into whatever the author next focuses, or reading arbitrary text back in
+	// and trusting it.
+	//
+	// Session storage rather than a ref, because the editor unmounts on every
+	// page and report change. A ref made copying work everywhere except
+	// between two pages, which is the one place copying is worth having: a
+	// visual is easy to rebuild beside itself and laborious to rebuild
+	// somewhere else. Session rather than local, so a definition does not
+	// outlive the browsing it belongs to.
+	const clipboardKey = "sightline.visualClipboard";
 
 	const copyVisual = useCallback(() => {
 		const visual = visualsRef.current.find(
 			(v) => v.visualId === selectedId,
 		);
 		if (!visual) return;
-		clipboardRef.current = visual;
+		try {
+			sessionStorage.setItem(clipboardKey, JSON.stringify(visual));
+		} catch {
+			// Storage can be full or refused outright. Copying is a
+			// convenience, so it fails quietly rather than interrupting.
+		}
 	}, [selectedId]);
 
+	// Places a definition on this page as a visual of its own.
+	//
+	// Shared by paste and duplicate, which differ only in where the definition
+	// comes from and therefore have to agree on everything else: a new id, a
+	// free slot rather than sitting exactly on top of its original, and a
+	// parent that exists here.
+	const placeCopy = useCallback(
+		(source: EditableVisual) => {
+			// A copy taken from inside a group belongs in that group, since
+			// that is where its rectangle is measured from and anywhere else
+			// would move it. Pasted onto a page that has no such group the
+			// reference is dropped, which puts it on the canvas rather than
+			// inside something that does not exist.
+			const claimed =
+				typeof source.config.parentId === "string"
+					? source.config.parentId
+					: null;
+			const parentId =
+				claimed &&
+				visualsRef.current.some((v) => v.visualId === claimed)
+					? claimed
+					: null;
+
+			const siblings = visualsRef.current.filter((v) =>
+				parentId
+					? v.config.parentId === parentId
+					: typeof v.config.parentId !== "string",
+			);
+
+			const config = structuredClone(source.config);
+			if (parentId) config.parentId = parentId;
+			else delete config.parentId;
+
+			const visual: EditableVisual = {
+				...source,
+				visualId:
+					typeof crypto !== "undefined"
+						? crypto.randomUUID()
+						: `copy-${Date.now()}`,
+				title: source.title ? `${source.title} copy` : null,
+				config,
+				layout: findFreeSlot(
+					siblings.map((v) => v.layout),
+					source.layout.w,
+					source.layout.h,
+				),
+				isNew: true,
+			};
+
+			record();
+			setVisuals((prev) => [...prev, visual]);
+			markPending({ type: "addVisual", visual });
+			selectVisual(visual.visualId);
+			setDirty(true);
+		},
+		[markPending, record, selectVisual],
+	);
+
 	const pasteVisual = useCallback(() => {
-		const source = clipboardRef.current;
-		if (!source) return;
+		if (locks.protectEdit) return;
+		let stored: string | null = null;
+		try {
+			stored = sessionStorage.getItem(clipboardKey);
+		} catch {
+			return;
+		}
+		if (!stored) return;
 
-		record();
+		// Whatever is in storage was written by this app, but a stale entry
+		// from an older shape would still parse, so the fields the paste
+		// depends on are checked rather than assumed.
+		let source: EditableVisual;
+		try {
+			const parsed = JSON.parse(stored) as EditableVisual;
+			if (
+				!parsed ||
+				typeof parsed.visualType !== "string" ||
+				typeof parsed.config !== "object" ||
+				parsed.config === null ||
+				!parsed.layout
+			) {
+				return;
+			}
+			source = parsed;
+		} catch {
+			return;
+		}
 
-		// A copy is its own visual: a new id, and a place of its own rather
-		// than sitting exactly on top of the one it came from. A copy taken
-		// from inside a group is pasted into that group, since that is where
-		// its rectangle is measured from and anywhere else would move it.
-		const parentId =
-			typeof source.config.parentId === "string"
-				? source.config.parentId
-				: null;
-		const siblings = visualsRef.current.filter((v) =>
-			parentId
-				? v.config.parentId === parentId
-				: typeof v.config.parentId !== "string",
+		placeCopy(source);
+	}, [locks.protectEdit, placeCopy]);
+
+	// Copy and paste in one step, which is what an author building the second
+	// of two similar visuals actually wants. It leaves the clipboard alone, so
+	// duplicating here does not lose a definition copied from another page.
+	const duplicateVisual = useCallback(() => {
+		if (locks.protectEdit) return;
+		const visual = visualsRef.current.find(
+			(v) => v.visualId === selectedId,
 		);
-
-		const visual: EditableVisual = {
-			...source,
-			visualId:
-				typeof crypto !== "undefined"
-					? crypto.randomUUID()
-					: `copy-${Date.now()}`,
-			title: source.title ? `${source.title} copy` : null,
-			config: structuredClone(source.config),
-			layout: findFreeSlot(
-				siblings.map((v) => v.layout),
-				source.layout.w,
-				source.layout.h,
-			),
-			isNew: true,
-		};
-
-		setVisuals((prev) => [...prev, visual]);
-		markPending({ type: "addVisual", visual });
-		setSelectedId(visual.visualId);
-		setDirty(true);
-	}, [markPending, record]);
+		if (!visual) return;
+		placeCopy(visual);
+	}, [locks.protectEdit, selectedId, placeCopy]);
 
 	// The shortcuts an author expects of anything they arrange things on.
 	//
@@ -777,8 +1179,42 @@ export function ReportEditor({
 	// thing that was dragged.
 	useEffect(() => {
 		const onKey = (event: KeyboardEvent) => {
-			if (!(event.metaKey || event.ctrlKey)) return;
 			if (isTypingTarget(event.target)) return;
+
+			// Arrows carry no modifier of their own, so they are read before
+			// the check that everything below needs one. Shift resizes rather
+			// than moves, which is the pairing every canvas uses.
+			const nudges: Record<string, [number, number]> = {
+				ArrowLeft: [-1, 0],
+				ArrowRight: [1, 0],
+				ArrowUp: [0, -1],
+				ArrowDown: [0, 1],
+			};
+			const delta = nudges[event.key];
+			if (delta && !event.metaKey && !event.ctrlKey && !event.altKey) {
+				// Nothing selected means the arrow belongs to whatever the
+				// author is scrolling.
+				if (selection.length === 0) return;
+				event.preventDefault();
+				nudgeSelection(delta[0], delta[1], event.shiftKey);
+				return;
+			}
+
+			// Delete and backspace both, because which one takes something off
+			// a canvas depends entirely on which keyboard somebody learned on.
+			//
+			// Backspace is the one that has to be taken deliberately: outside a
+			// text field a browser reads it as "go back", so leaving the
+			// default in place would navigate away from the report instead of
+			// deleting anything.
+			if (event.key === "Delete" || event.key === "Backspace") {
+				if (selection.length === 0) return;
+				event.preventDefault();
+				removeSelection();
+				return;
+			}
+
+			if (!(event.metaKey || event.ctrlKey)) return;
 
 			const key = event.key.toLowerCase();
 
@@ -803,12 +1239,28 @@ export function ReportEditor({
 			if (key === "v") {
 				event.preventDefault();
 				pasteVisual();
+				return;
+			}
+			// Ctrl+D is what every canvas tool uses for this, and the browser
+			// binds it to bookmarking, so it has to be taken deliberately.
+			if (key === "d") {
+				event.preventDefault();
+				duplicateVisual();
 			}
 		};
 
 		document.addEventListener("keydown", onKey);
 		return () => document.removeEventListener("keydown", onKey);
-	}, [undo, redo, copyVisual, pasteVisual]);
+	}, [
+		undo,
+		redo,
+		copyVisual,
+		pasteVisual,
+		duplicateVisual,
+		nudgeSelection,
+		removeSelection,
+		selection.length,
+	]);
 
 	const save = useCallback(async () => {
 		if (pendingRef.current.size === 0) return;
@@ -1036,7 +1488,7 @@ export function ReportEditor({
 			setVisuals(initialVisuals);
 			setPageConfig(initialPageConfig);
 			setPageTitle(initialPageTitle);
-			setSelectedId(null);
+			selectVisual(null);
 			history.clear();
 			setDirty(pendingRef.current.size > 0);
 			return;
@@ -1202,6 +1654,41 @@ export function ReportEditor({
 					</svg>
 				</button>
 
+				{/* Straightening the page is offered rather than applied,
+				    because the canvas allows overlap deliberately and an
+				    author part way through arranging has not finished. */}
+				<button
+					type="button"
+					className={styles.iconTool}
+					onClick={tidy}
+					disabled={locks.protectEdit}
+					title="Tidy up the page: close gaps, resolve overlaps and level rows"
+					aria-label="Tidy up the page"
+				>
+					<svg
+						width="15"
+						height="15"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						strokeWidth="2"
+						strokeLinecap="round"
+						strokeLinejoin="round"
+						aria-hidden="true"
+					>
+						<rect x="3" y="4" width="8" height="6" rx="1" />
+						<rect x="13" y="4" width="8" height="6" rx="1" />
+						<rect x="3" y="14" width="18" height="6" rx="1" />
+					</svg>
+				</button>
+
+				<AlignTools
+					count={selection.length}
+					onAlign={alignSelection}
+					onDistribute={distributeSelection}
+					disabled={locks.protectEdit}
+				/>
+
 				<span className={styles.divider} aria-hidden="true" />
 
 				<label className={styles.previewPicker}>
@@ -1314,7 +1801,7 @@ export function ReportEditor({
 								: ""
 					}`}
 					onClick={() => {
-						setSelectedId(null);
+						selectVisual(null);
 						setPanelTab("history");
 					}}
 					title="Open the edit history"
@@ -1469,7 +1956,75 @@ export function ReportEditor({
 						setVisuals([]);
 						setPageConfig({});
 						setPageTitle(title);
-						setSelectedId(null);
+						selectVisual(null);
+						// A page that has not been written cannot be undone
+						// back past its own creation.
+						history.clear();
+						setDirty(true);
+					}}
+					// Everything on the page currently open, on a new page.
+					//
+					// Built out of the same operations a blank page and a
+					// hand-placed visual use, so another session replays it
+					// exactly as it replays anything else and nothing is
+					// written until the save.
+					onCopy={(title) => {
+						const newId =
+							typeof crypto !== "undefined"
+								? crypto.randomUUID()
+								: String(Date.now());
+
+						// Every visual needs a new id, and a group's children
+						// point at the group by id, so the whole mapping is
+						// worked out before anything is rewritten. Copying
+						// them one at a time would leave a child pointing at
+						// the group on the page it came from.
+						const remap = new Map<string, string>();
+						for (const visual of visualsRef.current) {
+							remap.set(
+								visual.visualId,
+								typeof crypto !== "undefined"
+									? crypto.randomUUID()
+									: `${visual.visualId}-copy`,
+							);
+						}
+
+						const copies: EditableVisual[] = visualsRef.current.map(
+							(visual) => {
+								const config = structuredClone(visual.config);
+								const parent =
+									typeof config.parentId === "string"
+										? remap.get(config.parentId)
+										: undefined;
+								if (parent) config.parentId = parent;
+								else delete config.parentId;
+
+								return {
+									...visual,
+									visualId: remap.get(visual.visualId)!,
+									config,
+									isNew: true,
+								};
+							},
+						);
+
+						pendingRef.current.set(`page:${newId}`, {
+							type: "addPage",
+							pageId: newId,
+							title,
+						});
+						for (const visual of copies) {
+							pendingRef.current.set(visual.visualId, {
+								type: "addVisual",
+								visual,
+							});
+						}
+
+						setDraftPage({ pageId: newId, title });
+						setVisuals(copies);
+						setPageConfig(pageConfigRef.current);
+						setPageTitle(title);
+						selectVisual(null);
 						// A page that has not been written cannot be undone
 						// back past its own creation.
 						history.clear();
@@ -1523,8 +2078,9 @@ export function ReportEditor({
 					visuals={visuals}
 					sources={sources}
 					selectedId={selectedId}
+					selectedIds={selection}
 					zoom={zoom}
-					onSelect={setSelectedId}
+					onSelect={selectVisual}
 					onLayoutChange={changeLayout}
 					onGestureStart={beginGesture}
 					onGestureEnd={endGesture}
@@ -1553,7 +2109,8 @@ export function ReportEditor({
 					}
 					onChange={updateVisual}
 					onRemove={removeVisual}
-					onDeselect={() => setSelectedId(null)}
+					onDuplicate={duplicateVisual}
+					onDeselect={() => selectVisual(null)}
 					readOnly={locks.protectEdit}
 					groups={groups}
 					pageSource={

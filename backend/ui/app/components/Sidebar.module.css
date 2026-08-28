@@ -219,3 +219,11 @@
 	border-style: solid;
 	color: var(--text-primary);
 }
+
+/* Navigation is for getting to the page. On paper the reader is already there,
+   and the chrome would take a third of the sheet to say so. */
+@media print {
+	.sidebar {
+		display: none !important;
+	}
+}

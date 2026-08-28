@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
 	evaluateConditions,
+	referenceValue,
 	scalePosition,
 	styleForMeasure,
 	type ConditionRule,
@@ -84,8 +85,19 @@ test("applyTo row paints a different column than the one tested", () => {
 
 test("later rules override earlier ones field by field", () => {
 	const rules: ConditionRule[] = [
-		{ field: "V", operator: "gt", value: 0, background: { token: "info" }, bold: true },
-		{ field: "V", operator: "gt", value: 100, background: { token: "success" } },
+		{
+			field: "V",
+			operator: "gt",
+			value: 0,
+			background: { token: "info" },
+			bold: true,
+		},
+		{
+			field: "V",
+			operator: "gt",
+			value: 100,
+			background: { token: "success" },
+		},
 	];
 	const hit = evaluateConditions(rules, { V: 500 }, "V");
 	assert.ok(hit);
@@ -133,4 +145,72 @@ test("a degenerate range produces no scale rather than an extreme", () => {
 	// spread that is not there.
 	assert.equal(scalePosition(5, 5, 5), null);
 	assert.equal(scalePosition(Number.NaN, 0, 10), null);
+});
+
+// --- Reference lines -------------------------------------------------------
+
+const rows = [{ sales: 10 }, { sales: 20 }, { sales: 30 }, { sales: 40 }];
+
+test("a fixed reference line sits where it was set", () => {
+	assert.equal(
+		referenceValue({ id: "a", kind: "value", value: 25 }, rows, "sales"),
+		25,
+	);
+});
+
+test("a fixed reference line with no number cannot be placed", () => {
+	assert.equal(
+		referenceValue({ id: "a", kind: "value" }, rows, "sales"),
+		null,
+	);
+});
+
+test("the average line is the mean of the values on the chart", () => {
+	assert.equal(
+		referenceValue({ id: "a", kind: "average" }, rows, "sales"),
+		25,
+	);
+});
+
+test("the median of an even count averages the middle two", () => {
+	assert.equal(
+		referenceValue({ id: "a", kind: "median" }, rows, "sales"),
+		25,
+	);
+});
+
+test("the median of an odd count is the middle value", () => {
+	assert.equal(
+		referenceValue({ id: "a", kind: "median" }, rows.slice(0, 3), "sales"),
+		20,
+	);
+});
+
+test("the highest and lowest lines sit on the extremes", () => {
+	assert.equal(referenceValue({ id: "a", kind: "max" }, rows, "sales"), 40);
+	assert.equal(referenceValue({ id: "a", kind: "min" }, rows, "sales"), 10);
+});
+
+test("a derived line over a column with no numbers cannot be placed", () => {
+	assert.equal(
+		referenceValue(
+			{ id: "a", kind: "average" },
+			[{ sales: "n/a" }],
+			"sales",
+		),
+		null,
+	);
+});
+
+test("values that are not numbers are left out of the average", () => {
+	// Two readable values, so the mean is theirs rather than being dragged
+	// towards zero by the ones that are not there.
+	assert.equal(
+		referenceValue(
+			{ id: "a", kind: "average" },
+			[{ sales: 10 }, { sales: null }, { sales: 30 }],
+			"sales",
+		),
+		20,
+	);
 });

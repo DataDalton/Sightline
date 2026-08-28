@@ -404,6 +404,88 @@
 	font-variant-numeric: tabular-nums;
 }
 
+/* The edge between two columns, for dragging one wider.
+
+   Sits inside the header cell against its trailing edge and is wider than the
+   line it represents, because a two pixel target is one nobody hits. Invisible
+   until the header is pointed at, so a row of forty columns is not a row of
+   forty visible seams. */
+.resizeHandle {
+	position: absolute;
+	top: 0;
+	right: 0;
+	width: 9px;
+	height: 100%;
+	z-index: 2;
+	cursor: col-resize;
+	touch-action: none;
+	background: none;
+}
+
+.headerCell:hover .resizeHandle::after,
+.resizeHandle:active::after {
+	content: "";
+	position: absolute;
+	top: 20%;
+	right: 4px;
+	width: 2px;
+	height: 60%;
+	border-radius: 1px;
+	background: var(--border-strong);
+}
+
+.resizeHandle:hover::after,
+.resizeHandle:active::after {
+	background: var(--brand);
+}
+
+/* The change against an earlier window, under the figure it belongs to.
+
+   In the cell rather than in a column of its own, so the number and its
+   movement are read as one thing and the reader's own column arrangement,
+   pinning and export are left exactly as they were. */
+.cellChange {
+	display: block;
+	margin-top: 1px;
+	font-size: 10px;
+	font-weight: 600;
+	line-height: 1.2;
+	font-variant-numeric: tabular-nums;
+	color: var(--text-muted);
+	letter-spacing: 0.01em;
+}
+
+.changeUp {
+	color: var(--delta-positive);
+}
+
+.changeDown {
+	color: var(--delta-negative);
+}
+
+/* The total of the whole result, pinned to the foot of the grid.
+
+   Sticky rather than fixed, and inside the scroller, so it slides sideways with
+   the columns it totals and stays where it is vertically. Weighted, because it
+   is a different kind of row from the ones above it and reading it as one more
+   record would be a misreading. */
+.totalRow {
+	position: sticky;
+	bottom: 0;
+	z-index: 3;
+	display: flex;
+	align-items: center;
+	height: 36px;
+	border-top: 1px solid var(--border-strong);
+	background: var(--surface-sunken);
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.totalRow .pinned {
+	background: var(--surface-sunken);
+}
+
 .sentinel {
 	display: flex;
 	align-items: center;

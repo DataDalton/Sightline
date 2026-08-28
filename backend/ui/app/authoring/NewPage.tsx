@@ -25,6 +25,7 @@ export function NewPageDialog({
 	source,
 	reportId,
 	onBlank,
+	onCopy,
 	onCreated,
 	onClose,
 }: {
@@ -34,6 +35,12 @@ export function NewPageDialog({
 	source: ChooserSource | null;
 	reportId: string;
 	onBlank: (title: string) => void;
+	// Everything on the page currently open, on a new page.
+	//
+	// The best template is usually a page somebody already built, because it
+	// carries the conventions the team actually uses rather than the ones
+	// this build shipped with. Absent where there is nothing to copy.
+	onCopy?: ((title: string) => void) | null;
 	// Handed the new page's id, because the editor has to move onto it. Its
 	// state is seeded from its props once, so a page added underneath it would
 	// leave it holding a report version one behind the server and the next save
@@ -127,6 +134,20 @@ export function NewPageDialog({
 					>
 						Cancel
 					</button>
+					{onCopy && (
+						<button
+							type="button"
+							className={styles.secondary}
+							disabled={busy || title.trim() === ""}
+							onClick={() => {
+								onCopy(title.trim());
+								onClose();
+							}}
+							title="Everything on the page currently open, arranged the same way, on a new page"
+						>
+							Copy this page
+						</button>
+					)}
 					<button
 						type="button"
 						className={styles.primary}

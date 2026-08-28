@@ -4,7 +4,19 @@ import { useMemo } from "react";
 import { useVisualQuery } from "../hooks/useVisualQuery";
 import { queryForVisual } from "../../lib/query/visualSpec";
 import { resolveKpiGroups, type KpiGroup } from "../../lib/visuals/kpiGroups";
-import { formatCompact, toNumber, type FormatHint } from "../../lib/format";
+import {
+	formatCompact,
+	formatDelta,
+	toNumber,
+	type FormatHint,
+} from "../../lib/format";
+import {
+	relativeChange,
+	shiftDateFilters,
+	type ComparePeriod,
+	type DateClause,
+} from "../../lib/query/compare";
+import { Sparkline } from "./Sparkline";
 import { evaluateConditions, type VisualStyle } from "../../lib/visuals/style";
 import { readThemeColors, withAlpha } from "./colors";
 import { VisualError } from "./VisualFrame";
@@ -29,6 +41,14 @@ interface KpiRowProps {
 	// Bands to split the tiles into. One query either way: the grouping is
 	// about how the answer is laid out, not about what is asked for.
 	groups?: KpiGroup[];
+	// What to compare each figure against, and which date the page's range
+	// filter sits on. Both are needed: without the field there is no window to
+	// move, and without a period there is nothing to move it to.
+	compareTo?: ComparePeriod | null;
+	compareField?: string | null;
+	// The dimension each tile is trended over. One extra query for the row
+	// rather than one per tile, since every tile reads the same shape.
+	sparkline?: string | null;
 }
 
 // A growth measure carries its own sign, so a tile colours it without anyone
@@ -46,6 +66,9 @@ export function KpiRow({
 	fields,
 	style,
 	groups,
+	compareTo,
+	compareField,
+	sparkline,
 }: KpiRowProps) {
 	const { rows, error, isLoading } = useVisualQuery(
 		queryForVisual("kpiRow", {
@@ -54,6 +77,52 @@ export function KpiRow({
 			measures,
 			filters,
 		}),
+	);
+
+	// The same question about an earlier window.
+	//
+	// The shifted filters are an ordinary spec, so this goes through the same
+	// batcher and the same cache as everything else on the page and arrives in
+	// the same round trip. Null whenever the window cannot be moved, which
+	// leaves the tiles showing their figures with no comparison rather than
+	// comparing against a period nobody chose.
+	//
+	// Keyed on the serialised filters rather than the array, because the page
+	// rebuilds that array on every render and keying on its identity would
+	// hand back a new window every time.
+	const filterKey = JSON.stringify(filters ?? []);
+	const comparisonFilters = useMemo(() => {
+		if (!compareTo || !compareField) return null;
+		return shiftDateFilters(
+			(filters ?? []) as DateClause[],
+			compareField,
+			compareTo,
+		);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [compareTo, compareField, filterKey]);
+
+	const comparison = useVisualQuery(
+		comparisonFilters
+			? queryForVisual("kpiRow", {
+					sourceKey,
+					dimensions: [],
+					measures,
+					filters: comparisonFilters,
+				})
+			: null,
+	);
+
+	// One query for the whole row rather than one per tile: every tile trends
+	// over the same dimension, so they are all columns of the same answer.
+	const trend = useVisualQuery(
+		sparkline
+			? queryForVisual("lineChart", {
+					sourceKey,
+					dimensions: [sparkline],
+					measures,
+					filters,
+				})
+			: null,
 	);
 
 	const colors = useMemo(
@@ -105,7 +174,12 @@ export function KpiRow({
 	}
 
 	const row = rows[0] ?? {};
+	const earlier = comparison.rows[0] ?? null;
 	const rules = style?.conditions ?? [];
+
+	// The trend series per measure, in the order the rows came back.
+	const trendFor = (measure: string): (number | null)[] =>
+		trend.rows.map((r) => toNumber(r[measure]));
 
 	const tile = (name: string) => {
 		const hint: FormatHint =
@@ -141,6 +215,20 @@ export function KpiRow({
 					)
 				: undefined;
 
+		// The change since the earlier window, when there is one to report.
+		//
+		// A measure that already carries its own sign is left alone: putting a
+		// delta under a figure that is itself a delta gives a tile two
+		// different changes and no way to tell which is which.
+		const previous = earlier ? toNumber(earlier[name]) : null;
+		const change = signed ? null : relativeChange(numeric, previous);
+		const absolute =
+			signed || numeric === null || previous === null
+				? null
+				: numeric - previous;
+
+		const spark = sparkline ? trendFor(name) : [];
+
 		return (
 			<div key={name} className={styles.kpi} style={{ background }}>
 				<span
@@ -165,6 +253,50 @@ export function KpiRow({
 					{signed && numeric !== null && numeric > 0 ? "+" : ""}
 					{formatCompact(raw, hint)}
 				</span>
+
+				{/* The change, under the figure rather than beside it, so a
+				    row of tiles keeps one column of figures to read down. */}
+				{change !== null && (
+					<span
+						className={`${styles.kpiChange} ${
+							change > 0
+								? styles.kpiPositive
+								: change < 0
+									? styles.kpiNegative
+									: ""
+						}`}
+						title={
+							absolute === null
+								? undefined
+								: `${formatDelta(absolute, hint)} against the earlier window`
+						}
+					>
+						<span aria-hidden="true">
+							{change > 0 ? "▲" : change < 0 ? "▼" : "="}
+						</span>
+						{Math.abs(change * 100) < 0.05
+							? "no change"
+							: `${change > 0 ? "+" : "-"}${Math.abs(change * 100).toFixed(1)}%`}
+					</span>
+				)}
+
+				{/* Waiting for the comparison rather than reporting there is
+				    none. An empty space that later fills in reads as a tile
+				    that moved; nothing at all reads as a tile with no
+				    comparison, which is a different thing. */}
+				{change === null && comparisonFilters !== null && (
+					<span className={styles.kpiChange} aria-hidden="true">
+						&nbsp;
+					</span>
+				)}
+
+				{spark.length > 1 && (
+					<Sparkline
+						values={spark}
+						label={`${name} over ${sparkline}`}
+						color={explicitColor}
+					/>
+				)}
 			</div>
 		);
 	};

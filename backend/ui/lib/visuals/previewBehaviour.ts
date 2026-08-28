@@ -50,14 +50,22 @@ const behaviours: Record<string, PreviewBehaviour> = {
 	barChart: "crossFilter",
 	horizontalBarChart: "crossFilter",
 	comboChart: "crossFilter",
+	slopeChart: "crossFilter",
+	paretoChart: "crossFilter",
 	pieChart: "crossFilter",
 	donutChart: "crossFilter",
 	treemapChart: "crossFilter",
 	funnelChart: "crossFilter",
 	stackedBarChart: "crossFilter",
 	heatmapChart: "crossFilter",
+	boxPlot: "crossFilter",
+	calendarChart: "crossFilter",
+	timelineChart: "crossFilter",
+	sankeyChart: "crossFilter",
+	choroplethChart: "crossFilter",
 	radarChart: "crossFilter",
 	waterfallChart: "crossFilter",
+	bulletChart: "crossFilter",
 	table: "crossFilter",
 
 	// A continuous axis, where the question is usually a stretch rather than a
@@ -69,6 +77,8 @@ const behaviours: Record<string, PreviewBehaviour> = {
 	matrixTable: "drill",
 
 	// Summaries and detail panels answer rather than ask.
+	histogramChart: "respond",
+	smallMultiples: "respond",
 	kpiRow: "respond",
 	gauge: "respond",
 	definitionList: "respond",

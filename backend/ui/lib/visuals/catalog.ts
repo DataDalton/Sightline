@@ -83,6 +83,19 @@ export type VisualOption =
 			label: string;
 			kind: "field";
 			scope: "dimension" | "measure";
+			// Where the choices come from.
+			//
+			// "encoded" is the default and is right for a setting about
+			// something already on the visual, such as which measure a top ten
+			// is ranked by. "source" is for a setting about the page rather
+			// than the visual: the date a comparison window sits on is the one
+			// the page's range filter applies to, and a scorecard has no
+			// dimensions of its own to choose it from, so an encoded list would
+			// be empty and the setting unreachable.
+			from?: "encoded" | "source";
+			// Narrows the choices to fields that look like dates, so a
+			// comparison window is not offered Product Number.
+			role?: "temporal";
 			help?: string;
 	  };
 
@@ -111,6 +124,9 @@ export interface VisualTypeDefinition {
 		axes?: boolean;
 		legend?: boolean;
 		tooltip?: boolean;
+		// A target, a budget or the average drawn across the plot. Only for
+		// types with a value scale to place one against.
+		referenceLines?: boolean;
 	};
 	// Settings particular to this type, offered in the properties panel in the
 	// order they are declared.
@@ -158,6 +174,42 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		supports: { color: true, conditionalFormat: true },
 		options: [
 			{
+				key: "compareTo",
+				label: "Compare against",
+				kind: "select",
+				choices: [
+					{ value: "", label: "Nothing" },
+					{ value: "year", label: "The same window a year earlier" },
+					{
+						value: "quarter",
+						label: "The same window a quarter earlier",
+					},
+					{
+						value: "month",
+						label: "The same window a month earlier",
+					},
+					{ value: "previous", label: "The period before" },
+				],
+				fallback: "",
+				help: "Adds the change since then under each figure. Asks the same question again with the page's date window moved back, so whatever the reader has filtered to is what gets compared.",
+			},
+			{
+				key: "compareField",
+				label: "Date the window sits on",
+				kind: "field",
+				scope: "dimension",
+				from: "source",
+				role: "temporal",
+				help: "Which date the page's range filter applies to. The comparison needs a range on the page to move, so with nothing filtered the figures show on their own.",
+			},
+			{
+				key: "sparkline",
+				label: "Trend each tile over",
+				kind: "field",
+				scope: "dimension",
+				help: "Draws the shape of each figure across this dimension inside the tile. Usually the month or the week.",
+			},
+			{
 				key: "groups",
 				label: "Bands",
 				kind: "measureGroups",
@@ -178,6 +230,44 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		},
 		supports: { color: true, tooltip: true },
 		defaultLayout: { w: 3, h: 4 },
+	},
+	{
+		type: "bulletChart",
+		label: "Progress to target",
+		category: "summary",
+		guidance:
+			"Actual against target, one row per category. Says whether something is on plan in a strip a quarter the height of a gauge, and shows several at once where a gauge shows one.",
+		encoding: {
+			dimensions: { min: 1, max: 1, label: "One row each" },
+			measures: {
+				min: 2,
+				max: 2,
+				label: "What happened, then what was aimed for",
+			},
+		},
+		supports: { color: true, tooltip: true, axes: true },
+		options: [
+			{
+				key: "colourByTarget",
+				label: "Colour by whether the target was met",
+				kind: "toggle",
+				fallback: true,
+				help: "Off leaves every bar the series colour, which is right when clearing the target is not straightforwardly good.",
+			},
+			{
+				key: "sortBy",
+				label: "Order rows by",
+				kind: "select",
+				choices: [
+					{ value: "source", label: "The order they arrive in" },
+					{ value: "valueDesc", label: "Furthest ahead first" },
+					{ value: "valueAsc", label: "Furthest behind first" },
+				],
+				fallback: "valueAsc",
+				help: "Behind first by default, because the rows that need attention are the ones worth putting at the top.",
+			},
+		],
+		defaultLayout: { w: 6, h: 4 },
 	},
 
 	// --- Comparison --------------------------------------------------------
@@ -203,8 +293,16 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			axes: true,
 			legend: true,
 			tooltip: true,
+			referenceLines: true,
 		},
 		options: [
+			{
+				key: "zoomSlider",
+				label: "Let readers zoom the axis",
+				kind: "toggle",
+				fallback: false,
+				help: "Adds a slider under the plot and lets the wheel narrow it. For a series long enough that the whole of it does not read at once.",
+			},
 			{
 				key: "topN",
 				label: "Keep only the top",
@@ -259,8 +357,16 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			axes: true,
 			legend: true,
 			tooltip: true,
+			referenceLines: true,
 		},
 		options: [
+			{
+				key: "zoomSlider",
+				label: "Let readers zoom the axis",
+				kind: "toggle",
+				fallback: false,
+				help: "Adds a slider under the plot and lets the wheel narrow it. For a series long enough that the whole of it does not read at once.",
+			},
 			{
 				key: "topN",
 				label: "Keep only the top",
@@ -313,7 +419,17 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			axes: true,
 			legend: true,
 			tooltip: true,
+			referenceLines: true,
 		},
+		options: [
+			{
+				key: "zoomSlider",
+				label: "Let readers zoom the axis",
+				kind: "toggle",
+				fallback: false,
+				help: "Adds a slider under the plot and lets the wheel narrow it. For a series long enough that the whole of it does not read at once.",
+			},
+		],
 		defaultLayout: { w: 6, h: 5 },
 	},
 
@@ -335,8 +451,16 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			axes: true,
 			legend: true,
 			tooltip: true,
+			referenceLines: true,
 		},
 		options: [
+			{
+				key: "zoomSlider",
+				label: "Let readers zoom the axis",
+				kind: "toggle",
+				fallback: false,
+				help: "Adds a slider under the plot and lets the wheel narrow it. For a series long enough that the whole of it does not read at once.",
+			},
 			{
 				key: "nulls",
 				label: "Where data is missing",
@@ -368,8 +492,16 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			axes: true,
 			legend: true,
 			tooltip: true,
+			referenceLines: true,
 		},
 		options: [
+			{
+				key: "zoomSlider",
+				label: "Let readers zoom the axis",
+				kind: "toggle",
+				fallback: false,
+				help: "Adds a slider under the plot and lets the wheel narrow it. For a series long enough that the whole of it does not read at once.",
+			},
 			{
 				key: "nulls",
 				label: "Where data is missing",
@@ -384,6 +516,34 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		defaultLayout: { w: 6, h: 5 },
 	},
 	{
+		type: "smallMultiples",
+		label: "Small multiples",
+		category: "trend",
+		guidance:
+			"One small chart per category, all on the same scale. Twelve regions read at a glance here and are unreadable overlaid on a single line chart. The shared scale is the point: shape and level are both comparable.",
+		encoding: {
+			dimensions: {
+				min: 2,
+				max: 2,
+				label: "A panel each, then along the bottom of each",
+			},
+			measures: { min: 1, max: 1 },
+		},
+		supports: { color: true, tooltip: false },
+		options: [
+			{
+				key: "columns",
+				label: "Panels across",
+				kind: "number",
+				fallback: 3,
+				min: 1,
+				max: 6,
+				step: 1,
+			},
+		],
+		defaultLayout: { w: 6, h: 5 },
+	},
+	{
 		type: "waterfallChart",
 		label: "Waterfall",
 		category: "trend",
@@ -393,7 +553,12 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			dimensions: { min: 1, max: 1 },
 			measures: { min: 1, max: 1 },
 		},
-		supports: { color: true, axes: true, tooltip: true },
+		supports: {
+			color: true,
+			axes: true,
+			tooltip: true,
+			referenceLines: true,
+		},
 		defaultLayout: { w: 6, h: 5 },
 	},
 
@@ -567,16 +732,210 @@ export const visualCatalog: VisualTypeDefinition[] = [
 
 	// --- Distribution and relationship -------------------------------------
 	{
+		type: "timelineChart",
+		label: "Timeline",
+		category: "trend",
+		guidance:
+			"A bar spanning a start and an end, one row per thing. For anything with a lifecycle: campaigns, contracts, projects, outages. A row missing either date is left off rather than drawn open ended.",
+		encoding: {
+			dimensions: {
+				min: 3,
+				max: 3,
+				label: "What it is, then the start, then the end",
+			},
+			measures: { min: 0, max: 1, label: "Shown in the tooltip" },
+		},
+		supports: { color: true, axes: true, tooltip: true },
+		defaultLayout: { w: 8, h: 5 },
+	},
+	{
+		type: "calendarChart",
+		label: "Calendar heatmap",
+		category: "distribution",
+		guidance:
+			"A year of daily figures laid out as a calendar. The clearest answer to when something is busy: weekday patterns, month ends and holidays all show without anybody modelling them.",
+		encoding: {
+			dimensions: { min: 1, max: 1, label: "A date, one cell each" },
+			measures: { min: 1, max: 1 },
+		},
+		supports: { colorScale: true, tooltip: true },
+		defaultLayout: { w: 12, h: 4 },
+	},
+	{
+		type: "choroplethChart",
+		label: "Map",
+		category: "distribution",
+		guidance:
+			"A figure by country, coloured on a world map. The dimension has to hold country names or two letter codes; anything it cannot place is named under the map rather than quietly left off.",
+		encoding: {
+			dimensions: { min: 1, max: 1, label: "A country each" },
+			measures: { min: 1, max: 1 },
+		},
+		supports: { colorScale: true, tooltip: true },
+		defaultLayout: { w: 8, h: 6 },
+	},
+	{
+		type: "sankeyChart",
+		label: "Flow",
+		category: "composition",
+		guidance:
+			"How much moves from each thing on the left to each thing on the right: channel to region, status to next status. The funnel covers a fixed sequence, this covers a branching one.",
+		encoding: {
+			dimensions: { min: 2, max: 2, label: "From, then to" },
+			measures: { min: 1, max: 1, label: "How much flows" },
+		},
+		supports: { color: true, tooltip: true },
+		defaultLayout: { w: 6, h: 5 },
+	},
+	{
+		type: "histogramChart",
+		label: "Histogram",
+		category: "distribution",
+		guidance:
+			"How a figure is spread across the things it is measured on, such as order value across customers. An average hides a long tail or two clusters, and this is what shows either.",
+		encoding: {
+			dimensions: { min: 1, max: 1, label: "Measured across" },
+			measures: { min: 1, max: 1, label: "The figure being spread" },
+		},
+		supports: { color: true, axes: true, tooltip: true },
+		options: [
+			{
+				key: "bins",
+				label: "Number of bars",
+				kind: "number",
+				min: 2,
+				max: 50,
+				step: 1,
+				help: "Left empty this is chosen from how many things there are, which keeps the same chart from redrawing with a different number of bars every time the page is filtered.",
+			},
+		],
+		defaultLayout: { w: 5, h: 5 },
+	},
+	{
+		type: "boxPlot",
+		label: "Box plot",
+		category: "distribution",
+		guidance:
+			"The middle half of a figure, its median and its outliers, one box per category. Two dimensions draws a box for each value of the first; one draws a single box.",
+		encoding: {
+			dimensions: {
+				min: 1,
+				max: 2,
+				label: "A box each, then what it is spread across",
+			},
+			measures: { min: 1, max: 1 },
+		},
+		supports: { color: true, axes: true, tooltip: true },
+		defaultLayout: { w: 5, h: 5 },
+	},
+	{
+		type: "paretoChart",
+		label: "Pareto",
+		category: "comparison",
+		guidance:
+			"Ranked bars with the running share drawn over them. Answers which few categories account for most of the total, and shows where the rest stops being worth chasing.",
+		encoding: {
+			dimensions: { min: 1, max: 1, label: "Ranked by" },
+			measures: { min: 1, max: 1 },
+		},
+		supports: { color: true, axes: true, legend: true, tooltip: true },
+		options: [
+			{
+				key: "cutoff",
+				label: "Line drawn at",
+				kind: "number",
+				fallback: 80,
+				min: 1,
+				max: 100,
+				step: 1,
+				help: "Where the running share crosses this is the set worth acting on. Eighty is the convention and is rarely worth changing.",
+			},
+			{
+				key: "topN",
+				label: "Keep only the top",
+				kind: "number",
+				min: 1,
+				max: 500,
+				step: 1,
+				help: "A long tail is the point of a Pareto, so leave this empty unless the tail is thousands of rows rather than dozens.",
+			},
+		],
+		defaultLayout: { w: 6, h: 5 },
+	},
+	{
+		type: "slopeChart",
+		label: "Slope chart",
+		category: "comparison",
+		guidance:
+			"Every category's before and after, joined by a line. The clearest way to show a set of changes at once, and far easier to read than paired bars. Needs a date range on the page to compare against.",
+		encoding: {
+			dimensions: { min: 1, max: 1, label: "One line each" },
+			measures: { min: 1, max: 1 },
+		},
+		supports: { axes: true, tooltip: true },
+		options: [
+			{
+				key: "compareTo",
+				label: "Compare against",
+				kind: "select",
+				choices: [
+					{ value: "", label: "Nothing" },
+					{ value: "year", label: "The same window a year earlier" },
+					{
+						value: "quarter",
+						label: "The same window a quarter earlier",
+					},
+					{
+						value: "month",
+						label: "The same window a month earlier",
+					},
+					{ value: "previous", label: "The period before" },
+				],
+				fallback: "",
+				help: "Asks the same question again with the page's date window moved back, so whatever the reader has filtered to is what gets compared.",
+			},
+			{
+				key: "compareField",
+				label: "Date the window sits on",
+				kind: "field",
+				scope: "dimension",
+				from: "source",
+				role: "temporal",
+				help: "Which date the page's range filter applies to. The comparison needs a range on the page to move.",
+			},
+		],
+		defaultLayout: { w: 5, h: 5 },
+	},
+	{
 		type: "scatterChart",
 		label: "Scatter plot",
 		category: "relationship",
 		guidance:
-			"Whether two measures move together. Add a second measure for the second axis.",
+			"Whether two measures move together. The first is across, the second is up, and a third sizes each point.",
 		encoding: {
-			dimensions: { min: 1, max: 1 },
-			measures: { min: 1, max: 3 },
+			dimensions: { min: 1, max: 1, label: "Names each point" },
+			measures: {
+				min: 1,
+				max: 3,
+				label: "Across, then up, then an optional size",
+			},
 		},
-		supports: { color: true, axes: true, legend: true, tooltip: true },
+		supports: {
+			color: true,
+			axes: true,
+			legend: true,
+			tooltip: true,
+			referenceLines: true,
+		},
+		options: [
+			{
+				key: "zoomSlider",
+				label: "Let readers zoom the axis",
+				kind: "toggle",
+				fallback: false,
+				help: "Adds a slider under the plot and lets the wheel narrow it. For a series long enough that the whole of it does not read at once.",
+			},
+		],
 		defaultLayout: { w: 6, h: 5 },
 	},
 	{
@@ -645,6 +1004,42 @@ export const visualCatalog: VisualTypeDefinition[] = [
 				],
 				fallback: "comfortable",
 				help: "Compact fits about a third more rows on a screen. Worth it for short codes and dates, not for long names.",
+			},
+			{
+				key: "compareTo",
+				label: "Compare against",
+				kind: "select",
+				choices: [
+					{ value: "", label: "Nothing" },
+					{ value: "year", label: "The same window a year earlier" },
+					{
+						value: "quarter",
+						label: "The same window a quarter earlier",
+					},
+					{
+						value: "month",
+						label: "The same window a month earlier",
+					},
+					{ value: "previous", label: "The period before" },
+				],
+				fallback: "",
+				help: "Puts the change since then under each figure. Compares the first page, which is what a reader is looking at.",
+			},
+			{
+				key: "compareField",
+				label: "Date the window sits on",
+				kind: "field",
+				scope: "dimension",
+				from: "source",
+				role: "temporal",
+				help: "Which date the page's range filter applies to. The comparison needs a range on the page to move.",
+			},
+			{
+				key: "showTotals",
+				label: "Total row",
+				kind: "toggle",
+				fallback: false,
+				help: "A row pinned to the foot holding the total of every measure across the whole result, not only the rows loaded so far. Asked as its own query, so it is right for a table of two million rows showing the first two hundred.",
 			},
 		],
 		defaultLayout: { w: 12, h: 6 },

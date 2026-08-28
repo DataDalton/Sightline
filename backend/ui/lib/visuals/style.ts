@@ -239,7 +239,8 @@ export const rampsById: Record<string, ScaleRamp> = Object.fromEntries(
 function sameSpec(a: ColorSpec | undefined, b: ColorSpec | undefined): boolean {
 	if (!a || !b) return a === b;
 	if ("token" in a && "token" in b) return a.token === b.token;
-	if ("hex" in a && "hex" in b) return a.hex.toLowerCase() === b.hex.toLowerCase();
+	if ("hex" in a && "hex" in b)
+		return a.hex.toLowerCase() === b.hex.toLowerCase();
 	return false;
 }
 
@@ -282,6 +283,150 @@ export interface AxisStyle {
 	labelRotation?: number;
 }
 
+// --- Categorical palettes ---------------------------------------------------
+
+// Named sets of series colours.
+//
+// Ten colour scales already existed and every one of them is sequential or
+// diverging, which is for encoding magnitude. Nothing named a set for encoding
+// categories, so a chart's series took palette positions in order and an author
+// who wanted a different set picked eight colours by hand.
+//
+// Expressed in tokens rather than hex, like everything else here, so a set
+// follows the theme rather than fighting it.
+export interface PalettePreset {
+	id: string;
+	label: string;
+	tokens: PaletteToken[];
+	// What it is for, where that is not obvious from the name.
+	note?: string;
+}
+
+export const palettePresets: PalettePreset[] = [
+	{
+		id: "full",
+		label: "Full palette",
+		tokens: [
+			"chart-1",
+			"chart-2",
+			"chart-3",
+			"chart-4",
+			"chart-5",
+			"chart-6",
+			"chart-7",
+			"chart-8",
+		],
+		note: "The default. Eight hues, taken in order.",
+	},
+	{
+		id: "pair",
+		label: "Blue and amber",
+		tokens: ["chart-1", "chart-3"],
+		note: "Two series that stay apart in print, in greyscale, and for the most common form of colour blindness. The safest choice when there are only two.",
+	},
+	{
+		id: "spread",
+		label: "Four, spread apart",
+		tokens: ["chart-1", "chart-3", "chart-4", "chart-7"],
+		note: "Blue, amber, violet and lime, which are as far apart as this palette goes. For four series that have nothing to do with each other.",
+	},
+	{
+		id: "cool",
+		label: "Cool",
+		tokens: ["chart-1", "chart-6", "chart-2", "chart-4"],
+		note: "Blues through to violet. Reads as one family, which suits parts of a whole rather than rivals.",
+	},
+	{
+		id: "warm",
+		label: "Warm",
+		tokens: ["chart-3", "chart-5", "chart-8", "brand"],
+		note: "Ambers through to red. Stands out on a page that is otherwise cool.",
+	},
+	{
+		id: "status",
+		label: "Status",
+		tokens: ["success", "warning", "danger", "info"],
+		note: "Only where the categories really are good, watch, bad. Anywhere else this asserts a judgement the data does not carry.",
+	},
+];
+
+// --- Reference lines -------------------------------------------------------
+
+// A line drawn across a chart at a value worth comparing the bars to.
+//
+// Both halves matter. A fixed value is the budget, the target, the contract
+// limit: a number that comes from outside the data and is the whole reason the
+// chart is being read. A derived one is the average or the maximum, which
+// nobody has to look up and which turns a row of bars into "these three are
+// above the line".
+//
+// Derived rather than asking an author to type today's average, because a
+// typed one is right on the day it was typed and quietly wrong afterwards.
+export interface ReferenceLine {
+	id: string;
+	label?: string;
+	// A fixed number, or one worked out from the values already on the chart.
+	kind: "value" | "average" | "median" | "max" | "min";
+	// Only read when kind is "value".
+	value?: number;
+	// Which measure a derived line is computed from, and which scale a fixed
+	// one is read against. Absent means the first measure on the chart.
+	measure?: string;
+	axis?: "left" | "right";
+	color?: ColorSpec;
+	line?: "solid" | "dashed" | "dotted";
+}
+
+// Where a reference line sits, given the rows the chart is drawing.
+//
+// Returns null when the line cannot be placed: a fixed line with no number, or
+// a derived one over a measure with no numeric values in it. A line at an
+// invented position is worse than no line, because it is read as a fact.
+export function referenceValue(
+	reference: ReferenceLine,
+	rows: Record<string, unknown>[],
+	measure: string,
+): number | null {
+	if (reference.kind === "value") {
+		return typeof reference.value === "number" &&
+			Number.isFinite(reference.value)
+			? reference.value
+			: null;
+	}
+
+	const values = rows
+		.map((row) => {
+			const raw = row[measure];
+			// A missing value is missing, not zero. Number(null) is 0 and
+			// Number("") is 0, and either one silently drags an average
+			// towards a figure nothing in the data reported.
+			if (raw === null || raw === undefined || raw === "") return null;
+			const n = typeof raw === "number" ? raw : Number(raw);
+			return Number.isFinite(n) ? n : null;
+		})
+		.filter((n): n is number => n !== null);
+
+	if (values.length === 0) return null;
+
+	switch (reference.kind) {
+		case "average":
+			return values.reduce((sum, n) => sum + n, 0) / values.length;
+		case "max":
+			return Math.max(...values);
+		case "min":
+			return Math.min(...values);
+		case "median": {
+			const sorted = [...values].sort((a, b) => a - b);
+			const mid = Math.floor(sorted.length / 2);
+			// An even count has no single middle, so the two either side of it
+			// are averaged rather than one of them being picked.
+			return sorted.length % 2 === 0
+				? (sorted[mid - 1] + sorted[mid]) / 2
+				: sorted[mid];
+		}
+	}
+}
+
 export interface VisualStyle {
 	palette?: PaletteToken[];
 	series?: SeriesStyle[];
@@ -291,6 +436,7 @@ export interface VisualStyle {
 	xAxis?: AxisStyle;
 	yAxis?: AxisStyle;
 	rightAxis?: AxisStyle;
+	referenceLines?: ReferenceLine[];
 	legend?: { show?: boolean; position?: "top" | "bottom" | "right" };
 	// Bars and points; a value of 0 is square.
 	cornerRadius?: number;
@@ -299,18 +445,14 @@ export interface VisualStyle {
 	// Placeholder shown while the visual loads. The right choice depends on
 	// what is coming: a chart-shaped skeleton holds the layout, a spinner
 	// suits a tile too small for one.
-	loadingAnimation?:
-		| "skeleton"
-		| "bars"
-		| "spinner"
-		| "pulse"
-		| "none";
+	loadingAnimation?: "skeleton" | "bars" | "spinner" | "pulse" | "none";
 }
 
 export const defaultStyle: VisualStyle = {
 	series: [],
 	conditions: [],
 	colorScales: [],
+	referenceLines: [],
 	tooltip: { enabled: true, mode: "axis" },
 	xAxis: { showGrid: false },
 	yAxis: { beginAtZero: true, showGrid: true, format: "auto" },
@@ -428,8 +570,10 @@ export function evaluateConditions(
 		matched = true;
 		// Later rules win field by field, so a specific rule placed after a
 		// general one overrides only what it actually sets.
-		if (rule.background !== undefined) accumulated.background = rule.background;
-		if (rule.textColor !== undefined) accumulated.textColor = rule.textColor;
+		if (rule.background !== undefined)
+			accumulated.background = rule.background;
+		if (rule.textColor !== undefined)
+			accumulated.textColor = rule.textColor;
 		if (rule.bold !== undefined) accumulated.bold = rule.bold;
 		if (rule.marker !== undefined) accumulated.marker = rule.marker;
 	}

@@ -63,7 +63,9 @@ const tableSource: SemanticSource = {
 	object: "customer_directory",
 	kind: "table",
 	dimensions: [field("Region", "dimension", "region")],
-	measures: [field("Accounts", "measure", "COUNT(DISTINCT customer_id)", "int")],
+	measures: [
+		field("Accounts", "measure", "COUNT(DISTINCT customer_id)", "int"),
+	],
 };
 
 function spec(overrides: Partial<QuerySpec> = {}): QuerySpec {
@@ -75,6 +77,7 @@ function spec(overrides: Partial<QuerySpec> = {}): QuerySpec {
 		sort: [],
 		limit: 1000,
 		offset: 0,
+		transforms: [],
 		...overrides,
 	};
 }
@@ -119,10 +122,7 @@ test("a table uses its own aggregate expression, not MEASURE()", () => {
 			measures: ["Accounts"],
 		}),
 	);
-	assert.match(
-		compiled.sql,
-		/COUNT\(DISTINCT customer_id\) AS `Accounts`/,
-	);
+	assert.match(compiled.sql, /COUNT\(DISTINCT customer_id\) AS `Accounts`/);
 	assert.ok(!compiled.sql.includes("MEASURE("));
 });
 
@@ -166,7 +166,11 @@ test("binds every value in a multi-value filter separately", () => {
 		spec({
 			dimensions: ["Category"],
 			filters: [
-				{ field: "Category", op: "eq", values: ["North", "South", "West"] },
+				{
+					field: "Category",
+					op: "eq",
+					values: ["North", "South", "West"],
+				},
 			],
 		}),
 	);
@@ -215,9 +219,7 @@ test("casts a bound value for a date comparison", () => {
 		source,
 		spec({
 			dimensions: ["Category"],
-			filters: [
-				{ field: "Month", op: "gte", value: "2026-01-01" },
-			],
+			filters: [{ field: "Month", op: "gte", value: "2026-01-01" }],
 		}),
 	);
 
