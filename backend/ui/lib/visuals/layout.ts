@@ -334,3 +334,264 @@ export function wouldLoop(
 	}
 	return false;
 }
+
+// --- Tidying an arrangement -------------------------------------------------
+
+// How close two heights have to be before they are treated as meant to match.
+//
+// A row where one visual is four rows and its neighbour is five reads as a
+// mistake, and levelling it is the whole point of tidying. A row where one is
+// four and its neighbour is nine reads as a decision, and growing the short one
+// to nine would throw that decision away. One row of slack separates the two.
+const levellingSlack = 1;
+
+// A row narrower than this is left at the width the author gave it. Filling a
+// single three column visual out to the full twelve is not tidying, it is
+// rewriting the page.
+const fillableFrom = 9;
+
+export interface TidyResult<T> {
+	items: T[];
+	// How many rectangles the tidy actually changed, so the editor can say
+	// nothing needed doing rather than recording an empty step.
+	moved: number;
+}
+
+function sameRect(a: Rect, b: Rect): boolean {
+	return a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+}
+
+// Straightens one container's arrangement: closes gaps, lines rows up, and
+// levels heights that were nearly level already.
+//
+// Rows are the visuals sharing a y, which is what an author means by a row and
+// what the grid's snapping already produces. Grouping by overlap instead would
+// pull a tall visual and the two stacked beside it into one row and then
+// flatten all three, which is a rearrangement rather than a tidy.
+//
+// Five rules, in order, each one narrow enough to predict before pressing it:
+//
+//   1. Rows keep their vertical order, and stack with no empty rows between.
+//   2. A row of two or more closes the horizontal gaps between its visuals,
+//      preserving their left-to-right order.
+//   3. A row already reaching most of the way across is stretched to fill the
+//      grid, so the page has one right edge rather than a ragged one.
+//   4. Heights within a row level up to the tallest, but only when they were
+//      within a row of each other to begin with.
+//   5. A row holding one visual keeps its x and its width, because a visual
+//      placed on its own is placed where somebody wanted it.
+//
+// Nothing here reads or writes a parent, so a caller with groups on the page
+// runs it once per container. A group's children are measured from the group's
+// own origin, and mixing the two coordinate spaces would move every child.
+export function tidyLayout<T extends { rect: Rect }>(
+	items: T[],
+): TidyResult<T> {
+	if (items.length === 0) return { items, moved: 0 };
+
+	// Rows in the order they appear down the page, each sorted left to right.
+	const rows = new Map<number, T[]>();
+	for (const item of items) {
+		const row = rows.get(item.rect.y);
+		if (row) row.push(item);
+		else rows.set(item.rect.y, [item]);
+	}
+	const ordered = [...rows.entries()]
+		.sort(([a], [b]) => a - b)
+		.map(([, row]) => [...row].sort((a, b) => a.rect.x - b.rect.x));
+
+	const next = new Map<T, Rect>();
+	let y = 0;
+
+	for (const row of ordered) {
+		const heights = row.map((i) => i.rect.h);
+		const tallest = Math.max(...heights);
+		const shortest = Math.min(...heights);
+		// Rule 4. A row whose heights already agree is levelled for free, and
+		// one where they disagree by more than the slack is left alone.
+		const level = tallest - shortest <= levellingSlack;
+
+		if (row.length === 1) {
+			// Rule 5.
+			const only = row[0];
+			next.set(only, { ...only.rect, y });
+			y += only.rect.h;
+			continue;
+		}
+
+		const total = row.reduce((sum, i) => sum + i.rect.w, 0);
+		// Rule 3. Slack is shared from the left, so the leftmost visuals take
+		// the extra column when it does not divide evenly. Never widens past
+		// the grid, and never narrows anything.
+		const slack =
+			total >= fillableFrom && total < gridColumns
+				? gridColumns - total
+				: 0;
+		const share = Math.floor(slack / row.length);
+		let spare = slack - share * row.length;
+
+		let x = 0;
+		for (const item of row) {
+			const extra = share + (spare > 0 ? 1 : 0);
+			if (spare > 0) spare--;
+			const w = Math.min(item.rect.w + extra, gridColumns - x);
+			next.set(item, {
+				x,
+				y,
+				w: Math.max(minWidth, w),
+				h: level ? tallest : item.rect.h,
+			});
+			// Rule 2. The next visual starts where this one ends.
+			x += w;
+		}
+
+		y += level ? tallest : Math.max(...heights);
+	}
+
+	let moved = 0;
+	const result = items.map((item) => {
+		const rect = next.get(item);
+		if (!rect || sameRect(rect, item.rect)) return item;
+		moved++;
+		return { ...item, rect };
+	});
+
+	return { items: result, moved };
+}
+
+// --- Aligning a selection ---------------------------------------------------
+
+// What lining up a set of rectangles can mean.
+//
+// Every mode is measured against the selection's own bounds rather than
+// against one member of it. Aligning left means the leftmost edge in the
+// selection, not the edge of whichever visual happened to be clicked first,
+// which is the behaviour of every tool an author has arranged anything in.
+export type AlignMode =
+	| "left"
+	| "right"
+	| "centreX"
+	| "top"
+	| "bottom"
+	| "centreY"
+	| "matchWidth"
+	| "matchHeight";
+
+function bounds(rects: Rect[]): {
+	left: number;
+	right: number;
+	top: number;
+	bottom: number;
+} {
+	return {
+		left: Math.min(...rects.map((r) => r.x)),
+		right: Math.max(...rects.map((r) => r.x + r.w)),
+		top: Math.min(...rects.map((r) => r.y)),
+		bottom: Math.max(...rects.map((r) => r.y + r.h)),
+	};
+}
+
+export function alignRects<T extends { rect: Rect }>(
+	items: T[],
+	mode: AlignMode,
+): T[] {
+	// One rectangle is already aligned with itself.
+	if (items.length < 2) return items;
+
+	const box = bounds(items.map((i) => i.rect));
+	const widest = Math.max(...items.map((i) => i.rect.w));
+	const tallest = Math.max(...items.map((i) => i.rect.h));
+
+	return items.map((item) => {
+		const r = item.rect;
+		let next: Rect;
+
+		switch (mode) {
+			case "left":
+				next = { ...r, x: box.left };
+				break;
+			case "right":
+				next = { ...r, x: box.right - r.w };
+				break;
+			case "centreX":
+				next = {
+					...r,
+					x: Math.round((box.left + box.right - r.w) / 2),
+				};
+				break;
+			case "top":
+				next = { ...r, y: box.top };
+				break;
+			case "bottom":
+				next = { ...r, y: box.bottom - r.h };
+				break;
+			case "centreY":
+				next = {
+					...r,
+					y: Math.round((box.top + box.bottom - r.h) / 2),
+				};
+				break;
+			case "matchWidth":
+				// Widened rather than narrowed, so matching never hides
+				// content that was visible before it.
+				next = { ...r, w: Math.min(widest, gridColumns - r.x) };
+				break;
+			case "matchHeight":
+				next = { ...r, h: tallest };
+				break;
+		}
+
+		// Alignment cannot push anything off the grid, whatever the arithmetic
+		// above worked out.
+		next = {
+			...next,
+			x: Math.max(0, Math.min(next.x, gridColumns - next.w)),
+		};
+		return sameRect(next, r) ? item : { ...item, rect: next };
+	});
+}
+
+// Spreads a selection so the gaps between its members are equal.
+//
+// The outermost two stay where they are, which is what makes this predictable:
+// an author sets the span by placing the ends, and distributing fills it. With
+// fewer than three there is no middle to move, so nothing happens.
+//
+// Gaps rather than centres. Equal centres on rectangles of different widths
+// leaves visibly uneven space between them, and space is what the eye reads.
+export function distributeRects<T extends { rect: Rect }>(
+	items: T[],
+	axis: "x" | "y",
+): T[] {
+	if (items.length < 3) return items;
+
+	const size = axis === "x" ? "w" : "h";
+	const sorted = [...items].sort((a, b) => a.rect[axis] - b.rect[axis]);
+
+	const first = sorted[0].rect;
+	const last = sorted[sorted.length - 1].rect;
+	const start = first[axis];
+	const end = last[axis] + last[size];
+	const occupied = sorted.reduce((sum, i) => sum + i.rect[size], 0);
+	const free = end - start - occupied;
+	// Overlapping already, so there is no free space to share out and any
+	// answer here would be an invention.
+	if (free < 0) return items;
+
+	const gap = free / (sorted.length - 1);
+
+	const moved = new Map<T, Rect>();
+	let at = start;
+	for (const item of sorted) {
+		const value = Math.round(at);
+		if (value !== item.rect[axis]) {
+			moved.set(item, { ...item.rect, [axis]: value });
+		}
+		at += item.rect[size] + gap;
+	}
+
+	return items.map((item) => {
+		const rect = moved.get(item);
+		return rect ? { ...item, rect } : item;
+	});
+}

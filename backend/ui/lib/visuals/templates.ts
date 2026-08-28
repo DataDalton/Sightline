@@ -309,6 +309,481 @@ export const pageTemplates: PageTemplate[] = [
 			},
 		],
 	},
+
+	{
+		key: "target",
+		label: "Against target",
+		blurb: "Whether each part of the business is on plan, worst first, with the gap spelled out underneath.",
+		slots: [
+			{
+				key: "by",
+				label: "One row each",
+				scope: "dimension",
+				required: true,
+				help: "What is being held to the target: a region, a team, a product line.",
+			},
+			{
+				key: "actual",
+				label: "What happened",
+				scope: "measure",
+				required: true,
+			},
+			{
+				key: "target",
+				label: "What was aimed for",
+				scope: "measure",
+				required: true,
+				help: "The plan, the budget or the quota, as a measure the source already carries.",
+			},
+		],
+		visuals: [
+			{
+				type: "kpiRow",
+				measures: ["{actual}", "{target}"],
+				layout: { x: 0, y: 0, w: 12, h: 2 },
+			},
+			{
+				type: "bulletChart",
+				title: "Against target",
+				dimensions: ["{by}"],
+				measures: ["{actual}", "{target}"],
+				options: { sortBy: "valueAsc", colourByTarget: true },
+				layout: { x: 0, y: 2, w: 12, h: 5 },
+			},
+			{
+				type: "table",
+				title: "The numbers",
+				dimensions: ["{by}"],
+				measures: ["{actual}", "{target}"],
+				options: { showTotals: true },
+				layout: { x: 0, y: 7, w: 12, h: 5 },
+			},
+		],
+	},
+
+	{
+		key: "comparison-period",
+		label: "This period against last",
+		blurb: "Every figure with its change since the same window a year ago, and the movers picked out.",
+		slots: [
+			{
+				key: "date",
+				label: "Date",
+				scope: "dimension",
+				role: "temporal",
+				required: true,
+				help: "The date the range filter applies to. The comparison moves this window back.",
+			},
+			{
+				key: "by",
+				label: "Compared across",
+				scope: "dimension",
+				required: true,
+			},
+			{
+				key: "measure",
+				label: "Figure",
+				scope: "measure",
+				required: true,
+			},
+		],
+		visuals: [
+			{
+				type: "dateRangeFilter",
+				dimensions: ["{date}"],
+				options: { defaultPreset: "12m" },
+				layout: { x: 0, y: 0, w: 4, h: 1 },
+			},
+			{
+				type: "kpiRow",
+				measures: ["{measure}"],
+				options: {
+					compareTo: "year",
+					compareField: "{date}",
+					sparkline: "{date}",
+				},
+				layout: { x: 0, y: 1, w: 12, h: 2 },
+			},
+			{
+				type: "slopeChart",
+				title: "What moved",
+				dimensions: ["{by}"],
+				measures: ["{measure}"],
+				options: { compareTo: "year", compareField: "{date}" },
+				layout: { x: 0, y: 3, w: 5, h: 6 },
+			},
+			{
+				type: "table",
+				title: "The numbers, with the change",
+				dimensions: ["{by}"],
+				measures: ["{measure}"],
+				options: {
+					compareTo: "year",
+					compareField: "{date}",
+					showTotals: true,
+				},
+				layout: { x: 5, y: 3, w: 7, h: 6 },
+			},
+		],
+	},
+
+	{
+		key: "ranking",
+		label: "The vital few",
+		blurb: "Which categories account for most of the total, and where the rest stops being worth chasing.",
+		slots: [
+			{
+				key: "by",
+				label: "Ranked",
+				scope: "dimension",
+				required: true,
+			},
+			{
+				key: "measure",
+				label: "Figure",
+				scope: "measure",
+				required: true,
+			},
+		],
+		visuals: [
+			{
+				type: "kpiRow",
+				measures: ["{measure}"],
+				layout: { x: 0, y: 0, w: 12, h: 2 },
+			},
+			{
+				type: "paretoChart",
+				title: "Where it comes from",
+				dimensions: ["{by}"],
+				measures: ["{measure}"],
+				options: { cutoff: 80 },
+				layout: { x: 0, y: 2, w: 7, h: 6 },
+			},
+			{
+				type: "horizontalBarChart",
+				title: "Top twenty",
+				dimensions: ["{by}"],
+				measures: ["{measure}"],
+				options: { topN: 20, sortBy: "valueDesc", valueLabels: true },
+				layout: { x: 7, y: 2, w: 5, h: 6 },
+			},
+			{
+				type: "table",
+				title: "All of it",
+				dimensions: ["{by}"],
+				measures: ["{measure}"],
+				options: { showTotals: true },
+				layout: { x: 0, y: 8, w: 12, h: 5 },
+			},
+		],
+	},
+
+	{
+		key: "distribution",
+		label: "How it is spread",
+		blurb: "The shape of a figure rather than its total, which is what an average hides.",
+		slots: [
+			{
+				key: "across",
+				label: "Measured across",
+				scope: "dimension",
+				required: true,
+				help: "The things the figure is spread over: customers, orders, products.",
+			},
+			{
+				key: "measure",
+				label: "Figure",
+				scope: "measure",
+				required: true,
+			},
+			{
+				key: "group",
+				label: "Split by",
+				scope: "dimension",
+				required: false,
+				help: "Optional. Draws a box for each value so the spreads can be compared.",
+			},
+		],
+		visuals: [
+			{
+				type: "kpiRow",
+				measures: ["{measure}"],
+				layout: { x: 0, y: 0, w: 12, h: 2 },
+			},
+			{
+				type: "histogramChart",
+				title: "The spread",
+				dimensions: ["{across}"],
+				measures: ["{measure}"],
+				layout: { x: 0, y: 2, w: 6, h: 5 },
+			},
+			{
+				type: "boxPlot",
+				title: "Middle half and outliers",
+				dimensions: ["{group}", "{across}"],
+				measures: ["{measure}"],
+				layout: { x: 6, y: 2, w: 6, h: 5 },
+			},
+		],
+	},
+
+	{
+		key: "activity",
+		label: "When it happens",
+		blurb: "A year of daily figures as a calendar, so weekday patterns and quiet spells are visible without anybody modelling them.",
+		slots: [
+			{
+				key: "date",
+				label: "Date",
+				scope: "dimension",
+				role: "temporal",
+				required: true,
+				help: "A daily date. A month or a quarter has too few cells to read as a calendar.",
+			},
+			{
+				key: "measure",
+				label: "Figure",
+				scope: "measure",
+				required: true,
+			},
+			{
+				key: "by",
+				label: "Split by",
+				scope: "dimension",
+				required: false,
+			},
+		],
+		visuals: [
+			{
+				type: "kpiRow",
+				measures: ["{measure}"],
+				layout: { x: 0, y: 0, w: 12, h: 2 },
+			},
+			{
+				type: "calendarChart",
+				title: "By day",
+				dimensions: ["{date}"],
+				measures: ["{measure}"],
+				layout: { x: 0, y: 2, w: 12, h: 4 },
+			},
+			{
+				type: "smallMultiples",
+				title: "Each one over time",
+				dimensions: ["{by}", "{date}"],
+				measures: ["{measure}"],
+				options: { columns: 3 },
+				layout: { x: 0, y: 6, w: 12, h: 5 },
+			},
+		],
+	},
+
+	{
+		key: "exception",
+		label: "Exceptions",
+		blurb: "Only the rows that clear a cutoff the reader sets, with the total of what is left.",
+		slots: [
+			{
+				key: "by",
+				label: "One row each",
+				scope: "dimension",
+				required: true,
+			},
+			{
+				key: "measure",
+				label: "Tested against the cutoff",
+				scope: "measure",
+				required: true,
+			},
+			{
+				key: "detail",
+				label: "Also shown",
+				scope: "measure",
+				required: false,
+			},
+		],
+		visuals: [
+			{
+				type: "thresholdControl",
+				dimensions: ["{by}"],
+				measures: ["{measure}"],
+				options: { direction: "above" },
+				layout: { x: 0, y: 0, w: 3, h: 1 },
+			},
+			{
+				type: "kpiRow",
+				measures: ["{measure}", "{detail}"],
+				layout: { x: 3, y: 0, w: 9, h: 2 },
+			},
+			{
+				type: "horizontalBarChart",
+				title: "What cleared it",
+				dimensions: ["{by}"],
+				measures: ["{measure}"],
+				options: { sortBy: "valueDesc", valueLabels: true, topN: 25 },
+				layout: { x: 0, y: 2, w: 6, h: 6 },
+			},
+			{
+				type: "table",
+				title: "The rows",
+				dimensions: ["{by}"],
+				measures: ["{measure}", "{detail}"],
+				options: { showTotals: true },
+				layout: { x: 6, y: 2, w: 6, h: 6 },
+			},
+		],
+	},
+
+	{
+		key: "flow",
+		label: "Flow between two things",
+		blurb: "How much moves from each thing on the left to each thing on the right.",
+		slots: [
+			{
+				key: "from",
+				label: "From",
+				scope: "dimension",
+				required: true,
+			},
+			{
+				key: "to",
+				label: "To",
+				scope: "dimension",
+				required: true,
+			},
+			{
+				key: "measure",
+				label: "How much flows",
+				scope: "measure",
+				required: true,
+			},
+		],
+		visuals: [
+			{
+				type: "kpiRow",
+				measures: ["{measure}"],
+				layout: { x: 0, y: 0, w: 12, h: 2 },
+			},
+			{
+				type: "sankeyChart",
+				title: "Where it goes",
+				dimensions: ["{from}", "{to}"],
+				measures: ["{measure}"],
+				layout: { x: 0, y: 2, w: 7, h: 6 },
+			},
+			{
+				type: "matrixTable",
+				title: "Crossed over",
+				dimensions: ["{from}", "{to}"],
+				measures: ["{measure}"],
+				options: { columnDimension: true },
+				layout: { x: 7, y: 2, w: 5, h: 6 },
+			},
+		],
+	},
+
+	{
+		key: "relationship",
+		label: "Whether two figures move together",
+		blurb: "One point per thing, with a third figure sizing it. For finding what is unusual rather than what is large.",
+		slots: [
+			{
+				key: "by",
+				label: "One point each",
+				scope: "dimension",
+				required: true,
+			},
+			{
+				key: "across",
+				label: "Across the bottom",
+				scope: "measure",
+				required: true,
+			},
+			{
+				key: "up",
+				label: "Up the side",
+				scope: "measure",
+				required: true,
+			},
+			{
+				key: "size",
+				label: "Point size",
+				scope: "measure",
+				required: false,
+			},
+		],
+		visuals: [
+			{
+				type: "scatterChart",
+				title: "Against each other",
+				dimensions: ["{by}"],
+				measures: ["{across}", "{up}", "{size}"],
+				layout: { x: 0, y: 0, w: 7, h: 6 },
+			},
+			{
+				type: "table",
+				title: "The numbers",
+				dimensions: ["{by}"],
+				measures: ["{across}", "{up}", "{size}"],
+				options: { showTotals: true },
+				layout: { x: 7, y: 0, w: 5, h: 6 },
+			},
+		],
+	},
+
+	{
+		key: "profile",
+		label: "One record",
+		blurb: "Everything about a single thing, found by searching for it. Uses the header and detail panels that a page about one customer needs and a table cannot give.",
+		slots: [
+			{
+				key: "identifier",
+				label: "Found by",
+				scope: "dimension",
+				required: true,
+				help: "What the reader searches for: an account number, a name, an order reference.",
+			},
+			{
+				key: "measure",
+				label: "Headline figure",
+				scope: "measure",
+				required: true,
+			},
+			{
+				key: "detail",
+				label: "Also shown",
+				scope: "dimension",
+				required: false,
+			},
+		],
+		visuals: [
+			{
+				type: "searchFilter",
+				dimensions: ["{identifier}"],
+				options: { placeholder: "Search" },
+				layout: { x: 0, y: 0, w: 4, h: 1 },
+			},
+			{
+				type: "entityHeader",
+				dimensions: ["{identifier}", "{detail}"],
+				measures: ["{measure}"],
+				layout: { x: 0, y: 1, w: 12, h: 2 },
+			},
+			{
+				type: "definitionList",
+				title: "Details",
+				dimensions: ["{identifier}", "{detail}"],
+				measures: ["{measure}"],
+				layout: { x: 0, y: 3, w: 5, h: 5 },
+			},
+			{
+				type: "table",
+				title: "Everything",
+				dimensions: ["{identifier}", "{detail}"],
+				measures: ["{measure}"],
+				layout: { x: 5, y: 3, w: 7, h: 5 },
+			},
+		],
+	},
 ];
 
 export const templateByKey: Record<string, PageTemplate> = Object.fromEntries(

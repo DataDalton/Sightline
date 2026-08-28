@@ -323,6 +323,291 @@ export function VisualThumbnail({ type, size = 40 }: ThumbnailProps) {
 					</>
 				);
 
+			case "timelineChart":
+				return (
+					<>
+						{[
+							{ y: 8, x: 6, w: 22 },
+							{ y: 16, x: 14, w: 26 },
+							{ y: 24, x: 26, w: 30 },
+						].map((span) => (
+							<rect
+								key={span.y}
+								x={span.x}
+								y={span.y}
+								width={span.w}
+								height="5"
+								fill={bar}
+								rx="2"
+							/>
+						))}
+					</>
+				);
+
+			case "calendarChart":
+				return (
+					<>
+						{Array.from({ length: 12 }, (_, wk) =>
+							Array.from({ length: 5 }, (_, day) => (
+								<rect
+									key={`${wk}-${day}`}
+									x={5 + wk * 4.6}
+									y={9 + day * 4.6}
+									width="3.6"
+									height="3.6"
+									fill={bar}
+									fillOpacity={
+										0.15 + ((wk * 3 + day * 5) % 7) / 8
+									}
+									rx="0.6"
+								/>
+							)),
+						)}
+					</>
+				);
+
+			case "choroplethChart":
+				return (
+					<>
+						<rect
+							x="4"
+							y="8"
+							width="56"
+							height="24"
+							fill={muted}
+							opacity="0.2"
+							rx="1"
+						/>
+						<path
+							d="M8 14 L18 11 L24 16 L20 24 L10 22 Z"
+							fill={bar}
+						/>
+						<path
+							d="M26 12 L38 10 L42 18 L32 24 L26 20 Z"
+							fill={bar}
+							fillOpacity="0.5"
+						/>
+						<path
+							d="M44 13 L56 12 L57 22 L46 25 Z"
+							fill={bar}
+							fillOpacity="0.8"
+						/>
+					</>
+				);
+
+			case "sankeyChart":
+				return (
+					<>
+						<path
+							d="M12 12 C32 12, 32 15, 52 15"
+							fill="none"
+							stroke={bar}
+							strokeOpacity="0.45"
+							strokeWidth="7"
+						/>
+						<path
+							d="M12 24 C32 24, 32 28, 52 28"
+							fill="none"
+							stroke={alt}
+							strokeOpacity="0.45"
+							strokeWidth="9"
+						/>
+						<path
+							d="M12 30 C32 30, 32 17, 52 17"
+							fill="none"
+							stroke={third}
+							strokeOpacity="0.35"
+							strokeWidth="4"
+						/>
+						<rect x="8" y="7" width="4" height="12" fill={bar} />
+						<rect x="8" y="21" width="4" height="12" fill={alt} />
+						<rect x="52" y="9" width="4" height="12" fill={bar} />
+						<rect x="52" y="23" width="4" height="10" fill={alt} />
+					</>
+				);
+
+			case "histogramChart":
+				return (
+					<>
+						{[6, 14, 24, 30, 22, 13, 7, 3].map((h, i) => (
+							<rect
+								key={i}
+								x={7 + i * 7}
+								y={34 - h}
+								width="6"
+								height={h}
+								fill={bar}
+							/>
+						))}
+					</>
+				);
+
+			case "boxPlot":
+				return (
+					<>
+						{[
+							{ x: 16, min: 5, q1: 12, med: 18, q3: 25, max: 33 },
+							{ x: 32, min: 9, q1: 15, med: 20, q3: 27, max: 31 },
+							{ x: 48, min: 3, q1: 10, med: 22, q3: 28, max: 36 },
+						].map((box) => (
+							<g key={box.x}>
+								<line
+									x1={box.x}
+									y1={box.min}
+									x2={box.x}
+									y2={box.max}
+									stroke={muted}
+								/>
+								<rect
+									x={box.x - 5}
+									y={box.q1}
+									width="10"
+									height={box.q3 - box.q1}
+									fill={bar}
+									fillOpacity="0.4"
+									stroke={bar}
+								/>
+								<line
+									x1={box.x - 5}
+									y1={box.med}
+									x2={box.x + 5}
+									y2={box.med}
+									stroke={third}
+									strokeWidth="1.6"
+								/>
+							</g>
+						))}
+					</>
+				);
+
+			case "paretoChart":
+				return (
+					<>
+						{[26, 19, 13, 9, 6, 4].map((h, i) => (
+							<rect
+								key={i}
+								x={8 + i * 9}
+								y={34 - h}
+								width="6"
+								height={h}
+								fill={bar}
+								rx="1"
+							/>
+						))}
+						<polyline
+							points="11,24 20,17 29,12 38,9 47,7 56,6"
+							fill="none"
+							stroke={third}
+							strokeWidth="1.6"
+						/>
+					</>
+				);
+
+			case "slopeChart":
+				return (
+					<>
+						{[
+							{ then: 30, now: 10, up: true },
+							{ then: 20, now: 24, up: false },
+							{ then: 12, now: 30, up: false },
+						].map((pair) => (
+							<g key={pair.then}>
+								<line
+									x1="14"
+									y1={pair.then}
+									x2="50"
+									y2={pair.now}
+									stroke={pair.up ? bar : alt}
+									strokeWidth="1.6"
+								/>
+								<circle
+									cx="14"
+									cy={pair.then}
+									r="2.2"
+									fill={pair.up ? bar : alt}
+								/>
+								<circle
+									cx="50"
+									cy={pair.now}
+									r="2.2"
+									fill={pair.up ? bar : alt}
+								/>
+							</g>
+						))}
+					</>
+				);
+
+			case "bulletChart":
+				return (
+					<>
+						{[
+							{ y: 8, actual: 40, target: 32 },
+							{ y: 18, actual: 22, target: 34 },
+							{ y: 28, actual: 33, target: 26 },
+						].map((row) => (
+							<g key={row.y}>
+								<rect
+									x="8"
+									y={row.y}
+									width="46"
+									height="5"
+									fill={muted}
+									opacity="0.35"
+									rx="1"
+								/>
+								<rect
+									x="8"
+									y={row.y}
+									width={row.actual}
+									height="5"
+									fill={row.actual >= row.target ? bar : alt}
+									rx="1"
+								/>
+								<rect
+									x={8 + row.target}
+									y={row.y - 2}
+									width="1.5"
+									height="9"
+									fill={muted}
+								/>
+							</g>
+						))}
+					</>
+				);
+
+			case "smallMultiples":
+				return (
+					<>
+						{[
+							{ x: 5, y: 6, pts: "0,10 5,7 10,8 15,3" },
+							{ x: 24, y: 6, pts: "0,4 5,6 10,5 15,9" },
+							{ x: 43, y: 6, pts: "0,9 5,6 10,4 15,2" },
+							{ x: 5, y: 24, pts: "0,6 5,8 10,5 15,7" },
+							{ x: 24, y: 24, pts: "0,3 5,5 10,8 15,10" },
+							{ x: 43, y: 24, pts: "0,8 5,5 10,6 15,4" },
+						].map((panel) => (
+							<g
+								key={`${panel.x}-${panel.y}`}
+								transform={`translate(${panel.x} ${panel.y})`}
+							>
+								<rect
+									width="16"
+									height="11"
+									fill={muted}
+									opacity="0.15"
+									rx="1"
+								/>
+								<polyline
+									points={panel.pts}
+									fill="none"
+									stroke={bar}
+									strokeWidth="1.2"
+								/>
+							</g>
+						))}
+					</>
+				);
+
 			case "waterfallChart":
 				return (
 					<>

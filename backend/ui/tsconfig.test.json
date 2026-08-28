@@ -22,6 +22,10 @@
 		"lib/query/csv.ts",
 		"lib/query/csv.test.ts",
 		"lib/query/exportLimits.ts",
+		"lib/query/compare.ts",
+		"lib/query/compare.test.ts",
+		"lib/query/transform.ts",
+		"lib/query/transform.test.ts",
 		"lib/visuals/catalog.ts",
 		"lib/visuals/templates.ts",
 		"lib/visuals/templates.test.ts",
@@ -71,6 +75,18 @@
 		"lib/visuals/undo.ts",
 		"lib/visuals/undo.test.ts",
 		"lib/visuals/applyOps.ts",
-		"lib/visuals/applyOps.test.ts"
+		"lib/visuals/applyOps.test.ts",
+		"lib/visuals/filterWidgets.ts",
+		"lib/visuals/filterWidgets.test.ts",
+		"lib/visuals/shareState.ts",
+		"lib/visuals/shareState.test.ts",
+		"lib/visuals/chartSummary.ts",
+		"lib/visuals/chartSummary.test.ts",
+		"lib/visuals/distribution.ts",
+		"lib/visuals/distribution.test.ts",
+		"lib/visuals/presets.ts",
+		"lib/visuals/presets.test.ts",
+		"lib/visuals/countryNames.ts",
+		"lib/visuals/countryNames.test.ts"
 	]
 }

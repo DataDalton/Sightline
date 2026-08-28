@@ -9,6 +9,7 @@ import {
 } from "../../lib/visuals/catalog";
 import {
 	paletteTokens,
+	palettePresets,
 	type ColorSpec,
 	type PaletteToken,
 	type VisualStyle,
@@ -16,6 +17,10 @@ import {
 import { readThemeColors } from "../visuals/colors";
 import { resolveKpiGroups, type KpiGroup } from "../../lib/visuals/kpiGroups";
 import { ConditionsEditor } from "./ConditionsEditor";
+import { ReferenceLinesEditor } from "./ReferenceLinesEditor";
+import { DerivedFigures } from "./DerivedFigures";
+import { chartTypes, gridTypes } from "../../lib/query/visualSpec";
+import type { QueryTransform } from "../../lib/query/transform";
 import { Select } from "../components/shared/Select";
 import { Toggle } from "../components/shared/Toggle";
 import { HistoryPanel } from "./HistoryPanel";
@@ -23,7 +28,7 @@ import { PageSettings } from "./PageSettings";
 import { Check, FieldList } from "./FieldList";
 import { Hint, Section, SectionGroup } from "./PanelSection";
 import type { PageConfig } from "./ReportEditor";
-import type { SourceMeta } from "../visuals/types";
+import { isTemporalField, type SourceMeta } from "../visuals/types";
 import type { EditableVisual } from "./types";
 import styles from "./Editor.module.css";
 
@@ -45,6 +50,7 @@ interface PropertiesPanelProps {
 	source: SourceMeta | undefined;
 	onChange: (next: EditableVisual) => void;
 	onRemove: (visualId: string) => void;
+	onDuplicate: () => void;
 	// Back to the page without hunting for a bare patch of canvas to click.
 	onDeselect: () => void;
 	// The page is locked against changes. The panel still opens, because
@@ -118,6 +124,7 @@ export function PropertiesPanel({
 	source,
 	onChange,
 	onRemove,
+	onDuplicate,
 	onDeselect,
 	readOnly = false,
 	groups,
@@ -238,6 +245,45 @@ export function PropertiesPanel({
 	const updateStyle = (patch: Partial<VisualStyle>) =>
 		updateConfig({ style: { ...style, ...patch } });
 
+	// Changing the type keeps the fields, trimmed to what the new type takes.
+	//
+	// Kept, because the fields are usually the reason for the change: the same
+	// figures drawn a different way, and clearing them would mean choosing
+	// every one again. Trimmed, because a type holding more than its encoding
+	// allows renders a refusal instead of a chart, and the author is then left
+	// working out which field to take off.
+	//
+	// One call rather than a type change followed by a field change. Both
+	// helpers build their patch from the visual as it stands, so the second
+	// would be written against the state before the first and discard it.
+	const changeType = (nextType: string) => {
+		const next = visualByType[nextType];
+		if (!next) {
+			return { droppedDimensions: 0, droppedMeasures: 0 };
+		}
+
+		const keptDimensions = dimensions.slice(
+			0,
+			next.encoding.dimensions.max,
+		);
+		const keptMeasures = measures.slice(0, next.encoding.measures.max);
+
+		onChange({
+			...visual,
+			visualType: nextType,
+			config: {
+				...visual.config,
+				dimensions: keptDimensions,
+				measures: keptMeasures,
+			},
+		});
+
+		return {
+			droppedDimensions: dimensions.length - keptDimensions.length,
+			droppedMeasures: measures.length - keptMeasures.length,
+		};
+	};
+
 	return (
 		<div className={styles.panel}>
 			<div className={styles.panelHead}>
@@ -296,12 +342,15 @@ export function PropertiesPanel({
 							setFieldSearch={setFieldSearch}
 							update={update}
 							updateConfig={updateConfig}
+							changeType={changeType}
+							onDuplicate={onDuplicate}
 							onRemove={onRemove}
 						/>
 					) : (
 						<FormatTab
 							visual={visual}
 							definition={definition}
+							source={source}
 							dimensions={dimensions}
 							measures={measures}
 							groups={groups}
@@ -327,6 +376,8 @@ function DataTab({
 	setFieldSearch,
 	update,
 	updateConfig,
+	changeType,
+	onDuplicate,
 	onRemove,
 }: {
 	visual: EditableVisual;
@@ -339,11 +390,26 @@ function DataTab({
 	setFieldSearch: (v: string) => void;
 	update: (patch: Partial<EditableVisual>) => void;
 	updateConfig: (patch: Record<string, unknown>) => void;
+	changeType: (nextType: string) => {
+		droppedDimensions: number;
+		droppedMeasures: number;
+	};
+	onDuplicate: () => void;
 	onRemove: (visualId: string) => void;
 }) {
 	const problem = checkEncoding(visual.visualType, dimensions, measures);
 
+	// What the last type change had to take off, so the author is told rather
+	// than left to notice. Cleared as soon as they change anything about the
+	// encoding themselves, since by then it is describing a state that has
+	// moved on.
+	const [trimmed, setTrimmed] = useState<{
+		dimensions: number;
+		measures: number;
+	} | null>(null);
+
 	const toggle = (name: string, kind: "dimensions" | "measures") => {
+		setTrimmed(null);
 		const current = kind === "dimensions" ? dimensions : measures;
 		const next = current.includes(name)
 			? current.filter((f) => f !== name)
@@ -358,6 +424,7 @@ function DataTab({
 	) => {
 		const current = [...(kind === "dimensions" ? dimensions : measures)];
 		if (to < 0 || to >= current.length) return;
+		setTrimmed(null);
 		const [moved] = current.splice(from, 1);
 		current.splice(to, 0, moved);
 		updateConfig({ [kind]: current });
@@ -418,13 +485,30 @@ function DataTab({
 					<Select
 						id="visual-type"
 						value={visual.visualType}
-						onChange={(v) => update({ visualType: v })}
+						onChange={(v) => {
+							const result = changeType(v);
+							setTrimmed(
+								result.droppedDimensions ||
+									result.droppedMeasures
+									? {
+											dimensions:
+												result.droppedDimensions,
+											measures: result.droppedMeasures,
+										}
+									: null,
+							);
+						}}
 						searchable
 						options={Object.values(visualByType).map((d) => ({
 							value: d.type,
 							label: d.label,
 						}))}
 					/>
+					{trimmed && (
+						<Hint>
+							{describeTrim(trimmed)} The rest carried over.
+						</Hint>
+					)}
 				</div>
 
 				{/* Which group holds this, for the times dragging it there is
@@ -563,6 +647,35 @@ function DataTab({
 				</Section>
 			)}
 
+			{/* Only where the answer is a set of rows to work across. A
+			    scorecard is one row, so a running total or a rank over it
+			    would be a column of one. */}
+			{(chartTypes.has(visual.visualType) ||
+				gridTypes.has(visual.visualType)) && (
+				<DerivedFigures
+					transforms={
+						(visual.config.transforms as QueryTransform[]) ?? []
+					}
+					available={[...dimensions, ...measures]}
+					onChange={(next) => updateConfig({ transforms: next })}
+				/>
+			)}
+
+			<Section id="visual-copy" title="Copy">
+				<Hint>
+					A copy lands beside this one with the same fields, options
+					and formatting, ready to be pointed somewhere else. Ctrl+C
+					and Ctrl+V move one between pages and reports.
+				</Hint>
+				<button
+					type="button"
+					className={styles.panelButton}
+					onClick={onDuplicate}
+				>
+					Duplicate visual
+				</button>
+			</Section>
+
 			{/* Set apart rather than stacked with the settings, and matching
 			    the delete control on the Report tab, so the one thing in the
 			    panel that cannot be undone looks the same wherever it is. */}
@@ -594,6 +707,7 @@ function DataTab({
 function VisualOptions({
 	visual,
 	definition,
+	source,
 	dimensions,
 	measures,
 	groups,
@@ -601,6 +715,9 @@ function VisualOptions({
 }: {
 	visual: EditableVisual;
 	definition: VisualTypeDefinition;
+	// Needed by any option whose choices come from the source rather than from
+	// what the visual already encodes.
+	source: SourceMeta | undefined;
 	dimensions: string[];
 	measures: string[];
 	groups: GroupChoice[];
@@ -739,10 +856,28 @@ function VisualOptions({
 					);
 				}
 
-				// A field the visual already reads, so the list is what the
-				// author has encoded rather than everything the source offers.
+				// Where the choices come from, and what they are narrowed to.
+				//
+				// Encoded by default, which is right for a setting about
+				// something already on the visual. A setting about the page
+				// asks the source instead: a scorecard encodes no dimensions,
+				// so an encoded list would be empty and the setting could
+				// never be given a value.
+				const fromSource = option.from === "source";
+				const pool: string[] = fromSource
+					? (
+							(option.scope === "measure"
+								? source?.measures
+								: source?.dimensions) ?? []
+						).map((f) => f.name)
+					: option.scope === "measure"
+						? measures
+						: dimensions;
+
 				const choices =
-					option.scope === "measure" ? measures : dimensions;
+					option.role === "temporal" && fromSource
+						? pool.filter((name) => isTemporalField(source, name))
+						: pool;
 				return (
 					<div key={option.key} className={styles.field}>
 						<label className={styles.fieldLabel}>
@@ -763,6 +898,12 @@ function VisualOptions({
 								})),
 							]}
 						/>
+						{choices.length === 0 && (
+							<Hint>
+								This source has no field of that kind, so there
+								is nothing to choose.
+							</Hint>
+						)}
 						{option.help && <Hint>{option.help}</Hint>}
 					</div>
 				);
@@ -910,6 +1051,7 @@ function MeasureBands({
 function FormatTab({
 	visual,
 	definition,
+	source,
 	dimensions,
 	measures,
 	groups,
@@ -919,6 +1061,9 @@ function FormatTab({
 }: {
 	visual: EditableVisual;
 	definition: VisualTypeDefinition;
+	// Passed through to the option controls, for any whose choices come from
+	// the source rather than from what the visual encodes.
+	source: SourceMeta | undefined;
 	dimensions: string[];
 	measures: string[];
 	groups: GroupChoice[];
@@ -987,6 +1132,7 @@ function FormatTab({
 			<VisualOptions
 				visual={visual}
 				definition={definition}
+				source={source}
 				dimensions={dimensions}
 				measures={measures}
 				groups={groups}
@@ -1013,6 +1159,60 @@ function FormatTab({
 									label: m,
 								}))}
 							/>
+						</div>
+					)}
+
+					{/* A named set for the whole chart, above the per-series
+					    colour. Choosing a set is the decision an author
+					    actually makes; the swatch below is for the one series
+					    that has to be different from the rest. */}
+					{measures.length > 1 && (
+						<div className={styles.field}>
+							<span className={styles.fieldLabel}>
+								Series colours
+							</span>
+							<div className={styles.swatchGrid}>
+								{palettePresets.map((preset) => {
+									const on =
+										JSON.stringify(style.palette ?? []) ===
+										JSON.stringify(preset.tokens);
+									const stops = preset.tokens
+										.map(
+											(token, i) =>
+												`var(--${token}) ${(i / preset.tokens.length) * 100}%, var(--${token}) ${((i + 1) / preset.tokens.length) * 100}%`,
+										)
+										.join(", ");
+									return (
+										<button
+											key={preset.id}
+											type="button"
+											className={styles.markerButton}
+											aria-pressed={on}
+											aria-label={preset.label}
+											title={preset.note ?? preset.label}
+											onClick={() =>
+												updateStyle({
+													palette: preset.tokens,
+												})
+											}
+											style={{
+												background: `linear-gradient(90deg, ${stops})`,
+												outline: on
+													? "2px solid var(--brand)"
+													: undefined,
+											}}
+										/>
+									);
+								})}
+							</div>
+							<Hint>
+								{palettePresets.find(
+									(preset) =>
+										JSON.stringify(style.palette ?? []) ===
+										JSON.stringify(preset.tokens),
+								)?.note ??
+									"Colours are taken by series position, so a chart keeps its colours as measures are added."}
+							</Hint>
 						</div>
 					)}
 
@@ -1369,6 +1569,23 @@ function FormatTab({
 				</Section>
 			)}
 
+			{supports.referenceLines && (
+				<ReferenceLinesEditor
+					style={style}
+					measures={measures}
+					// The second scale only exists once a series has been put
+					// on it, so asking which one a line reads against before
+					// then is a question with one answer.
+					hasRightAxis={Boolean(
+						supports.secondAxis &&
+						(style.series ?? []).some(
+							(entry) => entry.axis === "right",
+						),
+					)}
+					onChange={updateStyle}
+				/>
+			)}
+
 			{supports.conditionalFormat && (
 				<ConditionsEditor
 					style={style}
@@ -1384,4 +1601,28 @@ function FormatTab({
 			)}
 		</>
 	);
+}
+
+// What a type change had to take off, said as a sentence rather than as two
+// counts. Only ever called with at least one of them above zero.
+function describeTrim(trimmed: {
+	dimensions: number;
+	measures: number;
+}): string {
+	const parts: string[] = [];
+	if (trimmed.dimensions > 0) {
+		parts.push(
+			trimmed.dimensions === 1
+				? "1 dimension"
+				: `${trimmed.dimensions} dimensions`,
+		);
+	}
+	if (trimmed.measures > 0) {
+		parts.push(
+			trimmed.measures === 1
+				? "1 measure"
+				: `${trimmed.measures} measures`,
+		);
+	}
+	return `This type takes fewer fields, so ${parts.join(" and ")} came off.`;
 }

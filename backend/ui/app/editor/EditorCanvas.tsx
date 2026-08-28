@@ -105,8 +105,11 @@ interface EditorCanvasProps {
 	visuals: EditableVisual[];
 	sources: Record<string, SourceMeta>;
 	selectedId: string | null;
+	// Everything selected, anchor included. The anchor is the one the
+	// properties panel is about; the rest are along for an alignment.
+	selectedIds: string[];
 	zoom: number;
-	onSelect: (visualId: string | null) => void;
+	onSelect: (visualId: string | null, additive?: boolean) => void;
 	onLayoutChange: (visualId: string, rect: Rect) => void;
 	// Reported so the editor can protect a visual from remote edits while a
 	// gesture on it is in progress.
@@ -147,6 +150,7 @@ export function EditorCanvas({
 	visuals,
 	sources,
 	selectedId,
+	selectedIds,
 	zoom,
 	onSelect,
 	onLayoutChange,
@@ -410,6 +414,7 @@ export function EditorCanvas({
 	const itemContext: ItemContext = {
 		readOnly,
 		selectedId,
+		selectedIds,
 		sources,
 		draggingId: state?.id ?? null,
 		dropTargetId,
@@ -598,13 +603,14 @@ export function EditorCanvas({
 interface ItemContext {
 	readOnly: boolean;
 	selectedId: string | null;
+	selectedIds: string[];
 	sources: Record<string, SourceMeta>;
 	draggingId: string | null;
 	// The group a visual being dragged would land in if released now.
 	dropTargetId: string | null;
 	childrenOf: Map<string, EditableVisual[]>;
 	remoteSelections?: Map<string, string>;
-	onSelect: (visualId: string | null) => void;
+	onSelect: (visualId: string | null, additive?: boolean) => void;
 	onContentChange?: (visualId: string, html: string) => void;
 	startGesture: (
 		event: React.PointerEvent,
@@ -645,6 +651,10 @@ function CanvasItem({
 	ctx: ItemContext;
 }) {
 	const isSelected = ctx.selectedId === visual.visualId;
+	// Along for an alignment rather than the subject of the panel, so it is
+	// outlined but not treated as the thing being edited.
+	const inSelection =
+		!isSelected && ctx.selectedIds.includes(visual.visualId);
 	const isDragging = ctx.draggingId === visual.visualId;
 	const isGroup = visual.visualType === "group";
 	const isDropTarget = ctx.dropTargetId === visual.visualId;
@@ -662,8 +672,8 @@ function CanvasItem({
 	return (
 		<div
 			className={`${styles.item} ${isSelected ? styles.itemSelected : ""} ${
-				isDragging ? styles.itemDragging : ""
-			} ${editingText || ctx.readOnly ? "" : styles.itemDraggable} ${
+				inSelection ? styles.itemCoSelected : ""
+			} ${isDragging ? styles.itemDragging : ""} ${editingText || ctx.readOnly ? "" : styles.itemDraggable} ${
 				isDropTarget ? styles.itemDropTarget : ""
 			}`}
 			style={{
@@ -673,8 +683,13 @@ function CanvasItem({
 				height: pixels.height,
 			}}
 			onPointerDown={(e) => {
-				ctx.onSelect(visual.visualId);
-				if (!editingText) {
+				// Holding a modifier adds to the selection rather than
+				// replacing it, and starts no drag: the press is about
+				// choosing what to align, and moving one member out of a
+				// group of four is the opposite of what was asked for.
+				const additive = e.shiftKey || e.metaKey || e.ctrlKey;
+				ctx.onSelect(visual.visualId, additive);
+				if (!editingText && !additive) {
 					ctx.startGesture(e, "move", visual.visualId, rect, metrics);
 				}
 			}}
@@ -868,7 +883,7 @@ function ControlSlot({
 	selectedId: string | null;
 	sources: Record<string, SourceMeta>;
 	remoteBy: string | undefined;
-	onSelect: (visualId: string | null) => void;
+	onSelect: (visualId: string | null, additive?: boolean) => void;
 	onMoveControl?: (visualId: string, delta: -1 | 1) => void;
 }) {
 	const isSelected = selectedId === visual.visualId;

@@ -5,11 +5,13 @@ import { createPortal } from "react-dom";
 import {
 	categoryLabels,
 	categoryOrder,
+	visualByType,
 	visualCatalog,
 	type VisualCategory,
 	type VisualTypeDefinition,
 } from "../../lib/visuals/catalog";
 import { VisualThumbnail } from "./VisualThumbnail";
+import { visualPresets, type VisualPreset } from "../../lib/visuals/presets";
 import { VisualPreview } from "./VisualPreview";
 import styles from "./VisualPicker.module.css";
 
@@ -26,7 +28,9 @@ import styles from "./VisualPicker.module.css";
 
 interface VisualPickerProps {
 	open: boolean;
-	onPick: (type: string) => void;
+	// A preset carries its own settings and formatting, so the picker hands
+	// back the whole thing rather than only a type name.
+	onPick: (type: string, preset?: VisualPreset) => void;
 	onClose: () => void;
 	// Which category to open at. Set when the picker is reached from something
 	// that already knows what kind of thing is wanted, such as the filter
@@ -44,7 +48,10 @@ export function VisualPicker({
 	const [category, setCategory] = useState<VisualCategory | "all">(
 		initialCategory ?? "all",
 	);
-	const [hovered, setHovered] = useState<VisualTypeDefinition | null>(null);
+	const [hovered, setHovered] = useState<{
+		definition: VisualTypeDefinition;
+		preset: VisualPreset | null;
+	} | null>(null);
 	// Viewport coordinates of the preview, measured from the card it belongs
 	// to. Portalled and fixed, so the dialog cannot clip a preview anchored to
 	// a card in the last row.
@@ -100,8 +107,12 @@ export function VisualPicker({
 	}, []);
 
 	const show = useCallback(
-		(definition: VisualTypeDefinition, element: HTMLElement) => {
-			setHovered(definition);
+		(
+			definition: VisualTypeDefinition,
+			element: HTMLElement,
+			preset: VisualPreset | null = null,
+		) => {
+			setHovered({ definition, preset });
 			place(element);
 		},
 		[place],
@@ -206,6 +217,77 @@ export function VisualPicker({
 				</div>
 
 				<div className={styles.body}>
+					{/* Starting points, above the bare types.
+
+					    An author reaching for a bar chart almost always wants
+					    one of a handful of arrangements, and building each of
+					    them meant setting the same four settings by hand every
+					    time. Offered here because this is the moment they are
+					    already deciding what to place. */}
+					{search.trim() === "" && category === "all" && (
+						<section className={styles.group}>
+							<h3 className={styles.groupTitle}>
+								Ready to place
+							</h3>
+							<div className={styles.grid}>
+								{visualPresets.map((preset) => (
+									<button
+										key={preset.key}
+										type="button"
+										className={styles.card}
+										onClick={() =>
+											onPick(preset.visualType, preset)
+										}
+										onMouseEnter={(e) => {
+											const definition =
+												visualByType[preset.visualType];
+											if (definition) {
+												show(
+													definition,
+													e.currentTarget,
+													preset,
+												);
+											}
+										}}
+										onFocus={(e) => {
+											const definition =
+												visualByType[preset.visualType];
+											if (definition) {
+												show(
+													definition,
+													e.currentTarget,
+													preset,
+												);
+											}
+										}}
+										onMouseLeave={() => {
+											setHovered(null);
+											setPreviewAt(null);
+										}}
+									>
+										{/* No title attribute, matching the
+										    type cards beside these. The
+										    preview panel is what explains a
+										    card, and a native tooltip appears
+										    over the top of it and covers the
+										    thing it was meant to explain. The
+										    label below names the card for a
+										    screen reader. */}
+										<span className={styles.preview}>
+											<VisualThumbnail
+												type={preset.visualType}
+												size={52}
+											/>
+										</span>
+										<span className={styles.cardLabel}>
+											{preset.label}
+										</span>
+									</button>
+								))}
+							</div>
+						</section>
+					)}
+
 					{total === 0 ? (
 						<div className={styles.empty}>
 							Nothing matches &quot;{search}&quot;.
@@ -276,7 +358,11 @@ export function VisualPicker({
 			{hovered &&
 				previewAt &&
 				createPortal(
-					<VisualPreview definition={hovered} box={previewAt} />,
+					<VisualPreview
+						definition={hovered.definition}
+						preset={hovered.preset}
+						box={previewAt}
+					/>,
 					document.body,
 				)}
 		</div>

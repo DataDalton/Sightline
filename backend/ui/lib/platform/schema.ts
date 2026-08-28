@@ -606,6 +606,38 @@ const statements: string[] = [
 
 	`CREATE INDEX IF NOT EXISTS favourites_user_idx
 		ON favourites (user_email, created_on DESC)`,
+
+	// --- Commentary --------------------------------------------------------
+
+	// A note somebody pinned to a visual.
+	//
+	// "The dip in March was the system migration" is the context that makes a
+	// figure readable, and it lived in email, so the same question came back
+	// every quarter and whoever answered it last was not the one being asked.
+	//
+	// Attached to the visual rather than to the report, because that is the
+	// grain the question is asked at, and carrying an optional date so a note
+	// about one point can say which point.
+	//
+	// No foreign key to report_visuals. A visual is replaced rather than
+	// updated when a version is restored, and a cascade would delete the
+	// commentary along with it. An orphan note is swept rather than lost.
+	`CREATE TABLE IF NOT EXISTS visual_notes (
+		note_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		report_id   UUID NOT NULL REFERENCES reports(report_id) ON DELETE CASCADE,
+		page_id     UUID NOT NULL,
+		visual_id   UUID NOT NULL,
+		author_email TEXT NOT NULL,
+		body        TEXT NOT NULL,
+		anchored_on DATE,
+		created_on  TIMESTAMPTZ NOT NULL DEFAULT now(),
+		updated_on  TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
+	// Read a page at a time, which is how the reader loads them: every note on
+	// every visual of the page they just opened, in one query.
+	`CREATE INDEX IF NOT EXISTS visual_notes_page_idx
+		ON visual_notes (page_id, visual_id, created_on)`,
 ];
 
 // Columns added after the initial schema shipped. CREATE TABLE IF NOT EXISTS

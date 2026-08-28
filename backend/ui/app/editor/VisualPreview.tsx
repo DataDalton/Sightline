@@ -1,6 +1,7 @@
 "use client";
 
 import { VisualRender } from "./VisualRender";
+import { describePreset, type VisualPreset } from "../../lib/visuals/presets";
 import {
 	behaviourCaptions,
 	behaviourFor,
@@ -22,14 +23,24 @@ import styles from "./VisualPreview.module.css";
 
 export function VisualPreview({
 	definition,
+	preset,
 	box,
 }: {
 	definition: VisualTypeDefinition;
+	// The starting point a card offers, when the card is one.
+	//
+	// A preset shows its own name and its own line over the drawing and the
+	// behaviour of the type it produces, because those are the type's rather
+	// than the preset's. What it adds is the list of what it sets: a static
+	// drawing of a bar chart cannot show that this one keeps the top ten and
+	// prints its values, so the settings are named instead.
+	preset?: VisualPreset | null;
 	// Viewport coordinates, so nothing above it can clip it and it stays put
 	// against the card it belongs to.
 	box: { left: number; top: number };
 }) {
 	const { dimensions: d, measures: m } = definition.encoding;
+	const carries = preset ? describePreset(preset) : [];
 
 	return (
 		<div
@@ -41,11 +52,26 @@ export function VisualPreview({
 			    is the frame every visual gets, so a preview without one is a
 			    preview of something narrower than what gets added. */}
 			<div className={styles.card}>
-				<span className={styles.cardTitle}>{definition.label}</span>
+				<span className={styles.cardTitle}>
+					{preset?.label ?? definition.label}
+				</span>
 				<VisualRender type={definition.type} />
 			</div>
 
-			<p className={styles.guidance}>{definition.guidance}</p>
+			<p className={styles.guidance}>
+				{preset?.blurb ?? definition.guidance}
+			</p>
+
+			{/* What the preset sets, which the drawing above cannot show. */}
+			{carries.length > 0 && (
+				<div className={styles.needs}>
+					{carries.map((said) => (
+						<span key={said} className={styles.need}>
+							{said}
+						</span>
+					))}
+				</div>
+			)}
 			{/* What a reader can do with it, which is not visible in a picture
 			    of it: a bar chart and a pie chart both narrow the page when a
 			    mark is clicked, a line chart is brushed instead, and a KPI row

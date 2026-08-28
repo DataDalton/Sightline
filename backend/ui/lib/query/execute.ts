@@ -1,6 +1,7 @@
 import type { Identity } from "../auth/identity";
 import { resolvePolicyClass, type PolicyClass } from "../auth/policy";
 import { queryAsUser } from "../data/userSession";
+import { applyTransforms } from "./transform";
 import { isDatabricksApp } from "../runtime";
 import { getSource } from "../semantic/registry";
 import type { SemanticSource } from "../semantic/types";
@@ -191,20 +192,26 @@ async function runAndCache(
 		);
 	}
 
+	// Derived figures are worked out here, before the answer is stored, so a
+	// cache hit serves them alongside everything else and costs nothing. They
+	// are part of the key, so an answer computed with them is never handed to
+	// a request that asked without them.
+	const derived = applyTransforms(rows, compiled.columns, spec.transforms);
+
 	// Stored only when it may be reused. Writing an answer computed for one
 	// reader while the class is not known to be complete would hand it to the
 	// next reader the moment the walk finished.
 	if (!isShareable(source)) {
 		return {
-			rows,
-			columns: compiled.columns,
-			rowCount: rows.length,
+			rows: derived.rows,
+			columns: derived.columns,
+			rowCount: derived.rows.length,
 			computedAt: Date.now(),
 			expiresAt: Date.now(),
 		};
 	}
 
-	return cacheSet(key, policy, source, rows, compiled.columns);
+	return cacheSet(key, policy, source, derived.rows, derived.columns);
 }
 
 // --- Several queries at once ------------------------------------------------

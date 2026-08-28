@@ -4,8 +4,20 @@ import {
 	toNumber,
 	type FormatHint,
 } from "../../lib/format";
-import { styleForMeasure, type VisualStyle } from "../../lib/visuals/style";
+import {
+	referenceValue,
+	styleForMeasure,
+	type VisualStyle,
+} from "../../lib/visuals/style";
 import { withAlpha, type ThemeColors } from "./colors";
+import { paretoCumulative } from "../../lib/query/visualSpec";
+import {
+	binValues,
+	fiveNumber,
+	type FiveNumber,
+} from "../../lib/visuals/distribution";
+import { matchCountry } from "../../lib/visuals/countryNames";
+import { worldMapName } from "./worldMap";
 
 // Builds the ECharts option for each visual type.
 //
@@ -15,6 +27,10 @@ import { withAlpha, type ThemeColors } from "./colors";
 
 export interface ChartContext {
 	rows: Record<string, unknown>[];
+	// The same rows for an earlier window, for the types that draw a change
+	// rather than a level. Null means no comparison was asked for, which is a
+	// different thing from one that was asked for and came back empty.
+	comparisonRows?: Record<string, unknown>[] | null;
 	dimensions: string[];
 	measures: string[];
 	colors: ThemeColors;
@@ -145,6 +161,111 @@ function categoryAxis(ctx: ChartContext, categories: string[]) {
 }
 
 const baseGrid = { left: 8, right: 16, top: 30, bottom: 8, containLabel: true };
+
+// A window onto a long series, when the author has asked for one.
+//
+// Off unless asked for. A slider under every chart is furniture on the ninety
+// percent of them that plot twelve months, and it costs vertical space on a
+// tile that has none to give.
+//
+// Two controls rather than one, because they suit different hands: the slider
+// is the discoverable one and the wheel is the fast one, and both drive the
+// same window so they cannot disagree.
+//
+// This is a view of the same rows rather than a new query. Nothing is fetched,
+// so the window moves at the speed of a repaint and narrowing it never costs a
+// warehouse round trip.
+function zoomWindow(ctx: ChartContext, axisIndex: 0 | 1) {
+	if (ctx.options?.zoomSlider !== true) return undefined;
+
+	const on = axisIndex === 0 ? { xAxisIndex: 0 } : { yAxisIndex: 0 };
+	return [
+		{
+			type: "slider" as const,
+			...on,
+			height: 18,
+			bottom: 4,
+			borderColor: ctx.colors.grid,
+			fillerColor: withAlpha(ctx.colors.series[0], 0.12),
+			handleStyle: { color: ctx.colors.axis },
+			textStyle: { color: ctx.colors.textMuted, fontSize: 10 },
+		},
+		{ type: "inside" as const, ...on },
+	];
+}
+
+// The lines an author asked to be drawn across the plot.
+//
+// Attached to one series rather than to each, because a reference is a property
+// of the chart and drawing it per series would stack four identical lines on
+// top of each other and label the plot four times.
+//
+// A line that cannot be placed is left out rather than drawn at zero. The whole
+// value of a target line is that its position is a fact, and one at a position
+// nobody chose is read as a fact too.
+function referenceMarkLine(
+	ctx: ChartContext,
+	orientation: "vertical" | "horizontal" = "vertical",
+) {
+	const lines = ctx.style?.referenceLines ?? [];
+	if (lines.length === 0) return undefined;
+
+	const dashes: Record<string, string> = {
+		solid: "solid",
+		dashed: "dashed",
+		dotted: "dotted",
+	};
+
+	const data = lines
+		.map((reference) => {
+			const measure = reference.measure ?? ctx.measures[0];
+			if (!measure) return null;
+
+			const at = referenceValue(reference, ctx.rows, measure);
+			if (at === null) return null;
+
+			const color = reference.color
+				? ctx.colors.resolve(reference.color, ctx.colors.axis)
+				: ctx.colors.axis;
+
+			// A horizontal bar chart puts the values along the bottom, so
+			// the line that reads as a threshold there is a vertical one.
+			const position =
+				orientation === "horizontal" ? { xAxis: at } : { yAxis: at };
+
+			return {
+				...position,
+				// The right scale when the measure it belongs to is plotted
+				// there, so a target for a percentage does not land against a
+				// currency axis.
+				yAxisIndex: reference.axis === "right" ? 1 : 0,
+				label: {
+					show: true,
+					position: "insideEndTop" as const,
+					color,
+					fontSize: 11,
+					formatter: () =>
+						reference.label?.trim() ||
+						formatCompact(at, ctx.hintFor(measure)),
+				},
+				lineStyle: {
+					color,
+					width: 1.5,
+					type: dashes[reference.line ?? "dashed"] ?? "dashed",
+				},
+			};
+		})
+		.filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+
+	if (data.length === 0) return undefined;
+
+	return {
+		silent: true,
+		symbol: "none" as const,
+		animation: false,
+		data,
+	};
+}
 
 // --- Cartesian: bar, line, area, scatter, combo, stacked -------------------
 
@@ -310,6 +431,9 @@ export function buildCartesian(
 					? { width: s.lineWidth ?? 2, color }
 					: undefined,
 			areaStyle,
+			// Only on the first series, so one reference draws one line.
+			markLine:
+				index === 0 ? referenceMarkLine(ctx, orientation) : undefined,
 			data,
 		};
 	});
@@ -324,7 +448,14 @@ export function buildCartesian(
 		animation: false,
 		color: colors.series,
 		textStyle: { color: colors.text, fontFamily: "inherit" },
-		grid: { ...baseGrid, top: style?.legend?.show === false ? 12 : 30 },
+		grid: {
+			...baseGrid,
+			top: style?.legend?.show === false ? 12 : 30,
+			// The slider sits under the plot, so the plot has to stop above
+			// it rather than being drawn behind it.
+			bottom: ctx.options?.zoomSlider === true ? 34 : baseGrid.bottom,
+		},
+		dataZoom: zoomWindow(ctx, orientation === "horizontal" ? 1 : 0),
 		legend: legend(ctx, measures.length > 1),
 		tooltip: {
 			...tooltip(ctx),
@@ -758,6 +889,1216 @@ export function buildWaterfall(ctx: ChartContext) {
 					borderRadius: [2, 2, 0, 0],
 				},
 				data: falling,
+			},
+		],
+	};
+}
+
+// --- Choropleth --------------------------------------------------------------
+
+// A figure by country, coloured on a map.
+//
+// The hard part is not the drawing, it is the matching. Boundary data spells
+// several countries differently from every business system that has recorded
+// one, and a map that silently drops what it cannot place is a map that lies by
+// omission: the row it drops is usually one of the largest, and nothing on the
+// page says a row is missing.
+//
+// So what did not match is counted and handed back with the option, and the
+// visual says so under the map. Naming the unmatched values is the difference
+// between a map somebody can fix and a map they have to trust.
+export function buildChoropleth(ctx: ChartContext, known: Map<string, string>) {
+	const { rows, dimensions, measures, colors } = ctx;
+	const field = dimensions[0];
+	const measure = measures[0];
+	const hint = ctx.hintFor(measure);
+
+	const placed = new Map<string, number>();
+	const unmatched: string[] = [];
+
+	for (const row of rows) {
+		const raw = String(row[field] ?? "");
+		if (raw === "") continue;
+
+		const value = toNumber(row[measure]);
+		if (value === null) continue;
+
+		const country = matchCountry(raw, known);
+		if (!country) {
+			if (!unmatched.includes(raw)) unmatched.push(raw);
+			continue;
+		}
+
+		// Two values landing on one country are added, which is what happens
+		// when the data holds both a code and a name for the same place.
+		placed.set(country, (placed.get(country) ?? 0) + value);
+	}
+
+	const values = [...placed.values()];
+	if (values.length === 0) {
+		return { option: null, unmatched, matched: 0 };
+	}
+
+	const option = {
+		animation: false,
+		textStyle: { color: colors.text, fontFamily: "inherit" },
+		tooltip: {
+			...tooltip(ctx),
+			trigger: "item" as const,
+			formatter: (params: unknown) => {
+				const p = params as { name: string; value: number };
+				// Every country is drawn, including the ones the data says
+				// nothing about, so the tooltip has to tell the two apart.
+				if (typeof p.value !== "number" || Number.isNaN(p.value)) {
+					return `${p.name}<br/>No data`;
+				}
+				return `${p.name}<br/>${measure}: ${formatValue(p.value, hint)}`;
+			},
+		},
+		visualMap: {
+			min: Math.min(...values),
+			max: Math.max(...values),
+			calculable: true,
+			orient: "horizontal" as const,
+			left: "center" as const,
+			bottom: 4,
+			itemWidth: 12,
+			itemHeight: 90,
+			textStyle: { color: colors.textMuted, fontSize: 10 },
+			inRange: {
+				color: [
+					withAlpha(colors.series[0], 0.15),
+					withAlpha(colors.series[0], 0.55),
+					colors.series[0],
+				],
+			},
+		},
+		series: [
+			{
+				type: "map" as const,
+				map: worldMapName,
+				roam: true,
+				// The whole world by default. A report about one region can be
+				// zoomed into, and the reader's own zoom is not something to
+				// reset on every redraw.
+				emphasis: {
+					label: { show: false },
+					itemStyle: { areaColor: withAlpha(colors.series[0], 0.85) },
+				},
+				itemStyle: {
+					// The countries the data says nothing about, which is most
+					// of them on most reports. Drawn, because a map with holes
+					// in it is unreadable, but plainly not coloured.
+					areaColor: colors.grid,
+					borderColor: colors.grid,
+					borderWidth: 0.5,
+				},
+				select: { disabled: true },
+				data: [...placed.entries()].map(([name, value]) => ({
+					name,
+					value,
+				})),
+			},
+		],
+	};
+
+	return { option, unmatched, matched: placed.size };
+}
+
+// --- Timeline ----------------------------------------------------------------
+
+// Bars spanning a start and an end, one row per thing.
+//
+// For anything with a lifecycle: campaigns, projects, contract windows,
+// outages. Nothing here could draw one, and the workaround is a table of two
+// date columns that a reader has to hold in their head to compare.
+//
+// Built out of two stacked bars rather than a custom series: an invisible one
+// up to the start, and a visible one the length of the span. That is the same
+// picture, and it keeps another chart type out of the largest asset the client
+// downloads.
+//
+// The axis carries milliseconds and is formatted back into dates, because a
+// category axis would space every bar evenly whatever the real gaps between
+// them are, and the gaps are half of what a timeline says.
+export function buildTimeline(ctx: ChartContext) {
+	const { rows, dimensions, measures, colors } = ctx;
+	const [labelField, startField, endField] = dimensions;
+	const measure = measures[0];
+
+	const asTime = (value: unknown): number | null => {
+		if (value === null || value === undefined || value === "") return null;
+		const at = Date.parse(String(value));
+		return Number.isFinite(at) ? at : null;
+	};
+
+	const bars = rows
+		.map((row) => {
+			const from = asTime(row[startField]);
+			const to = asTime(row[endField]);
+			// A span needs both ends. One of them missing is an open interval,
+			// and drawing it to the edge of the chart would claim an end date
+			// the data does not have.
+			if (from === null || to === null) return null;
+			return {
+				label: String(row[labelField] ?? ""),
+				from,
+				to: Math.max(to, from),
+				value: measure ? toNumber(row[measure]) : null,
+			};
+		})
+		.filter((bar): bar is NonNullable<typeof bar> => bar !== null)
+		// Earliest at the top, which is how a schedule is read.
+		.sort((a, b) => a.from - b.from);
+
+	if (bars.length === 0) return null;
+
+	const day = 86400000;
+	const asDate = (at: number) => new Date(at).toISOString().slice(0, 10);
+
+	return {
+		animation: false,
+		color: colors.series,
+		textStyle: { color: colors.text, fontFamily: "inherit" },
+		grid: { ...baseGrid, top: 12, left: 8 },
+		legend: { show: false },
+		tooltip: {
+			...tooltip(ctx),
+			trigger: "item" as const,
+			formatter: (params: unknown) => {
+				const p = params as { dataIndex: number };
+				const bar = bars[p.dataIndex];
+				if (!bar) return "";
+				const days = Math.max(1, Math.round((bar.to - bar.from) / day));
+				const lines = [
+					`<strong>${bar.label}</strong>`,
+					`${asDate(bar.from)} to ${asDate(bar.to)}`,
+					days === 1 ? "1 day" : `${days} days`,
+				];
+				if (measure && bar.value !== null) {
+					lines.push(
+						`${measure}: ${formatValue(bar.value, ctx.hintFor(measure))}`,
+					);
+				}
+				return lines.join("<br/>");
+			},
+		},
+		xAxis: {
+			type: "time" as const,
+			axisLabel: { color: colors.axis, hideOverlap: true },
+			splitLine: {
+				show: ctx.style?.xAxis?.showGrid !== false,
+				lineStyle: { color: colors.grid },
+			},
+		},
+		yAxis: {
+			type: "category" as const,
+			data: bars.map((bar) => bar.label),
+			// A category axis counts up from the bottom, which puts the
+			// earliest thing at the foot of a schedule nobody reads that way.
+			inverse: true,
+			axisLabel: { color: colors.axis, hideOverlap: true },
+			axisLine: { lineStyle: { color: colors.grid } },
+			axisTick: { show: false },
+		},
+		series: [
+			{
+				// The run-up to the start, invisible. This is what floats the
+				// visible bar to where the span actually begins.
+				type: "bar" as const,
+				stack: "span",
+				silent: true,
+				itemStyle: { color: "transparent" },
+				data: bars.map((bar) => bar.from),
+			},
+			{
+				type: "bar" as const,
+				stack: "span",
+				barWidth: "55%",
+				itemStyle: {
+					color: colors.series[0],
+					borderRadius: 3,
+				},
+				// A span of zero has no width to draw, so a single day is
+				// given one rather than disappearing.
+				data: bars.map((bar) => Math.max(bar.to - bar.from, day / 2)),
+			},
+		],
+	};
+}
+
+// --- Calendar ----------------------------------------------------------------
+
+// A year of daily figures, laid out as a calendar.
+//
+// The best single answer to "when is it busy". Weekly seasonality, month ends
+// and public holidays all become visible without anybody modelling them, which
+// is not true of the same series drawn as a line: a line with three hundred and
+// sixty five points is a smear, and the weekday pattern that is obvious here is
+// invisible in it.
+//
+// The date is read from the dimension rather than asked of the source, so any
+// field holding a date works and none of them has to be marked as one.
+export function buildCalendar(ctx: ChartContext) {
+	const { rows, dimensions, measures, colors } = ctx;
+	const dateField = dimensions[0];
+	const measure = measures[0];
+	const hint = ctx.hintFor(measure);
+
+	const points: [string, number][] = [];
+	for (const row of rows) {
+		const raw = row[dateField];
+		if (raw === null || raw === undefined || raw === "") continue;
+		// The date part only. A timestamp and a date are the same day, and a
+		// calendar has one cell for it.
+		const day = String(raw).slice(0, 10);
+		if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+		const value = toNumber(row[measure]);
+		if (value === null) continue;
+		points.push([day, value]);
+	}
+
+	// Nothing that reads as a date, so there is no calendar to draw. Said by
+	// the empty state rather than by an empty grid of twelve months.
+	if (points.length === 0) return null;
+
+	const days = points.map(([day]) => day).sort();
+	const from = days[0];
+	const to = days[days.length - 1];
+	const values = points.map(([, value]) => value);
+
+	return {
+		animation: false,
+		textStyle: { color: colors.text, fontFamily: "inherit" },
+		tooltip: {
+			...tooltip(ctx),
+			trigger: "item" as const,
+			formatter: (params: unknown) => {
+				const p = params as { value: [string, number] };
+				return `${p.value[0]}<br/>${measure}: ${formatValue(p.value[1], hint)}`;
+			},
+		},
+		visualMap: {
+			min: Math.min(...values),
+			max: Math.max(...values),
+			calculable: false,
+			orient: "horizontal" as const,
+			left: "center" as const,
+			bottom: 0,
+			itemWidth: 10,
+			itemHeight: 60,
+			textStyle: { color: colors.textMuted, fontSize: 10 },
+			inRange: {
+				color: [
+					withAlpha(colors.series[0], 0.12),
+					withAlpha(colors.series[0], 0.55),
+					colors.series[0],
+				],
+			},
+		},
+		calendar: {
+			top: 30,
+			left: 30,
+			right: 12,
+			bottom: 46,
+			cellSize: ["auto", "auto"] as ["auto", "auto"],
+			range: from === to ? from.slice(0, 7) : [from, to],
+			itemStyle: {
+				color: "transparent",
+				borderColor: colors.grid,
+				borderWidth: 1,
+			},
+			splitLine: { lineStyle: { color: colors.grid } },
+			yearLabel: { show: false },
+			monthLabel: { color: colors.axis, fontSize: 10 },
+			dayLabel: {
+				color: colors.axis,
+				fontSize: 10,
+				// Monday first, which is how a working week is read.
+				firstDay: 1,
+			},
+		},
+		series: [
+			{
+				type: "heatmap" as const,
+				coordinateSystem: "calendar" as const,
+				data: points,
+			},
+		],
+	};
+}
+
+// --- Sankey ------------------------------------------------------------------
+
+// Flow between two sets of categories.
+//
+// The funnel covers a fixed sequence of stages and nothing covered a branching
+// one: channel to region, status to next status, source to outcome. Two
+// dimensions and a measure, which the query layer already returns.
+export function buildSankey(ctx: ChartContext) {
+	const { rows, dimensions, measures, colors } = ctx;
+	const [fromField, toField] = dimensions;
+	const measure = measures[0];
+	const hint = ctx.hintFor(measure);
+
+	// Both sides are prefixed, because a value appearing on the left and on the
+	// right is two different nodes. Without this, "Open" as a starting status
+	// and "Open" as an ending one become one node with a loop through it, and
+	// the diagram will not lay out at all.
+	const leftOf = (value: string) => `from ${value}`;
+	const rightOf = (value: string) => `to ${value}`;
+
+	const nodes = new Map<string, string>();
+	const links = new Map<string, number>();
+
+	for (const row of rows) {
+		const value = toNumber(row[measure]);
+		// A flow of nothing is not a flow, and a negative one has no width.
+		if (value === null || value <= 0) continue;
+
+		const left = String(row[fromField] ?? "");
+		const right = String(row[toField] ?? "");
+		if (left === "" || right === "") continue;
+
+		nodes.set(leftOf(left), left);
+		nodes.set(rightOf(right), right);
+
+		const key = `${leftOf(left)}\u001f${rightOf(right)}`;
+		links.set(key, (links.get(key) ?? 0) + value);
+	}
+
+	if (links.size === 0) return null;
+
+	return {
+		animation: false,
+		color: colors.series,
+		textStyle: { color: colors.text, fontFamily: "inherit" },
+		tooltip: {
+			...tooltip(ctx),
+			trigger: "item" as const,
+			formatter: (params: unknown) => {
+				const p = params as {
+					dataType: string;
+					name: string;
+					value: number;
+					data: { source?: string; target?: string };
+				};
+				if (p.dataType === "edge") {
+					const source = nodes.get(p.data.source ?? "") ?? "";
+					const target = nodes.get(p.data.target ?? "") ?? "";
+					return `${source} to ${target}<br/>${formatValue(p.value, hint)}`;
+				}
+				return `${nodes.get(p.name) ?? p.name}<br/>${formatValue(p.value, hint)}`;
+			},
+		},
+		series: [
+			{
+				type: "sankey" as const,
+				left: 8,
+				right: 8,
+				top: 12,
+				bottom: 12,
+				emphasis: { focus: "adjacency" as const },
+				nodeGap: 10,
+				nodeWidth: 12,
+				label: {
+					color: colors.text,
+					fontSize: 11,
+					// The prefix is bookkeeping, so the label shows the value
+					// the reader recognises.
+					formatter: (params: unknown) =>
+						nodes.get((params as { name: string }).name) ?? "",
+				},
+				lineStyle: { color: "gradient", opacity: 0.4 },
+				data: [...nodes.keys()].map((id) => ({ name: id })),
+				links: [...links.entries()].map(([key, value]) => {
+					const [source, target] = key.split("\u001f");
+					return { source, target, value };
+				}),
+			},
+		],
+	};
+}
+
+// --- Histogram and box plot --------------------------------------------------
+
+// The shape of a measure across whatever it is grouped by.
+//
+// Not a histogram of underlying records, because there are none to have. Every
+// source here is a metric view: it carries its own semantic layer, measures are
+// read through MEASURE(), and what comes back is aggregates. A bin expression in
+// the GROUP BY would have been binning rows that do not exist.
+//
+// So the question this answers is the one that is actually available, and it is
+// usually the one being asked anyway: how order value is distributed across
+// customers, how margin is distributed across products. The dimension names the
+// units and the measure is what is spread across them.
+//
+// Averages hide bimodality and long tails, and until now nothing here could show
+// either.
+export function buildHistogram(ctx: ChartContext) {
+	const { rows, measures, colors } = ctx;
+	const measure = measures[0];
+	const hint = ctx.hintFor(measure);
+
+	const values = rows
+		.map((row) => toNumber(row[measure]))
+		.filter((v): v is number => v !== null);
+
+	const asked = Number(ctx.options?.bins);
+	const bins = binValues(
+		values,
+		Number.isFinite(asked) && asked > 0 ? asked : undefined,
+	);
+	if (bins.length === 0) return null;
+
+	// Labelled by where each bin starts. Both ends on every bar is unreadable
+	// at any width a page gives a chart, and the next bar says where this one
+	// stops.
+	const categories = bins.map((bin) => formatCompact(bin.from, hint));
+
+	return {
+		animation: false,
+		color: colors.series,
+		textStyle: { color: colors.text, fontFamily: "inherit" },
+		grid: { ...baseGrid, top: 16 },
+		legend: { show: false },
+		tooltip: {
+			...tooltip(ctx),
+			trigger: "axis" as const,
+			axisPointer: { type: "shadow" as const },
+			formatter: (params: unknown) => {
+				const list = Array.isArray(params) ? params : [params];
+				const first = list[0] as { dataIndex: number };
+				const bin = bins[first.dataIndex];
+				if (!bin) return "";
+				const share = (bin.count / values.length) * 100;
+				return [
+					`${formatValue(bin.from, hint)} to ${formatValue(bin.to, hint)}`,
+					`${bin.count} of ${values.length} (${share.toFixed(1)}%)`,
+				].join("<br/>");
+			},
+		},
+		xAxis: {
+			type: "category" as const,
+			data: categories,
+			name: ctx.style?.xAxis?.label ?? measure,
+			nameLocation: "middle" as const,
+			nameGap: 28,
+			nameTextStyle: { color: colors.textMuted },
+			axisLabel: { color: colors.axis, hideOverlap: true },
+			axisLine: { lineStyle: { color: colors.grid } },
+			axisTick: { show: false },
+		},
+		yAxis: {
+			type: "value" as const,
+			name: ctx.style?.yAxis?.label ?? "Count",
+			axisLabel: { color: colors.axis },
+			splitLine: {
+				show: ctx.style?.yAxis?.showGrid !== false,
+				lineStyle: { color: colors.grid },
+			},
+		},
+		series: [
+			{
+				type: "bar" as const,
+				name: "Count",
+				// Touching, because the bars are a continuous range rather
+				// than separate categories, and a gap between them says
+				// otherwise.
+				barCategoryGap: "2%",
+				itemStyle: { color: colors.series[0] },
+				data: bins.map((bin) => bin.count),
+			},
+		],
+	};
+}
+
+// Spread and outliers, one box per category.
+//
+// Two dimensions draws a box for each value of the first, with the spread taken
+// across the second. One dimension draws a single box across it. The measure is
+// what is being spread either way.
+//
+// Assembled out of bar and scatter series rather than the boxplot type ECharts
+// ships. Registering that would put another chart in the largest asset the
+// client downloads in order to draw a rectangle and three lines, and a pair of
+// stacked bars gives the same picture: one invisible up to the lower quartile,
+// one visible from there to the upper.
+export function buildBoxPlot(ctx: ChartContext) {
+	const { rows, dimensions, measures, colors } = ctx;
+	const measure = measures[0];
+	const hint = ctx.hintFor(measure);
+
+	// One box across everything when no grouping field was given, which is the
+	// honest reading of "the spread of this measure".
+	const groupField = dimensions.length > 1 ? dimensions[0] : null;
+
+	const groups = new Map<string, number[]>();
+	for (const row of rows) {
+		const value = toNumber(row[measure]);
+		if (value === null) continue;
+		const key = groupField ? String(row[groupField] ?? "") : "All";
+		const bucket = groups.get(key);
+		if (bucket) bucket.push(value);
+		else groups.set(key, [value]);
+	}
+
+	const boxes: { label: string; box: FiveNumber }[] = [];
+	for (const [label, values] of groups) {
+		const box = fiveNumber(values);
+		if (box) boxes.push({ label, box });
+	}
+	if (boxes.length === 0) return null;
+
+	const fill = withAlpha(colors.series[0], 0.35);
+
+	return {
+		animation: false,
+		color: colors.series,
+		textStyle: { color: colors.text, fontFamily: "inherit" },
+		grid: { ...baseGrid, top: 16 },
+		legend: { show: false },
+		tooltip: {
+			...tooltip(ctx),
+			trigger: "item" as const,
+			formatter: (params: unknown) => {
+				const p = params as {
+					dataIndex: number;
+					seriesType: string;
+					value: number[] | number;
+				};
+				const entry = boxes[p.dataIndex];
+				if (!entry) return "";
+				if (p.seriesType === "scatter") {
+					const value = Array.isArray(p.value) ? p.value[1] : p.value;
+					return `${entry.label}<br/>${formatValue(value, hint)}`;
+				}
+				const b = entry.box;
+				const lines = [
+					`<strong>${entry.label}</strong>`,
+					`Highest inside: ${formatValue(b.max, hint)}`,
+					`Upper quartile: ${formatValue(b.q3, hint)}`,
+					`Median: ${formatValue(b.median, hint)}`,
+					`Lower quartile: ${formatValue(b.q1, hint)}`,
+					`Lowest inside: ${formatValue(b.min, hint)}`,
+				];
+				if (b.outliers.length > 0) {
+					lines.push(`${b.outliers.length} beyond the whiskers`);
+				}
+				return lines.join("<br/>");
+			},
+		},
+		xAxis: {
+			type: "category" as const,
+			data: boxes.map((entry) => entry.label),
+			axisLabel: { color: colors.axis, hideOverlap: true },
+			axisLine: { lineStyle: { color: colors.grid } },
+			axisTick: { show: false },
+		},
+		yAxis: {
+			type: "value" as const,
+			name: ctx.style?.yAxis?.label ?? measure,
+			// Not forced through zero. The box is the whole chart, and
+			// stretching the scale to the origin flattens it into a line.
+			scale: true,
+			axisLabel: {
+				color: colors.axis,
+				formatter: (v: number) => formatCompact(v, hint),
+			},
+			splitLine: {
+				show: ctx.style?.yAxis?.showGrid !== false,
+				lineStyle: { color: colors.grid },
+			},
+		},
+		series: [
+			{
+				// The whiskers, behind everything else: a thin bar spanning
+				// the full range that is not an outlier.
+				type: "bar" as const,
+				stack: "whisker",
+				silent: true,
+				barGap: "-100%",
+				barWidth: "6%",
+				z: 1,
+				itemStyle: { color: "transparent" },
+				data: boxes.map((entry) => entry.box.min),
+			},
+			{
+				type: "bar" as const,
+				stack: "whisker",
+				silent: true,
+				barWidth: "6%",
+				z: 1,
+				itemStyle: { color: colors.axis },
+				data: boxes.map((entry) => entry.box.max - entry.box.min),
+			},
+			{
+				// The box, floated from the lower quartile to the upper.
+				type: "bar" as const,
+				stack: "box",
+				silent: true,
+				barGap: "-100%",
+				barWidth: "45%",
+				z: 2,
+				itemStyle: { color: "transparent" },
+				data: boxes.map((entry) => entry.box.q1),
+			},
+			{
+				type: "bar" as const,
+				stack: "box",
+				barWidth: "45%",
+				z: 2,
+				itemStyle: {
+					color: fill,
+					borderColor: colors.series[0],
+					borderWidth: 1.25,
+				},
+				data: boxes.map((entry) => entry.box.q3 - entry.box.q1),
+			},
+			{
+				// The median, as a flat wide point across the box.
+				type: "scatter" as const,
+				symbol: "rect",
+				symbolSize: [26, 2.5],
+				silent: true,
+				z: 3,
+				itemStyle: { color: colors.text },
+				data: boxes.map((entry, index) => [index, entry.box.median]),
+			},
+			{
+				type: "scatter" as const,
+				symbolSize: 6,
+				z: 3,
+				itemStyle: { color: colors.axis, opacity: 0.7 },
+				data: boxes.flatMap((entry, index) =>
+					entry.box.outliers.map((value) => [index, value]),
+				),
+			},
+		],
+	};
+}
+
+// --- Pareto ------------------------------------------------------------------
+
+// Ranked bars with the cumulative share drawn over them.
+//
+// The standard answer to "which few things account for most of it", and the one
+// chart here that could not be built at all until figures could be derived from
+// an answer: the cumulative line is each row's share of the total accumulated
+// down the rows, and no source models that.
+//
+// The eighty percent line is drawn by default and can be moved. It is what
+// turns the curve into a reading: everything to the left of where the line
+// meets it is the set worth acting on.
+export function buildPareto(ctx: ChartContext) {
+	const { rows, dimensions, measures, colors } = ctx;
+	const labelField = dimensions[0];
+	const measure = measures[0];
+	const hint = ctx.hintFor(measure);
+
+	const categories = rows.map((r) => String(r[labelField] ?? ""));
+	const bars = rows.map((row, index) => ({
+		value: toNumber(row[measure]),
+		itemStyle: {
+			color: colors.series[0],
+			opacity: highlightOpacity(ctx, index),
+			borderRadius: [2, 2, 0, 0] as [number, number, number, number],
+		},
+	}));
+	const cumulative = rows.map((row) => toNumber(row[paretoCumulative]));
+
+	const cut = Number(ctx.options?.cutoff);
+	const threshold = Number.isFinite(cut) && cut > 0 && cut <= 100 ? cut : 80;
+
+	const lineColor = colors.resolve({ token: "warning" }, colors.series[1]);
+
+	return {
+		animation: false,
+		color: colors.series,
+		textStyle: { color: colors.text, fontFamily: "inherit" },
+		grid: { ...baseGrid, top: 30 },
+		legend: legend(ctx, true),
+		tooltip: {
+			...tooltip(ctx),
+			trigger: "axis" as const,
+			axisPointer: { type: "shadow" as const },
+			formatter: (params: unknown) => {
+				const list = Array.isArray(params) ? params : [params];
+				const first = list[0] as { dataIndex: number };
+				const row = rows[first.dataIndex];
+				if (!row) return "";
+				const share = toNumber(row[paretoCumulative]);
+				return [
+					`<strong>${String(row[labelField] ?? "")}</strong>`,
+					`${measure}: ${formatValue(row[measure], hint)}`,
+					share === null ? "" : `Running share: ${share.toFixed(1)}%`,
+				]
+					.filter(Boolean)
+					.join("<br/>");
+			},
+		},
+		xAxis: categoryAxis(ctx, categories),
+		yAxis: [
+			valueAxis(ctx, hint),
+			{
+				type: "value" as const,
+				name: "Cumulative",
+				// Fixed to the full range, because the curve's shape against
+				// a hundred is the reading. Scaling it to the data would make
+				// every Pareto look the same.
+				min: 0,
+				max: 100,
+				axisLabel: {
+					color: colors.axis,
+					formatter: (v: number) => `${v}%`,
+				},
+				splitLine: { show: false },
+			},
+		],
+		series: [
+			{
+				type: "bar" as const,
+				name: measure,
+				data: bars,
+			},
+			{
+				type: "line" as const,
+				name: "Cumulative share",
+				yAxisIndex: 1,
+				symbol: "circle",
+				symbolSize: 5,
+				lineStyle: { width: 2, color: lineColor },
+				itemStyle: { color: lineColor },
+				markLine: {
+					silent: true,
+					symbol: "none" as const,
+					animation: false,
+					data: [
+						{
+							yAxis: threshold,
+							label: {
+								show: true,
+								position: "insideEndTop" as const,
+								color: colors.textMuted,
+								fontSize: 11,
+								formatter: `${threshold}%`,
+							},
+							lineStyle: {
+								color: colors.axis,
+								type: "dashed" as const,
+								width: 1.5,
+							},
+						},
+					],
+				},
+				data: cumulative,
+			},
+		],
+	};
+}
+
+// --- Slope -------------------------------------------------------------------
+
+// Two points per category, joined by a line.
+//
+// The clearest way to show a set of changes at once. Paired bars make a reader
+// compare eight lengths in four pairs and work out which pairs moved; a slope
+// chart makes the movement the mark, so an eye reads the whole set at a glance
+// and the crossings are the story.
+//
+// Drawn as one series per category rather than two series of points, because
+// the line between a category's two values is the thing being read and ECharts
+// only joins points that belong to the same series.
+export function buildSlope(ctx: ChartContext) {
+	const { rows, dimensions, measures, colors } = ctx;
+	const labelField = dimensions[0];
+	const measure = measures[0];
+	const hint = ctx.hintFor(measure);
+	const earlier = ctx.comparisonRows;
+
+	// No comparison, so there is no slope to draw. Said by the chart rather
+	// than drawn as a flat line, which would read as "nothing changed".
+	if (!earlier) return null;
+
+	const before = new Map(
+		earlier.map((row) => [
+			String(row[labelField] ?? ""),
+			toNumber(row[measure]),
+		]),
+	);
+
+	const pairs = rows
+		.map((row) => {
+			const label = String(row[labelField] ?? "");
+			const now = toNumber(row[measure]);
+			const then = before.get(label) ?? null;
+			// A category present in one window and not the other has no slope.
+			// Drawing it from zero would invent an arrival or a disappearance
+			// that the data does not report.
+			if (now === null || then === null) return null;
+			return { label, then, now };
+		})
+		.filter((pair): pair is NonNullable<typeof pair> => pair !== null);
+
+	const up = colors.resolve({ token: "success" }, colors.series[0]);
+	const down = colors.resolve({ token: "danger" }, colors.series[1]);
+
+	const series = pairs.map((pair) => ({
+		type: "line" as const,
+		name: pair.label,
+		symbol: "circle",
+		symbolSize: 7,
+		// Rising and falling read differently at a glance, which is the whole
+		// point of the shape.
+		itemStyle: { color: pair.now >= pair.then ? up : down },
+		lineStyle: { width: 1.75, color: pair.now >= pair.then ? up : down },
+		// Only the right-hand end is labelled. Both ends doubles the ink for
+		// one extra column of names, and the left is already an axis.
+		endLabel: {
+			show: true,
+			color: colors.textMuted,
+			fontSize: 11,
+			formatter: pair.label,
+		},
+		emphasis: { focus: "series" as const },
+		data: [pair.then, pair.now],
+	}));
+
+	return {
+		animation: false,
+		color: colors.series,
+		textStyle: { color: colors.text, fontFamily: "inherit" },
+		// Room on the right for the end labels, which sit outside the plot.
+		grid: { ...baseGrid, top: 20, right: 96 },
+		legend: { show: false },
+		tooltip: {
+			...tooltip(ctx),
+			trigger: "item" as const,
+			formatter: (params: unknown) => {
+				const p = params as { seriesName: string };
+				const pair = pairs.find((x) => x.label === p.seriesName);
+				if (!pair) return "";
+				const change =
+					pair.then === 0
+						? null
+						: (pair.now - pair.then) / Math.abs(pair.then);
+				return [
+					`<strong>${pair.label}</strong>`,
+					`Before: ${formatValue(pair.then, hint)}`,
+					`After: ${formatValue(pair.now, hint)}`,
+					change === null
+						? "No change to report against zero"
+						: `Change: ${change > 0 ? "+" : ""}${(change * 100).toFixed(1)}%`,
+				].join("<br/>");
+			},
+		},
+		xAxis: {
+			type: "category" as const,
+			// Two positions and nothing between them, so the axis is drawn
+			// tight to the ends rather than with a category's usual padding.
+			boundaryGap: false,
+			data: ["Before", "After"],
+			axisLabel: { color: colors.axis },
+			axisLine: { lineStyle: { color: colors.grid } },
+			axisTick: { show: false },
+			splitLine: { show: true, lineStyle: { color: colors.grid } },
+		},
+		yAxis: {
+			type: "value" as const,
+			name: ctx.style?.yAxis?.label,
+			scale: ctx.style?.yAxis?.beginAtZero === false,
+			axisLabel: {
+				color: colors.axis,
+				formatter: (v: number) => formatCompact(v, hint),
+			},
+			splitLine: { show: false },
+		},
+		series,
+	};
+}
+
+// --- Bullet ------------------------------------------------------------------
+
+// Actual against target, one row per category.
+//
+// The gauge answers this for a single figure and eats a tile doing it. Most of
+// the time the question is asked about several things at once, and a stack of
+// gauges is unreadable: they cannot be compared to each other, only each to its
+// own dial.
+//
+// Drawn as a bar against a tick, which is Few's bullet without the qualitative
+// bands. The bands are left out deliberately: they need three more thresholds
+// per row that nobody has, and without real ones they become decoration that
+// implies a judgement the data does not carry.
+export function buildBullet(ctx: ChartContext) {
+	const { dimensions, measures, colors } = ctx;
+	const [actualField, targetField] = measures;
+	const labelField = dimensions[0];
+	const hint = ctx.hintFor(actualField);
+
+	// Sorted on the gap rather than on the actual, because "furthest behind"
+	// is the question this chart is asked, and the largest shortfall is not
+	// the smallest number.
+	const shortfall = (row: Record<string, unknown>): number => {
+		const actual = toNumber(row[actualField]) ?? 0;
+		const target = toNumber(row[targetField]);
+		if (target === null || target === 0) return 0;
+		return actual / target;
+	};
+
+	const by = ctx.options?.sortBy;
+	const rows =
+		by === "valueDesc" || by === "valueAsc"
+			? [...ctx.rows].sort(
+					(a, b) =>
+						(by === "valueDesc" ? -1 : 1) *
+						(shortfall(a) - shortfall(b)),
+				)
+			: ctx.rows;
+
+	const categories = rows.map((r) => String(r[labelField] ?? ""));
+	const colourByTarget = ctx.options?.colourByTarget !== false;
+
+	const bars = rows.map((row, index) => {
+		const actual = toNumber(row[actualField]);
+		const target = toNumber(row[targetField]);
+		const met = actual !== null && target !== null && actual >= target;
+
+		return {
+			value: actual,
+			itemStyle: {
+				color: colourByTarget
+					? met
+						? colors.resolve({ token: "success" }, colors.series[0])
+						: colors.resolve({ token: "warning" }, colors.series[0])
+					: colors.series[0],
+				opacity: highlightOpacity(ctx, index),
+				borderRadius: 2,
+			},
+		};
+	});
+
+	const targets = rows.map((row) => toNumber(row[targetField]));
+
+	return {
+		animation: false,
+		color: colors.series,
+		textStyle: { color: colors.text, fontFamily: "inherit" },
+		grid: { ...baseGrid, top: 12, bottom: 8 },
+		tooltip: {
+			...tooltip(ctx),
+			formatter: (params: unknown) => {
+				const list = Array.isArray(params) ? params : [params];
+				const first = list[0] as { dataIndex: number };
+				const row = rows[first.dataIndex];
+				if (!row) return "";
+
+				const actual = toNumber(row[actualField]);
+				const target = toNumber(row[targetField]);
+				const lines = [
+					`<strong>${String(row[labelField] ?? "")}</strong>`,
+					`${actualField}: ${formatValue(actual, hint)}`,
+					`${targetField}: ${formatValue(target, ctx.hintFor(targetField))}`,
+				];
+				// The share of target is the number the chart is actually
+				// about, and it is the one nobody can read off a bar.
+				if (actual !== null && target !== null && target !== 0) {
+					lines.push(
+						`Against target: ${Math.round((actual / target) * 100)}%`,
+					);
+				}
+				return lines.join("<br/>");
+			},
+		},
+		xAxis: {
+			type: "value" as const,
+			name: ctx.style?.xAxis?.label,
+			axisLabel: {
+				color: colors.axis,
+				formatter: (v: number) => formatCompact(v, hint),
+			},
+			splitLine: {
+				show: ctx.style?.xAxis?.showGrid !== false,
+				lineStyle: { color: colors.grid },
+			},
+		},
+		yAxis: {
+			type: "category" as const,
+			data: categories,
+			// Reversed so the first row is at the top. A category axis counts
+			// up from the bottom, which puts a list in the order nobody wrote
+			// it in.
+			inverse: true,
+			axisLabel: { color: colors.axis, hideOverlap: true },
+			axisLine: { lineStyle: { color: colors.grid } },
+			axisTick: { show: false },
+		},
+		series: [
+			{
+				type: "bar" as const,
+				name: actualField,
+				barWidth: 14,
+				data: bars,
+			},
+			{
+				// The target, drawn as the tick a bullet chart uses rather
+				// than as a second bar. A second bar invites the two to be
+				// compared as quantities of the same thing, when one of them
+				// is the line the other is being judged against.
+				type: "scatter" as const,
+				name: targetField,
+				symbol: "rect",
+				symbolSize: [3, 24],
+				itemStyle: { color: colors.text },
+				data: targets.map((value, index) =>
+					value === null ? null : [value, index],
+				),
+			},
+		],
+	};
+}
+
+// --- Scatter -----------------------------------------------------------------
+
+// Two measures plotted against each other, which is the question the
+// relationship category exists to answer.
+//
+// This used to go through the cartesian builder, which puts the dimension on a
+// category axis and draws each measure as its own series of dots. That is a dot
+// chart. It cannot show correlation, which is what the catalogue told authors it
+// was for, and the third measure it accepted was drawn at a fixed size.
+//
+// So: the first measure is the horizontal position, the second is the vertical,
+// and a third sizes the point, which is a bubble chart for free. The dimension
+// names each point rather than positioning it, and is what the tooltip reads.
+//
+// One measure still draws the old shape. Reports authored before this expect
+// it, and a chart that silently became empty on deploy would be worse than the
+// one that was merely mislabelled.
+export function buildScatter(ctx: ChartContext) {
+	const { rows, dimensions, measures, colors } = ctx;
+	if (measures.length < 2) return buildCartesian(ctx, "scatter");
+
+	const [xField, yField, sizeField] = measures;
+	const labelField = dimensions[0];
+	const xHint = ctx.hintFor(xField);
+	const yHint = ctx.hintFor(yField);
+
+	const sizes = sizeField
+		? rows
+				.map((r) => toNumber(r[sizeField]))
+				.filter((n): n is number => n !== null)
+		: [];
+	const sizeMax = sizes.length > 0 ? Math.max(...sizes) : 0;
+
+	// Area rather than radius, because a point twice as wide reads as four
+	// times the value and that is how a bubble chart misleads.
+	const minRadius = 5;
+	const maxRadius = 26;
+	const radiusFor = (value: number | null): number => {
+		if (value === null || sizeMax <= 0) return 9;
+		const share = Math.max(0, value) / sizeMax;
+		return (
+			minRadius + (maxRadius - minRadius) * Math.sqrt(Math.min(1, share))
+		);
+	};
+
+	const points = rows
+		.map((row) => {
+			const x = toNumber(row[xField]);
+			const y = toNumber(row[yField]);
+			// A point missing either coordinate has no position, so it is left
+			// out rather than pinned to an axis it does not sit on.
+			if (x === null || y === null) return null;
+			const size = sizeField ? toNumber(row[sizeField]) : null;
+			return {
+				value: [x, y, size ?? 0],
+				name: labelField ? String(row[labelField] ?? "") : "",
+				symbolSize: radiusFor(size),
+			};
+		})
+		.filter((point): point is NonNullable<typeof point> => point !== null);
+
+	return {
+		animation: false,
+		color: colors.series,
+		textStyle: { color: colors.text, fontFamily: "inherit" },
+		grid: {
+			...baseGrid,
+			top: 24,
+			bottom: ctx.options?.zoomSlider === true ? 34 : baseGrid.bottom,
+		},
+		dataZoom: zoomWindow(ctx, 0),
+		tooltip: {
+			...tooltip(ctx),
+			formatter: (params: unknown) => {
+				const p = params as {
+					name: string;
+					value: [number, number, number];
+				};
+				const lines = [
+					`${xField}: ${formatValue(p.value[0], xHint)}`,
+					`${yField}: ${formatValue(p.value[1], yHint)}`,
+				];
+				if (sizeField) {
+					lines.push(
+						`${sizeField}: ${formatValue(p.value[2], ctx.hintFor(sizeField))}`,
+					);
+				}
+				const head = p.name ? `<strong>${p.name}</strong><br/>` : "";
+				return head + lines.join("<br/>");
+			},
+		},
+		xAxis: {
+			type: "value" as const,
+			name: ctx.style?.xAxis?.label ?? xField,
+			nameLocation: "middle" as const,
+			nameGap: 26,
+			nameTextStyle: { color: colors.textMuted },
+			// Both scales carry data rather than categories, so neither is
+			// forced through zero: a cloud of points between 90 and 110 is the
+			// whole chart, and stretching the axis to the origin flattens it
+			// into a dot.
+			scale: ctx.style?.xAxis?.beginAtZero !== true,
+			min: ctx.style?.xAxis?.min,
+			max: ctx.style?.xAxis?.max,
+			axisLabel: {
+				color: colors.axis,
+				formatter: (v: number) => formatCompact(v, xHint),
+			},
+			splitLine: {
+				show: ctx.style?.xAxis?.showGrid !== false,
+				lineStyle: { color: colors.grid },
+			},
+		},
+		yAxis: {
+			type: "value" as const,
+			name: ctx.style?.yAxis?.label ?? yField,
+			scale: ctx.style?.yAxis?.beginAtZero !== true,
+			min: ctx.style?.yAxis?.min,
+			max: ctx.style?.yAxis?.max,
+			axisLabel: {
+				color: colors.axis,
+				formatter: (v: number) => formatCompact(v, yHint),
+			},
+			splitLine: {
+				show: ctx.style?.yAxis?.showGrid !== false,
+				lineStyle: { color: colors.grid },
+			},
+		},
+		series: [
+			{
+				type: "scatter" as const,
+				name: yField,
+				itemStyle: {
+					color: colors.series[0],
+					opacity: 0.75,
+					borderColor: colors.surface,
+					borderWidth: 1,
+				},
+				markLine: referenceMarkLine(ctx),
+				data: points,
 			},
 		],
 	};

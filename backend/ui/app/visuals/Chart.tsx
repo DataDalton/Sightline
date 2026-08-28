@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as echarts from "echarts/core";
 import {
 	BarChart,
@@ -12,6 +12,8 @@ import {
 	GaugeChart,
 	HeatmapChart,
 	RadarChart,
+	SankeyChart,
+	MapChart,
 } from "echarts/charts";
 import {
 	GridComponent,
@@ -22,29 +24,50 @@ import {
 	MarkLineComponent,
 	BrushComponent,
 	ToolboxComponent,
+	CalendarComponent,
 } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 import { useTheme } from "../context/ThemeContext";
 import { useVisualQuery } from "../hooks/useVisualQuery";
 import { queryForVisual } from "../../lib/query/visualSpec";
-import type { FormatHint } from "../../lib/format";
+import type { QueryTransform } from "../../lib/query/transform";
+import {
+	shiftDateFilters,
+	type ComparePeriod,
+	type DateClause,
+} from "../../lib/query/compare";
+import { formatValue, type FormatHint } from "../../lib/format";
+import { describeChart } from "../../lib/visuals/chartSummary";
+import { matchCountry } from "../../lib/visuals/countryNames";
 import { checkEncoding } from "../../lib/visuals/catalog";
 import { indicesToValues, rangeToIndices } from "../../lib/visuals/brush";
 import type { VisualStyle } from "../../lib/visuals/style";
 import { readThemeColors } from "./colors";
+import { ensureWorldMap } from "./worldMap";
 import {
+	buildBoxPlot,
+	buildBullet,
+	buildCalendar,
 	buildCartesian,
+	buildChoropleth,
+	buildHistogram,
 	buildFunnel,
 	buildGauge,
 	buildHeatmap,
+	buildPareto,
 	buildPie,
 	buildRadar,
+	buildSankey,
+	buildScatter,
+	buildSlope,
+	buildTimeline,
 	buildTreemap,
 	buildWaterfall,
 	type ChartContext,
 } from "./chartOptions";
 import { VisualEmpty, VisualError, VisualLoading } from "./VisualFrame";
 import type { FieldMeta } from "./types";
+import styles from "./Visual.module.css";
 
 // Only the chart types in use are registered, so the bundle carries those
 // rather than all of ECharts. Canvas rendering is chosen over SVG because a
@@ -60,6 +83,8 @@ echarts.use([
 	GaugeChart,
 	HeatmapChart,
 	RadarChart,
+	SankeyChart,
+	MapChart,
 	GridComponent,
 	LegendComponent,
 	TooltipComponent,
@@ -68,6 +93,7 @@ echarts.use([
 	MarkLineComponent,
 	BrushComponent,
 	ToolboxComponent,
+	CalendarComponent,
 	CanvasRenderer,
 ]);
 
@@ -83,6 +109,17 @@ interface ChartProps {
 	measures: string[];
 	filters?: unknown[];
 	limit?: number;
+	// Figures worked out from the answer, declared on the visual. Part of the
+	// query rather than applied to the marks, so the derived columns arrive
+	// inside the cached payload and the warm path asks for the same thing.
+	transforms?: QueryTransform[];
+	// What to compare against, and the date the page's range filter sits on.
+	//
+	// Resolved by the renderer rather than read out of the options here,
+	// because the field falls back to the source's own default time field and
+	// only the renderer can see the source.
+	compareTo?: ComparePeriod | null;
+	compareField?: string | null;
 	fields: Map<string, FieldMeta>;
 	// A number, or "100%" when an enclosing layout has already decided. The
 	// canvas is redrawn by a resize observer either way.
@@ -105,6 +142,21 @@ interface ChartProps {
 	// from onSelect because a range is a different intent from a single
 	// category: it means "these ones", not "this one".
 	onSelectRange?: (field: string, values: string[]) => void;
+	// Where to leave a way of reading the drawn chart back as an image.
+	//
+	// A ref rather than a callback that stores the getter, because the getter
+	// reads the chart instance at the moment it is called and depends on
+	// nothing else. Storing it made every redraw a state update, a state
+	// update is a render, and a render rebuilt the option the effect was keyed
+	// on, so the two chased each other until React gave up.
+	//
+	// Given out by the chart rather than taken from the DOM, because the
+	// canvas belongs to the renderer and reaching for it would break the
+	// moment that changed.
+	imageRef?: React.MutableRefObject<(() => string | null) | null>;
+	// Only read for the spoken description, so a reader who cannot see the
+	// chart is told which one it is.
+	title?: string | null;
 }
 
 export function Chart({
@@ -114,6 +166,9 @@ export function Chart({
 	measures,
 	filters,
 	limit = 500,
+	transforms,
+	compareTo,
+	compareField,
 	fields,
 	height = 300,
 	style,
@@ -121,6 +176,8 @@ export function Chart({
 	onSelect,
 	selectedValues,
 	onSelectRange,
+	imageRef,
+	title,
 }: ChartProps) {
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const chartRef = useRef<echarts.ECharts | null>(null);
@@ -143,6 +200,91 @@ export function Chart({
 					filters,
 					limit,
 					options,
+					transforms,
+				})
+			: null,
+	);
+
+	// The same question about an earlier window, for the types that draw a
+	// comparison rather than a single period.
+	//
+	// The shifted filters are an ordinary spec, so this shares the batcher, the
+	// cache and the warm path with everything else the page asks for. Null
+	// whenever there is no date window on the page to move, which leaves the
+	// chart to say it has nothing to compare against rather than drawing a
+	// change of zero.
+	//
+	// Keyed on the serialised filters rather than the array. The page rebuilds
+	// that array on every render, so keying on its identity would hand back a
+	// new window every time and rebuild the chart with it.
+	const filterKey = JSON.stringify(filters ?? []);
+	const comparisonFilters = useMemo(() => {
+		if (!compareTo || !compareField) return null;
+		return shiftDateFilters(
+			(filters ?? []) as DateClause[],
+			compareField,
+			compareTo,
+		);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [compareTo, compareField, filterKey]);
+
+	// A map needs its boundaries before it can be drawn, and they are four
+	// hundred kilobytes fetched only when a map is actually on a page. Held in
+	// state rather than awaited inside the option, because building the option
+	// is synchronous and the fetch is not.
+	const isMap = visualType === "choroplethChart";
+	const [countries, setCountries] = useState<Map<string, string> | null>(
+		null,
+	);
+	const [mapFailed, setMapFailed] = useState(false);
+
+	useEffect(() => {
+		if (!isMap) return;
+		let live = true;
+		void ensureWorldMap()
+			.then((names) => {
+				if (live) setCountries(names);
+			})
+			.catch(() => {
+				if (live) setMapFailed(true);
+			});
+		return () => {
+			live = false;
+		};
+	}, [isMap]);
+
+	// What the map could not place.
+	//
+	// Derived rather than read back out of the builder, because a ref set
+	// during render does not re-render and the whole point of this is that the
+	// reader is told. A map that silently drops what it cannot match is a map
+	// that lies by omission, and the row it drops is usually a large one.
+	const unmatched = useMemo(() => {
+		if (!isMap || !countries) return [];
+		const field = dimensions[0];
+		const out: string[] = [];
+		for (const row of rows) {
+			const raw = String(row[field] ?? "");
+			if (raw === "" || out.includes(raw)) continue;
+			if (!matchCountry(raw, countries)) out.push(raw);
+		}
+		return out;
+	}, [isMap, countries, rows, dimensions]);
+
+	// Types whose whole shape is a comparison, so an absent one is worth
+	// explaining rather than leaving as a blank frame.
+	const comparisonNeeded = visualType === "slopeChart";
+
+	const comparison = useVisualQuery(
+		ready && comparisonFilters
+			? queryForVisual(visualType, {
+					sourceKey,
+					dimensions,
+					measures,
+					filters: comparisonFilters,
+					limit,
+					options,
+					transforms,
 				})
 			: null,
 	);
@@ -216,6 +358,26 @@ export function Chart({
 				return buildGauge(ctx);
 			case "waterfallChart":
 				return buildWaterfall(ctx);
+			case "bulletChart":
+				return buildBullet(ctx);
+			case "slopeChart":
+				return buildSlope(ctx);
+			case "paretoChart":
+				return buildPareto(ctx);
+			case "histogramChart":
+				return buildHistogram(ctx);
+			case "boxPlot":
+				return buildBoxPlot(ctx);
+			case "calendarChart":
+				return buildCalendar(ctx);
+			case "timelineChart":
+				return buildTimeline(ctx);
+			case "choroplethChart":
+				return countries
+					? buildChoropleth(ctx, countries).option
+					: null;
+			case "sankeyChart":
+				return buildSankey(ctx);
 			case "heatmapChart":
 				return buildHeatmap(ctx);
 			case "radarChart":
@@ -229,7 +391,7 @@ export function Chart({
 			case "areaChart":
 				return buildCartesian(ctx, "area");
 			case "scatterChart":
-				return buildCartesian(ctx, "scatter");
+				return buildScatter(ctx);
 			case "lineChart":
 				return buildCartesian(ctx, "line");
 			default:
@@ -249,7 +411,32 @@ export function Chart({
 		// reader is in the middle of drawing.
 		JSON.stringify(options ?? {}),
 		(selectedValues ?? []).join("\u0000"),
+		comparison.rows,
+		comparisonFilters,
+		countries,
 	]);
+
+	// Twice the drawn size, so the picture holds up pasted into a document at
+	// its natural width. The page's own surface behind it rather than
+	// transparency, which lands as black on most things it gets pasted into.
+	// Nothing here depends on the option, because the getter looks the chart up
+	// when it runs rather than closing over it. So this happens once.
+	useEffect(() => {
+		if (!imageRef) return;
+		const ref = imageRef;
+		ref.current = () => {
+			const chart = chartRef.current;
+			if (!chart) return null;
+			return chart.getDataURL({
+				type: "png",
+				pixelRatio: 2,
+				backgroundColor: readThemeColors().surface,
+			});
+		};
+		return () => {
+			ref.current = null;
+		};
+	}, [imageRef]);
 
 	useEffect(() => {
 		if (!containerRef.current || !option) return;
@@ -413,14 +600,97 @@ export function Chart({
 	if (isLoading && rows.length === 0) return <VisualLoading rows={5} />;
 	if (rows.length === 0) return <VisualEmpty />;
 
+	if (isMap && mapFailed) {
+		return (
+			<VisualEmpty message="The map boundaries could not be loaded, so there is nothing to draw this on. Reloading the page is worth a try." />
+		);
+	}
+	if (isMap && !countries) return <VisualLoading rows={4} />;
+
+	// A comparison chart with nothing to compare against. Said rather than
+	// drawn as a flat line, which would read as "nothing changed" when the
+	// truth is that no earlier window was asked for.
+	if (comparisonNeeded && !comparisonFilters) {
+		return (
+			<VisualEmpty message="This chart draws a change, so it needs a date range on the page and a date field set under Compare against." />
+		);
+	}
+
+	if (comparisonNeeded && comparison.isLoading) {
+		return <VisualLoading rows={5} />;
+	}
+
+	// What the chart says, for a reader who cannot see it.
+	//
+	// A canvas is one opaque element with no text in it, so without this a
+	// screen reader meets a page of visuals and finds nothing on any of them.
+	// The sentence is the glance and the table under it is the detail, and the
+	// table holds the rows the chart drew rather than a second query that
+	// could disagree with it.
+	const columns = [...dimensions, ...measures];
+
 	return (
-		<div
-			ref={attachContainer}
-			style={{
-				width: "100%",
-				height,
-				cursor: onSelect ? "pointer" : "default",
-			}}
-		/>
+		<>
+			<div
+				ref={attachContainer}
+				role="img"
+				aria-label={describeChart(
+					visualType,
+					rows,
+					dimensions,
+					measures,
+					title,
+				)}
+				style={{
+					width: "100%",
+					height,
+					cursor: onSelect ? "pointer" : "default",
+				}}
+			/>
+			{unmatched.length > 0 && (
+				<p className={styles.mapUnmatched} role="status">
+					{unmatched.length === 1
+						? `1 value could not be placed on the map: ${unmatched[0]}.`
+						: `${unmatched.length} values could not be placed on the map: ${unmatched.slice(0, 6).join(", ")}${unmatched.length > 6 ? ", and others" : ""}.`}
+				</p>
+			)}
+
+			<table className="sr-only">
+				<caption>
+					{describeChart(
+						visualType,
+						rows,
+						dimensions,
+						measures,
+						title,
+					)}
+				</caption>
+				<thead>
+					<tr>
+						{columns.map((column) => (
+							<th key={column} scope="col">
+								{column}
+							</th>
+						))}
+					</tr>
+				</thead>
+				<tbody>
+					{rows.map((row, index) => (
+						<tr key={index}>
+							{columns.map((column) => (
+								<td key={column}>
+									{formatValue(
+										row[column],
+										(fields.get(column)
+											?.formatHint as FormatHint) ??
+											"decimal",
+									)}
+								</td>
+							))}
+						</tr>
+					))}
+				</tbody>
+			</table>
+		</>
 	);
 }

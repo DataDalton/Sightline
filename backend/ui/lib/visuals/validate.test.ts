@@ -256,3 +256,117 @@ test("describeProblems names only what blocks the write", () => {
 	assert.match(described, /measure/i);
 	assert.equal(/Divsion/.test(described), false);
 });
+
+// --- Derived figures -------------------------------------------------------
+
+const derivedSource = {
+	dimensions: ["Region"],
+	measures: ["Net Sales", "Units"],
+};
+
+const withTransforms = (transforms: unknown[]) =>
+	validateVisual(
+		"barChart",
+		{
+			dimensions: ["Region"],
+			measures: ["Net Sales", "Units"],
+			transforms,
+		},
+		derivedSource,
+	);
+
+test("a derived figure over a field the visual reads is accepted", () => {
+	const problems = withTransforms([
+		{ kind: "percentOfTotal", measure: "Net Sales", as: "Share" },
+	]);
+	assert.deepEqual(problems, []);
+});
+
+test("a derived figure reading a field the visual does not return is refused", () => {
+	const problems = withTransforms([
+		{ kind: "runningTotal", measure: "Margin", as: "Cumulative" },
+	]);
+	assert.equal(problems.length, 1);
+	assert.equal(problems[0].severity, "error");
+	assert.match(problems[0].message, /does not return/);
+});
+
+test("a derived figure may read one declared above it", () => {
+	assert.deepEqual(
+		withTransforms([
+			{ kind: "runningTotal", measure: "Net Sales", as: "Cumulative" },
+			{
+				kind: "percentOfTotal",
+				measure: "Cumulative",
+				as: "Cumulative %",
+			},
+		]),
+		[],
+	);
+});
+
+test("a derived figure cannot read one declared below it", () => {
+	// The chain runs in order, so reading downwards is reading something that
+	// has not been worked out yet.
+	const problems = withTransforms([
+		{ kind: "percentOfTotal", measure: "Cumulative", as: "Cumulative %" },
+		{ kind: "runningTotal", measure: "Net Sales", as: "Cumulative" },
+	]);
+	assert.ok(problems.some((p) => p.severity === "error"));
+});
+
+test("naming a derived figure after a real field is refused", () => {
+	const problems = withTransforms([
+		{ kind: "percentOfTotal", measure: "Net Sales", as: "Units" },
+	]);
+	assert.equal(problems[0].severity, "error");
+	assert.match(problems[0].message, /already a column/);
+});
+
+test("two derived figures cannot share a name", () => {
+	const problems = withTransforms([
+		{ kind: "percentOfTotal", measure: "Net Sales", as: "Figure" },
+		{ kind: "runningTotal", measure: "Units", as: "Figure" },
+	]);
+	assert.ok(problems.some((p) => /already a column/.test(p.message)));
+});
+
+test("a derived figure with no name is refused", () => {
+	const problems = withTransforms([
+		{ kind: "percentOfTotal", measure: "Net Sales", as: "  " },
+	]);
+	assert.match(problems[0].message, /needs a column name/);
+});
+
+test("a calculation nobody implements is refused", () => {
+	const problems = withTransforms([
+		{ kind: "notAThing", measure: "Net Sales", as: "Figure" },
+	]);
+	assert.match(problems[0].message, /no calculation chosen/);
+});
+
+test("a ratio dividing by a field the visual does not return is refused", () => {
+	const problems = withTransforms([
+		{
+			kind: "ratio",
+			measure: "Net Sales",
+			denominator: "Margin",
+			as: "Per margin",
+		},
+	]);
+	assert.match(problems[0].message, /divides by Margin/);
+});
+
+test("a ratio between two fields the visual returns is accepted", () => {
+	assert.deepEqual(
+		withTransforms([
+			{
+				kind: "ratio",
+				measure: "Net Sales",
+				denominator: "Units",
+				as: "Per unit",
+			},
+		]),
+		[],
+	);
+});

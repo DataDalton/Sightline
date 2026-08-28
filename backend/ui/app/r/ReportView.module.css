@@ -401,3 +401,101 @@
 	color: var(--text-primary);
 	border-color: var(--brand);
 }
+
+/* A visual opened on its own, over the page rather than in place of it.
+
+   The arrangement underneath is left exactly as it was, so closing puts the
+   reader back where they were looking without anything having moved. */
+.expandBackdrop {
+	position: fixed;
+	inset: 0;
+	z-index: 60;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: var(--space-4);
+	background: color-mix(in srgb, var(--surface-base) 78%, transparent);
+	backdrop-filter: blur(2px);
+}
+
+.expandBox {
+	width: min(1600px, 94vw);
+	height: 88vh;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	border-radius: var(--radius-lg);
+	box-shadow: var(--shadow-lg);
+	overflow: hidden;
+}
+
+.expandBox > * {
+	flex: 1;
+	min-height: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.expandBackdrop {
+		backdrop-filter: none;
+	}
+}
+
+/* --- print ---
+
+   A page sent to a printer used to produce the sidebar, the header and one
+   visual, because the grid positions everything absolutely against a pixel
+   width the paper does not have.
+
+   So on paper the arrangement is dropped and the page becomes one column in
+   reading order, which is the same thing a narrow screen already gets. The
+   author's arrangement is about fitting a screen, and paper is a different
+   screen. */
+@media print {
+	.page {
+		padding: 0;
+		max-width: none;
+	}
+
+	/* Everything that exists to be pressed. None of it does anything on
+	   paper, and all of it costs room. */
+	.actions,
+	.tabs,
+	.readerGrip,
+	.resetSize,
+	.filterStrip {
+		display: none !important;
+	}
+
+	.grid {
+		position: static !important;
+		height: auto !important;
+		display: flex;
+		flex-direction: column;
+		gap: 16px;
+	}
+
+	.gridItem {
+		position: static !important;
+		width: 100% !important;
+		height: auto !important;
+		min-height: 320px;
+		transform: none !important;
+		/* A visual split across two sheets is a visual nobody can read. */
+		break-inside: avoid;
+		page-break-inside: avoid;
+	}
+
+	.gridItem > .gridBody {
+		height: auto !important;
+		min-height: 320px;
+	}
+
+	.header {
+		break-after: avoid;
+		page-break-after: avoid;
+	}
+
+	.expandBackdrop {
+		display: none !important;
+	}
+}

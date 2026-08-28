@@ -166,6 +166,7 @@ export async function getDistinctValues(
 				// One extra row reveals whether the list was cut short.
 				limit: limit + 1,
 				offset: 0,
+				transforms: [],
 			});
 
 			const rows = identity.userToken

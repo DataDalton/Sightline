@@ -19,6 +19,8 @@ export interface SavedViewConfig {
 	// order, and columns they pinned to the left edge.
 	columnOrder?: string[];
 	pinnedColumns?: string[];
+	// Widths the reader dragged columns to, by column name.
+	columnWidths?: Record<string, number>;
 	// Sizes the reader dragged visuals to, in grid columns and rows.
 	visualSizes?: Record<string, { w?: number; h?: number }>;
 }
@@ -37,6 +39,10 @@ interface SavedViewsProps {
 	pageId: string;
 	current: SavedViewConfig;
 	activeViewId: string | null;
+	// A view a link asked for, applied once the list has loaded. The link
+	// carries the view's id rather than a copy of its contents, so opening one
+	// shows the view as it stands rather than as it was when the link was sent.
+	requestedViewId?: string | null;
 	onApply: (view: SavedView | null) => void;
 }
 
@@ -45,6 +51,7 @@ export function SavedViews({
 	pageId,
 	current,
 	activeViewId,
+	requestedViewId,
 	onApply,
 }: SavedViewsProps) {
 	const [open, setOpen] = useState(false);
@@ -58,6 +65,23 @@ export function SavedViews({
 		`/api/views?pageId=${encodeURIComponent(pageId)}`,
 	);
 	const views = data?.views ?? [];
+
+	// Applied once, when the list arrives. Guarded on having applied it rather
+	// than on activeViewId, because a reader who follows a link and then
+	// deliberately clears the view should not have it put back the moment the
+	// list revalidates.
+	const requestedRef = useRef<string | null>(null);
+	useEffect(() => {
+		if (!requestedViewId || views.length === 0) return;
+		if (requestedRef.current === requestedViewId) return;
+
+		const wanted = views.find((v) => v.viewId === requestedViewId);
+		requestedRef.current = requestedViewId;
+		// A link to a view somebody has since deleted opens the page as the
+		// report defines it, which is the only remaining honest answer.
+		if (wanted) onApply(wanted);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [requestedViewId, views.length]);
 
 	useEffect(() => {
 		if (!open) return;

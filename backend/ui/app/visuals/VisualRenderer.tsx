@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import { Chart } from "./chartEntry";
 import { DataGrid } from "./DataGrid";
 import { MatrixTable } from "./MatrixTable";
 import { TextPanel } from "./TextPanel";
 import { KpiRow } from "./KpiRow";
+import { SmallMultiples } from "./SmallMultiples";
 import { RecordPanel } from "./RecordPanel";
 import {
 	BulkFilter,
@@ -22,6 +23,8 @@ import {
 } from "./FilterWidgets";
 import { usePageFilters } from "./PageFilters";
 import { VisualFrame, VisualNotice } from "./VisualFrame";
+import { ChartActions } from "./ChartActions";
+import { NotesAction, VisualNotes, usePageNotes } from "./VisualNotes";
 import { ErrorBoundary } from "../components/shared/ErrorBoundary";
 import { fieldMap, type SourceMeta } from "./types";
 import type { KpiGroup } from "../../lib/visuals/kpiGroups";
@@ -31,6 +34,12 @@ import {
 	visualByType,
 } from "../../lib/visuals/catalog";
 import { chartTypes, gridTypes, recordTypes } from "../../lib/query/visualSpec";
+import {
+	shiftDateFilters,
+	type ComparePeriod,
+	type DateClause,
+} from "../../lib/query/compare";
+import type { QueryTransform } from "../../lib/query/transform";
 import type { VisualStyle } from "../../lib/visuals/style";
 import styles from "./Visual.module.css";
 
@@ -54,6 +63,10 @@ export interface VisualConfig {
 	measures?: string[];
 	filters?: unknown[];
 	sort?: { field: string; direction: "asc" | "desc" }[];
+	// Figures worked out from the answer rather than asked of the warehouse.
+	// Stored beside the encoding, since they are part of what the visual asks
+	// for rather than part of how it looks.
+	transforms?: QueryTransform[];
 	options?: Record<string, unknown>;
 	// Colours, fills, conditional formatting and tooltip behaviour. Stored in
 	// the same JSONB column as the encoding, so a new option needs no
@@ -85,31 +98,28 @@ interface VisualRendererProps {
 	// saved view can carry it.
 	columnOrder?: string[];
 	pinnedColumns?: string[];
+	columnWidths?: Record<string, number>;
 	onColumnLayout?: (next: {
 		columnOrder: string[];
 		pinnedColumns: string[];
+		columnWidths: Record<string, number>;
 	}) => void;
 }
 
-// A readable heading when the stored title is only a layout slot name.
-const slotTitles: Record<string, string> = {
-	kpi: "Summary",
-	trend: "Trend",
-	line: "Trend",
-	rank: "Top contributors",
-	chart: "Breakdown",
-	table: "Detail",
-	switch: "Breakdown",
-	grain: "Period",
-	filters: "Filters",
-	threshold: "Threshold",
-	header: "Overview",
-	note: "Note",
-};
+// The title a visual shows, or nothing.
+//
+// Straight through. There used to be a translation here: reports were seeded
+// with slot keys as titles, so a visual stored as "table" rendered as "Detail",
+// and seventy one of the eighty nine visuals on the platform went through it.
+//
+// That made the editor lie. The properties panel showed the stored key and the
+// page showed the translation, so an author who renamed a visual to one of the
+// twelve magic words watched their title be silently replaced, with nothing
+// anywhere explaining why. The stored titles have been migrated to the words
+// readers were already seeing, so there is nothing left to translate.
 
 function displayTitle(visual: VisualSpec): string | null {
-	if (!visual.title) return null;
-	return slotTitles[visual.title] ?? visual.title;
+	return visual.title || null;
 }
 
 // One visual's failure stays inside that visual.
@@ -141,6 +151,7 @@ function VisualBody({
 	frameHeight,
 	columnOrder,
 	pinnedColumns,
+	columnWidths,
 	onColumnLayout,
 }: VisualRendererProps) {
 	// Every data visual reads the page state, which is what makes a filter
@@ -155,6 +166,40 @@ function VisualBody({
 		drillByVisual,
 		drillDown,
 	} = usePageFilters();
+
+	// Whether the figures behind a chart are open, and a way to read the chart
+	// back as a picture. Held here rather than inside the chart, because the
+	// controls for both sit in the frame around it.
+	const [showingTable, setShowingTable] = useState(false);
+	const [showingNotes, setShowingNotes] = useState(false);
+	// Where the chart leaves a way of reading itself back as a picture.
+	//
+	// A ref rather than state. The getter reads the chart instance when it is
+	// called and depends on nothing else, so holding it in state made every
+	// redraw a state update, and the render that followed rebuilt the option
+	// the publishing effect was keyed on. The two chased each other until
+	// React stopped them.
+	const chartImageRef = useRef<(() => string | null) | null>(null);
+	const getChartImage = useCallback(
+		() => chartImageRef.current?.() ?? null,
+		[],
+	);
+
+	// Derived figures the author declared. Read straight off the config rather
+	// than through the catalogue, because they are a list an author builds
+	// rather than a setting with a fallback.
+	// Every note on the page, fetched once and shared. A visual picks out
+	// its own rather than asking for them, so a page of eight visuals costs
+	// one request instead of eight.
+	const { notes: pageNotes, refresh: refreshNotes } = usePageNotes(
+		reportId ?? null,
+		pageId ?? null,
+	);
+	const notes = pageNotes.filter((n) => n.visualId === visual.visualId);
+
+	const transforms = Array.isArray(visual.config.transforms)
+		? (visual.config.transforms as QueryTransform[])
+		: undefined;
 
 	const sourceKey = visual.sourceKey;
 	const source = sourceKey ? sources[sourceKey] : undefined;
@@ -223,7 +268,7 @@ function VisualBody({
 			? visual.config.options.note
 			: null;
 
-	const driftNote =
+	const fieldNote =
 		missingFields.length > 0
 			? `${missingFields.length === 1 ? "One field is" : `${missingFields.length} fields are`} no longer available on this source: ${missingFields.join(", ")}`
 			: null;
@@ -236,6 +281,49 @@ function VisualBody({
 		...clausesFor(visual.visualId),
 		...((visual.config.filters ?? []) as unknown[]),
 	];
+
+	// What a comparison would be asked against, and whether it can be asked at
+	// all.
+	//
+	// The field falls back to the source's own default time field, so choosing
+	// "the same window a year earlier" is one decision rather than two. The
+	// second setting is for a source carrying several dates, not a hoop to get
+	// through.
+	const comparePeriod =
+		(optionValue<string>(visual.visualType, visual.config, "compareTo") as
+			| ComparePeriod
+			| undefined) || null;
+	const compareField =
+		optionValue<string>(visual.visualType, visual.config, "compareField") ||
+		source?.defaultTimeField ||
+		null;
+
+	// A comparison moves the page's date window back, so with no window on the
+	// page there is nothing to move and nothing to draw.
+	//
+	// Said rather than left blank. Without this an author changes the setting,
+	// nothing happens, and there is nothing anywhere to suggest why: every
+	// figure on the page is still correct, so it reads as the setting being
+	// broken rather than as the page missing a filter.
+	const compareNote =
+		comparePeriod &&
+		!(
+			compareField &&
+			shiftDateFilters(
+				filters as DateClause[],
+				compareField,
+				comparePeriod,
+			)
+		)
+			? compareField
+				? `Nothing to compare against yet. This moves the page's date range back, so the page needs a date filter on ${compareField}.`
+				: "Nothing to compare against yet. This source has no date field for a comparison to move."
+			: null;
+
+	// Both are caveats about the same visual, and the frame has one place to
+	// put them.
+	const driftNote =
+		[fieldNote, compareNote].filter(Boolean).join(" ") || null;
 
 	// A drill hierarchy replaces the visual's dimension with whichever level
 	// the reader has descended to, so clicking a bar moves down the hierarchy
@@ -500,7 +588,55 @@ function VisualBody({
 					visual.config,
 					"groups",
 				)}
+				compareTo={comparePeriod}
+				compareField={compareField}
+				sparkline={
+					optionValue<string>(
+						visual.visualType,
+						visual.config,
+						"sparkline",
+					) ?? null
+				}
 			/>
+		);
+	}
+
+	if (visual.visualType === "smallMultiples") {
+		return (
+			<VisualFrame
+				visualId={visual.visualId}
+				actions={
+					<NotesAction
+						count={notes.length}
+						onOpen={() => setShowingNotes(true)}
+						available={Boolean(reportId && pageId)}
+					/>
+				}
+				title={displayTitle(visual)}
+				notice={driftNote}
+			>
+				{showingNotes && reportId && pageId && (
+					<VisualNotes
+						reportId={reportId}
+						pageId={pageId}
+						visualId={visual.visualId}
+						notes={notes}
+						onChanged={refreshNotes}
+						onClose={() => setShowingNotes(false)}
+					/>
+				)}
+				{note && <VisualNotice>{note}</VisualNotice>}
+				<SmallMultiples
+					sourceKey={sourceKey}
+					dimensions={dimensions}
+					measures={measures}
+					filters={filters}
+					fields={fields}
+					style={style}
+					options={visual.config.options}
+					height={frameHeight}
+				/>
+			</VisualFrame>
 		);
 	}
 
@@ -518,7 +654,29 @@ function VisualBody({
 			: dimensions;
 
 		return (
-			<VisualFrame title={displayTitle(visual)} flush notice={driftNote}>
+			<VisualFrame
+				visualId={visual.visualId}
+				actions={
+					<NotesAction
+						count={notes.length}
+						onOpen={() => setShowingNotes(true)}
+						available={Boolean(reportId && pageId)}
+					/>
+				}
+				title={displayTitle(visual)}
+				flush
+				notice={driftNote}
+			>
+				{showingNotes && reportId && pageId && (
+					<VisualNotes
+						reportId={reportId}
+						pageId={pageId}
+						visualId={visual.visualId}
+						notes={notes}
+						onChanged={refreshNotes}
+						onClose={() => setShowingNotes(false)}
+					/>
+				)}
 				{note && <VisualNotice>{note}</VisualNotice>}
 				<MatrixTable
 					sourceKey={sourceKey}
@@ -570,6 +728,20 @@ function VisualBody({
 
 		return (
 			<VisualFrame
+				visualId={visual.visualId}
+				actions={
+					<>
+						<NotesAction
+							count={notes.length}
+							onOpen={() => setShowingNotes(true)}
+							available={Boolean(reportId && pageId)}
+						/>
+						<ChartActions
+							getImage={getChartImage}
+							onShowTable={() => setShowingTable(true)}
+						/>
+					</>
+				}
 				title={displayTitle(visual)}
 				notice={driftNote}
 				onZoomOut={
@@ -598,6 +770,9 @@ function VisualBody({
 					measures={measures}
 					filters={filters}
 					fields={fields}
+					transforms={transforms}
+					compareTo={comparePeriod}
+					compareField={compareField}
 					style={style}
 					// Inside a laid-out page the frame already has a height and
 					// the chart fills what is left after the title, which is
@@ -631,7 +806,87 @@ function VisualBody({
 									?.values ?? [])
 							: []
 					}
+					imageRef={chartImageRef}
+					title={displayTitle(visual)}
 				/>
+
+				{/* The chart's own query, drawn as a table.
+				    
+				    This is the answer to "can I see the numbers", and it is
+				    exactly the numbers the chart drew rather than a second
+				    query that might disagree with it. Whatever the reader has
+				    filtered or brushed is already in those filters, so
+				    clicking a bar and then opening this shows what that bar is
+				    made of. */}
+				{showingNotes && reportId && pageId && (
+					<VisualNotes
+						reportId={reportId}
+						pageId={pageId}
+						visualId={visual.visualId}
+						notes={notes}
+						onChanged={refreshNotes}
+						onClose={() => setShowingNotes(false)}
+					/>
+				)}
+
+				{showingTable && (
+					<div
+						className={styles.tableOverlay}
+						role="dialog"
+						aria-modal="true"
+						aria-label={`Figures behind ${displayTitle(visual) ?? "this chart"}`}
+						onPointerDown={(e) => {
+							if (e.target === e.currentTarget) {
+								setShowingTable(false);
+							}
+						}}
+					>
+						<div className={styles.tableOverlayBox}>
+							<div className={styles.tableOverlayHead}>
+								<span className={styles.title}>
+									{displayTitle(visual) ?? "Figures"}
+								</span>
+								<span
+									className={styles.headerSpacer}
+									aria-hidden="true"
+								/>
+								<button
+									type="button"
+									className={styles.frameAction}
+									onClick={() => setShowingTable(false)}
+									title="Close"
+									aria-label="Close"
+								>
+									<svg
+										width="14"
+										height="14"
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										strokeWidth="2"
+										strokeLinecap="round"
+										aria-hidden="true"
+									>
+										<path d="M18 6 6 18M6 6l12 12" />
+									</svg>
+								</button>
+							</div>
+							<DataGrid
+								sourceKey={sourceKey}
+								dimensions={activeDimensions}
+								measures={measures}
+								baseFilters={filters}
+								fields={fields}
+								height="100%"
+								pageSize={200}
+								reportId={reportId}
+								pageId={pageId}
+								visualId={visual.visualId}
+								style={style}
+							/>
+						</div>
+					</div>
+				)}
 			</VisualFrame>
 		);
 	}
@@ -640,6 +895,7 @@ function VisualBody({
 		const isHeader = visual.visualType === "entityHeader";
 		return (
 			<VisualFrame
+				visualId={visual.visualId}
 				title={isHeader ? null : displayTitle(visual)}
 				notice={driftNote}
 			>
@@ -662,16 +918,48 @@ function VisualBody({
 		const compact = visual.visualType !== "table";
 		const gridHeight = frameHeight ?? (compact ? 220 : 520);
 		return (
-			<VisualFrame title={displayTitle(visual)} flush notice={driftNote}>
+			<VisualFrame
+				visualId={visual.visualId}
+				actions={
+					<NotesAction
+						count={notes.length}
+						onOpen={() => setShowingNotes(true)}
+						available={Boolean(reportId && pageId)}
+					/>
+				}
+				title={displayTitle(visual)}
+				flush
+				notice={driftNote}
+			>
+				{showingNotes && reportId && pageId && (
+					<VisualNotes
+						reportId={reportId}
+						pageId={pageId}
+						visualId={visual.visualId}
+						notes={notes}
+						onChanged={refreshNotes}
+						onClose={() => setShowingNotes(false)}
+					/>
+				)}
 				{note && <VisualNotice>{note}</VisualNotice>}
 				<DataGrid
 					sourceKey={sourceKey}
 					dimensions={dimensions}
 					measures={measures}
 					baseFilters={filters}
+					transforms={transforms}
 					fields={fields}
 					height={frameHeight ? "100%" : gridHeight}
 					pageSize={compact ? 25 : 200}
+					showTotals={
+						optionValue<boolean>(
+							visual.visualType,
+							visual.config,
+							"showTotals",
+						) === true
+					}
+					compareTo={comparePeriod}
+					compareField={compareField}
 					density={
 						optionValue<"comfortable" | "compact">(
 							visual.visualType,
@@ -685,6 +973,7 @@ function VisualBody({
 					style={style}
 					columnOrder={columnOrder}
 					pinnedColumns={pinnedColumns}
+					columnWidths={columnWidths}
 					onColumnLayout={onColumnLayout}
 				/>
 			</VisualFrame>

@@ -526,6 +526,582 @@ function body(type: string): React.ReactNode {
 			);
 		}
 
+		case "timelineChart": {
+			// Overlapping spans of different lengths, which is what a timeline
+			// is read for and what a table of two date columns cannot show.
+			const spans = [
+				{ label: "Launch", from: 0.02, to: 0.34 },
+				{ label: "Pilot", from: 0.18, to: 0.52 },
+				{ label: "Rollout", from: 0.4, to: 0.86 },
+				{ label: "Support", from: 0.62, to: 0.98 },
+			];
+			const left = 54;
+			const span = r - left;
+			const slot = (b - t) / spans.length;
+			return (
+				<>
+					{[0.25, 0.5, 0.75].map((at) => (
+						<line
+							key={at}
+							x1={left + span * at}
+							y1={t}
+							x2={left + span * at}
+							y2={b}
+							stroke={line}
+						/>
+					))}
+					{spans.map((entry, i) => {
+						const mid = t + slot * i + slot / 2;
+						return (
+							<g key={entry.label}>
+								<Label x={left - 6} y={mid + 3} anchor="end">
+									{entry.label}
+								</Label>
+								<rect
+									x={left + span * entry.from}
+									y={mid - 6}
+									width={span * (entry.to - entry.from)}
+									height={12}
+									fill={c1}
+									rx={3}
+								/>
+							</g>
+						);
+					})}
+					<Label x={left} y={b + 12} anchor="start" size={6}>
+						Jan
+					</Label>
+					<Label x={r} y={b + 12} anchor="end" size={6}>
+						Dec
+					</Label>
+				</>
+			);
+		}
+
+		case "calendarChart": {
+			// Seventeen weeks across, Monday at the top. Busier towards the
+			// end and quiet at the weekends, which is the pattern this exists
+			// to make visible.
+			const weeks = 17;
+			const cell = Math.min((r - l - 18) / weeks, 11);
+			const top = t + 10;
+			return (
+				<>
+					{["M", "W", "F", "S"].map((day, i) => (
+						<Label
+							key={day}
+							x={l + 6}
+							y={top + cell * i * 2 + cell * 0.75}
+							anchor="end"
+							size={6}
+						>
+							{day}
+						</Label>
+					))}
+					{Array.from({ length: weeks }, (_, wk) =>
+						Array.from({ length: 7 }, (_, day) => {
+							// Weekends quiet, midweek busy, and rising over
+							// the period.
+							const weekend = day >= 5;
+							const heat = weekend
+								? 0.08
+								: 0.15 + (wk / weeks) * 0.6 + (day % 3) * 0.08;
+							return (
+								<rect
+									key={`${wk}-${day}`}
+									x={l + 10 + wk * cell}
+									y={top + day * cell}
+									width={cell - 1.5}
+									height={cell - 1.5}
+									fill={c1}
+									fillOpacity={Math.min(0.92, heat)}
+									rx={1}
+								/>
+							);
+						}),
+					)}
+					<Label x={l + 10} y={top - 4} anchor="start" size={6}>
+						Jan
+					</Label>
+					<Label x={l + 10 + cell * 8} y={top - 4} size={6}>
+						Feb
+					</Label>
+					<Label
+						x={l + 10 + cell * (weeks - 1)}
+						y={top - 4}
+						anchor="end"
+						size={6}
+					>
+						Mar
+					</Label>
+				</>
+			);
+		}
+
+		case "choroplethChart": {
+			// A recognisable world without pretending to be accurate: this is
+			// a drawing of what the visual is, and the real one is drawn from
+			// boundary data the moment it is placed.
+			const blobs = [
+				{ d: "M40 44 L58 38 L74 46 L70 62 L52 66 L38 58 Z", fill: 0.9 },
+				{ d: "M74 66 L88 62 L96 82 L84 96 L72 84 Z", fill: 0.45 },
+				{ d: "M112 40 L138 34 L146 48 L132 58 L114 54 Z", fill: 0.7 },
+				{ d: "M120 62 L142 60 L150 82 L128 92 L116 76 Z", fill: 0.25 },
+				{ d: "M150 34 L196 28 L212 50 L184 66 L152 56 Z", fill: 0.55 },
+				{ d: "M196 74 L220 70 L226 90 L204 96 Z", fill: 0.15 },
+			];
+			return (
+				<>
+					<rect
+						x={l}
+						y={t}
+						width={r - l}
+						height={b - t}
+						fill={line}
+						opacity="0.25"
+						rx={2}
+					/>
+					{blobs.map((blob, i) => (
+						<path
+							key={i}
+							d={blob.d}
+							fill={c1}
+							fillOpacity={blob.fill}
+							stroke={paper}
+							strokeWidth="0.75"
+						/>
+					))}
+					{/* The scale, which is what says the colour means a
+					    quantity rather than a category. */}
+					{[0.15, 0.35, 0.55, 0.75, 0.95].map((stop, i) => (
+						<rect
+							key={stop}
+							x={l + 4 + i * 12}
+							y={b + 2}
+							width={12}
+							height={5}
+							fill={c1}
+							fillOpacity={stop}
+						/>
+					))}
+				</>
+			);
+		}
+
+		case "sankeyChart": {
+			// Three sources fanning into two outcomes, which is the shape a
+			// funnel cannot draw.
+			const leftX = l + 6;
+			const rightX = r - 30;
+			const sources = [
+				{ label: "Direct", y: t + 6, h: 34 },
+				{ label: "Partner", y: t + 46, h: 26 },
+				{ label: "Web", y: t + 78, h: 18 },
+			];
+			const targets = [
+				{ label: "Won", y: t + 10, h: 44 },
+				{ label: "Lost", y: t + 60, h: 34 },
+			];
+			const flows = [
+				{ from: 0, to: 0, fromOff: 0, toOff: 0, w: 22 },
+				{ from: 0, to: 1, fromOff: 22, toOff: 0, w: 12 },
+				{ from: 1, to: 0, fromOff: 0, toOff: 22, w: 16 },
+				{ from: 1, to: 1, fromOff: 16, toOff: 12, w: 10 },
+				{ from: 2, to: 1, fromOff: 0, toOff: 22, w: 18 },
+			];
+			return (
+				<>
+					{flows.map((flow, i) => {
+						const a = sources[flow.from];
+						const bb = targets[flow.to];
+						const y1 = a.y + flow.fromOff + flow.w / 2;
+						const y2 = bb.y + flow.toOff + flow.w / 2;
+						const mid = (leftX + 8 + rightX) / 2;
+						return (
+							<path
+								key={i}
+								d={`M${leftX + 8} ${y1} C${mid} ${y1}, ${mid} ${y2}, ${rightX} ${y2}`}
+								fill="none"
+								stroke={i % 2 === 0 ? c1 : c2}
+								strokeOpacity="0.35"
+								strokeWidth={flow.w}
+							/>
+						);
+					})}
+					{sources.map((node) => (
+						<g key={node.label}>
+							<rect
+								x={leftX}
+								y={node.y}
+								width={8}
+								height={node.h}
+								fill={c1}
+								rx={1}
+							/>
+							<Label
+								x={leftX + 12}
+								y={node.y + node.h / 2 + 2}
+								anchor="start"
+								size={6}
+							>
+								{node.label}
+							</Label>
+						</g>
+					))}
+					{targets.map((node) => (
+						<g key={node.label}>
+							<rect
+								x={rightX}
+								y={node.y}
+								width={8}
+								height={node.h}
+								fill={c2}
+								rx={1}
+							/>
+							<Label
+								x={rightX + 12}
+								y={node.y + node.h / 2 + 2}
+								anchor="start"
+								size={6}
+							>
+								{node.label}
+							</Label>
+						</g>
+					))}
+				</>
+			);
+		}
+
+		case "histogramChart": {
+			// A right skewed spread, which is what most business figures look
+			// like and what an average hides.
+			const counts = [3, 9, 17, 24, 19, 12, 7, 4, 2, 1];
+			const slot = (r - l) / counts.length;
+			const peak = Math.max(...counts);
+			const y = (v: number) => b - ((b - t) * v) / peak;
+			return (
+				<>
+					<Grid />
+					{counts.map((count, i) => (
+						<rect
+							key={i}
+							x={l + slot * i}
+							y={y(count)}
+							width={slot - 1}
+							height={b - y(count)}
+							fill={c1}
+						/>
+					))}
+					<Label x={(l + r) / 2} y={b + 14} size={6}>
+						Order value
+					</Label>
+				</>
+			);
+		}
+
+		case "boxPlot": {
+			const boxes = [
+				{ label: "North", min: 18, q1: 34, med: 48, q3: 62, max: 78 },
+				{ label: "South", min: 30, q1: 44, med: 52, q3: 60, max: 70 },
+				{ label: "East", min: 8, q1: 22, med: 30, q3: 52, max: 88 },
+			];
+			const slot = (r - l) / boxes.length;
+			const y = (v: number) => b - ((b - t) * v) / 100;
+			return (
+				<>
+					<Grid />
+					{boxes.map((box, i) => {
+						const cx = l + slot * i + slot / 2;
+						const half = slot * 0.24;
+						return (
+							<g key={box.label}>
+								{/* The whisker, behind the box. */}
+								<line
+									x1={cx}
+									y1={y(box.max)}
+									x2={cx}
+									y2={y(box.min)}
+									stroke={edge}
+								/>
+								<line
+									x1={cx - half / 2}
+									y1={y(box.max)}
+									x2={cx + half / 2}
+									y2={y(box.max)}
+									stroke={edge}
+								/>
+								<line
+									x1={cx - half / 2}
+									y1={y(box.min)}
+									x2={cx + half / 2}
+									y2={y(box.min)}
+									stroke={edge}
+								/>
+								<rect
+									x={cx - half}
+									y={y(box.q3)}
+									width={half * 2}
+									height={y(box.q1) - y(box.q3)}
+									fill={c1}
+									fillOpacity="0.35"
+									stroke={c1}
+								/>
+								{/* The median, which is the line the eye goes
+								    to first. */}
+								<line
+									x1={cx - half}
+									y1={y(box.med)}
+									x2={cx + half}
+									y2={y(box.med)}
+									stroke={ink}
+									strokeWidth="2"
+								/>
+								<Label x={cx} y={b + 12}>
+									{box.label}
+								</Label>
+							</g>
+						);
+					})}
+				</>
+			);
+		}
+
+		case "paretoChart": {
+			// A long tail, which is the shape a Pareto exists to show, with the
+			// running share crossing the cut-off part way along it.
+			const values = [30, 22, 16, 11, 8, 6, 4, 3];
+			const total = values.reduce((sum, v) => sum + v, 0);
+			const slot = (r - l) / values.length;
+			const y = (v: number) => b - ((b - t) * v) / 32;
+			const share = (i: number) =>
+				(values.slice(0, i + 1).reduce((sum, v) => sum + v, 0) /
+					total) *
+				100;
+			const cy = (percent: number) => b - ((b - t) * percent) / 100;
+			return (
+				<>
+					<Grid />
+					{values.map((value, i) => (
+						<rect
+							key={i}
+							x={l + slot * i + slot * 0.18}
+							y={y(value)}
+							width={slot * 0.64}
+							height={b - y(value)}
+							fill={c1}
+							rx={1}
+						/>
+					))}
+					{/* The cut-off, and the running share crossing it. */}
+					<line
+						x1={l}
+						y1={cy(80)}
+						x2={r}
+						y2={cy(80)}
+						stroke={edge}
+						strokeWidth="1"
+						strokeDasharray="3 3"
+					/>
+					<polyline
+						points={values
+							.map(
+								(_, i) =>
+									`${l + slot * i + slot / 2},${cy(share(i))}`,
+							)
+							.join(" ")}
+						fill="none"
+						stroke="var(--warning)"
+						strokeWidth="1.8"
+					/>
+					<Label x={r - 2} y={cy(80) - 4} anchor="end" size={6}>
+						80%
+					</Label>
+				</>
+			);
+		}
+
+		case "slopeChart": {
+			// Five categories, most of them rising and two falling, so the
+			// drawing shows the crossings that are the whole reason for the
+			// shape.
+			const pairs = [
+				{ label: "North", then: 34, now: 78 },
+				{ label: "South", then: 58, now: 88 },
+				{ label: "East", then: 72, now: 41 },
+				{ label: "West", then: 46, now: 60 },
+				{ label: "Central", then: 88, now: 26 },
+			];
+			const x1 = l + 24;
+			const x2 = r - 52;
+			const y = (v: number) => b - ((b - t) * v) / 100;
+			return (
+				<>
+					<line x1={x1} y1={t} x2={x1} y2={b} stroke={line} />
+					<line x1={x2} y1={t} x2={x2} y2={b} stroke={line} />
+					{pairs.map((pair) => {
+						const rising = pair.now >= pair.then;
+						const stroke = rising
+							? "var(--success)"
+							: "var(--danger)";
+						return (
+							<g key={pair.label}>
+								<line
+									x1={x1}
+									y1={y(pair.then)}
+									x2={x2}
+									y2={y(pair.now)}
+									stroke={stroke}
+									strokeWidth="1.6"
+								/>
+								<circle
+									cx={x1}
+									cy={y(pair.then)}
+									r="3"
+									fill={stroke}
+								/>
+								<circle
+									cx={x2}
+									cy={y(pair.now)}
+									r="3"
+									fill={stroke}
+								/>
+								<Label
+									x={x2 + 6}
+									y={y(pair.now) + 3}
+									anchor="start"
+								>
+									{pair.label}
+								</Label>
+							</g>
+						);
+					})}
+					<Label x={x1} y={b + 12}>
+						Before
+					</Label>
+					<Label x={x2} y={b + 12}>
+						After
+					</Label>
+				</>
+			);
+		}
+
+		case "bulletChart": {
+			// Four regions, two of them clear of target and two behind it, so
+			// the drawing shows both states rather than only the happy one.
+			const rows = [
+				{ label: "North", actual: 0.92, target: 0.78 },
+				{ label: "South", actual: 0.71, target: 0.66 },
+				{ label: "East", actual: 0.44, target: 0.7 },
+				{ label: "West", actual: 0.31, target: 0.62 },
+			];
+			const left = 48;
+			const span = r - left;
+			const slot = (b - t) / rows.length;
+			return (
+				<>
+					{rows.map((row, i) => {
+						const mid = t + slot * i + slot / 2;
+						const met = row.actual >= row.target;
+						return (
+							<g key={row.label}>
+								<Label x={left - 6} y={mid + 3} anchor="end">
+									{row.label}
+								</Label>
+								<rect
+									x={left}
+									y={mid - 7}
+									width={span}
+									height={14}
+									fill={line}
+									rx={2}
+								/>
+								<rect
+									x={left}
+									y={mid - 7}
+									width={span * row.actual}
+									height={14}
+									fill={
+										met
+											? "var(--success)"
+											: "var(--warning)"
+									}
+									rx={2}
+								/>
+								{/* The target, as the tick the bar is judged
+								    against rather than as a second bar. */}
+								<rect
+									x={left + span * row.target - 1.5}
+									y={mid - 11}
+									width={3}
+									height={22}
+									fill={edge}
+								/>
+							</g>
+						);
+					})}
+				</>
+			);
+		}
+
+		case "smallMultiples": {
+			// Six panels on one scale, with the differences in level as
+			// visible as the differences in shape. That is the whole reason
+			// for the shared scale, so the drawing has to show it.
+			const panels = [
+				{ label: "North", series: [42, 48, 55, 61, 58, 66] },
+				{ label: "South", series: [30, 33, 31, 36, 38, 41] },
+				{ label: "East", series: [58, 52, 47, 40, 36, 29] },
+				{ label: "West", series: [18, 21, 26, 24, 30, 34] },
+				{ label: "Nordic", series: [12, 14, 13, 16, 18, 17] },
+				{ label: "Iberia", series: [24, 22, 27, 33, 31, 38] },
+			];
+			const cols = 3;
+			const cellW = (r - l) / cols;
+			const cellH = (b - t) / 2;
+			return (
+				<>
+					{panels.map((panel, i) => {
+						const col = i % cols;
+						const row = Math.floor(i / cols);
+						const x0 = l + col * cellW + 3;
+						const y0 = t + row * cellH + 12;
+						const w = cellW - 8;
+						const h = cellH - 24;
+						// One scale across every panel, which is what makes
+						// them comparable.
+						const y = (v: number) => y0 + h - (h * v) / 70;
+						const step = w / (panel.series.length - 1);
+						const line = panel.series
+							.map((v, j) => `${x0 + step * j},${y(v)}`)
+							.join(" ");
+						return (
+							<g key={panel.label}>
+								<Label
+									x={x0}
+									y={y0 - 3}
+									anchor="start"
+									size={6}
+								>
+									{panel.label}
+								</Label>
+								<polygon
+									points={`${x0},${y0 + h} ${line} ${x0 + w},${y0 + h}`}
+									fill={c1}
+									fillOpacity="0.14"
+								/>
+								<polyline
+									points={line}
+									fill="none"
+									stroke={c1}
+									strokeWidth="1.4"
+								/>
+							</g>
+						);
+					})}
+				</>
+			);
+		}
+
 		case "waterfallChart": {
 			// Opening, three movements, closing.
 			const steps = [

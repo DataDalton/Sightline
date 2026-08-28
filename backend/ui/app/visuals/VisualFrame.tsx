@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import type { QueryMeta } from "../hooks/useVisualQuery";
 import { usePageFilters, type DrillStep } from "./PageFilters";
+import { useExpand } from "./ExpandContext";
 import { Skeleton } from "../components/shared/Skeleton";
 import styles from "./Visual.module.css";
 
@@ -23,6 +24,14 @@ export interface DrillInfo {
 }
 
 interface VisualFrameProps {
+	// Which visual this frame is around, so the header can offer the actions
+	// that need to name one. Absent where a frame is drawn for something that
+	// is not a placed visual, and the actions are then not offered.
+	visualId?: string | null;
+	// Chart or grid actions the renderer wants in the header, such as copying
+	// the picture. Placed here rather than by each renderer so every visual's
+	// controls sit in the same place.
+	actions?: ReactNode;
 	title?: string | null;
 	meta?: QueryMeta;
 	flush?: boolean;
@@ -47,6 +56,8 @@ function freshnessLabel(meta: QueryMeta): string {
 }
 
 export function VisualFrame({
+	visualId,
+	actions,
 	title,
 	meta,
 	flush,
@@ -56,11 +67,23 @@ export function VisualFrame({
 	children,
 }: VisualFrameProps) {
 	const { drillUp } = usePageFilters();
+	const expand = useExpand();
 	const showDrill = drill && drill.fields.length > 1;
+
+	// Offered only where there is a page able to honour it and a visual to
+	// name. The editor canvas and the version comparison draw frames too, and
+	// neither has anywhere to expand into.
+	const canExpand = Boolean(expand && visualId);
+	const isExpanded = canExpand && expand?.expandedId === visualId;
 
 	return (
 		<div className={styles.visual}>
-			{(title || meta || showDrill || onZoomOut) && (
+			{(title ||
+				meta ||
+				showDrill ||
+				onZoomOut ||
+				actions ||
+				canExpand) && (
 				<div className={styles.header}>
 					{title && <span className={styles.title}>{title}</span>}
 
@@ -129,6 +152,59 @@ export function VisualFrame({
 								<path d="M8 11h6M20 20l-3.5-3.5" />
 							</svg>
 							Zoomed to selection
+						</button>
+					)}
+
+					{/* Pushed to the right of whatever the header is
+					    already carrying, so the actions sit in the same place
+					    on every visual whether or not it has a breadcrumb. */}
+					<span className={styles.headerSpacer} aria-hidden="true" />
+
+					{actions}
+
+					{canExpand && (
+						<button
+							type="button"
+							className={styles.frameAction}
+							onClick={() =>
+								expand?.setExpandedId(
+									isExpanded ? null : (visualId ?? null),
+								)
+							}
+							title={
+								isExpanded
+									? "Back to the page"
+									: "Open this on its own, full size"
+							}
+							aria-label={
+								isExpanded
+									? "Back to the page"
+									: "Open this full size"
+							}
+						>
+							<svg
+								width="13"
+								height="13"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								strokeWidth="2"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								aria-hidden="true"
+							>
+								{isExpanded ? (
+									<>
+										<path d="M9 3v6H3M21 15h-6v6" />
+										<path d="M15 9l6-6M3 21l6-6" />
+									</>
+								) : (
+									<>
+										<path d="M15 3h6v6M9 21H3v-6" />
+										<path d="M21 3l-7 7M3 21l7-7" />
+									</>
+								)}
+							</svg>
 						</button>
 					)}
 
