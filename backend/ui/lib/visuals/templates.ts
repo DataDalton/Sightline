@@ -157,7 +157,7 @@ export const pageTemplates: PageTemplate[] = [
 				title: "Share",
 				dimensions: ["{by}"],
 				measures: ["{measure}"],
-				options: { topN: 8 },
+				options: { groupTail: 8 },
 				layout: { x: 7, y: 3, w: 5, h: 6 },
 			},
 			{

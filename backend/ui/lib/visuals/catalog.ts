@@ -429,6 +429,25 @@ export const visualCatalog: VisualTypeDefinition[] = [
 				fallback: false,
 				help: "Adds a slider under the plot and lets the wheel narrow it. For a series long enough that the whole of it does not read at once.",
 			},
+			// The query layer already ranks any chart carrying these, so a
+			// combo drawn over categories was the one comparison chart whose
+			// author could not say "the largest twelve" without hand-writing
+			// the config.
+			{
+				key: "topN",
+				label: "Keep only the top",
+				kind: "number",
+				min: 1,
+				max: 500,
+				help: "Ranks by the measure below and asks the warehouse for that many rows. Left empty it asks for everything and draws it, which for a few thousand categories is a chart nobody can read and a query nobody needed.",
+			},
+			{
+				key: "topBy",
+				label: "Ranked by",
+				kind: "field",
+				scope: "measure",
+				help: "Defaults to the first measure.",
+			},
 		],
 		defaultLayout: { w: 6, h: 5 },
 	},
@@ -576,19 +595,12 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		supports: { color: true, legend: true, tooltip: true },
 		options: [
 			{
-				key: "topN",
-				label: "Keep only the top",
+				key: "groupTail",
+				label: "Slices to keep",
 				kind: "number",
-				min: 1,
-				max: 500,
-				help: "Ranks by the measure below and asks the warehouse for that many rows. Left empty it asks for everything and draws it, which for a few thousand categories is a chart nobody can read and a query nobody needed.",
-			},
-			{
-				key: "topBy",
-				label: "Ranked by",
-				kind: "field",
-				scope: "measure",
-				help: "Defaults to the first measure.",
+				min: 2,
+				max: 50,
+				help: "Keeps the largest slices and gathers the rest into one named Other. Left empty every value gets a slice, which past a dozen is a colour key with a circle attached.",
 			},
 			{
 				key: "sliceLabels",
@@ -602,14 +614,6 @@ export const visualCatalog: VisualTypeDefinition[] = [
 				],
 				fallback: "percent",
 				help: "A pie is read as a share, so the share is the default. Labels are dropped past a dozen slices whatever this says, because they stop fitting.",
-			},
-			{
-				key: "topN",
-				label: "Group the tail",
-				kind: "number",
-				min: 2,
-				max: 50,
-				help: "Keeps the largest slices and gathers the rest into one named Other. Left empty every value gets a slice, which past a dozen is a colour key with a circle attached.",
 			},
 		],
 		defaultLayout: { w: 4, h: 5 },
@@ -627,19 +631,12 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		supports: { color: true, legend: true, tooltip: true },
 		options: [
 			{
-				key: "topN",
-				label: "Keep only the top",
+				key: "groupTail",
+				label: "Slices to keep",
 				kind: "number",
-				min: 1,
-				max: 500,
-				help: "Ranks by the measure below and asks the warehouse for that many rows. Left empty it asks for everything and draws it, which for a few thousand categories is a chart nobody can read and a query nobody needed.",
-			},
-			{
-				key: "topBy",
-				label: "Ranked by",
-				kind: "field",
-				scope: "measure",
-				help: "Defaults to the first measure.",
+				min: 2,
+				max: 50,
+				help: "Keeps the largest slices and gathers the rest into one named Other. Left empty every value gets a slice, which past a dozen is a colour key with a circle attached.",
 			},
 			{
 				key: "sliceLabels",
