@@ -96,7 +96,7 @@ export const visualPresets: VisualPreset[] = [
 		label: "Composition, tidied",
 		blurb: "The largest six with everything else gathered into one slice, which is the point at which a donut stops being readable.",
 		visualType: "donutChart",
-		options: { topN: 6, sliceLabels: "percent" },
+		options: { groupTail: 6, sliceLabels: "percent" },
 	},
 	{
 		key: "on-plan",
