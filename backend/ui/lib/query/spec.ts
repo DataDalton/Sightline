@@ -1,3 +1,4 @@
+import { transformKinds, type QueryTransform } from "./transform";
 import {
 	isValidOperator,
 	operatorLabels,
@@ -34,6 +35,11 @@ export interface QuerySpec {
 	sort: QuerySort[];
 	limit: number;
 	offset: number;
+	// Figures worked out from the answer rather than asked of the warehouse.
+	// Applied after the rows come back and before they are cached, so a hit
+	// serves them too. Part of the cache key, since two specs differing only
+	// in these are two different answers.
+	transforms: QueryTransform[];
 }
 
 // Upper bounds on the shape of a single request.
@@ -59,6 +65,10 @@ export interface QuerySpec {
 export const maxDimensions = 100;
 export const maxMeasures = 100;
 export const maxFilters = 40;
+// Each one is a pass over rows the warehouse has already returned, so the cost
+// is small and bounded. This is a backstop against a malformed request rather
+// than a design rule.
+export const maxTransforms = 12;
 export const maxLimit = 50000;
 export const defaultLimit = 1000;
 
@@ -108,7 +118,11 @@ function parseFilters(raw: unknown): QueryFilter[] {
 			return { field, op: operator, values };
 		}
 
-		return { field, op: operator, value: asString(o.value, `filter ${i} value`) };
+		return {
+			field,
+			op: operator,
+			value: asString(o.value, `filter ${i} value`),
+		};
 	});
 }
 
@@ -122,18 +136,106 @@ function parseSort(raw: unknown): QuerySort[] {
 		}
 		const o = item as Record<string, unknown>;
 		const direction =
-			String(o.direction ?? "asc").toLowerCase() === "desc" ? "desc" : "asc";
+			String(o.direction ?? "asc").toLowerCase() === "desc"
+				? "desc"
+				: "asc";
 		return { field: asString(o.field, `sort ${i} field`), direction };
 	});
 }
 
 function parseNameList(raw: unknown, label: string, max: number): string[] {
 	if (raw === undefined || raw === null) return [];
-	if (!Array.isArray(raw)) throw new QuerySpecError(`${label} must be an array`);
+	if (!Array.isArray(raw))
+		throw new QuerySpecError(`${label} must be an array`);
 	if (raw.length > max) {
 		throw new QuerySpecError(`at most ${max} ${label} are allowed`);
 	}
 	return raw.map((v, i) => asString(v, `${label} ${i}`));
+}
+
+// Derived figures, checked against what the query will actually return.
+//
+// Two rules, and both matter. Every column a transform reads has to be one the
+// answer carries, which is the request's own fields plus anything an earlier
+// transform produced, so the chain is validated in the order it runs. And a new
+// name may not shadow a field the source defines, or a visual asking for that
+// field would silently get the derived column instead.
+function parseTransforms(
+	raw: unknown,
+	dimensions: string[],
+	measures: string[],
+): QueryTransform[] {
+	if (raw === undefined || raw === null) return [];
+	if (!Array.isArray(raw)) {
+		throw new QuerySpecError("transforms must be an array");
+	}
+	if (raw.length > maxTransforms) {
+		throw new QuerySpecError(
+			`at most ${maxTransforms} transforms are allowed`,
+		);
+	}
+
+	const known = new Set([...dimensions, ...measures]);
+	const original = new Set(known);
+	const out: QueryTransform[] = [];
+
+	raw.forEach((item, i) => {
+		if (!item || typeof item !== "object") {
+			throw new QuerySpecError(`transform ${i} must be an object`);
+		}
+		const o = item as Record<string, unknown>;
+		const kind = asString(o.kind, `transform ${i} kind`);
+		if (!transformKinds.has(kind)) {
+			throw new QuerySpecError(
+				`transform ${i} kind must be one of ${[...transformKinds].join(", ")}`,
+			);
+		}
+
+		const measure = asString(o.measure, `transform ${i} measure`);
+		if (!known.has(measure)) {
+			throw new QuerySpecError(
+				`transform ${i} reads "${measure}", which this query does not return`,
+			);
+		}
+
+		const as = asString(o.as, `transform ${i} name`);
+		if (original.has(as)) {
+			throw new QuerySpecError(
+				`transform ${i} would name a column "${as}", which the source already defines`,
+			);
+		}
+
+		if (kind === "ratio") {
+			const denominator = asString(
+				o.denominator,
+				`transform ${i} denominator`,
+			);
+			if (!known.has(denominator)) {
+				throw new QuerySpecError(
+					`transform ${i} divides by "${denominator}", which this query does not return`,
+				);
+			}
+			const scaleRaw = Number(o.scale ?? 1);
+			const scale = Number.isFinite(scaleRaw) ? scaleRaw : 1;
+			out.push({ kind, measure, denominator, as, scale });
+		} else if (kind === "rank") {
+			const direction =
+				String(o.direction ?? "desc").toLowerCase() === "asc"
+					? "asc"
+					: "desc";
+			out.push({ kind, measure, as, direction });
+		} else {
+			out.push({
+				kind: kind as "percentOfTotal" | "runningTotal" | "indexTo",
+				measure,
+				as,
+			});
+		}
+
+		known.add(as);
+	});
+
+	return out;
 }
 
 // Validates the shape of a client request. Field names are checked against the
@@ -154,14 +256,18 @@ export function parseQuerySpec(raw: unknown): QuerySpec {
 		? Math.max(Math.trunc(offsetRaw), 0)
 		: 0;
 
+	const dimensions = parseNameList(o.dimensions, "dimensions", maxDimensions);
+	const measures = parseNameList(o.measures, "measures", maxMeasures);
+
 	return {
 		sourceKey: asString(o.sourceKey, "sourceKey"),
-		dimensions: parseNameList(o.dimensions, "dimensions", maxDimensions),
-		measures: parseNameList(o.measures, "measures", maxMeasures),
+		dimensions,
+		measures,
 		filters: parseFilters(o.filters),
 		sort: parseSort(o.sort),
 		limit,
 		offset,
+		transforms: parseTransforms(o.transforms, dimensions, measures),
 	};
 }
 
@@ -171,9 +277,11 @@ export function parseQuerySpec(raw: unknown): QuerySpec {
 export function canonicalizeSpec(spec: QuerySpec): string {
 	const filters = spec.filters
 		.map((f) =>
-			[f.field, f.op, f.values ? f.values.join("") : (f.value ?? "")].join(
-				"\u0000",
-			),
+			[
+				f.field,
+				f.op,
+				f.values ? f.values.join("") : (f.value ?? ""),
+			].join("\u0000"),
 		)
 		.sort();
 
@@ -185,5 +293,17 @@ export function canonicalizeSpec(spec: QuerySpec): string {
 		o: spec.sort.map((s) => `${s.field}:${s.direction}`),
 		l: spec.limit,
 		x: spec.offset,
+		// Two specs differing only in what is derived from the answer are two
+		// different answers, so the cache has to tell them apart.
+		t: spec.transforms.map((t) =>
+			[
+				t.kind,
+				t.measure,
+				t.as,
+				"denominator" in t ? t.denominator : "",
+				"direction" in t ? t.direction : "",
+				"scale" in t ? String(t.scale ?? "") : "",
+			].join(" "),
+		),
 	});
 }

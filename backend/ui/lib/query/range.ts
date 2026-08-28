@@ -123,6 +123,7 @@ export async function getFieldRange(
 					sort: [{ field, direction }],
 					limit: 1,
 					offset: 0,
+					transforms: [],
 				});
 
 				const rows = identity.userToken

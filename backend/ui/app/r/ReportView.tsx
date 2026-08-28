@@ -11,6 +11,13 @@ import { titleSeparator, usePageTitle } from "../hooks/usePageTitle";
 import { DataFreshness } from "../visuals/DataFreshness";
 import { VisualRenderer, type VisualSpec } from "../visuals/VisualRenderer";
 import { PageFilterProvider } from "../visuals/PageFilters";
+import {
+	decodeShareParams,
+	encodeShareParams,
+	type ShareContext,
+	type SharedPageState,
+} from "../../lib/visuals/shareState";
+import { filterWidgetsOf } from "../../lib/visuals/filterWidgets";
 import { openingFilters } from "../../lib/visuals/pageDefaults";
 import { FilterBar } from "../visuals/FilterWidgets";
 import { isPageControl, visualByType } from "../../lib/visuals/catalog";
@@ -22,6 +29,7 @@ import type { SourceMeta } from "../visuals/types";
 import { FieldPicker } from "./FieldPicker";
 import { SavedViews, type SavedView } from "./SavedViews";
 import { FavouriteButton } from "./FavouriteButton";
+import { ShareLinkButton } from "./ShareLinkButton";
 import { ReportGrid } from "./ReportGrid";
 import {
 	ScaledArea,
@@ -95,6 +103,58 @@ interface ReportResponse {
 // one did not, so the report rendered an empty page on the server and every
 // visual waited for hydration before it could even start. fallbackData on the
 // call is unambiguous about which key it answers.
+// Which page of a report is open, given what the reader has chosen and what a
+// link asked for.
+//
+// A plain function rather than something worked out in the body, because the
+// effect that keeps the address bar in step has to run before the report has
+// loaded and therefore cannot read anything computed after it.
+function pageOf(
+	report: ReportDetail,
+	activePageId: string | null,
+	namedPage: string | null,
+): ReportDetail["pages"][number] | undefined {
+	return (
+		report.pages.find(
+			(p) => p.pageId === (activePageId ?? namedPage ?? null),
+		) ?? report.pages[0]
+	);
+}
+
+// What the parameters in the address bar mean, given the controls a page
+// actually has.
+//
+// A parameter is named after a field, so reading one back means finding the
+// control that owns that field. One naming a field no control owns is dropped
+// rather than applied: narrowing the page with nothing on screen able to show
+// or clear it would leave a reader stuck.
+function shareContextOf(
+	report: ReportDetail,
+	page: ReportDetail["pages"][number] | undefined,
+	views: { viewId: string; name: string }[],
+): ShareContext {
+	return {
+		pages: report.pages.map((p) => ({
+			pageId: p.pageId,
+			title: p.title,
+		})),
+		widgets: filterWidgetsOf(page?.visuals ?? []),
+		// The switchers name a dimension, and the ones a page offers are the
+		// ones its own visuals encode. Placeholders are left out: they stand
+		// for whatever the switcher is set to rather than naming a field.
+		dimensions: (page?.visuals ?? []).flatMap((v) =>
+			((v.config as { dimensions?: string[] })?.dimensions ?? []).filter(
+				(d) => !d.startsWith("<"),
+			),
+		),
+		views,
+	};
+}
+
+// Shared rather than a fresh literal, so the share context does not change
+// identity on every render while the list is still loading.
+const noViews: { viewId: string; name: string }[] = [];
+
 export default function ReportView({
 	slug,
 	initial,
@@ -149,9 +209,43 @@ export default function ReportView({
 			setEditing(true);
 		}
 	}, []);
+
+	// What the link this reader followed asked the page to open on.
+	//
+	// Read once, after mount, for the same reason the editor flag is: this
+	// component renders on the server too, where there is no address bar, and
+	// seeding from one only on the client is a hydration mismatch.
+
+	// Held as the parameters the reader arrived with, until the report has
+	// loaded: turning a parameter named after a field back into the control
+	// that owns it needs the pages and widgets the report actually carries.
+	//
+	// Read once, after mount, for the same reason the editor flag is. This
+	// component renders on the server too, where there is no address bar, and
+	// seeding from one only on the client is a hydration mismatch.
+	const [arrivedWith, setArrivedWith] = useState<URLSearchParams | null>(
+		null,
+	);
+	useEffect(() => {
+		setArrivedWith(new URLSearchParams(window.location.search));
+	}, []);
+
 	// Held by id rather than by index, because a report with subpages has two
 	// rows of tabs and an index into a flat list cannot say which one is on.
 	const [activePageId, setActivePageId] = useState<string | null>(null);
+
+	// The saved views for the open page, so a link can name one.
+	//
+	// The same key the picker uses, so SWR shares one request between them
+	// rather than asking twice for the same list.
+	const { data: viewList } = useSWR<{
+		views: { viewId: string; name: string }[];
+	}>(
+		activePageId
+			? `/api/views?pageId=${encodeURIComponent(activePageId)}`
+			: null,
+	);
+	const savedViews = viewList?.views ?? noViews;
 
 	// A report with one page is named by the report. With several, the page is
 	// what distinguishes two tabs open on the same report, so it is named too.
@@ -182,11 +276,64 @@ export default function ReportView({
 	const [columnLayout, setColumnLayout] = useState<{
 		columnOrder: string[];
 		pinnedColumns: string[];
-	}>({ columnOrder: [], pinnedColumns: [] });
+		columnWidths: Record<string, number>;
+	}>({ columnOrder: [], pinnedColumns: [], columnWidths: {} });
 	// Sizes the reader has dragged visuals to, in grid columns and rows.
 	const [visualSizes, setVisualSizes] = useState<Record<string, VisualSize>>(
 		{},
 	);
+
+	// Everything the address bar should be carrying, gathered from the three
+	// places that own a piece of it.
+	const [pageState, setPageState] = useState<SharedPageState>({});
+
+	// The address bar, kept in step with what is on screen.
+	//
+	// Written with replaceState rather than pushState. The link has to describe
+	// the page for it to be worth sending, and it is what a reload reads back,
+	// so it belongs in the URL. Pushing an entry per filter click would also
+	// make the back button an undo for filters, and the cost of that is that
+	// leaving a report somebody has been working in takes ten presses.
+	//
+	// This only became reasonable once the parameters were short and readable.
+	// The first attempt packed everything into one opaque value and came to
+	// seven hundred characters, which is why that was abandoned rather than
+	// tuned.
+	//
+	// Above every early return, and reading the report out of the query rather
+	// than out of anything worked out below. A hook that runs only once the
+	// report has loaded runs on some renders and not others, which is what
+	// React counts and refuses.
+	useEffect(() => {
+		// Not before the reader's own parameters have been read, or this would
+		// overwrite the link they followed with the empty state it is about to
+		// replace.
+		if (!arrivedWith || !data) return;
+
+		const page = pageOf(data.report, activePageId, null);
+		const next = encodeShareParams(
+			{
+				...pageState,
+				page: activePageId ?? undefined,
+				view: activeViewId ?? undefined,
+			},
+			shareContextOf(data.report, page, savedViews),
+		);
+
+		const url = new URL(window.location.href);
+		// Only the parameters this owns are replaced, so anything else the URL
+		// is carrying survives.
+		for (const key of [...url.searchParams.keys()]) {
+			if (key !== "edit") url.searchParams.delete(key);
+		}
+		for (const [key, value] of next.entries()) {
+			url.searchParams.set(key, value);
+		}
+
+		if (url.toString() !== window.location.href) {
+			window.history.replaceState(window.history.state, "", url);
+		}
+	}, [arrivedWith, data, pageState, activePageId, activeViewId, savedViews]);
 
 	if (error) {
 		return (
@@ -217,8 +364,35 @@ export default function ReportView({
 	}
 
 	const { report, sources } = data;
-	const page =
-		report.pages.find((p) => p.pageId === activePageId) ?? report.pages[0];
+
+	// Which page a link named, read against the pages alone: every other
+	// parameter is read against the controls that page carries, so the page
+	// has to be settled first.
+	const namedPage =
+		(arrivedWith &&
+			decodeShareParams(
+				arrivedWith,
+				shareContextOf(report, undefined, noViews),
+			)?.page) ||
+		null;
+
+	const page = pageOf(report, activePageId, namedPage);
+
+	// What the link this reader followed asked the page to open on.
+	const shared = arrivedWith
+		? decodeShareParams(
+				arrivedWith,
+				shareContextOf(report, page, savedViews),
+			)
+		: null;
+
+	// The sender's filters belong to the page they were looking at. Switching
+	// to another page inside the report is a new question, so the link's state
+	// stops applying and the page's own defaults take over.
+	const sharedHere =
+		shared && (!shared.page || shared.page === page?.pageId)
+			? shared
+			: null;
 
 	// What this page's filter widgets are set to before anybody touches them.
 	// Handed to the provider as its opening state rather than applied after
@@ -240,7 +414,11 @@ export default function ReportView({
 	const openPage = (nextId: string) => {
 		setActivePageId(nextId);
 		setCustom(null);
-		setColumnLayout({ columnOrder: [], pinnedColumns: [] });
+		setColumnLayout({
+			columnOrder: [],
+			pinnedColumns: [],
+			columnWidths: {},
+		});
 		setVisualSizes({});
 		setActiveViewId(null);
 	};
@@ -396,8 +574,26 @@ export default function ReportView({
 		);
 	}
 
+	// A report with no pages at all. Rare, and only reachable while somebody is
+	// building one, but it is the difference between saying so and rendering a
+	// blank rectangle.
+	if (!page) {
+		return (
+			<div className={styles.page}>
+				<div className={styles.state}>
+					This report has no pages yet.
+				</div>
+			</div>
+		);
+	}
+
 	return (
-		<PageFilterProvider key={page.pageId} opening={opening}>
+		<PageFilterProvider
+			key={page.pageId}
+			opening={opening}
+			shared={sharedHere}
+			onShareableChange={setPageState}
+		>
 			<ViewScaleProvider
 				sizes={visualSizes}
 				onSizesChange={(next) => {
@@ -440,6 +636,10 @@ export default function ReportView({
 										initial={isFavourite}
 									/>
 								)}
+								{/* Beside the star, because both are things a
+								    reader does with the report rather than to
+								    it. */}
+								<ShareLinkButton />
 							</div>
 							{report.description && (
 								<p className={styles.description}>
@@ -516,12 +716,14 @@ export default function ReportView({
 								<SavedViews
 									reportId={report.reportId}
 									pageId={page.pageId}
+									requestedViewId={sharedHere?.view ?? null}
 									current={{
 										dimensions: currentDimensions,
 										measures: currentMeasures,
 										columnOrder: columnLayout.columnOrder,
 										pinnedColumns:
 											columnLayout.pinnedColumns,
+										columnWidths: columnLayout.columnWidths,
 										visualSizes,
 									}}
 									activeViewId={activeViewId}
@@ -531,6 +733,7 @@ export default function ReportView({
 											setColumnLayout({
 												columnOrder: [],
 												pinnedColumns: [],
+												columnWidths: {},
 											});
 											setVisualSizes({});
 											setActiveViewId(null);
@@ -547,6 +750,8 @@ export default function ReportView({
 												view.config.columnOrder ?? [],
 											pinnedColumns:
 												view.config.pinnedColumns ?? [],
+											columnWidths:
+												view.config.columnWidths ?? {},
 										});
 										setVisualSizes(
 											view.config.visualSizes ?? {},
@@ -624,6 +829,7 @@ export default function ReportView({
 								pageId={page?.pageId}
 								columnOrder={columnLayout.columnOrder}
 								pinnedColumns={columnLayout.pinnedColumns}
+								columnWidths={columnLayout.columnWidths}
 								onColumnLayout={(next) => {
 									setColumnLayout(next);
 									// The arrangement no longer matches the saved view it

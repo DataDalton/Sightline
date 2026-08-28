@@ -4,10 +4,12 @@ import {
 	createContext,
 	useCallback,
 	useContext,
+	useEffect,
 	useMemo,
 	useState,
 	type ReactNode,
 } from "react";
+import type { SharedPageState } from "../../lib/visuals/shareState";
 
 // Shared page state: filters, cross-filtering and drill position.
 //
@@ -108,13 +110,23 @@ const PageFilterContext = createContext<PageState>({
 // already let every visual issue its widest query and throw the answer away.
 export function PageFilterProvider({
 	opening,
+	shared,
+	onShareableChange,
 	children,
 }: {
 	opening?: Record<string, FilterClause[]>;
+	// What a link asked the page to open on. Replaces the page's own defaults
+	// entirely rather than merging with them: a link describes the whole filter
+	// state, and a widget the sender cleared has to stay clear rather than
+	// being refilled by the default underneath it.
+	shared?: SharedPageState | null;
+	// Fires whenever something worth putting in a link changes, so the page
+	// above can keep the address bar in step.
+	onShareableChange?: (state: SharedPageState) => void;
 	children: ReactNode;
 }) {
 	const [byWidget, setByWidget] = useState<Record<string, FilterClause[]>>(
-		() => opening ?? {},
+		() => shared?.filters ?? opening ?? {},
 	);
 	const [crossFilter, setCrossFilterState] = useState<CrossFilter | null>(
 		null,
@@ -123,9 +135,22 @@ export function PageFilterProvider({
 		Record<string, DrillStep[]>
 	>({});
 	const [selectedDimension, setSelectedDimension] = useState<string | null>(
-		null,
+		shared?.dimension ?? null,
 	);
-	const [selectedGrain, setSelectedGrain] = useState<string | null>(null);
+	const [selectedGrain, setSelectedGrain] = useState<string | null>(
+		shared?.grain ?? null,
+	);
+
+	// Reported after the render that changed it rather than from inside each
+	// setter, so one callback covers every route into this state and a widget
+	// added later cannot forget to announce itself.
+	useEffect(() => {
+		onShareableChange?.({
+			filters: byWidget,
+			dimension: selectedDimension ?? undefined,
+			grain: selectedGrain ?? undefined,
+		});
+	}, [byWidget, selectedDimension, selectedGrain, onShareableChange]);
 
 	const setWidgetFilter = useCallback(
 		(widgetId: string, clauses: FilterClause[]) => {

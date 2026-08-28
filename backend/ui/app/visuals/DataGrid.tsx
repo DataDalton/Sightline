@@ -7,6 +7,13 @@ import { createResultMemo, resultMaxAge } from "./resultMemo";
 import { canonical } from "../hooks/canonicalKey";
 import { runBatchedQuery } from "../hooks/queryBatch";
 import { useExport } from "../hooks/useExport";
+import type { QueryTransform } from "../../lib/query/transform";
+import {
+	relativeChange,
+	shiftDateFilters,
+	type ComparePeriod,
+	type DateClause,
+} from "../../lib/query/compare";
 import {
 	formatValue,
 	isNumericHint,
@@ -41,11 +48,23 @@ interface DataGridProps {
 	dimensions: string[];
 	measures: string[];
 	baseFilters?: unknown[];
+	// Figures worked out from the answer, declared on the visual. Part of the
+	// query, so a derived column arrives with the rows and sorts and exports
+	// like any other.
+	transforms?: QueryTransform[];
 	fields: Map<string, FieldMeta>;
 	pageSize?: number;
 	// How tall a row is. An author's judgement about the data rather than a
 	// reader preference, so it travels with the visual.
 	density?: GridDensity;
+	// A row at the foot holding the total of every measure across the whole
+	// result rather than across the rows that happen to be loaded.
+	showTotals?: boolean;
+	// The change against an earlier window, shown under each measure. Both
+	// halves are needed: the field says which range filter to move, the period
+	// says how far.
+	compareTo?: ComparePeriod | null;
+	compareField?: string | null;
 	// A number, or "100%" when an enclosing layout has already decided.
 	height?: number | string;
 	reportId?: string | null;
@@ -57,9 +76,13 @@ interface DataGridProps {
 	// reload.
 	columnOrder?: string[];
 	pinnedColumns?: string[];
+	// Widths the reader has dragged to, by column. Only the ones they changed:
+	// everything else keeps the width worked out from its name and its format.
+	columnWidths?: Record<string, number>;
 	onColumnLayout?: (next: {
 		columnOrder: string[];
 		pinnedColumns: string[];
+		columnWidths: Record<string, number>;
 	}) => void;
 }
 
@@ -112,8 +135,12 @@ export function DataGrid({
 	dimensions,
 	measures,
 	baseFilters = [],
+	transforms,
 	fields,
 	pageSize = 200,
+	showTotals = false,
+	compareTo,
+	compareField,
 	density = "comfortable",
 	height = 520,
 	reportId,
@@ -122,6 +149,7 @@ export function DataGrid({
 	style,
 	columnOrder,
 	pinnedColumns,
+	columnWidths,
 	onColumnLayout,
 }: DataGridProps) {
 	const [rows, setRows] = useState<Record<string, unknown>[]>([]);
@@ -178,6 +206,92 @@ export function DataGrid({
 		setPinned(pinnedColumns ?? []);
 	}, [JSON.stringify(pinnedColumns ?? [])]);
 
+	// Widths the reader has dragged to. Only the columns they touched: the
+	// rest keep the width worked out from the name and the format, so adding a
+	// column to the report does not arrive at somebody else's size.
+	const [sized, setSized] = useState<Record<string, number>>(
+		columnWidths ?? {},
+	);
+	useEffect(() => {
+		setSized(columnWidths ?? {});
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [JSON.stringify(columnWidths ?? {})]);
+
+	// A drag on the edge between two columns.
+	//
+	// Held in a ref rather than in state: it updates on every pointer move,
+	// and re-rendering a virtualized grid of forty columns per pixel of travel
+	// is the difference between a resize that follows the cursor and one that
+	// lags behind it. State carries the committed width, which changes once.
+	const resizeRef = useRef<{
+		column: string;
+		startX: number;
+		startWidth: number;
+	} | null>(null);
+	const [resizing, setResizing] = useState<{
+		column: string;
+		width: number;
+	} | null>(null);
+
+	const beginResize = useCallback(
+		(event: React.PointerEvent, column: string, from: number) => {
+			// Its own gesture, and the header's drag-to-reorder must not also
+			// start: a press on the edge is a resize, not a move.
+			event.stopPropagation();
+			event.preventDefault();
+			event.currentTarget.setPointerCapture(event.pointerId);
+			resizeRef.current = {
+				column,
+				startX: event.clientX,
+				startWidth: from,
+			};
+			setResizing({ column, width: from });
+		},
+		[],
+	);
+
+	const moveResize = useCallback((event: React.PointerEvent) => {
+		const state = resizeRef.current;
+		if (!state) return;
+		// Bounded below so a column cannot be dragged to nothing and lost.
+		// Not bounded above: a column of long descriptions is exactly the case
+		// this exists for, and the grid already scrolls sideways.
+		const width = Math.max(
+			minColumnWidth,
+			state.startWidth + (event.clientX - state.startX),
+		);
+		setResizing({ column: state.column, width });
+	}, []);
+
+	const endResize = useCallback(
+		(event: React.PointerEvent) => {
+			const state = resizeRef.current;
+			resizeRef.current = null;
+			setResizing(null);
+			if (!state) return;
+			if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+				event.currentTarget.releasePointerCapture(event.pointerId);
+			}
+
+			const width = Math.max(
+				minColumnWidth,
+				state.startWidth + (event.clientX - state.startX),
+			);
+			// A press that went nowhere is not a resize, so nothing is
+			// recorded and the column keeps whatever it had.
+			if (Math.abs(width - state.startWidth) < 2) return;
+
+			const next = { ...sized, [state.column]: width };
+			setSized(next);
+			onColumnLayout?.({
+				columnOrder: order,
+				pinnedColumns: pinned,
+				columnWidths: next,
+			});
+		},
+		[sized, order, pinned, onColumnLayout],
+	);
+
 	const scrollerRef = useRef<HTMLDivElement | null>(null);
 	const sentinelRef = useRef<HTMLDivElement | null>(null);
 	// Guards against a second page being requested while one is in flight, and
@@ -219,7 +333,7 @@ export function DataGrid({
 	// remembered page still the right answer.
 	const queryKey = `${sourceKey}|${dimensions.join(",")}|${measures.join(
 		",",
-	)}|${filterKey}|${sortKey}|${pageSize}`;
+	)}|${filterKey}|${sortKey}|${pageSize}|${JSON.stringify(transforms ?? [])}`;
 	queryKeyRef.current = queryKey;
 
 	const fetchPage = useCallback(
@@ -241,6 +355,7 @@ export function DataGrid({
 							: [],
 						limit: pageSize,
 						offset,
+						...(transforms?.length ? { transforms } : {}),
 					}),
 				);
 
@@ -274,8 +389,138 @@ export function DataGrid({
 				}
 			}
 		},
-		[sourceKey, dimensions, measures, activeFilters, sort, pageSize],
+		[
+			sourceKey,
+			dimensions,
+			measures,
+			activeFilters,
+			sort,
+			pageSize,
+			transforms,
+		],
 	);
+
+	// The total of every measure, across the whole result.
+	//
+	// Its own query rather than a sum of what is on screen. The grid loads two
+	// hundred rows at a time out of a result that can be millions, so adding up
+	// the loaded ones would total a sample and label it a total, which is worse
+	// than showing nothing.
+	//
+	// The same filters, no dimensions and no sort, which is a spec the query
+	// layer already understands and which the batcher sends alongside the
+	// page's other queries rather than as a round trip of its own.
+	const [totals, setTotals] = useState<Record<string, unknown> | null>(null);
+
+	useEffect(() => {
+		// Nothing to add up, so nothing is asked for.
+		if (!showTotals || measures.length === 0) {
+			setTotals(null);
+			return;
+		}
+
+		let live = true;
+		setTotals(null);
+
+		void runBatchedQuery(
+			canonical({
+				sourceKey,
+				dimensions: [],
+				measures,
+				filters: activeFilters,
+				sort: [],
+				limit: 1,
+				offset: 0,
+			}),
+		)
+			.then((data) => {
+				if (live) setTotals(data.rows?.[0] ?? null);
+			})
+			.catch(() => {
+				// A total that could not be fetched is left off rather than
+				// shown as zero. The rows above it are still correct, and a
+				// wrong total would put them in doubt.
+				if (live) setTotals(null);
+			});
+
+		return () => {
+			live = false;
+		};
+		// Keyed on the query shape, which is what decides the answer.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [showTotals, sourceKey, measures.join(","), filterKey]);
+
+	// The same rows for an earlier window, keyed by their dimension values.
+	//
+	// One query for the page rather than one per row, and the same spec shape
+	// the grid already asks for, so it shares the batcher and the cache. Only
+	// the first page is compared: the comparison is read alongside a figure the
+	// reader is looking at, and fetching an earlier window for rows nobody has
+	// scrolled to yet would double the cost of the whole table for nothing.
+	const comparisonFilters = useMemo(() => {
+		if (!compareTo || !compareField || measures.length === 0) return null;
+		return shiftDateFilters(
+			activeFilters as DateClause[],
+			compareField,
+			compareTo,
+		);
+	}, [compareTo, compareField, activeFilters, measures.length]);
+
+	const [earlier, setEarlier] = useState<
+		Map<string, Record<string, unknown>>
+	>(new Map());
+
+	// The dimension values of a row, joined into something a map can key on.
+	// The unit separator, because it cannot occur inside a value the way a
+	// comma or a pipe can and quietly merge two different rows.
+	const rowKey = useCallback(
+		(row: Record<string, unknown>): string =>
+			dimensions.map((d) => String(row[d] ?? "")).join(""),
+		[dimensions],
+	);
+
+	useEffect(() => {
+		if (!comparisonFilters) {
+			setEarlier(new Map());
+			return;
+		}
+
+		let live = true;
+		void runBatchedQuery(
+			canonical({
+				sourceKey,
+				dimensions,
+				measures,
+				filters: comparisonFilters,
+				sort: [],
+				limit: pageSize,
+				offset: 0,
+			}),
+		)
+			.then((data) => {
+				if (!live) return;
+				const map = new Map<string, Record<string, unknown>>();
+				for (const row of data.rows ?? []) map.set(rowKey(row), row);
+				setEarlier(map);
+			})
+			.catch(() => {
+				// No comparison rather than a wrong one. The figures beside it
+				// are still correct, and a change against a window that failed
+				// to load would not be.
+				if (live) setEarlier(new Map());
+			});
+
+		return () => {
+			live = false;
+		};
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [
+		JSON.stringify(comparisonFilters),
+		sourceKey,
+		dimensions.join(","),
+		measures.join(","),
+		pageSize,
+	]);
 
 	// Any change to the query shape restarts from the first page and returns
 	// the scroller to the top, so the user is not left mid-way through a
@@ -397,10 +642,20 @@ export function DataGrid({
 	const widths = useMemo(() => {
 		const map = new Map<string, number>();
 		for (const column of orderedColumns) {
-			map.set(column, columnWidth(column, hints.get(column) ?? "text"));
+			// The reader's own width wins over the one worked out from the
+			// name, and the drag in progress wins over both so the column
+			// follows the cursor before anything is committed.
+			const dragged =
+				resizing?.column === column ? resizing.width : undefined;
+			map.set(
+				column,
+				dragged ??
+					sized[column] ??
+					columnWidth(column, hints.get(column) ?? "text"),
+			);
 		}
 		return map;
-	}, [orderedColumns, hints]);
+	}, [orderedColumns, hints, sized, resizing]);
 
 	const totalWidth = useMemo(
 		() =>
@@ -441,7 +696,11 @@ export function DataGrid({
 	const publish = (nextOrder: string[], nextPinned: string[]) => {
 		setOrder(nextOrder);
 		setPinned(nextPinned);
-		onColumnLayout?.({ columnOrder: nextOrder, pinnedColumns: nextPinned });
+		onColumnLayout?.({
+			columnOrder: nextOrder,
+			pinnedColumns: nextPinned,
+			columnWidths: sized,
+		});
 	};
 
 	// Where a column sat before it was pinned, so unpinning puts it back rather
@@ -739,6 +998,20 @@ export function DataGrid({
 	// position in the DOM says nothing about where it sits in the result.
 	const striped = style?.stripedRows !== false;
 
+	// The change in one measure against the earlier window, or null when there
+	// is nothing to compare: no comparison asked for, not a measure, the row
+	// absent from the earlier window, or an earlier figure of zero which has
+	// no percentage to express.
+	function changeFor(
+		row: Record<string, unknown>,
+		column: string,
+	): number | null {
+		if (earlier.size === 0 || !measures.includes(column)) return null;
+		const before = earlier.get(rowKey(row));
+		if (!before) return null;
+		return relativeChange(toNumber(row[column]), toNumber(before[column]));
+	}
+
 	function cellAppearance(
 		row: Record<string, unknown>,
 		column: string,
@@ -1012,6 +1285,26 @@ export function DataGrid({
 								onPointerUp={endHeaderDrag}
 								onPointerCancel={cancelHeaderDrag}
 							>
+								{/* The edge between this column and the
+								    next. Its own gesture, so a press here
+								    never starts the drag that reorders. */}
+								<span
+									className={styles.resizeHandle}
+									role="separator"
+									aria-label={`Resize ${column}`}
+									onPointerDown={(e) =>
+										beginResize(
+											e,
+											column,
+											widths.get(column) ??
+												minColumnWidth,
+										)
+									}
+									onPointerMove={moveResize}
+									onPointerUp={endResize}
+									onPointerCancel={endResize}
+									onClick={(e) => e.stopPropagation()}
+								/>
 								<span
 									className={styles.gripDots}
 									aria-hidden="true"
@@ -1285,6 +1578,44 @@ export function DataGrid({
 														hint,
 													)}
 												</span>
+												{/* The change under the
+												    figure rather than in a
+												    column of its own, so the
+												    number and its movement are
+												    read together and the
+												    reader's column
+												    arrangement is left
+												    alone. */}
+												{(() => {
+													const change = changeFor(
+														row,
+														column,
+													);
+													if (change === null)
+														return null;
+													return (
+														<span
+															className={`${styles.cellChange} ${
+																change > 0
+																	? styles.changeUp
+																	: change < 0
+																		? styles.changeDown
+																		: ""
+															}`}
+														>
+															{change > 0
+																? "▲"
+																: change < 0
+																	? "▼"
+																	: "="}
+															{Math.abs(
+																change * 100,
+															) < 0.05
+																? "0%"
+																: `${Math.abs(change * 100).toFixed(1)}%`}
+														</span>
+													);
+												})()}
 											</div>
 										);
 									})}
@@ -1304,6 +1635,51 @@ export function DataGrid({
 							: hasMore
 								? ""
 								: "End of results"}
+					</div>
+				)}
+
+				{/* Inside the scroller rather than below it, so it slides
+				    sideways with the columns it is totalling and stays put
+				    vertically. A footer outside would line up only until
+				    somebody scrolled across. */}
+				{showTotals && totals && rows.length > 0 && (
+					<div
+						className={styles.totalRow}
+						style={{ width: totalWidth }}
+					>
+						{orderedColumns.map((column, index) => {
+							const hint = hints.get(column) ?? "text";
+							const isMeasure = measures.includes(column);
+							const isPinned = pinned.includes(column);
+							return (
+								<div
+									key={column}
+									className={`${styles.cell} ${
+										isNumericHint(hint)
+											? styles.numeric
+											: ""
+									} ${isPinned ? styles.pinned : ""} ${
+										isPinned && column === lastPinned
+											? styles.pinEdge
+											: ""
+									}`}
+									style={{
+										width: widths.get(column),
+										left: isPinned
+											? pinOffsets.get(column)
+											: undefined,
+									}}
+								>
+									<span className={styles.cellText}>
+										{isMeasure
+											? formatValue(totals[column], hint)
+											: index === 0
+												? "Total"
+												: ""}
+									</span>
+								</div>
+							);
+						})}
 					</div>
 				)}
 			</div>

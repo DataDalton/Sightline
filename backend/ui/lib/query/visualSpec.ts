@@ -1,4 +1,5 @@
 import { isFilterVisual } from "../visuals/catalog";
+import type { QueryTransform } from "./transform";
 
 // The query a visual makes, decided in one place.
 //
@@ -24,11 +25,20 @@ export const chartTypes = new Set([
 	"horizontalBarChart",
 	"stackedBarChart",
 	"comboChart",
+	"slopeChart",
+	"paretoChart",
+	"histogramChart",
+	"boxPlot",
+	"calendarChart",
+	"sankeyChart",
+	"timelineChart",
+	"choroplethChart",
 	"pieChart",
 	"donutChart",
 	"treemapChart",
 	"funnelChart",
 	"gauge",
+	"bulletChart",
 	"waterfallChart",
 	"heatmapChart",
 	"radarChart",
@@ -51,6 +61,10 @@ export interface VisualQueryShape {
 	sort?: { field: string; direction: "asc" | "desc" }[];
 	limit?: number;
 	offset?: number;
+	// Figures worked out from the answer. Part of the shape rather than
+	// applied afterwards, so the warm path and the client ask for the same
+	// thing and resolve to one cache entry.
+	transforms?: QueryTransform[];
 }
 
 export interface VisualInputs {
@@ -66,6 +80,8 @@ export interface VisualInputs {
 	filters?: unknown[];
 	// Only a chart takes one, and only when its author set it.
 	limit?: number;
+	// Derived figures the author declared on this visual.
+	transforms?: QueryTransform[];
 }
 
 // Rows a full-width grid asks for in its first page. Only the first page is
@@ -77,6 +93,11 @@ export const matrixLevelRows = 2000;
 
 // The chart default, when the author has not set one.
 export const chartRows = 500;
+
+// The columns a Pareto derives for itself. Named rather than generated, so the
+// renderer and the query agree on them without either being told.
+export const paretoShare = "Share of total";
+export const paretoCumulative = "Cumulative share";
 
 // Returns null for a visual that asks the warehouse nothing: a text panel, a
 // filter widget, a switch, a notice, or a type this build does not render.
@@ -139,6 +160,55 @@ export function queryForVisual(
 		};
 	}
 
+	// A Pareto is ranked bars with the cumulative share drawn over them, and
+	// the cumulative share is two derived figures composed: each row's share of
+	// the total, accumulated down the rows. Declared here rather than left to
+	// the author, because getting the pair right by hand is the whole reason
+	// nobody builds one.
+	if (visualType === "paretoChart") {
+		const measure = measures[0];
+		const dimension = dimensions[0];
+		if (!measure || !dimension) return null;
+
+		return {
+			sourceKey,
+			dimensions: [dimension],
+			measures: [measure],
+			filters,
+			// Ranked, because a Pareto that is not sorted is not a Pareto: the
+			// shape of the curve is the whole statement.
+			sort: [{ field: measure, direction: "desc" as const }],
+			limit: top?.count ?? inputs.limit ?? chartRows,
+			transforms: [
+				{ kind: "percentOfTotal", measure, as: paretoShare },
+				{
+					kind: "runningTotal",
+					measure: paretoShare,
+					as: paretoCumulative,
+				},
+			],
+		};
+	}
+
+	// One query for every panel, grouped by the splitting field and then by the
+	// axis, so a panel's series arrives in one run rather than interleaved with
+	// the others.
+	if (visualType === "smallMultiples") {
+		const [split, axis] = dimensions;
+		if (!split || !axis || measures.length === 0) return null;
+		return {
+			sourceKey,
+			dimensions: [split, axis],
+			measures,
+			filters,
+			sort: [
+				{ field: split, direction: "asc" as const },
+				{ field: axis, direction: "asc" as const },
+			],
+			limit: inputs.limit ?? chartRows,
+		};
+	}
+
 	if (chartTypes.has(visualType)) {
 		if (dimensions.length === 0 && measures.length === 0) return null;
 		return {
@@ -153,6 +223,9 @@ export function queryForVisual(
 						: [],
 				limit: inputs.limit ?? chartRows,
 			}),
+			...(inputs.transforms?.length
+				? { transforms: inputs.transforms }
+				: {}),
 		};
 	}
 
@@ -169,6 +242,9 @@ export function queryForVisual(
 			filters,
 			...(ranked ?? { sort: [], limit: gridPageSize }),
 			offset: 0,
+			...(inputs.transforms?.length
+				? { transforms: inputs.transforms }
+				: {}),
 		};
 	}
 

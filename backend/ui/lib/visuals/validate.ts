@@ -1,3 +1,4 @@
+import { transformKinds } from "../query/transform";
 import {
 	checkEncoding,
 	isFilterVisual,
@@ -26,7 +27,13 @@ export type Severity = "error" | "warning";
 
 export interface ValidationProblem {
 	severity: Severity;
-	field: "visualType" | "sourceKey" | "dimensions" | "measures" | "options";
+	field:
+		| "visualType"
+		| "sourceKey"
+		| "dimensions"
+		| "measures"
+		| "options"
+		| "transforms";
 	message: string;
 }
 
@@ -194,6 +201,89 @@ export function validateVisual(
 					message: `The source does not define a measure called ${name}.`,
 				});
 			}
+		}
+	}
+
+	// Derived figures, checked in the order they run.
+	//
+	// The query layer refuses a bad one too, and that is the enforcement that
+	// matters. This is so an author is told when they write it rather than
+	// when a reader opens the page and meets a refusal with nothing pointing
+	// back at the setting that caused it.
+	if (Array.isArray(config.transforms)) {
+		const produced = new Set<string>();
+		const readable = new Set([...dimensions, ...measures]);
+
+		for (const [index, entry] of config.transforms.entries()) {
+			const at = `Derived figure ${index + 1}`;
+
+			if (!entry || typeof entry !== "object") {
+				problems.push({
+					severity: "error",
+					field: "transforms",
+					message: `${at} is not set up.`,
+				});
+				continue;
+			}
+
+			const t = entry as Record<string, unknown>;
+			const kind = typeof t.kind === "string" ? t.kind : "";
+			const as = typeof t.as === "string" ? t.as.trim() : "";
+			const measure = typeof t.measure === "string" ? t.measure : "";
+
+			if (!transformKinds.has(kind)) {
+				problems.push({
+					severity: "error",
+					field: "transforms",
+					message: `${at} has no calculation chosen.`,
+				});
+				continue;
+			}
+
+			if (as === "") {
+				problems.push({
+					severity: "error",
+					field: "transforms",
+					message: `${at} needs a column name.`,
+				});
+				continue;
+			}
+
+			// Shadowing a real field is an error rather than a warning: a
+			// visual encoding that field would silently read this instead,
+			// and nothing on the page would say so.
+			if (readable.has(as) || produced.has(as)) {
+				problems.push({
+					severity: "error",
+					field: "transforms",
+					message: `${at} is called ${as}, which is already a column this visual has.`,
+				});
+				continue;
+			}
+
+			if (!readable.has(measure) && !produced.has(measure)) {
+				problems.push({
+					severity: "error",
+					field: "transforms",
+					message: `${at} reads ${measure || "nothing"}, which this visual does not return.`,
+				});
+				continue;
+			}
+
+			if (kind === "ratio") {
+				const by =
+					typeof t.denominator === "string" ? t.denominator : "";
+				if (!readable.has(by) && !produced.has(by)) {
+					problems.push({
+						severity: "error",
+						field: "transforms",
+						message: `${at} divides by ${by || "nothing"}, which this visual does not return.`,
+					});
+					continue;
+				}
+			}
+
+			produced.add(as);
 		}
 	}
 

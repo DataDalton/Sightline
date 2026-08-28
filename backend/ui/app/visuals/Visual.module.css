@@ -16,6 +16,52 @@
 	border-bottom: 1px solid var(--border-subtle);
 }
 
+/* Takes the room between whatever the header says on the left and the controls
+   on the right, so the actions land in the same place on every visual whether or
+   not it carries a breadcrumb. */
+.headerSpacer {
+	flex: 1;
+	min-width: 0;
+}
+
+/* A control in a visual's header. Quiet until the visual is pointed at, so a
+   page of twelve visuals is not a page of thirty six buttons. */
+.frameAction {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	flex-shrink: 0;
+	border: 1px solid transparent;
+	border-radius: var(--radius-sm);
+	background: none;
+	color: var(--text-muted);
+	cursor: pointer;
+	opacity: 0;
+	transition:
+		opacity var(--transition-fast),
+		color var(--transition-fast);
+}
+
+.visual:hover .frameAction,
+.frameAction:focus-visible {
+	opacity: 1;
+}
+
+.frameAction:hover {
+	border-color: var(--border-default);
+	background: var(--state-hover);
+	color: var(--text-primary);
+}
+
+/* Touch has no hover to reveal them with, so they are simply there. */
+@media (hover: none) {
+	.frameAction {
+		opacity: 1;
+	}
+}
+
 .title {
 	font-size: var(--text-md);
 	font-weight: 600;
@@ -87,6 +133,21 @@
 	letter-spacing: -0.02em;
 	font-variant-numeric: tabular-nums;
 	line-height: 1.15;
+}
+
+/* The change since the earlier window, under the figure. Small and quiet: the
+   figure is what the tile is for and the change is the second thing read, so it
+   sits at label size rather than competing with the number above it. */
+.kpiChange {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	font-size: var(--text-xs);
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	color: var(--text-muted);
+	line-height: 1.4;
+	white-space: nowrap;
 }
 
 .kpiPositive {
@@ -434,4 +495,322 @@
 	color: var(--text-secondary);
 	text-transform: uppercase;
 	letter-spacing: 0.06em;
+}
+
+/* The figures behind a chart, opened over it.
+
+   Sized like the expanded visual and closed the same ways, because to a reader
+   they are the same gesture: look closer at this one thing, then put it back. */
+.tableOverlay {
+	position: fixed;
+	inset: 0;
+	z-index: 60;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: var(--space-4);
+	background: color-mix(in srgb, var(--surface-base) 78%, transparent);
+}
+
+.tableOverlayBox {
+	display: flex;
+	flex-direction: column;
+	width: min(1400px, 94vw);
+	height: 84vh;
+	min-height: 0;
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-lg);
+	background: var(--surface-raised);
+	box-shadow: var(--shadow-lg);
+	overflow: hidden;
+}
+
+.tableOverlayHead {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	padding: var(--space-3) var(--space-4);
+	border-bottom: 1px solid var(--border-subtle);
+	flex-shrink: 0;
+}
+
+/* Always visible here. The header it is in appears because the reader asked for
+   it, so there is nothing to keep out of the way of. */
+.tableOverlayHead .frameAction {
+	opacity: 1;
+}
+
+.tableOverlayBox > *:last-child {
+	flex: 1;
+	min-height: 0;
+}
+
+/* --- print ---
+
+   The controls in a visual's header do nothing on paper, and the shadows and
+   hover states cost ink for no information. The frame keeps its border, which
+   is what says where one visual ends and the next begins. */
+@media print {
+	.frameAction,
+	.tableOverlay {
+		display: none !important;
+	}
+
+	.visual {
+		box-shadow: none;
+		break-inside: avoid;
+		page-break-inside: avoid;
+	}
+
+	/* A grid on paper shows what it has rather than a scrolling window onto
+	   it, so the rows that were loaded all print. */
+	.body {
+		overflow: visible !important;
+	}
+}
+
+/* One small chart per category, on a shared scale.
+
+   A grid rather than a flex wrap, because equal panel widths are what makes the
+   shapes comparable and a wrapped row leaves the last one a different size. */
+.multiples {
+	display: grid;
+	gap: var(--space-3);
+	align-content: start;
+	overflow-y: auto;
+	padding: var(--space-1);
+}
+
+.multiple {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.multipleHead {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: var(--space-2);
+	min-width: 0;
+}
+
+.multipleLabel {
+	font-size: var(--text-xs);
+	color: var(--text-secondary);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* Where the series has got to, which is the number a reader wants beside a
+   shape rather than under it. */
+.multipleValue {
+	font-size: var(--text-xs);
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	flex-shrink: 0;
+}
+
+.multiple svg {
+	width: 100%;
+	height: auto;
+}
+
+/* --- commentary --- */
+
+/* A note count on the frame control, so a visual carrying commentary says so
+   without being opened. Otherwise the note somebody left is one nobody finds. */
+.frameActionMarked {
+	opacity: 1;
+	color: var(--brand);
+}
+
+.noteCount {
+	position: absolute;
+	top: -2px;
+	right: -2px;
+	min-width: 13px;
+	height: 13px;
+	padding: 0 3px;
+	border-radius: var(--radius-full);
+	background: var(--brand);
+	color: var(--brand-contrast);
+	font-size: 9px;
+	font-weight: 700;
+	line-height: 13px;
+	text-align: center;
+}
+
+.frameAction {
+	position: relative;
+}
+
+/* Anchored to the visual rather than covering the page. A note is read against
+   the figure it is about, so putting it in a modal over that figure would take
+   away the thing it explains. */
+.notesPanel {
+	position: absolute;
+	top: 40px;
+	right: var(--space-3);
+	z-index: 20;
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	width: min(320px, calc(100% - var(--space-6)));
+	max-height: calc(100% - 56px);
+	overflow-y: auto;
+	padding: var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-lg);
+	background: var(--surface-raised);
+	box-shadow: var(--shadow-lg);
+}
+
+.visual {
+	position: relative;
+}
+
+.notesHead {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-2);
+}
+
+.notesHead .frameAction {
+	opacity: 1;
+}
+
+.notesTitle {
+	font-size: var(--text-sm);
+	font-weight: 600;
+}
+
+.notesEmpty {
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+	line-height: 1.5;
+}
+
+.note {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: var(--space-2);
+	border-radius: var(--radius-sm);
+	background: var(--surface-sunken);
+}
+
+.noteMeta {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	font-size: 10px;
+	color: var(--text-muted);
+}
+
+.noteMeta span:first-child {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.noteRemove {
+	border: none;
+	background: none;
+	color: var(--text-muted);
+	font-size: 14px;
+	line-height: 1;
+	cursor: pointer;
+	padding: 0 2px;
+}
+
+.noteRemove:hover {
+	color: var(--danger);
+}
+
+.noteBody {
+	font-size: var(--text-xs);
+	line-height: 1.5;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.noteInput {
+	min-height: 64px;
+	padding: var(--space-2);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-sm);
+	background: var(--surface-base);
+	color: var(--text-primary);
+	font-family: inherit;
+	font-size: var(--text-xs);
+	line-height: 1.5;
+	resize: vertical;
+}
+
+.noteActions {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+}
+
+.noteDate {
+	flex: 1;
+	min-width: 0;
+	padding: var(--space-1) var(--space-2);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-sm);
+	background: var(--surface-base);
+	color: var(--text-secondary);
+	font-family: inherit;
+	font-size: var(--text-xs);
+}
+
+.noteSave {
+	padding: var(--space-1) var(--space-3);
+	border: 1px solid var(--brand);
+	border-radius: var(--radius-sm);
+	background: var(--brand);
+	color: var(--brand-contrast);
+	font-family: inherit;
+	font-size: var(--text-xs);
+	font-weight: 600;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.noteSave:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.notesFailure {
+	font-size: var(--text-xs);
+	color: var(--danger);
+	line-height: 1.4;
+}
+
+@media print {
+	.notesPanel {
+		display: none !important;
+	}
+}
+
+/* What a map could not place, said under it.
+
+   A choropleth that silently drops the rows it cannot match to a country is a
+   map that lies by omission, and the row it drops is usually one of the largest.
+   Naming the values is the difference between a map somebody can fix and a map
+   they have to take on trust. */
+.mapUnmatched {
+	padding: var(--space-1) var(--space-3) var(--space-2);
+	font-size: var(--text-xs);
+	line-height: 1.4;
+	color: var(--text-muted);
+	overflow-wrap: anywhere;
 }

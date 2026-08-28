@@ -205,3 +205,11 @@
 	width: auto;
 	max-width: 160px;
 }
+
+/* Navigation is for getting to the page. On paper the reader is already there,
+   and the chrome would take a third of the sheet to say so. */
+@media print {
+	.header {
+		display: none !important;
+	}
+}
