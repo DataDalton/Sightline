@@ -562,7 +562,13 @@ export function buildPie(ctx: ChartContext, donut: boolean) {
 	// Past a dozen slices a pie is a colour key with a circle attached. Keeping
 	// the largest and gathering the rest says the same thing and stays legible,
 	// and the gathered slice is honest about being a sum rather than a value.
-	const topN = Number(ctx.options?.topN);
+	//
+	// This used to read topN, which the query layer also read as a row limit,
+	// so the rows beyond it never arrived and the Other slice could never
+	// appear. Worse, the shares that did appear were percentages of the
+	// truncated set rather than of the whole. Its own key, and a query that
+	// keeps the tail.
+	const topN = Number(ctx.options?.groupTail);
 	const grouped =
 		Number.isFinite(topN) && topN > 0 && ordered.length > topN
 			? [

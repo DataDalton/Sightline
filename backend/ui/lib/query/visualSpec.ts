@@ -123,7 +123,18 @@ export function queryForVisual(
 		typeof inputs.options?.topBy === "string" && inputs.options.topBy
 			? (inputs.options.topBy as string)
 			: measures[0];
+	// A pie is the exception, and the reason is arithmetic rather than taste.
+	//
+	// It draws each slice as a share of what it was given, so truncating the
+	// query to the largest six makes those six add up to a hundred percent of
+	// themselves. The shares are then wrong about the whole, and nothing on the
+	// chart says so. It groups its own tail into Other instead, which needs the
+	// rest of the rows to sum, so it asks for them.
+	const sharesTheWhole =
+		visualType === "pieChart" || visualType === "donutChart";
+
 	const top =
+		!sharesTheWhole &&
 		Number.isFinite(count) &&
 		count > 0 &&
 		dimensions.length > 0 &&
