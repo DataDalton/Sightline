@@ -82,8 +82,6 @@
 		"lib/visuals/shareState.test.ts",
 		"lib/visuals/chartSummary.ts",
 		"lib/visuals/chartSummary.test.ts",
-		"lib/visuals/distribution.ts",
-		"lib/visuals/distribution.test.ts",
 		"lib/visuals/presets.ts",
 		"lib/visuals/presets.test.ts",
 		"lib/visuals/countryNames.ts",

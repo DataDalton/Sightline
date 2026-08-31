@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as echarts from "echarts/core";
 import {
 	BarChart,
+	BoxplotChart,
 	LineChart,
 	ScatterChart,
 	PieChart,
@@ -29,7 +30,10 @@ import {
 import { CanvasRenderer } from "echarts/renderers";
 import { useTheme } from "../context/ThemeContext";
 import { useVisualQuery } from "../hooks/useVisualQuery";
-import { queryForVisual } from "../../lib/query/visualSpec";
+import {
+	distributionColumns,
+	queryForVisual,
+} from "../../lib/query/visualSpec";
 import type { QueryTransform } from "../../lib/query/transform";
 import {
 	shiftDateFilters,
@@ -75,6 +79,11 @@ import styles from "./Visual.module.css";
 // every one of them.
 echarts.use([
 	BarChart,
+	// The five number summary arrives from the warehouse, and this draws it.
+	// A pair of stacked bars used to stand in for a box, which cost nothing in
+	// bundle size and could not size itself against the band, could not draw
+	// whisker caps, and stacked wrongly the moment a quartile went negative.
+	BoxplotChart,
 	LineChart,
 	ScatterChart,
 	PieChart,
@@ -95,6 +104,19 @@ echarts.use([
 	ToolboxComponent,
 	CalendarComponent,
 	CanvasRenderer,
+]);
+
+// Columns of a summarised answer that hold a value of the measure, so they are
+// formatted the way the measure is rather than as a bare number. Count and the
+// outlier tally are counts of rows and stay plain.
+const summaryValueColumns = new Set<string>([
+	distributionColumns.lowerWhisker,
+	distributionColumns.lowerQuartile,
+	distributionColumns.median,
+	distributionColumns.upperQuartile,
+	distributionColumns.upperWhisker,
+	distributionColumns.binStart,
+	distributionColumns.binEnd,
 ]);
 
 export interface ChartSelection {
@@ -191,7 +213,12 @@ export function Chart({
 	// Shaped by lib/query/visualSpec, which is also what the server warms
 	// against. Two spellings of the same query are two cache keys, and the warm
 	// one would be the key nobody asks for.
-	const { rows, error, isLoading } = useVisualQuery(
+	const {
+		rows,
+		columns: answered,
+		error,
+		isLoading,
+	} = useVisualQuery(
 		ready
 			? queryForVisual(visualType, {
 					sourceKey,
@@ -416,6 +443,52 @@ export function Chart({
 		countries,
 	]);
 
+	// How many marks the axis bounds leave off the chart.
+	//
+	// Read back off the option rather than decided again here, so the number
+	// under the chart is counted against the bounds the chart is drawn with
+	// and the two cannot disagree. A chart that drops points without saying so
+	// is a chart that lies quietly, and a trimmed axis drops points by design.
+	const clipped = useMemo(() => {
+		// Scatter only, because it is the one type where the first measure is
+		// the horizontal axis and the second the vertical. Anywhere else the
+		// pairing is a guess, and a count against the wrong axis would be a
+		// sentence under the chart saying something untrue.
+		if (!option || visualType !== "scatterChart" || measures.length < 2) {
+			return 0;
+		}
+		const axes: [unknown, string][] = [
+			[(option as Record<string, unknown>).xAxis, measures[0]],
+			[(option as Record<string, unknown>).yAxis, measures[1]],
+		];
+
+		let count = 0;
+		for (const row of rows) {
+			for (const [axis, field] of axes) {
+				const bounds = axis as
+					| { min?: number; max?: number }
+					| undefined;
+				if (!bounds || !field) continue;
+				if (
+					typeof bounds.min !== "number" &&
+					typeof bounds.max !== "number"
+				) {
+					continue;
+				}
+				const value = Number(row[field]);
+				if (!Number.isFinite(value)) continue;
+				if (
+					(typeof bounds.min === "number" && value < bounds.min) ||
+					(typeof bounds.max === "number" && value > bounds.max)
+				) {
+					count++;
+					break;
+				}
+			}
+		}
+		return count;
+	}, [option, rows, measures, visualType]);
+
 	// Twice the drawn size, so the picture holds up pasted into a document at
 	// its natural width. The page's own surface behind it rather than
 	// transparency, which lands as black on most things it gets pasted into.
@@ -540,14 +613,28 @@ export function Chart({
 		chartRef.current.off("click");
 		chartRef.current.on(
 			"click",
-			(params: { name?: string; dataIndex?: number }) => {
+			(params: {
+				name?: string;
+				dataIndex?: number;
+				treePathInfo?: unknown[];
+			}) => {
 				const {
 					dimensions: dims,
 					rows: current,
 					onSelect: pick,
 				} = liveRef.current;
 				if (!pick || dims.length === 0) return;
-				const field = dims[0];
+
+				// A nested treemap draws two dimensions, so which one was
+				// clicked depends on how deep the tile is. The path includes
+				// the root, so a group is two long and a tile inside it is
+				// three. Taking the first dimension either way filtered the
+				// group field by a tile name that is not in it, which matched
+				// nothing and read as the click doing nothing.
+				const depth = params.treePathInfo?.length ?? 0;
+				const field =
+					depth > 2 && dims.length > 1 ? dims[depth - 2] : dims[0];
+
 				const value =
 					params.name ??
 					(params.dataIndex !== undefined
@@ -627,12 +714,34 @@ export function Chart({
 	// The sentence is the glance and the table under it is the detail, and the
 	// table holds the rows the chart drew rather than a second query that
 	// could disagree with it.
-	const columns = [...dimensions, ...measures];
+	// The columns the answer actually carries, not the ones the visual asked
+	// for. A box plot asks for a measure across a grain and is answered with
+	// quartiles, so a table built from the request would have had a column per
+	// field and a value in none of them.
+	const columns =
+		answered.length > 0 ? answered : [...dimensions, ...measures];
+
+	// A summarised answer names its columns after what they are rather than
+	// after the measure, so the hint comes from the measure they describe.
+	const hintFor = (column: string): FormatHint => {
+		const own = fields.get(column)?.formatHint as FormatHint | undefined;
+		if (own) return own;
+		if (summaryValueColumns.has(column) && measures[0]) {
+			return (
+				(fields.get(measures[0])?.formatHint as FormatHint) ?? "decimal"
+			);
+		}
+		return "decimal";
+	};
 
 	return (
-		<>
+		<div
+			className={styles.chartFrame}
+			style={typeof height === "number" ? { height } : undefined}
+		>
 			<div
 				ref={attachContainer}
+				className={styles.chartCanvas}
 				role="img"
 				aria-label={describeChart(
 					visualType,
@@ -641,12 +750,15 @@ export function Chart({
 					measures,
 					title,
 				)}
-				style={{
-					width: "100%",
-					height,
-					cursor: onSelect ? "pointer" : "default",
-				}}
+				style={{ cursor: onSelect ? "pointer" : "default" }}
 			/>
+			{clipped > 0 && (
+				<p className={styles.chartFootnote} role="status">
+					{clipped === 1
+						? "1 point sits outside the axis range and is not drawn."
+						: `${clipped.toLocaleString()} points sit outside the axis range and are not drawn.`}
+				</p>
+			)}
 			{unmatched.length > 0 && (
 				<p className={styles.mapUnmatched} role="status">
 					{unmatched.length === 1
@@ -687,9 +799,7 @@ export function Chart({
 									<td key={column}>
 										{formatValue(
 											row[column],
-											(fields.get(column)
-												?.formatHint as FormatHint) ??
-												"decimal",
+											hintFor(column),
 										)}
 									</td>
 								))}
@@ -698,6 +808,6 @@ export function Chart({
 					</tbody>
 				</table>
 			</div>
-		</>
+		</div>
 	);
 }

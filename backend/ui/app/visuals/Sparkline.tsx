@@ -28,6 +28,10 @@ interface SparklineProps {
 	// Fills the area under the line. Reads better at the small sizes a grid of
 	// these uses, where a hairline alone is easy to lose.
 	fill?: boolean;
+	// Scales to the width of whatever it is in, keeping width and height as the
+	// shape rather than as a size. A fixed width wider than its column is what
+	// put a horizontal scrollbar under a grid of these.
+	stretch?: boolean;
 }
 
 export function Sparkline({
@@ -38,6 +42,7 @@ export function Sparkline({
 	label,
 	domain,
 	fill = false,
+	stretch = false,
 }: SparklineProps) {
 	const points = values.filter((v): v is number => v !== null);
 	// One point is a dot, not a trend. Two is the fewest that has a direction.
@@ -71,13 +76,18 @@ export function Sparkline({
 
 	return (
 		<svg
-			width={width}
+			width={stretch ? undefined : width}
 			height={height}
 			viewBox={`0 0 ${width} ${height}`}
+			preserveAspectRatio={stretch ? "none" : undefined}
 			role={label ? "img" : "presentation"}
 			aria-label={label}
 			aria-hidden={label ? undefined : true}
-			style={{ display: "block", overflow: "visible" }}
+			style={{
+				display: "block",
+				overflow: "visible",
+				...(stretch ? { width: "100%" } : {}),
+			}}
 		>
 			{fill && (
 				<polygon

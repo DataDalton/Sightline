@@ -43,7 +43,6 @@ interface SmallMultiplesProps {
 	fields: Map<string, FieldMeta>;
 	style?: VisualStyle;
 	options?: Record<string, unknown>;
-	height?: number | string;
 }
 
 export function SmallMultiples({
@@ -53,7 +52,6 @@ export function SmallMultiples({
 	filters,
 	fields,
 	options,
-	height,
 }: SmallMultiplesProps) {
 	const [splitField, axisField] = dimensions;
 	const measure = measures[0];
@@ -129,7 +127,6 @@ export function SmallMultiples({
 			className={styles.multiples}
 			style={{
 				gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
-				height: typeof height === "number" ? height : undefined,
 			}}
 		>
 			{panels.map((panel) => {
@@ -153,6 +150,7 @@ export function SmallMultiples({
 							values={values}
 							width={160}
 							height={44}
+							stretch
 							domain={domain}
 							color={stroke}
 							fill

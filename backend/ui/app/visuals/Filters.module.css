@@ -268,20 +268,26 @@
 	gap: var(--space-2);
 }
 
+/* Sits beside the field name, so it reads as part of the label rather than as
+   a control competing with the presets under it. Underlined blue link text
+   next to eight buttons was the loudest thing in the strip. */
 .clearLink {
+	padding: 1px var(--space-1);
+	border-radius: var(--radius-sm);
 	font-size: var(--text-xs);
-	color: var(--text-link);
-	text-decoration: underline;
+	color: var(--text-muted);
 }
 
 .clearLink:hover {
+	background: var(--state-hover);
 	color: var(--danger);
 }
 
-/* Presets wrap rather than scroll: a hidden preset is one nobody uses. */
-.presetGrid {
+/* --- date range --- */
+
+.dateRow {
 	display: flex;
-	flex-wrap: wrap;
+	align-items: center;
 	gap: var(--space-1);
 }
 
@@ -420,16 +426,41 @@
 	background: var(--state-hover);
 }
 
-.segmentOn {
-	color: var(--text-primary);
-	background: var(--surface-raised);
+/* The accent, which is what selected means everywhere else here: a ticked
+   option, a filter count badge. A raised chip on a sunken track was the right
+   idea and too quiet at this size, where one option in eight is the answer to
+   what the whole page is showing. */
+.segmentOn,
+.segmentOn:hover {
+	color: var(--brand-contrast);
+	background: var(--brand);
 	box-shadow: var(--shadow-sm);
-	font-weight: 500;
+	font-weight: 600;
 }
 
 .segmentLoading {
 	padding: 4px 10px;
 	color: var(--text-muted);
+}
+
+/* The date presets answer three different kinds of question: a rolling window,
+   a period to date, and a named period. The rule marks where one kind stops, so
+   eight options read as three short groups rather than an undifferentiated
+   row. */
+.segmentDivider {
+	flex: 0 0 1px;
+	align-self: stretch;
+	margin: 3px 2px;
+	background: var(--border-default);
+}
+
+/* Narrower than the segments a dropdown draws, because there are eight of them
+   and they sit above two date boxes in the same column. */
+.presetSegment {
+	min-width: 36px;
+	padding: 4px var(--space-2);
+	font-size: var(--text-xs);
+	text-align: center;
 }
 
 /* The flag control. A switch reads as a state rather than as an action, which

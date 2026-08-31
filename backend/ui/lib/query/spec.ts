@@ -25,6 +25,28 @@ export interface QuerySort {
 	direction: "asc" | "desc";
 }
 
+// The spread of a measure across a grain, worked out by the warehouse.
+//
+// A metric view answers in aggregates, so the shape of a measure is the shape
+// of its values across whatever it is grouped by: order value across orders,
+// margin across products. The flat query above cannot ask that, because the
+// answer is one row per group while the values it is taken over run to tens of
+// millions of rows. Asking for them and summarising here meant a limit, and a
+// limit meant the first few hundred in whatever order they arrived, which for
+// a box plot of eight divisions was five hundred orders from one of them.
+//
+// So the summarising happens where the rows are. `detail` names the grain the
+// measure is evaluated at; `dimensions` on the spec stay the grouping, one box
+// or one histogram each.
+export interface QueryDistribution {
+	// "summary" returns a five number summary and an outlier count per group.
+	// "bins" returns a histogram of the values, and takes no grouping.
+	kind: "summary" | "bins";
+	detail: string[];
+	// How many bins, for "bins". Ignored by "summary".
+	bins?: number;
+}
+
 export interface QuerySpec {
 	sourceKey: string;
 	// Grouping fields. Empty means no aggregation, which is how detail and
@@ -40,6 +62,10 @@ export interface QuerySpec {
 	// serves them too. Part of the cache key, since two specs differing only
 	// in these are two different answers.
 	transforms: QueryTransform[];
+	// Set only by the distribution charts. Changes the shape of the answer
+	// entirely, so it is compiled by its own branch rather than by adding
+	// clauses to the flat query.
+	distribution?: QueryDistribution;
 }
 
 // Upper bounds on the shape of a single request.
@@ -71,6 +97,14 @@ export const maxFilters = 40;
 export const maxTransforms = 12;
 export const maxLimit = 50000;
 export const defaultLimit = 1000;
+// The grain a distribution is taken at, as a count of fields. More than a
+// handful is not a grain, it is a listing.
+export const maxDistributionDetail = 4;
+// Fewer than four bins is a bar chart with a worse label, and past a hundred
+// the bars are thinner than the gaps between them.
+export const minBins = 4;
+export const maxBins = 100;
+export const defaultBins = 20;
 
 export class QuerySpecError extends Error {}
 
@@ -259,6 +293,8 @@ export function parseQuerySpec(raw: unknown): QuerySpec {
 	const dimensions = parseNameList(o.dimensions, "dimensions", maxDimensions);
 	const measures = parseNameList(o.measures, "measures", maxMeasures);
 
+	const distribution = parseDistribution(o.distribution);
+
 	return {
 		sourceKey: asString(o.sourceKey, "sourceKey"),
 		dimensions,
@@ -268,7 +304,43 @@ export function parseQuerySpec(raw: unknown): QuerySpec {
 		limit,
 		offset,
 		transforms: parseTransforms(o.transforms, dimensions, measures),
+		...(distribution ? { distribution } : {}),
 	};
+}
+
+function parseDistribution(raw: unknown): QueryDistribution | null {
+	if (raw === undefined || raw === null) return null;
+	if (typeof raw !== "object") {
+		throw new QuerySpecError("distribution must be an object");
+	}
+	const o = raw as Record<string, unknown>;
+
+	const kind = o.kind;
+	if (kind !== "summary" && kind !== "bins") {
+		throw new QuerySpecError(
+			'distribution.kind must be "summary" or "bins"',
+		);
+	}
+
+	const detail = parseNameList(
+		o.detail,
+		"distribution.detail",
+		maxDistributionDetail,
+	);
+	if (detail.length === 0) {
+		throw new QuerySpecError(
+			"distribution.detail must name the grain the measure is taken at",
+		);
+	}
+
+	if (kind === "summary") return { kind, detail };
+
+	const asked = Number(o.bins ?? defaultBins);
+	const bins = Number.isFinite(asked)
+		? Math.min(Math.max(Math.trunc(asked), minBins), maxBins)
+		: defaultBins;
+
+	return { kind, detail, bins };
 }
 
 // Canonical string for cache keying. Field order matters to the SQL, so it is
@@ -293,6 +365,15 @@ export function canonicalizeSpec(spec: QuerySpec): string {
 		o: spec.sort.map((s) => `${s.field}:${s.direction}`),
 		l: spec.limit,
 		x: spec.offset,
+		// A distribution asks a different question of the same fields, so two
+		// specs differing only in it are two different answers.
+		p: spec.distribution
+			? [
+					spec.distribution.kind,
+					spec.distribution.detail.join(" "),
+					spec.distribution.bins ?? 0,
+				].join(":")
+			: "",
 		// Two specs differing only in what is derived from the answer are two
 		// different answers, so the cache has to tell them apart.
 		t: spec.transforms.map((t) =>

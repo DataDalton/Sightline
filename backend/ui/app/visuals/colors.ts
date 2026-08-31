@@ -148,3 +148,47 @@ export function mix(from: string, to: string, ratio: number): string {
 	const channel = (i: number) => Math.round(a[i] + (b[i] - a[i]) * clamped);
 	return `rgb(${channel(0)}, ${channel(1)}, ${channel(2)})`;
 }
+
+// Reads a colour into channels, for the few decisions that depend on how
+// bright it is. Returns null for a notation it cannot parse, and the caller
+// falls back rather than guessing.
+function channels(color: string): [number, number, number] | null {
+	const value = color.trim();
+
+	const six = /^#([0-9a-fA-F]{6})$/.exec(value);
+	if (six) {
+		return [
+			parseInt(six[1].slice(0, 2), 16),
+			parseInt(six[1].slice(2, 4), 16),
+			parseInt(six[1].slice(4, 6), 16),
+		];
+	}
+
+	const three = /^#([0-9a-fA-F]{3})$/.exec(value);
+	if (three) {
+		const [r, g, b] = three[1];
+		return [parseInt(r + r, 16), parseInt(g + g, 16), parseInt(b + b, 16)];
+	}
+
+	const rgb = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/.exec(value);
+	if (rgb) return [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])];
+
+	return null;
+}
+
+// Picks the label colour that stays readable on a filled shape.
+//
+// A treemap tile or a funnel band takes its fill from the data, so no single
+// label colour works across all of them: white vanishes on a pale tile and
+// near-black vanishes on a dark one. Falls back to onDark, which is the
+// brighter of the two and the safer guess for a colour this cannot read.
+export function contrastingText(
+	fill: string,
+	onDark: string,
+	onLight: string,
+): string {
+	const c = channels(fill);
+	if (!c) return onDark;
+	const luminance = (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255;
+	return luminance > 0.58 ? onLight : onDark;
+}

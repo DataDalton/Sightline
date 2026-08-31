@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import useSWR from "swr";
+import { DatePicker } from "../components/shared/DatePicker";
 import { maxNoteLength, type VisualNote } from "../../lib/platform/noteTypes";
 import styles from "./Visual.module.css";
 
@@ -170,14 +171,17 @@ export function VisualNotes({
 				{/* Optional, and the reason it is worth asking: a note about
 				    one point on a line is far more useful when it says which
 				    point. */}
-				<input
-					type="date"
+				<div
 					className={styles.noteDate}
-					value={anchor}
-					onChange={(e) => setAnchor(e.target.value)}
 					title="The date this is about, if it is about one"
-					aria-label="The date this note is about"
-				/>
+				>
+					<DatePicker
+						value={anchor}
+						onChange={setAnchor}
+						placeholder="No date"
+						ariaLabel="The date this note is about"
+					/>
+				</div>
 				<button
 					type="button"
 					className={styles.noteSave}
