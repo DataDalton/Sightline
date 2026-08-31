@@ -38,6 +38,12 @@ interface VisualFrameProps {
 	drill?: DrillInfo;
 	// A caveat about the data rather than an error: the visual still renders.
 	notice?: string | null;
+	// The author's own line about this visual. Chrome rather than content,
+	// for the same reason the drift notice is: it used to render inside the
+	// body, which a chart then filled at a hundred percent of, so the body
+	// was always taller than its box by the height of the note and every
+	// visual carrying one scrolled.
+	note?: string | null;
 	// Set when the reader drew a range across this visual and it narrowed to
 	// it, so the frame can say so and offer the way back.
 	onZoomOut?: (() => void) | null;
@@ -63,6 +69,7 @@ export function VisualFrame({
 	flush,
 	drill,
 	notice,
+	note,
 	onZoomOut,
 	children,
 }: VisualFrameProps) {
@@ -221,6 +228,7 @@ export function VisualFrame({
 					)}
 				</div>
 			)}
+			{note && <div className={styles.notice}>{note}</div>}
 			{notice && (
 				<div className={styles.driftNotice} role="status">
 					<svg
@@ -310,8 +318,4 @@ export function VisualEmpty({ message }: { message?: string }) {
 			<span>{message ?? "No data for the current filters"}</span>
 		</div>
 	);
-}
-
-export function VisualNotice({ children }: { children: ReactNode }) {
-	return <div className={styles.notice}>{children}</div>;
 }
