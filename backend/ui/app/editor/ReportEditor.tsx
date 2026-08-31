@@ -49,6 +49,25 @@ import styles from "./Editor.module.css";
 // would be a write per pointer move, and would make the version number a
 // contention point rather than a safety net.
 
+// How many grid rows a visual needs before its own content starts scrolling.
+//
+// Zero means no opinion, which leaves the height the author chose alone. Only a
+// note raises it, because a note renders inside the visual's box underneath
+// everything else and the grid has no way to see it. One row covers a note up
+// to about a hundred characters and two covers the longer ones, measured
+// against the 52 pixel row and the notice's own line height.
+function minRowsFor(visual: {
+	visualType: string;
+	config: { options?: Record<string, unknown> };
+}): number {
+	const note = visual.config.options?.note;
+	if (typeof note !== "string" || note.trim() === "") return 0;
+
+	const definition = visualByType[visual.visualType];
+	const base = definition?.defaultLayout.h ?? 4;
+	return base + (note.length > 100 ? 2 : 1);
+}
+
 interface ReportEditorProps {
 	reportId: string;
 	slug: string;
@@ -863,6 +882,12 @@ export function ReportEditor({
 	// Controls are left out because they are not on the grid at all. They sit in
 	// the filter strip in page order, so they have no rectangle to straighten.
 	const tidy = useCallback(() => {
+		// A note renders under the visual, inside the same box, so a visual
+		// carrying one needs a row the geometry cannot see. Without this the
+		// tidy levelled a noted chart down to its neighbours and left it
+		// scrolling, which is the opposite of what the button is for. Only
+		// noted visuals get a floor: everything else keeps the height its
+		// author chose.
 		if (locks.protectEdit) return;
 
 		// One container at a time. A group's children are measured from the
@@ -886,7 +911,11 @@ export function ReportEditor({
 		let moved = 0;
 		for (const members of containers.values()) {
 			const result = tidyLayout(
-				members.map((v) => ({ id: v.visualId, rect: v.layout })),
+				members.map((v) => ({
+					id: v.visualId,
+					rect: v.layout,
+					minH: minRowsFor(v),
+				})),
 			);
 			moved += result.moved;
 			for (const item of result.items) rects.set(item.id, item.rect);

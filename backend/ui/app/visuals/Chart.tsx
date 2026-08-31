@@ -655,42 +655,49 @@ export function Chart({
 				</p>
 			)}
 
-			<table className="sr-only">
-				<caption>
-					{describeChart(
-						visualType,
-						rows,
-						dimensions,
-						measures,
-						title,
-					)}
-				</caption>
-				<thead>
-					<tr>
-						{columns.map((column) => (
-							<th key={column} scope="col">
-								{column}
-							</th>
-						))}
-					</tr>
-				</thead>
-				<tbody>
-					{rows.map((row, index) => (
-						<tr key={index}>
+			{/* Wrapped rather than clipped directly, because a caption is laid
+			    out outside the table's border box: sr-only on the table hid
+			    every row and left the sentence on screen under each chart,
+			    where it read as a stray line of machine text nobody could
+			    edit. The wrapper has a border box the caption sits inside. */}
+			<div className="sr-only">
+				<table>
+					<caption>
+						{describeChart(
+							visualType,
+							rows,
+							dimensions,
+							measures,
+							title,
+						)}
+					</caption>
+					<thead>
+						<tr>
 							{columns.map((column) => (
-								<td key={column}>
-									{formatValue(
-										row[column],
-										(fields.get(column)
-											?.formatHint as FormatHint) ??
-											"decimal",
-									)}
-								</td>
+								<th key={column} scope="col">
+									{column}
+								</th>
 							))}
 						</tr>
-					))}
-				</tbody>
-			</table>
+					</thead>
+					<tbody>
+						{rows.map((row, index) => (
+							<tr key={index}>
+								{columns.map((column) => (
+									<td key={column}>
+										{formatValue(
+											row[column],
+											(fields.get(column)
+												?.formatHint as FormatHint) ??
+												"decimal",
+										)}
+									</td>
+								))}
+							</tr>
+						))}
+					</tbody>
+				</table>
+			</div>
 		</>
 	);
 }
