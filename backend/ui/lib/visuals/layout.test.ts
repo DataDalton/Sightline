@@ -409,3 +409,66 @@ test("distributing vertically works on the other axis", () => {
 	assert.equal(spread[1].rect.y, 5);
 	assert.equal(spread[2].rect.y, 10);
 });
+
+// A visual carrying a note renders it inside its own box, so the geometry the
+// tidy works on is a row short. These cover the floor the caller supplies.
+
+const tm = (
+	id: string,
+	x: number,
+	y: number,
+	w: number,
+	h: number,
+	minH: number,
+) => ({ id, rect: { x, y, w, h }, minH });
+
+test("tidying grows a lone visual to the height its content needs", () => {
+	const { items, moved } = tidyLayout([tm("a", 0, 0, 12, 4, 6)]);
+	assert.equal(items[0].rect.h, 6);
+	assert.equal(moved, 1);
+});
+
+test("a content floor never shrinks a visual that is already taller", () => {
+	const { items, moved } = tidyLayout([tm("a", 0, 0, 12, 8, 6)]);
+	assert.equal(items[0].rect.h, 8);
+	assert.equal(moved, 0);
+});
+
+test("a floor is honoured even when the row is too uneven to level", () => {
+	// Both are four rows on the grid, so the geometry saw a level row and left
+	// them alone. The second needs six. Six against four is beyond the
+	// levelling slack, so the row stays uneven on purpose, but the one that
+	// needs the room still gets it rather than being held at four.
+	const { items } = tidyLayout([
+		tm("a", 0, 0, 6, 4, 0),
+		tm("b", 6, 0, 6, 4, 6),
+	]);
+	assert.equal(items[0].rect.h, 4);
+	assert.equal(items[1].rect.h, 6);
+});
+
+test("a row within the slack levels up to the content floor", () => {
+	// Five against a floor of six is one row apart, so the row levels, and it
+	// levels to what the content needs rather than to the taller rectangle.
+	const { items } = tidyLayout([
+		tm("a", 0, 0, 6, 5, 0),
+		tm("b", 6, 0, 6, 4, 6),
+	]);
+	assert.equal(items[0].rect.h, 6);
+	assert.equal(items[1].rect.h, 6);
+});
+
+test("a visual with no floor keeps the height its author chose", () => {
+	const { items, moved } = tidyLayout([tm("a", 0, 0, 12, 3, 0)]);
+	assert.equal(items[0].rect.h, 3);
+	assert.equal(moved, 0);
+});
+
+test("the next row starts below the grown height, not the stored one", () => {
+	const { items } = tidyLayout([
+		tm("a", 0, 0, 12, 4, 7),
+		tm("b", 0, 4, 12, 4, 0),
+	]);
+	assert.equal(items[0].rect.h, 7);
+	assert.equal(items[1].rect.y, 7);
+});

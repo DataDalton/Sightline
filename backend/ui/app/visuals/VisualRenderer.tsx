@@ -22,7 +22,7 @@ import {
 	ThresholdFilter,
 } from "./FilterWidgets";
 import { usePageFilters } from "./PageFilters";
-import { VisualFrame, VisualNotice } from "./VisualFrame";
+import { VisualFrame } from "./VisualFrame";
 import { ChartActions } from "./ChartActions";
 import { NotesAction, VisualNotes, usePageNotes } from "./VisualNotes";
 import { ErrorBoundary } from "../components/shared/ErrorBoundary";
@@ -614,6 +614,7 @@ function VisualBody({
 				}
 				title={displayTitle(visual)}
 				notice={driftNote}
+				note={note}
 			>
 				{showingNotes && reportId && pageId && (
 					<VisualNotes
@@ -625,7 +626,6 @@ function VisualBody({
 						onClose={() => setShowingNotes(false)}
 					/>
 				)}
-				{note && <VisualNotice>{note}</VisualNotice>}
 				<SmallMultiples
 					sourceKey={sourceKey}
 					dimensions={dimensions}
@@ -666,6 +666,7 @@ function VisualBody({
 				title={displayTitle(visual)}
 				flush
 				notice={driftNote}
+				note={note}
 			>
 				{showingNotes && reportId && pageId && (
 					<VisualNotes
@@ -677,7 +678,6 @@ function VisualBody({
 						onClose={() => setShowingNotes(false)}
 					/>
 				)}
-				{note && <VisualNotice>{note}</VisualNotice>}
 				<MatrixTable
 					sourceKey={sourceKey}
 					rowDimensions={rowDimensions}
@@ -744,6 +744,7 @@ function VisualBody({
 				}
 				title={displayTitle(visual)}
 				notice={driftNote}
+				note={note}
 				onZoomOut={
 					crossFilter?.sourceVisualId === visual.visualId &&
 					crossFilter.zoomSource
@@ -761,7 +762,6 @@ function VisualBody({
 						: undefined
 				}
 			>
-				{note && <VisualNotice>{note}</VisualNotice>}
 				<Chart
 					visualType={visual.visualType}
 					sourceKey={sourceKey}
@@ -898,8 +898,8 @@ function VisualBody({
 				visualId={visual.visualId}
 				title={isHeader ? null : displayTitle(visual)}
 				notice={driftNote}
+				note={note}
 			>
-				{note && <VisualNotice>{note}</VisualNotice>}
 				<RecordPanel
 					sourceKey={sourceKey}
 					visualType={visual.visualType}
@@ -930,6 +930,7 @@ function VisualBody({
 				title={displayTitle(visual)}
 				flush
 				notice={driftNote}
+				note={note}
 			>
 				{showingNotes && reportId && pageId && (
 					<VisualNotes
@@ -941,7 +942,6 @@ function VisualBody({
 						onClose={() => setShowingNotes(false)}
 					/>
 				)}
-				{note && <VisualNotice>{note}</VisualNotice>}
 				<DataGrid
 					sourceKey={sourceKey}
 					dimensions={dimensions}

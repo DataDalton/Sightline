@@ -384,10 +384,20 @@ function sameRect(a: Rect, b: Rect): boolean {
 // Nothing here reads or writes a parent, so a caller with groups on the page
 // runs it once per container. A group's children are measured from the group's
 // own origin, and mixing the two coordinate spaces would move every child.
-export function tidyLayout<T extends { rect: Rect }>(
+// A visual may carry a floor its content needs, in rows. Tidy was purely
+// geometric and so could not know that a note under a chart takes a row of its
+// own: it levelled a row to the tallest rectangle and left the noted visual
+// scrolling, or shrank it to match its neighbours and made the clipping worse.
+// The caller works the floor out, because only it knows what is inside.
+export function tidyLayout<T extends { rect: Rect; minH?: number }>(
 	items: T[],
 ): TidyResult<T> {
 	if (items.length === 0) return { items, moved: 0 };
+
+	// What a visual is allowed to shrink to. Never below its own content, and
+	// never below the grid minimum.
+	const floorOf = (item: T) =>
+		Math.max(minHeight, item.minH ?? 0, item.rect.h);
 
 	// Rows in the order they appear down the page, each sorted left to right.
 	const rows = new Map<number, T[]>();
@@ -404,7 +414,10 @@ export function tidyLayout<T extends { rect: Rect }>(
 	let y = 0;
 
 	for (const row of ordered) {
-		const heights = row.map((i) => i.rect.h);
+		// Measured against what each visual needs rather than what it was
+		// given, so a row containing something with a note levels up to fit it
+		// instead of levelling it down to its neighbours.
+		const heights = row.map(floorOf);
 		const tallest = Math.max(...heights);
 		const shortest = Math.min(...heights);
 		// Rule 4. A row whose heights already agree is levelled for free, and
@@ -412,10 +425,11 @@ export function tidyLayout<T extends { rect: Rect }>(
 		const level = tallest - shortest <= levellingSlack;
 
 		if (row.length === 1) {
-			// Rule 5.
+			// Rule 5. Where it sits and how wide it is are the author's, but
+			// it still grows to what it needs.
 			const only = row[0];
-			next.set(only, { ...only.rect, y });
-			y += only.rect.h;
+			next.set(only, { ...only.rect, y, h: floorOf(only) });
+			y += floorOf(only);
 			continue;
 		}
 
@@ -439,7 +453,7 @@ export function tidyLayout<T extends { rect: Rect }>(
 				x,
 				y,
 				w: Math.max(minWidth, w),
-				h: level ? tallest : item.rect.h,
+				h: level ? tallest : floorOf(item),
 			});
 			// Rule 2. The next visual starts where this one ends.
 			x += w;
