@@ -1,9 +1,17 @@
 "use client";
 
-import { Children, useEffect, useMemo, useRef, useState } from "react";
+import {
+	Children,
+	Fragment,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { usePageFilters, type FilterClause } from "./PageFilters";
 import { RangeSlider } from "./RangeSlider";
 import { usePostResource } from "../hooks/usePostResource";
+import { DatePicker } from "../components/shared/DatePicker";
 import { Select } from "../components/shared/Select";
 import styles from "./Filters.module.css";
 
@@ -480,6 +488,10 @@ interface DateRangeProps extends BaseProps {
 interface Preset {
 	label: string;
 	title: string;
+	// Which kind of question this one answers. A rule is drawn where the kind
+	// changes, so the eight options read as three short groups rather than one
+	// undifferentiated row.
+	group: "rolling" | "toDate" | "named";
 	resolve: (now: Date) => [Date, Date];
 }
 
@@ -494,21 +506,25 @@ const presets: Preset[] = [
 	{
 		label: "7d",
 		title: "Last 7 days",
+		group: "rolling",
 		resolve: (n) => [new Date(n.getTime() - 7 * 864e5), n],
 	},
 	{
 		label: "30d",
 		title: "Last 30 days",
+		group: "rolling",
 		resolve: (n) => [new Date(n.getTime() - 30 * 864e5), n],
 	},
 	{
 		label: "90d",
 		title: "Last 90 days",
+		group: "rolling",
 		resolve: (n) => [new Date(n.getTime() - 90 * 864e5), n],
 	},
 	{
 		label: "12m",
 		title: "Last 12 months",
+		group: "rolling",
 		resolve: (n) => [
 			new Date(n.getFullYear() - 1, n.getMonth(), n.getDate()),
 			n,
@@ -517,11 +533,13 @@ const presets: Preset[] = [
 	{
 		label: "MTD",
 		title: "Month to date",
+		group: "toDate",
 		resolve: (n) => [new Date(n.getFullYear(), n.getMonth(), 1), n],
 	},
 	{
 		label: "QTD",
 		title: "Quarter to date",
+		group: "toDate",
 		resolve: (n) => [
 			new Date(n.getFullYear(), Math.floor(n.getMonth() / 3) * 3, 1),
 			n,
@@ -530,11 +548,13 @@ const presets: Preset[] = [
 	{
 		label: "YTD",
 		title: "Year to date",
+		group: "toDate",
 		resolve: (n) => [new Date(n.getFullYear(), 0, 1), n],
 	},
 	{
 		label: "Last yr",
 		title: "The whole of last calendar year",
+		group: "named",
 		resolve: (n) => [
 			new Date(n.getFullYear() - 1, 0, 1),
 			new Date(n.getFullYear() - 1, 11, 31),
@@ -646,52 +666,59 @@ export function DateRangeFilter({
 			</div>
 
 			{showPresets && (
-				<div className={styles.presetGrid}>
-					{presets.map((preset) => (
-						<button
-							key={preset.label}
-							type="button"
-							title={preset.title}
-							className={`${styles.miniButton} ${
-								activePreset === preset.label
-									? styles.checked
-									: ""
-							}`}
-							onClick={() => applyPreset(preset)}
-						>
-							{preset.label}
-						</button>
+				<div className={styles.segmented} role="group">
+					{presets.map((preset, index) => (
+						<Fragment key={preset.label}>
+							{index > 0 &&
+								presets[index - 1].group !== preset.group && (
+									<span
+										className={styles.segmentDivider}
+										aria-hidden="true"
+									/>
+								)}
+							<button
+								type="button"
+								title={preset.title}
+								aria-pressed={activePreset === preset.label}
+								className={`${styles.segment} ${styles.presetSegment} ${
+									activePreset === preset.label
+										? styles.segmentOn
+										: ""
+								}`}
+								onClick={() => applyPreset(preset)}
+							>
+								{preset.label}
+							</button>
+						</Fragment>
 					))}
 				</div>
 			)}
 
 			{showCalendar && (
-				<div className={styles.row}>
-					<input
-						type="date"
-						className={styles.input}
+				<div className={styles.dateRow}>
+					<DatePicker
 						value={from}
 						max={to || undefined}
-						aria-label="From"
-						onChange={(e) => {
-							setFrom(e.target.value);
+						ariaLabel="From"
+						placeholder="Any start"
+						onChange={(next) => {
+							setFrom(next);
 							setActivePreset(null);
-							apply(e.target.value, to);
+							apply(next, to);
 						}}
 					/>
 					<span className={styles.rangeDash} aria-hidden="true">
 						to
 					</span>
-					<input
-						type="date"
-						className={styles.input}
+					<DatePicker
 						value={to}
 						min={from || undefined}
-						aria-label="To"
-						onChange={(e) => {
-							setTo(e.target.value);
+						ariaLabel="To"
+						placeholder="Any end"
+						onChange={(next) => {
+							setTo(next);
 							setActivePreset(null);
-							apply(from, e.target.value);
+							apply(from, next);
 						}}
 					/>
 				</div>
@@ -1178,13 +1205,13 @@ export function DimensionSwitch({
 		return (
 			<div className={styles.widget}>
 				<span className={styles.label}>{label ?? fallbackLabel}</span>
-				<div className={styles.row} role="group">
+				<div className={styles.segmented} role="group">
 					{options.map((option) => (
 						<button
 							key={option}
 							type="button"
-							className={`${styles.miniButton} ${
-								option === active ? styles.checked : ""
+							className={`${styles.segment} ${
+								option === active ? styles.segmentOn : ""
 							}`}
 							aria-pressed={option === active}
 							onClick={() => setSelected(option)}

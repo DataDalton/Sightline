@@ -634,7 +634,6 @@ function VisualBody({
 					fields={fields}
 					style={style}
 					options={visual.config.options}
-					height={frameHeight}
 				/>
 			</VisualFrame>
 		);

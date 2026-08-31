@@ -287,6 +287,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		},
 		supports: {
 			color: true,
+			conditionalFormat: true,
 			fill: true,
 			stacking: true,
 			secondAxis: true,
@@ -352,6 +353,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		},
 		supports: {
 			color: true,
+			conditionalFormat: true,
 			fill: true,
 			stacking: true,
 			axes: true,
@@ -414,6 +416,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		},
 		supports: {
 			color: true,
+			conditionalFormat: true,
 			fill: true,
 			secondAxis: true,
 			axes: true,
@@ -789,7 +792,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		label: "Histogram",
 		category: "distribution",
 		guidance:
-			"How a figure is spread across the things it is measured on, such as order value across customers. An average hides a long tail or two clusters, and this is what shows either.",
+			"How a figure is spread across the things it is measured on, such as order value across customers. An average hides a long tail or two clusters, and this is what shows either. The bars are counted by the warehouse over every value, so the shape describes the whole population rather than a sample of it.",
 		encoding: {
 			dimensions: { min: 1, max: 1, label: "Measured across" },
 			measures: { min: 1, max: 1, label: "The figure being spread" },
@@ -800,10 +803,10 @@ export const visualCatalog: VisualTypeDefinition[] = [
 				key: "bins",
 				label: "Number of bars",
 				kind: "number",
-				min: 2,
-				max: 50,
+				min: 4,
+				max: 100,
 				step: 1,
-				help: "Left empty this is chosen from how many things there are, which keeps the same chart from redrawing with a different number of bars every time the page is filtered.",
+				help: "Twenty unless set. The bars cover the first to the ninety ninth percentile and the two tails fold into the end bars, so a handful of extreme values cannot squash the rest into one column.",
 			},
 		],
 		defaultLayout: { w: 5, h: 5 },
@@ -813,7 +816,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		label: "Box plot",
 		category: "distribution",
 		guidance:
-			"The middle half of a figure, its median and its outliers, one box per category. Two dimensions draws a box for each value of the first; one draws a single box.",
+			"The middle half of a figure, its median and how far the whiskers reach, one box per category. Two dimensions draws a box for each value of the first, taken across the second; one draws a single box. The quartiles are read by the warehouse across every value, to about one part in ten thousand, and how many fall beyond the whiskers is counted rather than plotted.",
 		encoding: {
 			dimensions: {
 				min: 1,
@@ -823,6 +826,17 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			measures: { min: 1, max: 1 },
 		},
 		supports: { color: true, axes: true, tooltip: true },
+		options: [
+			{
+				key: "topN",
+				label: "Keep only the top",
+				kind: "number",
+				min: 1,
+				max: 60,
+				step: 1,
+				help: "Boxes, ranked by median. Worth setting wherever the grouping field has more values than a reader can compare at a glance, which is most of them.",
+			},
+		],
 		defaultLayout: { w: 5, h: 5 },
 	},
 	{
@@ -925,6 +939,29 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			referenceLines: true,
 		},
 		options: [
+			{
+				key: "trimAxes",
+				label: "Keep extremes off the axis",
+				kind: "toggle",
+				fallback: true,
+				help: "Bounds each axis to the first and ninety ninth percentile when a handful of values would otherwise flatten the rest into a line. How many points that leaves out is said under the chart. Setting a bound by hand turns it off for that axis.",
+			},
+			{
+				key: "topN",
+				label: "Keep only the top",
+				kind: "number",
+				min: 1,
+				max: 2000,
+				step: 25,
+				help: "Points, ranked by the measure chosen below. Without it the query takes whatever sorts first by name, which on a field with millions of values is not a sample of anything.",
+			},
+			{
+				key: "topBy",
+				label: "Ranked by",
+				kind: "field",
+				scope: "measure",
+				help: "Which measure decides the ranking. The horizontal one is usually the size the chart is about.",
+			},
 			{
 				key: "zoomSlider",
 				label: "Let readers zoom the axis",

@@ -147,3 +147,52 @@ test("a type the catalogue does not know is still described", () => {
 	);
 	assert.ok(summary.startsWith("Chart of Net Sales by Month"));
 });
+
+// A box plot and a histogram are answered with a summary, so the sentence has
+// to describe the boxes and bars that are there rather than the grain they
+// were taken over.
+
+test("a box plot names its boxes and the grain behind them", () => {
+	const summary = describeChart(
+		"boxPlot",
+		[
+			{ Division: "Endoscopy", Median: 518 },
+			{ Division: "Instruments", Median: 586 },
+		],
+		["Division", "Order Number"],
+		["Net Sales"],
+		null,
+	);
+	assert.equal(
+		summary,
+		"Box plot of Net Sales across Order Number, 2 boxes, one for each Division.",
+	);
+});
+
+test("a box plot with no grouping is one box", () => {
+	const summary = describeChart(
+		"boxPlot",
+		[{ Median: 518 }],
+		["Order Number"],
+		["Net Sales"],
+		null,
+	);
+	assert.equal(
+		summary,
+		"Box plot of Net Sales across Order Number, one box.",
+	);
+});
+
+test("a histogram counts its bars", () => {
+	const summary = describeChart(
+		"histogramChart",
+		[{ Count: 12 }, { Count: 40 }, { Count: 3 }],
+		["Invoice Number"],
+		["Net Sales"],
+		"Invoice value spread",
+	);
+	assert.equal(
+		summary,
+		"Invoice value spread. Histogram of Net Sales across Invoice Number, 3 bars.",
+	);
+});

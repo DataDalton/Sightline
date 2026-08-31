@@ -371,3 +371,82 @@ test("a switcher offering a field the source dropped resolves to nothing", () =>
 	// sides drop it and neither asks the warehouse for a field that is gone.
 	assert.deepEqual(warmed?.dimensions, []);
 });
+
+// --- Distribution charts ---------------------------------------------------
+
+test("a box plot asks the warehouse to summarise, not for the values", () => {
+	const shape = queryForVisual("boxPlot", {
+		sourceKey: "sales",
+		dimensions: ["Division", "Order Number"],
+		measures: ["Net Sales"],
+	});
+
+	// The last dimension is the grain the measure is taken at, and it never
+	// appears in the grouping: the answer is one row per division.
+	assert.deepEqual(shape?.dimensions, ["Division"]);
+	assert.deepEqual(shape?.distribution, {
+		kind: "summary",
+		detail: ["Order Number"],
+	});
+});
+
+test("a box plot with one dimension draws a single box across it", () => {
+	const shape = queryForVisual("boxPlot", {
+		sourceKey: "sales",
+		dimensions: ["Order Number"],
+		measures: ["Net Sales"],
+	});
+
+	assert.deepEqual(shape?.dimensions, []);
+	assert.deepEqual(shape?.distribution?.detail, ["Order Number"]);
+});
+
+test("a box plot keeping the top few ranks on the measure", () => {
+	const shape = queryForVisual("boxPlot", {
+		sourceKey: "sales",
+		dimensions: ["Area Name", "Territory Name"],
+		measures: ["Revenue 1yr"],
+		options: { topN: 12 },
+	});
+
+	assert.deepEqual(shape?.sort, [
+		{ field: "Revenue 1yr", direction: "desc" },
+	]);
+	assert.equal(shape?.limit, 12);
+});
+
+test("a histogram takes no grouping and carries its bin count", () => {
+	const shape = queryForVisual("histogramChart", {
+		sourceKey: "sales",
+		dimensions: ["Invoice Number"],
+		measures: ["Net Sales"],
+		options: { bins: 30 },
+	});
+
+	assert.deepEqual(shape?.dimensions, []);
+	assert.deepEqual(shape?.distribution, {
+		kind: "bins",
+		detail: ["Invoice Number"],
+		bins: 30,
+	});
+});
+
+test("a histogram with no bin count leaves the choice to the compiler", () => {
+	const shape = queryForVisual("histogramChart", {
+		sourceKey: "sales",
+		dimensions: ["Invoice Number"],
+		measures: ["Net Sales"],
+	});
+	assert.equal(shape?.distribution?.bins, undefined);
+});
+
+test("a distribution chart with no dimension asks nothing", () => {
+	assert.equal(
+		queryForVisual("boxPlot", {
+			sourceKey: "sales",
+			dimensions: [],
+			measures: ["Net Sales"],
+		}),
+		null,
+	);
+});

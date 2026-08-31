@@ -573,11 +573,18 @@
 
    A grid rather than a flex wrap, because equal panel widths are what makes the
    shapes comparable and a wrapped row leaves the last one a different size. */
+/* Fills the body rather than taking a height of its own. It was given the
+   frame height, which is the whole visual including its header, so the grid
+   was always taller than the box it sat in: the body scrolled, the grid
+   scrolled, and both kept going after every panel was already on screen. */
 .multiples {
 	display: grid;
 	gap: var(--space-3);
 	align-content: start;
+	height: 100%;
+	min-height: 0;
 	overflow-y: auto;
+	overflow-x: hidden;
 	padding: var(--space-1);
 }
 
@@ -759,16 +766,12 @@
 	gap: var(--space-2);
 }
 
+/* Holds the date field, which draws its own border and background. This is
+   only the room it gets in the row. */
 .noteDate {
 	flex: 1;
 	min-width: 0;
-	padding: var(--space-1) var(--space-2);
-	border: 1px solid var(--border-default);
-	border-radius: var(--radius-sm);
-	background: var(--surface-base);
-	color: var(--text-secondary);
-	font-family: inherit;
-	font-size: var(--text-xs);
+	display: flex;
 }
 
 .noteSave {
@@ -813,4 +816,32 @@
 	line-height: 1.4;
 	color: var(--text-muted);
 	overflow-wrap: anywhere;
+}
+
+/* A column, so a line written under a chart takes its own height rather than
+   pushing the canvas past the bottom of the visual. The canvas asked for a
+   hundred percent of the body and anything after it overflowed, which is what
+   put a scrollbar on every map that could not place a value. */
+.chartFrame {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	min-height: 0;
+}
+
+.chartCanvas {
+	flex: 1 1 auto;
+	min-height: 0;
+	width: 100%;
+}
+
+/* What the chart is not showing. A trimmed axis is the only way a cloud of
+   points survives one value a billion times the rest, and a chart that drops
+   points without saying so is a chart that lies quietly. */
+.chartFootnote {
+	flex: 0 0 auto;
+	padding-top: var(--space-1);
+	font-size: var(--text-xs);
+	line-height: 1.4;
+	color: var(--text-muted);
 }

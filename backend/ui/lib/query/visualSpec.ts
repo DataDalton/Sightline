@@ -1,5 +1,6 @@
 import { isFilterVisual } from "../visuals/catalog";
 import type { QueryTransform } from "./transform";
+import type { QueryDistribution } from "./spec";
 
 // The query a visual makes, decided in one place.
 //
@@ -65,6 +66,9 @@ export interface VisualQueryShape {
 	// applied afterwards, so the warm path and the client ask for the same
 	// thing and resolve to one cache entry.
 	transforms?: QueryTransform[];
+	// Set by the distribution charts, which ask for a summary of a measure
+	// rather than for the values behind it.
+	distribution?: QueryDistribution;
 }
 
 export interface VisualInputs {
@@ -93,6 +97,25 @@ export const matrixLevelRows = 2000;
 
 // The chart default, when the author has not set one.
 export const chartRows = 500;
+
+// Boxes a summarised distribution draws. This bounds groups rather than
+// values: the values are summarised in the warehouse and never travel.
+export const distributionGroups = 60;
+
+// Column names a distribution answers in. Shared by the SQL that produces them
+// and the chart that draws them, so the two cannot drift apart on what a column
+// is called.
+export const distributionColumns = {
+	count: "Count",
+	lowerWhisker: "Lower whisker",
+	lowerQuartile: "Lower quartile",
+	median: "Median",
+	upperQuartile: "Upper quartile",
+	upperWhisker: "Upper whisker",
+	outliers: "Outliers",
+	binStart: "Bin start",
+	binEnd: "Bin end",
+} as const;
 
 // The columns a Pareto derives for itself. Named rather than generated, so the
 // renderer and the query agree on them without either being told.
@@ -217,6 +240,65 @@ export function queryForVisual(
 				{ field: axis, direction: "asc" as const },
 			],
 			limit: inputs.limit ?? chartRows,
+		};
+	}
+
+	// The shape of a measure, summarised where the values are.
+	//
+	// These two used to ask the flat query for one row per detail value and
+	// work the shape out here. That only holds while the detail grain is
+	// small, and it never is: a box plot of order value by division is taken
+	// over thirty six million orders, so the five hundred rows that came back
+	// were five hundred orders from whichever division sorted first. The chart
+	// then drew one box, confidently, from a sample nobody chose.
+	//
+	// The last dimension is the grain the measure is taken at. A box plot
+	// takes the one before it as the field to draw a box for; a histogram has
+	// no grouping, because a second set of bars over the first is not a
+	// histogram.
+	if (visualType === "boxPlot" || visualType === "histogramChart") {
+		const measure = measures[0];
+		if (!measure || dimensions.length === 0) return null;
+
+		const detail = [dimensions[dimensions.length - 1]];
+		const grouping =
+			visualType === "boxPlot" ? dimensions.slice(0, -1).slice(0, 1) : [];
+
+		const asked = Number(inputs.options?.bins);
+
+		// Keeping the largest few is ranking on the median, which is the one
+		// number a box stands for. Without it a source with sixty eight areas
+		// draws sixty eight boxes in alphabetical order.
+		const keep = Number(inputs.options?.topN);
+		const ranked =
+			visualType === "boxPlot" && Number.isFinite(keep) && keep > 0
+				? {
+						sort: [{ field: measure, direction: "desc" as const }],
+						limit: Math.min(Math.trunc(keep), distributionGroups),
+					}
+				: {
+						sort: [],
+						// Groups, not values. A box each for more boxes than
+						// this is a picture nobody can read anyway.
+						limit: distributionGroups,
+					};
+
+		return {
+			sourceKey,
+			dimensions: grouping,
+			measures: [measure],
+			filters,
+			...ranked,
+			distribution:
+				visualType === "boxPlot"
+					? { kind: "summary", detail }
+					: {
+							kind: "bins",
+							detail,
+							...(Number.isFinite(asked) && asked > 0
+								? { bins: Math.trunc(asked) }
+								: {}),
+						},
 		};
 	}
 
