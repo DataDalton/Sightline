@@ -5,17 +5,16 @@ import {
 	type FormatHint,
 } from "../../lib/format";
 import {
+	evaluateConditions,
 	referenceValue,
 	styleForMeasure,
 	type VisualStyle,
 } from "../../lib/visuals/style";
-import { withAlpha, type ThemeColors } from "./colors";
-import { paretoCumulative } from "../../lib/query/visualSpec";
+import { contrastingText, mix, withAlpha, type ThemeColors } from "./colors";
 import {
-	binValues,
-	fiveNumber,
-	type FiveNumber,
-} from "../../lib/visuals/distribution";
+	distributionColumns,
+	paretoCumulative,
+} from "../../lib/query/visualSpec";
 import { matchCountry } from "../../lib/visuals/countryNames";
 import { worldMapName } from "./worldMap";
 
@@ -88,6 +87,34 @@ function highlightOpacity(
 	return ctx.highlight.values.includes(value) ? 1 : 0.25;
 }
 
+// The colour a threshold rule puts on one bar.
+//
+// The same rules a grid and a scorecard read, so a page says the same thing
+// about the same figure wherever it appears. Only a background is honoured: a
+// bar has no text of its own, and a text colour applied to a filled shape is
+// the rule saying something the shape cannot carry.
+//
+// Returns undefined when nothing matches, which keeps the fast path: an
+// unstyled chart allocates no per-point objects at all.
+function conditionColor(
+	ctx: ChartContext,
+	measure: string,
+	rowIndex: number,
+): string | undefined {
+	const rules = ctx.style?.conditions ?? [];
+	if (rules.length === 0) return undefined;
+
+	const row = ctx.rows[rowIndex];
+	if (!row) return undefined;
+
+	const match = evaluateConditions(rules, row, measure, {
+		position: rowIndex,
+		total: ctx.rows.length,
+	});
+	if (!match?.background) return undefined;
+	return ctx.colors.resolve(match.background, ctx.colors.series[0]);
+}
+
 function seriesColor(
 	ctx: ChartContext,
 	measure: string,
@@ -106,6 +133,13 @@ function tooltip(ctx: ChartContext, trigger: "item" | "axis" = "axis") {
 	return {
 		show: ctx.style?.tooltip?.enabled !== false,
 		trigger: ctx.style?.tooltip?.mode === "single" ? "item" : trigger,
+		// Out of the visual and onto the page.
+		//
+		// A chart sits in a scrolling panel, so a tooltip drawn inside it is
+		// clipped by the panel: hovering anything near the top edge showed
+		// half a box. On the body it is positioned against the viewport and
+		// has the whole page to open into.
+		appendTo: "body",
 		backgroundColor: ctx.colors.tooltipBg,
 		borderWidth: 0,
 		textStyle: { color: ctx.colors.tooltipText, fontSize: 12 },
@@ -124,10 +158,32 @@ function legend(ctx: ChartContext, show: boolean) {
 	};
 }
 
+// How far above the plot an axis name sits, and how much room the grid has to
+// leave for it.
+//
+// ECharts draws the name outside the grid rect and containLabel does not
+// measure it, so a grid top of 16 with the default gap of 15 put "Count" at
+// y = 1 and the canvas cut the text in half. Every builder that can name a
+// vertical axis reserves axisNameTop rather than choosing its own.
+const axisNameGap = 10;
+const axisNameTop = 28;
+
+// The name of a vertical axis, at the top of it. Returns nothing when there is
+// no name, so a chart without one keeps whatever grid it chose.
+function verticalAxisName(ctx: ChartContext, text: string | null | undefined) {
+	if (!text) return {};
+	return {
+		name: text,
+		nameLocation: "end" as const,
+		nameGap: axisNameGap,
+		nameTextStyle: { color: ctx.colors.textMuted, align: "left" as const },
+	};
+}
+
 function valueAxis(ctx: ChartContext, hint: FormatHint) {
 	return {
 		type: "value" as const,
-		name: ctx.style?.yAxis?.label,
+		...verticalAxisName(ctx, ctx.style?.yAxis?.label),
 		// A truncated axis exaggerates differences, so zero is included unless
 		// the author explicitly opts out.
 		scale: ctx.style?.yAxis?.beginAtZero === false,
@@ -267,13 +323,123 @@ function referenceMarkLine(
 	};
 }
 
+// Bounds for an axis that a handful of values would otherwise ruin.
+//
+// A scatter of the largest few hundred orders is a readable cloud until one of
+// them carries a discount of minus five billion percent, at which point every
+// other point is a line along the axis. Trimming to the first and ninety ninth
+// percentile gives the cloud the plot back.
+//
+// Only applied when it changes the picture: if the trimmed span is most of the
+// full span there are no extremes to exclude, and moving the bounds would be
+// cropping the data for no reason. Whatever falls outside is counted and said
+// under the chart rather than quietly dropped.
+export function trimmedBounds(
+	values: number[],
+): { min: number; max: number } | null {
+	const usable = values
+		.filter((v) => Number.isFinite(v))
+		.sort((a, b) => a - b);
+	if (usable.length < 20) return null;
+
+	const at = (fraction: number) =>
+		usable[
+			Math.min(
+				usable.length - 1,
+				Math.max(0, Math.round((usable.length - 1) * fraction)),
+			)
+		];
+
+	const low = at(0.01);
+	const high = at(0.99);
+	const fullSpan = usable[usable.length - 1] - usable[0];
+	const trimmedSpan = high - low;
+	if (fullSpan <= 0 || trimmedSpan <= 0) return null;
+	if (trimmedSpan > fullSpan * 0.4) return null;
+
+	// A little air, so a point sitting exactly at the percentile is drawn
+	// inside the plot rather than half on the frame.
+	const pad = trimmedSpan * 0.05;
+	return { min: low - pad, max: high + pad };
+}
+
 // --- Cartesian: bar, line, area, scatter, combo, stacked -------------------
 
+// A second dimension turned into one series per value.
+//
+// A stacked chart splits a total, and the split is usually a field rather than
+// a list of measures: contract count by status within each expiry bucket is one
+// measure and two dimensions. Without this the second dimension was dropped and
+// every row became its own bar, which on a hundred percent stack drew a full
+// column for each of eleven rows and said nothing at all.
+//
+// Returns the context unchanged unless there is exactly one measure to split
+// and a dimension to split it by, because with several measures the measures
+// are already the series.
+function pivotSecondDimension(ctx: ChartContext): ChartContext {
+	if (ctx.dimensions.length < 2 || ctx.measures.length !== 1) return ctx;
+
+	const [axisField, seriesField] = ctx.dimensions;
+	const measure = ctx.measures[0];
+
+	// Both in first-seen order, so the axis keeps whatever order the query
+	// asked for and the stack is built the same way every render.
+	const categories: string[] = [];
+	const series: string[] = [];
+	const byCategory = new Map<string, Record<string, unknown>>();
+
+	for (const row of ctx.rows) {
+		const category = String(row[axisField] ?? "");
+		const name = String(row[seriesField] ?? "");
+
+		let entry = byCategory.get(category);
+		if (!entry) {
+			entry = { [axisField]: row[axisField] };
+			byCategory.set(category, entry);
+			categories.push(category);
+		}
+		if (!series.includes(name)) series.push(name);
+
+		// Summed rather than assigned, because the same pair can arrive twice
+		// once a third field is filtered rather than grouped.
+		entry[name] =
+			(toNumber(entry[name]) ?? 0) + (toNumber(row[measure]) ?? 0);
+	}
+
+	// A missing pair is zero of that series, not a gap. Left absent it would
+	// break the stack and shift every series above it.
+	for (const entry of byCategory.values()) {
+		for (const name of series) {
+			if (entry[name] === undefined) entry[name] = 0;
+		}
+	}
+
+	return {
+		...ctx,
+		rows: categories.map(
+			(c) => byCategory.get(c) as Record<string, unknown>,
+		),
+		dimensions: [axisField],
+		measures: series,
+		// The series are values of a dimension now, so they carry no format
+		// hint of their own. They hold the measure, so they read like it.
+		hintFor: (field) =>
+			series.includes(field) ? ctx.hintFor(measure) : ctx.hintFor(field),
+		// A selection was made against the rows before the pivot, and those
+		// rows no longer exist.
+		highlight: null,
+	};
+}
+
 export function buildCartesian(
-	ctx: ChartContext,
+	input: ChartContext,
 	kind: "bar" | "line" | "area" | "scatter" | "combo" | "stacked100",
 	orientation: "vertical" | "horizontal" = "vertical",
 ) {
+	// Only where the chart stacks. Everywhere else a second dimension is the
+	// author asking for something the type does not draw, and quietly turning
+	// it into eleven series would be a different chart from the one they built.
+	const ctx = kind === "stacked100" ? pivotSecondDimension(input) : input;
 	const { dimensions, measures, colors, style } = ctx;
 	const axisField = dimensions[0];
 	// Ordered before anything reads a row, so the categories and every series
@@ -357,11 +523,25 @@ export function buildCartesian(
 				: toNumber(r[measure]);
 
 			const opacity = highlightOpacity(ctx, rowIndex);
-			// A plain value where nothing is selected keeps the fast path;
-			// only a highlighted chart pays for per-point objects.
-			return opacity === undefined
-				? raw
-				: { value: raw, itemStyle: { opacity } };
+			// A threshold colour only reads on a filled mark, so it is left to
+			// the bars. A line changing colour partway along says the series
+			// changed, which is not what a rule about one value means.
+			const ruled =
+				echartsType === "bar"
+					? conditionColor(ctx, measure, rowIndex)
+					: undefined;
+
+			// A plain value where nothing is selected and no rule matches
+			// keeps the fast path; only a styled chart pays for per-point
+			// objects.
+			if (opacity === undefined && ruled === undefined) return raw;
+			return {
+				value: raw,
+				itemStyle: {
+					...(opacity === undefined ? {} : { opacity }),
+					...(ruled === undefined ? {} : { color: ruled }),
+				},
+			};
 		});
 
 		return {
@@ -450,7 +630,10 @@ export function buildCartesian(
 		textStyle: { color: colors.text, fontFamily: "inherit" },
 		grid: {
 			...baseGrid,
-			top: style?.legend?.show === false ? 12 : 30,
+			top: Math.max(
+				style?.legend?.show === false ? 12 : 30,
+				style?.yAxis?.label ? axisNameTop : 0,
+			),
 			// The slider sits under the plot, so the plot has to stop above
 			// it rather than being drawn behind it.
 			bottom: ctx.options?.zoomSlider === true ? 34 : baseGrid.bottom,
@@ -663,6 +846,34 @@ export function buildTreemap(ctx: ChartContext) {
 	const measure = measures[0];
 	const hint = ctx.hintFor(measure);
 
+	// A treemap fills whole tiles, and the series palette is built for lines
+	// and bars where colour covers a few pixels. At this size the dark theme
+	// palette is glaring, so every fill is mixed toward the surface behind it:
+	// lighter in light mode, darker in dark mode, same hue either way.
+	const tone = (color: string, strength: number) =>
+		mix(colors.surface, color, strength);
+
+	// Colour says which group a tile is in, not how big it is. The area
+	// already says how big it is, and a lightness ramp on top of that put the
+	// two largest tiles side by side in almost the same colour, then the next
+	// two in almost the same colour again: a treemap lays tiles out in size
+	// order, so ranking the shades makes every neighbour a near match.
+	//
+	// Within a group the strength steps through three values so adjacent tiles
+	// are still separable, and it cycles rather than ramps so nobody reads an
+	// order into it.
+	const steps = [0.78, 0.58, 0.68];
+	const strengthAt = (rank: number) => steps[rank % steps.length];
+
+	// White on a pale tile and near black on a dark one both disappear, and
+	// which a tile is depends on the data. ECharts also outlines a label placed
+	// inside a shape by default, which draws a halo around every word and is
+	// what makes the small tiles unreadable.
+	const labelStyle = (fill: string) => ({
+		color: contrastingText(fill, "#ffffff", "#16181d"),
+		textBorderWidth: 0,
+	});
+
 	// A second dimension nests, which is what a treemap is actually for.
 	const nested = dimensions.length > 1;
 	let data: unknown[];
@@ -676,17 +887,50 @@ export function buildTreemap(ctx: ChartContext) {
 			list.push({ name: child, value: toNumber(row[measure]) ?? 0 });
 			groups.set(parent, list);
 		}
-		data = Array.from(groups.entries()).map(([name, children], i) => ({
-			name,
-			itemStyle: { color: colors.series[i % colors.series.length] },
-			children,
-		}));
+
+		data = Array.from(groups.entries()).map(([name, children], i) => {
+			const hue = colors.series[i % colors.series.length];
+			// Largest first, so the tiles inside a group are laid out and
+			// stepped through in the same order.
+			const ordered = [...children].sort((a, b) => b.value - a.value);
+			const parentFill = tone(hue, 0.5);
+
+			return {
+				name,
+				itemStyle: { color: parentFill },
+				upperLabel: labelStyle(parentFill),
+				children: ordered.map((child, rank) => {
+					const fill = tone(hue, strengthAt(rank));
+					return {
+						name: child.name,
+						value: child.value,
+						itemStyle: { color: fill },
+						label: labelStyle(fill),
+					};
+				}),
+			};
+		});
 	} else {
-		data = rows.map((r, i) => ({
-			name: String(r[dimensions[0]] ?? ""),
-			value: toNumber(r[measure]) ?? 0,
-			itemStyle: { color: colors.series[i % colors.series.length] },
-		}));
+		// One dimension has no grouping, so each tile is its own category and
+		// takes the next colour in the palette. Neighbours are always a
+		// different hue, which is the whole job colour has here.
+		const ordered = [...rows].sort(
+			(a, b) => (toNumber(b[measure]) ?? 0) - (toNumber(a[measure]) ?? 0),
+		);
+
+		data = ordered.map((r, rank) => {
+			const hue = colors.series[rank % colors.series.length];
+			const fill = tone(
+				hue,
+				strengthAt(Math.floor(rank / colors.series.length)),
+			);
+			return {
+				name: String(r[dimensions[0]] ?? ""),
+				value: toNumber(r[measure]) ?? 0,
+				itemStyle: { color: fill },
+				label: labelStyle(fill),
+			};
+		});
 	}
 
 	return {
@@ -703,10 +947,31 @@ export function buildTreemap(ctx: ChartContext) {
 			{
 				type: "treemap",
 				roam: false,
-				nodeClick: false,
-				breadcrumb: { show: nested },
-				label: { show: true, formatter: "{b}", color: "#fff" },
-				upperLabel: nested ? { show: true, height: 20 } : undefined,
+				// Clicking a group opens it, and the breadcrumb goes back up.
+				// Without this a click on a nested treemap did nothing visible
+				// while still filtering the page, which read as the chart
+				// ignoring the click.
+				nodeClick: nested ? ("zoomToNode" as const) : false,
+				breadcrumb: {
+					show: nested,
+					itemStyle: {
+						color: colors.surface,
+						borderColor: colors.grid,
+						textStyle: { color: colors.text },
+					},
+				},
+				// Set per tile above. What is left here is the placement and
+				// the rule that a label too big for its tile is dropped rather
+				// than drawn over its neighbours.
+				label: {
+					show: true,
+					formatter: "{b}",
+					overflow: "truncate" as const,
+					textBorderWidth: 0,
+				},
+				upperLabel: nested
+					? { show: true, height: 20, textBorderWidth: 0 }
+					: undefined,
 				itemStyle: {
 					borderColor: colors.surface,
 					borderWidth: 2,
@@ -742,14 +1007,25 @@ export function buildFunnel(ctx: ChartContext) {
 				bottom: 10,
 				sort: "descending",
 				gap: 2,
-				label: { show: true, position: "inside", color: "#fff" },
-				data: rows.map((r, i) => ({
-					name: String(r[dimensions[0]] ?? ""),
-					value: toNumber(r[measures[0]]) ?? 0,
-					itemStyle: {
-						color: colors.series[i % colors.series.length],
-					},
-				})),
+				// Colour per band, so the label colour is decided per band
+				// too: one fixed white reads on the darker series colours and
+				// disappears on the lighter ones.
+				label: {
+					show: true,
+					position: "inside" as const,
+					textBorderWidth: 0,
+				},
+				data: rows.map((r, i) => {
+					const fill = colors.series[i % colors.series.length];
+					return {
+						name: String(r[dimensions[0]] ?? ""),
+						value: toNumber(r[measures[0]]) ?? 0,
+						itemStyle: { color: fill },
+						label: {
+							color: contrastingText(fill, "#ffffff", "#16181d"),
+						},
+					};
+				}),
 			},
 		],
 	};
@@ -1340,23 +1616,33 @@ export function buildSankey(ctx: ChartContext) {
 // customers, how margin is distributed across products. The dimension names the
 // units and the measure is what is spread across them.
 //
-// Averages hide bimodality and long tails, and until now nothing here could show
-// either.
+// The bins are counted by the warehouse over every value, and arrive already
+// counted. Counting them here meant asking for the values, asking for values
+// meant a row limit, and a row limit over ten million invoices was the first
+// five hundred invoice numbers in alphabetical order.
+//
+// The range is trimmed to the first and ninety ninth percentile, and the two
+// tails fold into the end bins. Equal bins over the full extent of money data
+// put every value in one bar and left the other twenty nine empty.
 export function buildHistogram(ctx: ChartContext) {
 	const { rows, measures, colors } = ctx;
 	const measure = measures[0];
 	const hint = ctx.hintFor(measure);
+	const c = distributionColumns;
 
-	const values = rows
-		.map((row) => toNumber(row[measure]))
-		.filter((v): v is number => v !== null);
-
-	const asked = Number(ctx.options?.bins);
-	const bins = binValues(
-		values,
-		Number.isFinite(asked) && asked > 0 ? asked : undefined,
-	);
+	const bins = rows
+		.map((row) => ({
+			from: toNumber(row[c.binStart]),
+			to: toNumber(row[c.binEnd]),
+			count: toNumber(row[c.count]) ?? 0,
+		}))
+		.filter(
+			(bin): bin is { from: number; to: number; count: number } =>
+				bin.from !== null && bin.to !== null,
+		);
 	if (bins.length === 0) return null;
+
+	const total = bins.reduce((sum, bin) => sum + bin.count, 0);
 
 	// Labelled by where each bin starts. Both ends on every bar is unreadable
 	// at any width a page gives a chart, and the next bar says where this one
@@ -1367,7 +1653,7 @@ export function buildHistogram(ctx: ChartContext) {
 		animation: false,
 		color: colors.series,
 		textStyle: { color: colors.text, fontFamily: "inherit" },
-		grid: { ...baseGrid, top: 16 },
+		grid: { ...baseGrid, top: axisNameTop },
 		legend: { show: false },
 		tooltip: {
 			...tooltip(ctx),
@@ -1376,12 +1662,23 @@ export function buildHistogram(ctx: ChartContext) {
 			formatter: (params: unknown) => {
 				const list = Array.isArray(params) ? params : [params];
 				const first = list[0] as { dataIndex: number };
-				const bin = bins[first.dataIndex];
+				const index = first.dataIndex;
+				const bin = bins[index];
 				if (!bin) return "";
-				const share = (bin.count / values.length) * 100;
+
+				// The end bins hold their tail as well as their own range, so
+				// they are named for what they actually contain.
+				const range =
+					index === 0
+						? `Up to ${formatValue(bin.to, hint)}`
+						: index === bins.length - 1
+							? `${formatValue(bin.from, hint)} and above`
+							: `${formatValue(bin.from, hint)} to ${formatValue(bin.to, hint)}`;
+
+				const share = total > 0 ? (bin.count / total) * 100 : 0;
 				return [
-					`${formatValue(bin.from, hint)} to ${formatValue(bin.to, hint)}`,
-					`${bin.count} of ${values.length} (${share.toFixed(1)}%)`,
+					range,
+					`${bin.count.toLocaleString()} of ${total.toLocaleString()} (${share.toFixed(1)}%)`,
 				].join("<br/>");
 			},
 		},
@@ -1398,7 +1695,7 @@ export function buildHistogram(ctx: ChartContext) {
 		},
 		yAxis: {
 			type: "value" as const,
-			name: ctx.style?.yAxis?.label ?? "Count",
+			...verticalAxisName(ctx, ctx.style?.yAxis?.label ?? "Count"),
 			axisLabel: { color: colors.axis },
 			splitLine: {
 				show: ctx.style?.yAxis?.showGrid !== false,
@@ -1426,71 +1723,66 @@ export function buildHistogram(ctx: ChartContext) {
 // across the second. One dimension draws a single box across it. The measure is
 // what is being spread either way.
 //
-// Assembled out of bar and scatter series rather than the boxplot type ECharts
-// ships. Registering that would put another chart in the largest asset the
-// client downloads in order to draw a rectangle and three lines, and a pair of
-// stacked bars gives the same picture: one invisible up to the lower quartile,
-// one visible from there to the upper.
+// The quartiles and the whiskers are computed by the warehouse over every
+// value, so the box describes the whole population rather than whichever few
+// hundred rows a limit happened to return. The outliers are counted rather than
+// drawn: nine hundred thousand outlying orders cannot be plotted, and how many
+// there are is the part that gets read.
 export function buildBoxPlot(ctx: ChartContext) {
 	const { rows, dimensions, measures, colors } = ctx;
 	const measure = measures[0];
 	const hint = ctx.hintFor(measure);
+	const c = distributionColumns;
 
-	// One box across everything when no grouping field was given, which is the
-	// honest reading of "the spread of this measure".
+	// The grouping field, when there is one. With a single dimension the whole
+	// set is one box, which is the honest reading of "the spread of this".
 	const groupField = dimensions.length > 1 ? dimensions[0] : null;
 
-	const groups = new Map<string, number[]>();
-	for (const row of rows) {
-		const value = toNumber(row[measure]);
-		if (value === null) continue;
-		const key = groupField ? String(row[groupField] ?? "") : "All";
-		const bucket = groups.get(key);
-		if (bucket) bucket.push(value);
-		else groups.set(key, [value]);
-	}
-
-	const boxes: { label: string; box: FiveNumber }[] = [];
-	for (const [label, values] of groups) {
-		const box = fiveNumber(values);
-		if (box) boxes.push({ label, box });
-	}
+	const boxes = rows
+		.map((row) => ({
+			label: groupField ? String(row[groupField] ?? "") : "All",
+			count: toNumber(row[c.count]) ?? 0,
+			outliers: toNumber(row[c.outliers]) ?? 0,
+			five: [
+				toNumber(row[c.lowerWhisker]),
+				toNumber(row[c.lowerQuartile]),
+				toNumber(row[c.median]),
+				toNumber(row[c.upperQuartile]),
+				toNumber(row[c.upperWhisker]),
+			],
+		}))
+		// A group whose measure is null everywhere has no box to draw. Left
+		// out rather than drawn flat at zero, which reads as a real answer.
+		.filter((box) => box.five.every((v) => v !== null));
 	if (boxes.length === 0) return null;
-
-	const fill = withAlpha(colors.series[0], 0.35);
 
 	return {
 		animation: false,
 		color: colors.series,
 		textStyle: { color: colors.text, fontFamily: "inherit" },
-		grid: { ...baseGrid, top: 16 },
+		grid: { ...baseGrid, top: axisNameTop },
 		legend: { show: false },
 		tooltip: {
 			...tooltip(ctx),
 			trigger: "item" as const,
 			formatter: (params: unknown) => {
-				const p = params as {
-					dataIndex: number;
-					seriesType: string;
-					value: number[] | number;
-				};
+				const p = params as { dataIndex: number };
 				const entry = boxes[p.dataIndex];
 				if (!entry) return "";
-				if (p.seriesType === "scatter") {
-					const value = Array.isArray(p.value) ? p.value[1] : p.value;
-					return `${entry.label}<br/>${formatValue(value, hint)}`;
-				}
-				const b = entry.box;
+				const [lo, q1, median, q3, hi] = entry.five as number[];
 				const lines = [
 					`<strong>${entry.label}</strong>`,
-					`Highest inside: ${formatValue(b.max, hint)}`,
-					`Upper quartile: ${formatValue(b.q3, hint)}`,
-					`Median: ${formatValue(b.median, hint)}`,
-					`Lower quartile: ${formatValue(b.q1, hint)}`,
-					`Lowest inside: ${formatValue(b.min, hint)}`,
+					`Highest inside: ${formatValue(hi, hint)}`,
+					`Upper quartile: ${formatValue(q3, hint)}`,
+					`Median: ${formatValue(median, hint)}`,
+					`Lower quartile: ${formatValue(q1, hint)}`,
+					`Lowest inside: ${formatValue(lo, hint)}`,
+					`Across ${entry.count.toLocaleString()} values`,
 				];
-				if (b.outliers.length > 0) {
-					lines.push(`${b.outliers.length} beyond the whiskers`);
+				if (entry.outliers > 0) {
+					lines.push(
+						`${entry.outliers.toLocaleString()} beyond the whiskers`,
+					);
 				}
 				return lines.join("<br/>");
 			},
@@ -1504,7 +1796,7 @@ export function buildBoxPlot(ctx: ChartContext) {
 		},
 		yAxis: {
 			type: "value" as const,
-			name: ctx.style?.yAxis?.label ?? measure,
+			...verticalAxisName(ctx, ctx.style?.yAxis?.label ?? measure),
 			// Not forced through zero. The box is the whole chart, and
 			// stretching the scale to the origin flattens it into a line.
 			scale: true,
@@ -1519,67 +1811,17 @@ export function buildBoxPlot(ctx: ChartContext) {
 		},
 		series: [
 			{
-				// The whiskers, behind everything else: a thin bar spanning
-				// the full range that is not an outlier.
-				type: "bar" as const,
-				stack: "whisker",
-				silent: true,
-				barGap: "-100%",
-				barWidth: "6%",
-				z: 1,
-				itemStyle: { color: "transparent" },
-				data: boxes.map((entry) => entry.box.min),
-			},
-			{
-				type: "bar" as const,
-				stack: "whisker",
-				silent: true,
-				barWidth: "6%",
-				z: 1,
-				itemStyle: { color: colors.axis },
-				data: boxes.map((entry) => entry.box.max - entry.box.min),
-			},
-			{
-				// The box, floated from the lower quartile to the upper.
-				type: "bar" as const,
-				stack: "box",
-				silent: true,
-				barGap: "-100%",
-				barWidth: "45%",
-				z: 2,
-				itemStyle: { color: "transparent" },
-				data: boxes.map((entry) => entry.box.q1),
-			},
-			{
-				type: "bar" as const,
-				stack: "box",
-				barWidth: "45%",
-				z: 2,
+				type: "boxplot" as const,
+				// Bounded in pixels rather than as a share of the band. One
+				// group means the band is the whole plot, and a box at half of
+				// that was a rectangle the width of the chart.
+				boxWidth: [10, 52],
 				itemStyle: {
-					color: fill,
+					color: withAlpha(colors.series[0], 0.35),
 					borderColor: colors.series[0],
 					borderWidth: 1.25,
 				},
-				data: boxes.map((entry) => entry.box.q3 - entry.box.q1),
-			},
-			{
-				// The median, as a flat wide point across the box.
-				type: "scatter" as const,
-				symbol: "rect",
-				symbolSize: [26, 2.5],
-				silent: true,
-				z: 3,
-				itemStyle: { color: colors.text },
-				data: boxes.map((entry, index) => [index, entry.box.median]),
-			},
-			{
-				type: "scatter" as const,
-				symbolSize: 6,
-				z: 3,
-				itemStyle: { color: colors.axis, opacity: 0.7 },
-				data: boxes.flatMap((entry, index) =>
-					entry.box.outliers.map((value) => [index, value]),
-				),
+				data: boxes.map((entry) => entry.five),
 			},
 		],
 	};
@@ -1776,7 +2018,11 @@ export function buildSlope(ctx: ChartContext) {
 		color: colors.series,
 		textStyle: { color: colors.text, fontFamily: "inherit" },
 		// Room on the right for the end labels, which sit outside the plot.
-		grid: { ...baseGrid, top: 20, right: 96 },
+		grid: {
+			...baseGrid,
+			top: Math.max(20, ctx.style?.yAxis?.label ? axisNameTop : 0),
+			right: 96,
+		},
 		legend: { show: false },
 		tooltip: {
 			...tooltip(ctx),
@@ -1812,7 +2058,7 @@ export function buildSlope(ctx: ChartContext) {
 		},
 		yAxis: {
 			type: "value" as const,
-			name: ctx.style?.yAxis?.label,
+			...verticalAxisName(ctx, ctx.style?.yAxis?.label),
 			scale: ctx.style?.yAxis?.beginAtZero === false,
 			axisLabel: {
 				color: colors.axis,
@@ -2010,6 +2256,22 @@ export function buildScatter(ctx: ChartContext) {
 		);
 	};
 
+	// Author bounds win. Trimming is what to do when nobody has said, not a
+	// second opinion about what somebody did say.
+	const asked = ctx.options?.trimAxes !== false;
+	const xBounds =
+		asked &&
+		ctx.style?.xAxis?.min === undefined &&
+		ctx.style?.xAxis?.max === undefined
+			? trimmedBounds(rows.map((r) => toNumber(r[xField]) ?? Number.NaN))
+			: null;
+	const yBounds =
+		asked &&
+		ctx.style?.yAxis?.min === undefined &&
+		ctx.style?.yAxis?.max === undefined
+			? trimmedBounds(rows.map((r) => toNumber(r[yField]) ?? Number.NaN))
+			: null;
+
 	const points = rows
 		.map((row) => {
 			const x = toNumber(row[xField]);
@@ -2032,12 +2294,18 @@ export function buildScatter(ctx: ChartContext) {
 		textStyle: { color: colors.text, fontFamily: "inherit" },
 		grid: {
 			...baseGrid,
-			top: 24,
+			top: axisNameTop,
 			bottom: ctx.options?.zoomSlider === true ? 34 : baseGrid.bottom,
 		},
 		dataZoom: zoomWindow(ctx, 0),
 		tooltip: {
 			...tooltip(ctx),
+			// Per point, like every other chart whose tooltip reads one mark.
+			// An axis pointer gathers everything at one position along an
+			// axis, which on two value axes is a set rather than a point: the
+			// formatter was handed the whole array and read a value off it
+			// that was not there.
+			trigger: "item" as const,
 			formatter: (params: unknown) => {
 				const p = params as {
 					name: string;
@@ -2067,8 +2335,8 @@ export function buildScatter(ctx: ChartContext) {
 			// whole chart, and stretching the axis to the origin flattens it
 			// into a dot.
 			scale: ctx.style?.xAxis?.beginAtZero !== true,
-			min: ctx.style?.xAxis?.min,
-			max: ctx.style?.xAxis?.max,
+			min: ctx.style?.xAxis?.min ?? xBounds?.min,
+			max: ctx.style?.xAxis?.max ?? xBounds?.max,
 			axisLabel: {
 				color: colors.axis,
 				formatter: (v: number) => formatCompact(v, xHint),
@@ -2080,10 +2348,10 @@ export function buildScatter(ctx: ChartContext) {
 		},
 		yAxis: {
 			type: "value" as const,
-			name: ctx.style?.yAxis?.label ?? yField,
+			...verticalAxisName(ctx, ctx.style?.yAxis?.label ?? yField),
 			scale: ctx.style?.yAxis?.beginAtZero !== true,
-			min: ctx.style?.yAxis?.min,
-			max: ctx.style?.yAxis?.max,
+			min: ctx.style?.yAxis?.min ?? yBounds?.min,
+			max: ctx.style?.yAxis?.max ?? yBounds?.max,
 			axisLabel: {
 				color: colors.axis,
 				formatter: (v: number) => formatCompact(v, yHint),

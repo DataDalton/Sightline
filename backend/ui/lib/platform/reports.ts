@@ -343,6 +343,16 @@ export async function getReport(
 			]),
 	);
 
+	// A visual with no source of its own reads the page's, and a page with none
+	// reads the report's. That is what both columns are for, and resolving it
+	// here means every consumer sees the same answer: the renderer, the editor,
+	// the warmer and the version comparison all read this one definition.
+	// Without it a visual carrying no key rendered as "No source configured"
+	// on a page that plainly had one.
+	const pageSource = new Map(
+		pageRows.map((p) => [p.page_id, p.source_key ?? report.source_key]),
+	);
+
 	const visualsByPage = new Map<string, VisualDefinition[]>();
 	for (const v of visualRows) {
 		const list = visualsByPage.get(v.page_id) ?? [];
@@ -350,7 +360,8 @@ export async function getReport(
 			visualId: v.visual_id,
 			visualType: v.visual_type,
 			title: v.title,
-			sourceKey: v.source_key,
+			sourceKey:
+				v.source_key ?? pageSource.get(v.page_id) ?? report.source_key,
 			config: v.config ?? {},
 			layout: {
 				x: v.layout_x,
@@ -384,7 +395,7 @@ export async function getReport(
 			slug: p.slug,
 			title: p.title,
 			template: p.template,
-			sourceKey: p.source_key,
+			sourceKey: p.source_key ?? report.source_key,
 			config: p.config ?? {},
 			protectDelete: p.protect_delete === true,
 			protectEdit: p.protect_edit === true,
