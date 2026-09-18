@@ -74,17 +74,48 @@ async function getToken(): Promise<string> {
 
 // --- Pool ------------------------------------------------------------------
 
+// Connections are retired on this schedule whether or not they are busy, so
+// one is never left for the server to end. Well inside the hour the credential
+// they were opened with lasts, and long against the idle reaper, which ends
+// most of them first anyway.
+const connectionLifetimeSeconds = 30 * 60;
+
+// What happens to a connection nobody is holding.
+//
+// A client checked back in sits open until it is next asked for, and in that
+// time the server can close it: an instance ends a session, a load balancer
+// drops a socket it has seen no traffic on, a network path fails. pg raises
+// that as an error on the idle client, and pg-pool drops the client and raises
+// it again on the pool. With nothing listening, Node treats an error event as
+// fatal, and the whole server went down over a connection that had already
+// been discarded.
+//
+// The client is gone by the time this runs. All that is left is to say so, and
+// only the message, because the error carries the whole client and serialising
+// that is ten kilobytes of socket internals per line.
+function watchIdleFailures(pool: Pool): Pool {
+	pool.on("error", (error) => {
+		console.warn(
+			"Idle platform store connection closed by the server:",
+			error.message,
+		);
+	});
+	return pool;
+}
+
 async function createPool(): Promise<Pool> {
 	const { Pool: PgPool } = await import("pg");
 
 	// Local development against any Postgres, bypassing Databricks auth.
 	if (lakebase.localUrl) {
-		return new PgPool({
-			connectionString: lakebase.localUrl,
-			max: 10,
-			idleTimeoutMillis: 30000,
-			connectionTimeoutMillis: 10000,
-		});
+		return watchIdleFailures(
+			new PgPool({
+				connectionString: lakebase.localUrl,
+				max: 10,
+				idleTimeoutMillis: 30000,
+				connectionTimeoutMillis: 10000,
+			}),
+		);
 	}
 
 	if (!lakebase.host || !lakebase.instanceName) {
@@ -114,9 +145,10 @@ async function createPool(): Promise<Pool> {
 		max: lakebase.poolMax,
 		idleTimeoutMillis: 30000,
 		connectionTimeoutMillis: 15000,
+		maxLifetimeSeconds: connectionLifetimeSeconds,
 	});
 
-	return pool;
+	return watchIdleFailures(pool);
 }
 
 export function getPool(): Promise<Pool> {
