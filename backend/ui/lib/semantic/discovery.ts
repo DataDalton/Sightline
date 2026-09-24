@@ -129,6 +129,10 @@ export interface RegisterInput {
 	// whether an answer may be shared beyond one policy class, so it is asked
 	// rather than assumed.
 	hasRowFilter?: boolean;
+	// How long an answer from this source may be held. Zero, the default,
+	// means the platform setting decides. Only a source that genuinely differs
+	// from the rest sets its own, because any positive number here wins over
+	// the platform setting and makes that setting unreachable for it.
 	cacheTtlSeconds?: number;
 }
 
@@ -197,7 +201,10 @@ export async function registerSource(
 			input.object,
 			input.kind,
 			input.hasRowFilter === true,
-			input.cacheTtlSeconds ?? 300,
+			// Zero rather than a number, so a newly registered source follows
+			// the platform setting instead of pinning itself to whatever that
+			// setting happened to be on the day it was registered.
+			Math.max(0, Math.floor(input.cacheTtlSeconds ?? 0)),
 			identity.email,
 		],
 	);
