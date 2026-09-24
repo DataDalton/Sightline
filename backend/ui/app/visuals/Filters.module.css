@@ -1,72 +1,3 @@
-.widget {
-	display: flex;
-	flex-direction: column;
-	gap: var(--space-1);
-	min-width: 0;
-}
-
-.label {
-	font-size: var(--text-xs);
-	font-weight: 600;
-	letter-spacing: 0.03em;
-	text-transform: uppercase;
-	color: var(--text-muted);
-}
-
-.control {
-	position: relative;
-}
-
-.trigger {
-	display: flex;
-	align-items: center;
-	gap: var(--space-2);
-	width: 100%;
-	padding: var(--space-2) var(--space-3);
-	border: 1px solid var(--border-default);
-	border-radius: var(--radius-md);
-	background: var(--surface-raised);
-	font-size: var(--text-sm);
-	text-align: left;
-	min-height: 34px;
-}
-
-.trigger:hover {
-	border-color: var(--border-strong);
-}
-
-.triggerActive {
-	border-color: var(--brand);
-	box-shadow: 0 0 0 1px var(--brand);
-}
-
-.triggerText {
-	flex: 1;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-.placeholder {
-	color: var(--text-muted);
-}
-
-.chevron {
-	flex-shrink: 0;
-	color: var(--text-muted);
-}
-
-.clear {
-	flex-shrink: 0;
-	display: flex;
-	color: var(--text-muted);
-	padding: 0 2px;
-}
-
-.clear:hover {
-	color: var(--danger);
-}
-
 .input {
 	width: 100%;
 	padding: var(--space-2) var(--space-3);
@@ -113,28 +44,6 @@
 	color: var(--text-muted);
 }
 
-.panel {
-	position: absolute;
-	left: 0;
-	right: 0;
-	top: calc(100% + 4px);
-	z-index: 60;
-	max-height: 340px;
-	min-width: 240px;
-	display: flex;
-	flex-direction: column;
-	background: var(--surface-float);
-	border: 1px solid var(--border-strong);
-	border-radius: var(--radius-lg);
-	box-shadow: var(--shadow-lg);
-	overflow: hidden;
-}
-
-.panelSearch {
-	padding: var(--space-2);
-	border-bottom: 1px solid var(--border-subtle);
-}
-
 .panelActions {
 	display: flex;
 	gap: var(--space-2);
@@ -155,8 +64,14 @@
 	background: var(--state-hover);
 }
 
+/* Bounded rather than flexed, because the popover is sized by its contents
+   now: without a ceiling a list of a hundred values would open a popover a
+   hundred values tall, and there would be nothing to scroll and nothing for
+   the observer at the foot of it to come into view against. */
 .list {
 	flex: 1;
+	min-height: 0;
+	max-height: 260px;
 	overflow-y: auto;
 	padding: var(--space-1);
 }
@@ -219,26 +134,139 @@
 	border-top: 1px solid var(--border-subtle);
 }
 
-.count {
-	padding: 0 var(--space-2);
-	border-radius: var(--radius-full);
-	background: var(--brand);
-	color: var(--brand-contrast);
-	font-size: var(--text-xs);
-	font-weight: 700;
-	flex-shrink: 0;
-}
+/* The filter strip that holds every filter widget on a page.
 
-/* The filter strip that holds every filter widget on a page. */
+   Centred rather than bottom aligned, and gapped tighter, because everything
+   in it is now one chip height. It used to align to the bottom so that a
+   label-over-control widget lined up with the tall date range beside it, which
+   left the short ones hanging off the bottom edge of a row three times their
+   height. */
 .bar {
 	display: flex;
 	flex-wrap: wrap;
-	align-items: flex-end;
-	gap: var(--space-3);
-	padding: var(--space-3) var(--space-4);
+	align-items: center;
+	gap: var(--space-2);
+	padding: var(--space-2) var(--space-3);
 	border: 1px solid var(--border-subtle);
 	border-radius: var(--radius-lg);
 	background: var(--surface-raised);
+}
+
+/* --- filter chip --- */
+
+.chipWrap {
+	position: relative;
+	display: flex;
+	align-items: center;
+}
+
+/* The label until it is set and the value once it is. An unset chip is quiet
+   so a strip of twelve reads as one line of chrome, and a set one carries the
+   accent so what the page is actually filtered to is what stands out. */
+.chip {
+	display: flex;
+	align-items: center;
+	gap: var(--space-1);
+	max-width: 280px;
+	padding: 5px var(--space-2);
+	min-height: 30px;
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-full);
+	background: var(--surface-raised);
+	color: var(--text-secondary);
+	font-size: var(--text-xs);
+	font-family: inherit;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.chip:hover {
+	border-color: var(--border-strong);
+	color: var(--text-primary);
+}
+
+.chip:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: 1px;
+}
+
+.chipSet {
+	border-color: var(--brand);
+	background: var(--brand-subtle);
+	color: var(--text-primary);
+}
+
+/* Once a chip carries a value the label becomes the qualifier for it, so it
+   steps back and the value takes the weight. */
+.chipSet .chipLabel {
+	color: var(--text-muted);
+	font-weight: 400;
+}
+
+.chipLabel {
+	font-weight: 600;
+}
+
+.chipValue {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.chipChevron {
+	flex-shrink: 0;
+	color: var(--text-muted);
+	transition: transform var(--transition-fast);
+}
+
+/* Points at the panel while it is open, so the chip says which one is the open
+   one on a strip carrying a dozen. */
+.chip[aria-expanded="true"] .chipChevron {
+	transform: rotate(180deg);
+}
+
+/* Sits on the chip rather than inside it, because a button inside a button is
+   not something a browser or a screen reader makes sense of. */
+.chipClear {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	margin-left: -24px;
+	margin-right: 6px;
+	border-radius: var(--radius-full);
+	background: transparent;
+	color: var(--text-muted);
+}
+
+.chipClear:hover {
+	background: var(--state-hover);
+	color: var(--danger);
+}
+
+.chipPanel {
+	position: fixed;
+	z-index: 200;
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	max-height: 380px;
+	padding: var(--space-2);
+	background: var(--surface-float);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius-lg);
+	box-shadow: var(--shadow-lg);
+	overflow: hidden;
+	/* Grows from the chip it belongs to rather than appearing whole. */
+	transform-origin: top left;
+	animation: popoverIn var(--transition-fast);
+}
+
+.chipPanel[data-placement="above"] {
+	transform-origin: bottom left;
+	animation-name: popoverInUp;
 }
 
 .barSpacer {
@@ -247,39 +275,19 @@
 }
 
 .clearAll {
-	padding: var(--space-2) var(--space-3);
+	padding: 5px var(--space-3);
+	min-height: 30px;
 	border: 1px solid var(--border-default);
-	border-radius: var(--radius-md);
+	border-radius: var(--radius-full);
 	background: var(--surface-raised);
-	font-size: var(--text-sm);
+	color: var(--text-secondary);
+	font-size: var(--text-xs);
 	white-space: nowrap;
 }
 
 .clearAll:hover {
 	background: var(--state-hover);
 	border-color: var(--danger);
-	color: var(--danger);
-}
-
-.labelRow {
-	display: flex;
-	align-items: baseline;
-	justify-content: space-between;
-	gap: var(--space-2);
-}
-
-/* Sits beside the field name, so it reads as part of the label rather than as
-   a control competing with the presets under it. Underlined blue link text
-   next to eight buttons was the loudest thing in the strip. */
-.clearLink {
-	padding: 1px var(--space-1);
-	border-radius: var(--radius-sm);
-	font-size: var(--text-xs);
-	color: var(--text-muted);
-}
-
-.clearLink:hover {
-	background: var(--state-hover);
 	color: var(--danger);
 }
 
@@ -438,11 +446,6 @@
 	font-weight: 600;
 }
 
-.segmentLoading {
-	padding: 4px 10px;
-	color: var(--text-muted);
-}
-
 /* The date presets answer three different kinds of question: a rolling window,
    a period to date, and a named period. The rule marks where one kind stops, so
    eight options read as three short groups rather than an undifferentiated
@@ -491,6 +494,53 @@
 	transform: translateX(11px);
 }
 
-.triggerActive .switchTrack {
-	background: var(--accent-solid, var(--text-primary));
+/* The search box, which stays in the strip rather than behind a chip. Sized to
+   the chip height so the row still reads as one line of controls. */
+.chipSearch {
+	width: 190px;
+	min-width: 0;
+	padding: 5px var(--space-3);
+	min-height: 30px;
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-full);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font-size: var(--text-xs);
+	font-family: inherit;
+}
+
+.chipSearch:focus {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: -1px;
+	border-color: transparent;
+}
+
+/* A period or breakdown switch. Not a filter: it chooses what the page is cut
+   by rather than narrowing what is on it, so it keeps its buttons rather than
+   becoming a chip. The label sits beside them so it stands at chip height
+   instead of stacking and making its row taller than every other one. */
+.switchWrap {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	min-width: 0;
+}
+
+.switchLabel {
+	font-size: var(--text-xs);
+	font-weight: 600;
+	letter-spacing: 0.03em;
+	text-transform: uppercase;
+	color: var(--text-muted);
+	white-space: nowrap;
+}
+
+/* The foot of a value list, watched by the observer that asks for the next
+   page. It sits inside the scrolling list rather than under it, so coming into
+   view means the reader has actually reached the end. */
+.more {
+	padding: var(--space-2);
+	text-align: center;
+	font-size: var(--text-xs);
+	color: var(--text-muted);
 }

@@ -1229,17 +1229,6 @@ export const visualCatalog: VisualTypeDefinition[] = [
 				help: 'Dropping is the shorter way to say "everything except these two" on a field with forty values, and it stays right as values are added: a new one is kept, where an include list would silently leave it out.',
 			},
 			{
-				key: "presentation",
-				label: "Shown as",
-				kind: "select",
-				choices: [
-					{ value: "dropdown", label: "Dropdown" },
-					{ value: "segmented", label: "Buttons" },
-				],
-				fallback: "dropdown",
-				help: "Buttons suit a field with a handful of values, where opening a list to see two options is more work than reading them.",
-			},
-			{
 				key: "multiple",
 				label: "Allow several values",
 				kind: "toggle",

@@ -11,7 +11,9 @@ import {
 import { usePageFilters, type FilterClause } from "./PageFilters";
 import { RangeSlider } from "./RangeSlider";
 import { usePostResource } from "../hooks/usePostResource";
+import { useValuePages } from "../hooks/useValuePages";
 import { DatePicker } from "../components/shared/DatePicker";
+import { FilterChip } from "./FilterChip";
 import { Select } from "../components/shared/Select";
 import styles from "./Filters.module.css";
 
@@ -39,20 +41,11 @@ interface DropdownProps extends BaseProps {
 	// Single select is the right default for a field a reader thinks of as
 	// "which one"; multi for "which of these".
 	multiple?: boolean;
-	// Values as buttons rather than behind a dropdown. For a field with a
-	// handful of values, where opening a list to see two options is more work
-	// than reading them.
-	segmented?: boolean;
 	// Keeps the chosen values, or drops them. Excluding is the shorter way to
 	// say "everything except these two" when the field has forty values, and it
 	// stays correct as values are added: a new one is included by default,
 	// where an include list would silently leave it out.
 	exclude?: boolean;
-}
-
-interface ValuesResponse {
-	values: string[];
-	truncated: boolean;
 }
 
 export function DropdownFilter({
@@ -61,14 +54,12 @@ export function DropdownFilter({
 	field,
 	label,
 	multiple = true,
-	segmented = false,
 	exclude = false,
 }: DropdownProps) {
 	const { setWidgetFilter, clausesExcept, byWidget } = usePageFilters();
 	const [open, setOpen] = useState(false);
 	const [search, setSearch] = useState("");
 	const [debounced, setDebounced] = useState("");
-	const wrapperRef = useRef<HTMLDivElement | null>(null);
 
 	const selected = useMemo(
 		() => byWidget[visualId]?.[0]?.values ?? [],
@@ -80,50 +71,23 @@ export function DropdownFilter({
 		return () => clearTimeout(timer);
 	}, [search]);
 
-	useEffect(() => {
-		if (!open) return;
-		const onClick = (e: MouseEvent) => {
-			if (
-				wrapperRef.current &&
-				!wrapperRef.current.contains(e.target as Node)
-			) {
-				setOpen(false);
-			}
-		};
-		const onKey = (e: KeyboardEvent) => {
-			if (e.key === "Escape") setOpen(false);
-		};
-		document.addEventListener("mousedown", onClick);
-		document.addEventListener("keydown", onKey);
-		return () => {
-			document.removeEventListener("mousedown", onClick);
-			document.removeEventListener("keydown", onKey);
-		};
-	}, [open]);
-
 	// Other widgets narrow this list; this widget does not narrow itself, or a
 	// reader could pick one value and then find no others available.
 	const others = clausesExcept(visualId);
 
-	// Asked only while the widget is open, and remembered after it closes. A
-	// reader opening the same dropdown twice is the normal case, and it used to
-	// mean two identical warehouse queries.
-	const valuesResource = usePostResource<ValuesResponse>(
-		"/api/query/values",
-		open
-			? {
-					sourceKey,
-					field,
-					search: debounced,
-					filters: others,
-					limit: 200,
-				}
-			: null,
+	// Asked while the chip is open, a page at a time, with the next page
+	// fetched as the reader reaches the end of the last. Nothing is asked for
+	// until the chip is opened, so a page carrying a dozen filters runs no
+	// warehouse query until somebody looks at one.
+	const {
+		values,
+		more,
+		loading,
+		error: valuesError,
+		sentinelRef,
+	} = useValuePages(
+		open ? { sourceKey, field, search: debounced, filters: others } : null,
 	);
-
-	const values = valuesResource.data?.values ?? [];
-	const truncated = valuesResource.data?.truncated ?? false;
-	const loading = valuesResource.isLoading;
 
 	const apply = (next: string[]) => {
 		setWidgetFilter(
@@ -168,183 +132,111 @@ export function DropdownFilter({
 					? selected[0]
 					: `${selected.length} selected`;
 
-	// Buttons rather than a list, for a field with few enough values that
-	// opening something to see them is the slower way to read them. The values
-	// come from the same place either way, so this is presentation and not a
-	// different question.
-	if (segmented) {
-		return (
-			<div className={styles.widget}>
-				<span className={styles.label}>{label ?? field}</span>
-				<div className={styles.segmented}>
-					{loading && values.length === 0 ? (
-						<span className={styles.segmentLoading}>…</span>
-					) : (
-						listed.map((value) => (
-							<button
-								key={value}
-								type="button"
-								aria-pressed={selected.includes(value)}
-								className={`${styles.segment} ${
-									selected.includes(value)
-										? styles.segmentOn
-										: ""
-								}`}
-								onClick={() => toggle(value)}
-							>
-								{value}
-							</button>
-						))
-					)}
-				</div>
-			</div>
-		);
-	}
-
 	return (
-		<div className={styles.widget} style={{ minWidth: 180 }}>
-			<span className={styles.label}>{label ?? field}</span>
-			<div className={styles.control} ref={wrapperRef}>
-				<button
-					type="button"
-					className={`${styles.trigger} ${selected.length > 0 ? styles.triggerActive : ""}`}
-					onClick={() => setOpen((v) => !v)}
-					aria-expanded={open}
-					aria-haspopup="listbox"
-				>
-					<span
-						className={`${styles.triggerText} ${selected.length === 0 ? styles.placeholder : ""}`}
-					>
-						{summary}
-					</span>
-					{selected.length > 0 && (
-						<span
-							role="button"
-							tabIndex={0}
-							className={styles.clear}
-							aria-label="Clear filter"
-							onClick={(e) => {
-								e.stopPropagation();
-								apply([]);
-							}}
-							onKeyDown={(e) => {
-								if (e.key === "Enter") {
-									e.stopPropagation();
-									apply([]);
-								}
-							}}
-						>
-							✕
-						</span>
-					)}
-					<svg
-						className={styles.chevron}
-						width="12"
-						height="12"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						strokeWidth="2.5"
-						strokeLinecap="round"
-					>
-						<path d="M6 9l6 6 6-6" />
-					</svg>
-				</button>
+		<FilterChip
+			label={label ?? field}
+			value={selected.length > 0 ? summary : null}
+			onClear={() => apply([])}
+			onOpenChange={setOpen}
+		>
+			{(close) => (
+				<>
+					<input
+						type="text"
+						className={styles.input}
+						placeholder="Search values"
+						value={search}
+						autoFocus
+						onChange={(e) => setSearch(e.target.value)}
+					/>
 
-				{open && (
-					<div className={styles.panel} role="listbox">
-						<div className={styles.panelSearch}>
-							<input
-								type="text"
-								className={styles.input}
-								placeholder="Search values"
-								value={search}
-								autoFocus
-								onChange={(e) => setSearch(e.target.value)}
-							/>
+					{multiple && listed.length > 0 && (
+						<div className={styles.panelActions}>
+							<button
+								type="button"
+								className={styles.miniButton}
+								onClick={() => apply(listed)}
+							>
+								Select all
+							</button>
+							<button
+								type="button"
+								className={styles.miniButton}
+								onClick={() => apply([])}
+							>
+								Clear
+							</button>
 						</div>
+					)}
 
-						{multiple && listed.length > 0 && (
-							<div className={styles.panelActions}>
-								<button
-									type="button"
-									className={styles.miniButton}
-									onClick={() => apply(listed)}
-								>
-									Select all
-								</button>
-								<button
-									type="button"
-									className={styles.miniButton}
-									onClick={() => apply([])}
-								>
-									Clear
-								</button>
-							</div>
-						)}
-
-						<div className={styles.list}>
-							{loading && listed.length === 0 ? (
-								<div className={styles.state}>
-									Loading values
-								</div>
-							) : listed.length === 0 ? (
-								<div className={styles.state}>
-									No matching values
-								</div>
-							) : (
-								listed.map((value) => {
-									const isSelected = selected.includes(value);
-									return (
-										<button
-											key={value}
-											type="button"
-											role="option"
-											aria-selected={isSelected}
-											className={styles.option}
-											onClick={() => toggle(value)}
+					{valuesError ? (
+						<div className={styles.state}>{valuesError}</div>
+					) : loading && listed.length === 0 ? (
+						<div className={styles.state}>Loading values</div>
+					) : listed.length === 0 ? (
+						<div className={styles.state}>No matching values</div>
+					) : (
+						<div className={styles.list} role="listbox">
+							{listed.map((value) => {
+								const isSelected = selected.includes(value);
+								return (
+									<button
+										key={value}
+										type="button"
+										role="option"
+										aria-selected={isSelected}
+										className={styles.option}
+										onClick={() => {
+											toggle(value);
+											if (!multiple) close();
+										}}
+									>
+										<span
+											className={`${styles.checkbox} ${
+												multiple ? "" : styles.radio
+											} ${isSelected ? styles.checked : ""}`}
+											aria-hidden="true"
 										>
-											<span
-												className={`${styles.checkbox} ${
-													multiple ? "" : styles.radio
-												} ${isSelected ? styles.checked : ""}`}
-												aria-hidden="true"
+											<svg
+												width="9"
+												height="9"
+												viewBox="0 0 16 16"
+												fill="none"
 											>
-												<svg
-													width="9"
-													height="9"
-													viewBox="0 0 16 16"
-													fill="none"
-												>
-													<path
-														d="M3 8.5l3.5 3.5L13 5"
-														stroke="currentColor"
-														strokeWidth="2.5"
-														strokeLinecap="round"
-														strokeLinejoin="round"
-													/>
-												</svg>
-											</span>
-											<span
-												className={styles.optionLabel}
-											>
-												{value}
-											</span>
-										</button>
-									);
-								})
+												<path
+													d="M3 8.5l3.5 3.5L13 5"
+													stroke="currentColor"
+													strokeWidth="2.5"
+													strokeLinecap="round"
+													strokeLinejoin="round"
+												/>
+											</svg>
+										</span>
+										<span className={styles.optionLabel}>
+											{value}
+										</span>
+									</button>
+								);
+							})}
+
+							{/* Watched rather than clicked. Reaching the end of
+							    the list is the request for more of it. */}
+							{more && (
+								<div
+									ref={sentinelRef}
+									className={styles.more}
+									role="status"
+								>
+									{loading
+										? "Loading more"
+										: "Scroll for more"}
+								</div>
 							)}
 						</div>
-
-						{truncated && (
-							<div className={styles.note}>
-								Showing first 200. Type to narrow.
-							</div>
-						)}
-					</div>
-				)}
-			</div>
-		</div>
+					)}
+				</>
+			)}
+		</FilterChip>
 	);
 }
 
@@ -383,19 +275,19 @@ export function SearchFilter({
 		return () => clearTimeout(timer);
 	}, [text, fields, visualId, setWidgetFilter]);
 
+	// The one control that stays in the strip rather than behind a chip.
+	// Everything else opens to be read; this one is typed into, and putting a
+	// text box behind a click adds a step to the only filter somebody reaches
+	// for without looking.
 	return (
-		<div className={styles.widget} style={{ minWidth: 220 }}>
-			<span className={styles.label}>
-				{label ?? `Search ${fields[0] ?? ""}`}
-			</span>
-			<input
-				type="search"
-				className={styles.input}
-				placeholder={placeholder ?? "Type to search"}
-				value={text}
-				onChange={(e) => setText(e.target.value)}
-			/>
-		</div>
+		<input
+			type="search"
+			className={styles.chipSearch}
+			placeholder={placeholder ?? label ?? "Type to search"}
+			aria-label={label ?? `Search ${fields[0] ?? ""}`}
+			value={text}
+			onChange={(e) => setText(e.target.value)}
+		/>
 	);
 }
 
@@ -425,47 +317,61 @@ export function BulkFilter({ visualId, field, label }: BulkProps) {
 	const pending = parse(text);
 
 	return (
-		<div className={styles.widget} style={{ minWidth: 220 }}>
-			<span className={styles.label}>{label ?? `${field} list`}</span>
-			<textarea
-				className={styles.textarea}
-				placeholder={`Paste ${field} values, one per line`}
-				value={text}
-				onChange={(e) => setText(e.target.value)}
-			/>
-			<div className={styles.row}>
-				<button
-					type="button"
-					className={styles.miniButton}
-					onClick={() =>
-						setWidgetFilter(
-							visualId,
-							pending.length > 0
-								? [{ field, op: "eq", values: pending }]
-								: [],
-						)
-					}
-					disabled={pending.length === 0}
-				>
-					Apply {pending.length > 0 ? `(${pending.length})` : ""}
-				</button>
-				<button
-					type="button"
-					className={styles.miniButton}
-					onClick={() => {
-						setText("");
-						setWidgetFilter(visualId, []);
-					}}
-				>
-					Clear
-				</button>
-			</div>
-			{applied > 0 && (
-				<span className={styles.hint}>
-					{applied} {applied === 1 ? "value" : "values"} applied
-				</span>
+		<FilterChip
+			label={label ?? `${field} list`}
+			value={applied > 0 ? `${applied} pasted` : null}
+			onClear={() => {
+				setText("");
+				setWidgetFilter(visualId, []);
+			}}
+			width={280}
+		>
+			{() => (
+				<>
+					<textarea
+						className={styles.textarea}
+						placeholder={`Paste ${field} values, one per line`}
+						value={text}
+						autoFocus
+						onChange={(e) => setText(e.target.value)}
+					/>
+					<div className={styles.row}>
+						<button
+							type="button"
+							className={styles.miniButton}
+							onClick={() =>
+								setWidgetFilter(
+									visualId,
+									pending.length > 0
+										? [{ field, op: "eq", values: pending }]
+										: [],
+								)
+							}
+							disabled={pending.length === 0}
+						>
+							Apply{" "}
+							{pending.length > 0 ? `(${pending.length})` : ""}
+						</button>
+						<button
+							type="button"
+							className={styles.miniButton}
+							onClick={() => {
+								setText("");
+								setWidgetFilter(visualId, []);
+							}}
+						>
+							Clear
+						</button>
+					</div>
+					{applied > 0 && (
+						<span className={styles.hint}>
+							{applied} {applied === 1 ? "value" : "values"}{" "}
+							applied
+						</span>
+					)}
+				</>
 			)}
-		</div>
+		</FilterChip>
 	);
 }
 
@@ -647,108 +553,134 @@ export function DateRangeFilter({
 		return [lo, hi];
 	}, [from, to, bounds]);
 
+	// What the chip says when the range is set. The preset's own name where one
+	// was chosen, because "12m" is what the reader picked and is shorter than
+	// the two dates it resolves to.
+	const short = (value: string) => {
+		const date = value ? new Date(`${value}T00:00:00`) : null;
+		return date && !Number.isNaN(date.getTime())
+			? date.toLocaleDateString(undefined, {
+					day: "numeric",
+					month: "short",
+					year: "2-digit",
+				})
+			: "";
+	};
+	const summary = activePreset
+		? presets.find((p) => p.label === activePreset)?.title || activePreset
+		: from && to
+			? `${short(from)} to ${short(to)}`
+			: from
+				? `from ${short(from)}`
+				: to
+					? `to ${short(to)}`
+					: null;
+
 	return (
-		<div
-			className={styles.widget}
-			style={{ minWidth: showSlider ? 300 : 260 }}
+		<FilterChip
+			label={label ?? field}
+			value={summary}
+			onClear={clear}
+			width={showSlider ? 340 : 300}
 		>
-			<div className={styles.labelRow}>
-				<span className={styles.label}>{label ?? field}</span>
-				{(from || to) && (
-					<button
-						type="button"
-						className={styles.clearLink}
-						onClick={clear}
-					>
-						Clear
-					</button>
-				)}
-			</div>
+			{() => (
+				<>
+					{showPresets && (
+						<div className={styles.segmented} role="group">
+							{presets.map((preset, index) => (
+								<Fragment key={preset.label}>
+									{index > 0 &&
+										presets[index - 1].group !==
+											preset.group && (
+											<span
+												className={
+													styles.segmentDivider
+												}
+												aria-hidden="true"
+											/>
+										)}
+									<button
+										type="button"
+										title={preset.title}
+										aria-pressed={
+											activePreset === preset.label
+										}
+										className={`${styles.segment} ${styles.presetSegment} ${
+											activePreset === preset.label
+												? styles.segmentOn
+												: ""
+										}`}
+										onClick={() => applyPreset(preset)}
+									>
+										{preset.label}
+									</button>
+								</Fragment>
+							))}
+						</div>
+					)}
 
-			{showPresets && (
-				<div className={styles.segmented} role="group">
-					{presets.map((preset, index) => (
-						<Fragment key={preset.label}>
-							{index > 0 &&
-								presets[index - 1].group !== preset.group && (
-									<span
-										className={styles.segmentDivider}
-										aria-hidden="true"
-									/>
-								)}
-							<button
-								type="button"
-								title={preset.title}
-								aria-pressed={activePreset === preset.label}
-								className={`${styles.segment} ${styles.presetSegment} ${
-									activePreset === preset.label
-										? styles.segmentOn
-										: ""
-								}`}
-								onClick={() => applyPreset(preset)}
+					{showCalendar && (
+						<div className={styles.dateRow}>
+							<DatePicker
+								value={from}
+								max={to || undefined}
+								ariaLabel="From"
+								placeholder="Any start"
+								onChange={(next) => {
+									setFrom(next);
+									setActivePreset(null);
+									apply(next, to);
+								}}
+							/>
+							<span
+								className={styles.rangeDash}
+								aria-hidden="true"
 							>
-								{preset.label}
-							</button>
-						</Fragment>
-					))}
-				</div>
-			)}
+								to
+							</span>
+							<DatePicker
+								value={to}
+								min={from || undefined}
+								ariaLabel="To"
+								placeholder="Any end"
+								onChange={(next) => {
+									setTo(next);
+									setActivePreset(null);
+									apply(from, next);
+								}}
+							/>
+						</div>
+					)}
 
-			{showCalendar && (
-				<div className={styles.dateRow}>
-					<DatePicker
-						value={from}
-						max={to || undefined}
-						ariaLabel="From"
-						placeholder="Any start"
-						onChange={(next) => {
-							setFrom(next);
-							setActivePreset(null);
-							apply(next, to);
-						}}
-					/>
-					<span className={styles.rangeDash} aria-hidden="true">
-						to
-					</span>
-					<DatePicker
-						value={to}
-						min={from || undefined}
-						ariaLabel="To"
-						placeholder="Any end"
-						onChange={(next) => {
-							setTo(next);
-							setActivePreset(null);
-							apply(from, next);
-						}}
-					/>
-				</div>
+					{showSlider &&
+						(bounds ? (
+							<RangeSlider
+								label={label ?? field}
+								min={new Date(bounds.min).getTime()}
+								max={new Date(bounds.max).getTime()}
+								value={sliderValue}
+								// A day, so a drag lands on a date rather than a time.
+								step={864e5}
+								format={(v) => iso(new Date(v))}
+								onChange={([lo, hi]) => {
+									setFrom(iso(new Date(lo)));
+									setTo(iso(new Date(hi)));
+									setActivePreset(null);
+								}}
+								// The query waits for the drag to finish: one per
+								// pointer move would be a query per pixel.
+								onCommit={([lo, hi]) =>
+									apply(iso(new Date(lo)), iso(new Date(hi)))
+								}
+							/>
+						) : (
+							<span className={styles.hint}>
+								Reading the date range
+							</span>
+						))}
+				</>
 			)}
-
-			{showSlider &&
-				(bounds ? (
-					<RangeSlider
-						label={label ?? field}
-						min={new Date(bounds.min).getTime()}
-						max={new Date(bounds.max).getTime()}
-						value={sliderValue}
-						// A day, so a drag lands on a date rather than a time.
-						step={864e5}
-						format={(v) => iso(new Date(v))}
-						onChange={([lo, hi]) => {
-							setFrom(iso(new Date(lo)));
-							setTo(iso(new Date(hi)));
-							setActivePreset(null);
-						}}
-						// The query waits for the drag to finish: one per
-						// pointer move would be a query per pixel.
-						onCommit={([lo, hi]) =>
-							apply(iso(new Date(lo)), iso(new Date(hi)))
-						}
-					/>
-				) : (
-					<span className={styles.hint}>Reading the date range</span>
-				))}
-		</div>
+		</FilterChip>
 	);
 }
 
@@ -841,78 +773,91 @@ export function NumericRangeFilter({
 					? `${(v / 1e3).toFixed(0)}K`
 					: v.toFixed(Math.abs(v) < 10 ? 2 : 0);
 
+	const summary =
+		min && max
+			? `${compact(Number(min))} to ${compact(Number(max))}`
+			: min
+				? `over ${compact(Number(min))}`
+				: max
+					? `under ${compact(Number(max))}`
+					: null;
+
 	return (
-		<div
-			className={styles.widget}
-			style={{ minWidth: showSlider ? 260 : 200 }}
+		<FilterChip
+			label={label ?? field}
+			value={summary}
+			onClear={() => {
+				setMin("");
+				setMax("");
+				setWidgetFilter(visualId, []);
+			}}
+			width={showSlider ? 300 : 240}
 		>
-			<div className={styles.labelRow}>
-				<span className={styles.label}>{label ?? field}</span>
-				{(min || max) && (
-					<button
-						type="button"
-						className={styles.clearLink}
-						onClick={() => {
-							setMin("");
-							setMax("");
-							setWidgetFilter(visualId, []);
-						}}
-					>
-						Clear
-					</button>
-				)}
-			</div>
+			{() => (
+				<>
+					{showSlider &&
+						(bounds ? (
+							<RangeSlider
+								label={label ?? field}
+								min={bounds.min}
+								max={bounds.max}
+								value={sliderValue}
+								step={step}
+								format={compact}
+								onChange={([lo, hi]) => {
+									setMin(String(lo));
+									setMax(String(hi));
+								}}
+								onCommit={([lo, hi]) =>
+									apply(String(lo), String(hi))
+								}
+							/>
+						) : (
+							<span className={styles.hint}>
+								Reading the value range
+							</span>
+						))}
 
-			{showSlider &&
-				(bounds ? (
-					<RangeSlider
-						label={label ?? field}
-						min={bounds.min}
-						max={bounds.max}
-						value={sliderValue}
-						step={step}
-						format={compact}
-						onChange={([lo, hi]) => {
-							setMin(String(lo));
-							setMax(String(hi));
-						}}
-						onCommit={([lo, hi]) => apply(String(lo), String(hi))}
-					/>
-				) : (
-					<span className={styles.hint}>Reading the value range</span>
-				))}
+					{degenerate && mode !== "inputs" && (
+						<span className={styles.hint}>
+							This field has no spread to slide across, so it
+							takes a minimum and maximum instead.
+						</span>
+					)}
 
-			{degenerate && mode !== "inputs" && (
-				<span className={styles.hint}>
-					This field has no spread to slide across, so it takes a
-					minimum and maximum instead.
-				</span>
+					{showInputs && (
+						<div className={styles.row}>
+							<input
+								type="number"
+								className={styles.input}
+								placeholder={
+									bounds ? compact(bounds.min) : "Min"
+								}
+								value={min}
+								aria-label="Minimum"
+								onChange={(e) => setMin(e.target.value)}
+							/>
+							<span
+								className={styles.rangeDash}
+								aria-hidden="true"
+							>
+								to
+							</span>
+							<input
+								type="number"
+								className={styles.input}
+								placeholder={
+									bounds ? compact(bounds.max) : "Max"
+								}
+								value={max}
+								aria-label="Maximum"
+								onChange={(e) => setMax(e.target.value)}
+							/>
+						</div>
+					)}
+				</>
 			)}
-
-			{showInputs && (
-				<div className={styles.row}>
-					<input
-						type="number"
-						className={styles.input}
-						placeholder={bounds ? compact(bounds.min) : "Min"}
-						value={min}
-						aria-label="Minimum"
-						onChange={(e) => setMin(e.target.value)}
-					/>
-					<span className={styles.rangeDash} aria-hidden="true">
-						to
-					</span>
-					<input
-						type="number"
-						className={styles.input}
-						placeholder={bounds ? compact(bounds.max) : "Max"}
-						value={max}
-						aria-label="Maximum"
-						onChange={(e) => setMax(e.target.value)}
-					/>
-				</div>
-			)}
-		</div>
+		</FilterChip>
 	);
 }
 
@@ -964,40 +909,36 @@ export function ThresholdFilter({
 	}, [value, op, field, visualId, setWidgetFilter]);
 
 	return (
-		<div className={styles.widget} style={{ minWidth: 210 }}>
-			<div className={styles.labelRow}>
-				<span className={styles.label}>{label ?? field}</span>
-				{value && (
+		<FilterChip
+			label={label ?? field}
+			value={value ? `${sense === "above" ? "≥" : "≤"} ${value}` : null}
+			onClear={() => setValue("")}
+			width={230}
+		>
+			{() => (
+				<div className={styles.row}>
 					<button
 						type="button"
-						className={styles.clearLink}
-						onClick={() => setValue("")}
+						className={styles.miniButton}
+						onClick={() =>
+							setSense(sense === "above" ? "below" : "above")
+						}
+						title="Switch which side of the cutoff is kept"
 					>
-						Clear
+						{sense === "above" ? "≥" : "≤"}
 					</button>
-				)}
-			</div>
-			<div className={styles.row}>
-				<button
-					type="button"
-					className={styles.miniButton}
-					onClick={() =>
-						setSense(sense === "above" ? "below" : "above")
-					}
-					title="Switch which side of the cutoff is kept"
-				>
-					{sense === "above" ? "≥" : "≤"}
-				</button>
-				<input
-					type="number"
-					className={styles.input}
-					placeholder="Any"
-					value={value}
-					aria-label={`${label ?? field} threshold`}
-					onChange={(e) => setValue(e.target.value)}
-				/>
-			</div>
-		</div>
+					<input
+						type="number"
+						className={styles.input}
+						placeholder="Any"
+						value={value}
+						autoFocus
+						aria-label={`${label ?? field} threshold`}
+						onChange={(e) => setValue(e.target.value)}
+					/>
+				</div>
+			)}
+		</FilterChip>
 	);
 }
 
@@ -1063,30 +1004,31 @@ export function ToggleFilter({
 	// applied after mount costs the page its widest query.
 	void defaultOn;
 
+	// A chip that switches where it stands. Everything else in the strip opens
+	// something because it has a value to choose; this one has two states and
+	// opening a popover to pick between them is the longer way round.
 	return (
-		<div className={styles.widget}>
-			<button
-				type="button"
-				role="switch"
-				aria-checked={on}
-				className={`${styles.trigger} ${on ? styles.triggerActive : ""}`}
-				onClick={() =>
-					setWidgetFilter(
-						visualId,
-						on ? [] : [{ field, op: "eq", values: [onValue] }],
-					)
-				}
-			>
-				<span className={styles.switchTrack} aria-hidden="true">
-					<span
-						className={`${styles.switchKnob} ${
-							on ? styles.switchKnobOn : ""
-						}`}
-					/>
-				</span>
-				<span className={styles.triggerText}>{label ?? field}</span>
-			</button>
-		</div>
+		<button
+			type="button"
+			role="switch"
+			aria-checked={on}
+			className={`${styles.chip} ${on ? styles.chipSet : ""}`}
+			onClick={() =>
+				setWidgetFilter(
+					visualId,
+					on ? [] : [{ field, op: "eq", values: [onValue] }],
+				)
+			}
+		>
+			<span className={styles.switchTrack} aria-hidden="true">
+				<span
+					className={`${styles.switchKnob} ${
+						on ? styles.switchKnobOn : ""
+					}`}
+				/>
+			</span>
+			<span className={styles.chipLabel}>{label ?? field}</span>
+		</button>
 	);
 }
 
@@ -1131,24 +1073,37 @@ export function PresenceFilter({ visualId, field, label }: PresenceProps) {
 	];
 
 	return (
-		<div className={styles.widget}>
-			<span className={styles.label}>{label ?? field}</span>
-			<div className={styles.segmented}>
-				{choices.map((choice) => (
-					<button
-						key={choice.value}
-						type="button"
-						aria-pressed={current === choice.value}
-						className={`${styles.segment} ${
-							current === choice.value ? styles.segmentOn : ""
-						}`}
-						onClick={() => choose(choice.value)}
-					>
-						{choice.label}
-					</button>
-				))}
-			</div>
-		</div>
+		<FilterChip
+			label={label ?? field}
+			value={
+				current === "any"
+					? null
+					: (choices.find((c) => c.value === current)?.label ?? null)
+			}
+			onClear={() => choose("any")}
+			width={220}
+		>
+			{(close) => (
+				<div className={styles.segmented} role="group">
+					{choices.map((choice) => (
+						<button
+							key={choice.value}
+							type="button"
+							aria-pressed={current === choice.value}
+							className={`${styles.segment} ${
+								current === choice.value ? styles.segmentOn : ""
+							}`}
+							onClick={() => {
+								choose(choice.value);
+								close();
+							}}
+						>
+							{choice.label}
+						</button>
+					))}
+				</div>
+			)}
+		</FilterChip>
 	);
 }
 
@@ -1203,8 +1158,10 @@ export function DimensionSwitch({
 	// fits.
 	if (options.length <= 4) {
 		return (
-			<div className={styles.widget}>
-				<span className={styles.label}>{label ?? fallbackLabel}</span>
+			<div className={styles.switchWrap}>
+				<span className={styles.switchLabel}>
+					{label ?? fallbackLabel}
+				</span>
 				<div className={styles.segmented} role="group">
 					{options.map((option) => (
 						<button
@@ -1225,8 +1182,8 @@ export function DimensionSwitch({
 	}
 
 	return (
-		<div className={styles.widget} style={{ minWidth: 200 }}>
-			<span className={styles.label}>{label ?? fallbackLabel}</span>
+		<div className={styles.switchWrap} style={{ minWidth: 200 }}>
+			<span className={styles.switchLabel}>{label ?? fallbackLabel}</span>
 			<Select
 				value={active}
 				onChange={setSelected}
@@ -1269,22 +1226,29 @@ export function FilterBar({ children }: { children: React.ReactNode }) {
 			    a reader who cannot see the chart that produced it still knows
 			    the page is filtered and how to undo it. */}
 			{crossFilter && (
-				<div className={styles.widget}>
-					<span className={styles.label}>From selection</span>
-					<button
-						type="button"
-						className={`${styles.trigger} ${styles.triggerActive}`}
-						onClick={() => setCrossFilter(null)}
-						title="Clear this selection"
+				<button
+					type="button"
+					className={`${styles.chip} ${styles.chipSet}`}
+					onClick={() => setCrossFilter(null)}
+					title="Clear this selection"
+				>
+					<span className={styles.chipLabel}>From selection</span>
+					<span className={styles.chipValue}>
+						{crossFilter.label}
+					</span>
+					<svg
+						width="11"
+						height="11"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						strokeWidth="2.5"
+						strokeLinecap="round"
+						aria-hidden="true"
 					>
-						<span className={styles.triggerText}>
-							{crossFilter.label}
-						</span>
-						<span className={styles.clear} aria-hidden="true">
-							✕
-						</span>
-					</button>
-				</div>
+						<path d="M6 6l12 12M18 6L6 18" />
+					</svg>
+				</button>
 			)}
 
 			<div className={styles.barSpacer} />

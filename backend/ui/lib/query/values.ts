@@ -30,17 +30,27 @@ export interface ValuesRequest {
 	// Filters currently applied to the grid, so the list cascades.
 	filters?: QueryFilter[];
 	limit?: number;
+	// Where to start, so a list longer than one page can be read by scrolling
+	// rather than only by typing. The order is the field ascending, which is
+	// stable, so page two is the rows after page one rather than a fresh
+	// arbitrary slice.
+	offset?: number;
 }
 
 export interface ValuesResult {
 	values: string[];
-	// True when the list was cut short, so the UI can say "keep typing".
+	// True when more rows exist past the ones returned, so the caller knows
+	// there is another page to ask for.
 	truncated: boolean;
 	source: "cache" | "warehouse";
 }
 
 const maxLimit = 500;
 const defaultLimit = 100;
+// How far a reader may scroll before the list asks them to type instead. Far
+// enough that no ordinary column runs out, short enough that a runaway scroll
+// stops.
+const maxOffset = 10000;
 
 interface CacheEntry {
 	value: ValuesResult;
@@ -63,6 +73,7 @@ function cacheKey(
 				f: request.field,
 				q: request.search ?? "",
 				l: request.limit ?? defaultLimit,
+				o: request.offset ?? 0,
 				// Filters change the result set, so they belong in the key.
 				fl: (request.filters ?? [])
 					.map((x) =>
@@ -126,6 +137,12 @@ export async function getDistinctValues(
 		Math.max(request.limit ?? defaultLimit, 1),
 		maxLimit,
 	);
+	// Bounded, because an offset is a number from a client and a scroll that
+	// runs away should stop rather than walk the whole column.
+	const offset = Math.min(
+		Math.max(Math.trunc(request.offset ?? 0), 0),
+		maxOffset,
+	);
 
 	// Which values exist is as filtered as the rows they came from, so this is
 	// held to the same rule the result cache is: a filtered source may only be
@@ -163,9 +180,9 @@ export async function getDistinctValues(
 				measures: [],
 				filters,
 				sort: [{ field: request.field, direction: "asc" }],
-				// One extra row reveals whether the list was cut short.
+				// One extra row reveals whether another page exists.
 				limit: limit + 1,
-				offset: 0,
+				offset,
 				transforms: [],
 			});
 

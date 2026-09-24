@@ -83,8 +83,6 @@
 	transform: rotate(180deg);
 }
 
-/* The list. Absolutely placed rather than portalled, so it scrolls with the
-   field it belongs to and cannot be left behind by a scrolling dialog. */
 /* Portalled to the body and placed in viewport coordinates, so nothing between
    it and the page can clip it. */
 .list {
@@ -99,6 +97,13 @@
 	border-radius: var(--radius-md);
 	background: var(--surface-float);
 	box-shadow: var(--shadow-lg);
+	transform-origin: top left;
+	animation: popoverIn var(--transition-fast);
+}
+
+.list[data-placement="above"] {
+	transform-origin: bottom left;
+	animation-name: popoverInUp;
 }
 
 /* Options set the list's width when they are wider than the field. Without

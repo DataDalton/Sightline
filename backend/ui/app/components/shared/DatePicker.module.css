@@ -63,6 +63,13 @@
 	border: 1px solid var(--border-strong);
 	border-radius: var(--radius-lg);
 	box-shadow: var(--shadow-lg);
+	transform-origin: top left;
+	animation: popoverIn var(--transition-fast);
+}
+
+.panel[data-placement="above"] {
+	transform-origin: bottom left;
+	animation-name: popoverInUp;
 }
 
 .head {

@@ -444,13 +444,6 @@ function VisualBody({
 								"multiple",
 							) !== false
 						}
-						segmented={
-							optionValue<string>(
-								visual.visualType,
-								visual.config,
-								"presentation",
-							) === "segmented"
-						}
 						exclude={
 							optionValue<string>(
 								visual.visualType,

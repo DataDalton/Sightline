@@ -473,6 +473,39 @@ textarea:disabled,
 	scrollbar-color: var(--border-strong) transparent;
 }
 
+/* Popovers and menus, which all open anchored to the control that opened them.
+
+   Defined here rather than in each module so every one of them moves the same
+   way, and so a module that names the animation gets this one rather than a
+   scoped copy of its own. Two of them, because a panel that opens upward should
+   grow from its bottom edge: the same keyframes played in both directions reads
+   as the panel sliding away from the thing it belongs to.
+
+   Entry only. Animating the exit means holding a closed panel in the tree until
+   its animation finishes, and a menu that lingers after the choice is made is
+   worse than one that goes. The reduced motion block below turns both off. */
+@keyframes popoverIn {
+	from {
+		opacity: 0;
+		transform: translateY(-4px) scale(0.98);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+@keyframes popoverInUp {
+	from {
+		opacity: 0;
+		transform: translateY(4px) scale(0.98);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
 @media (prefers-reduced-motion: reduce) {
 	*,
 	*::before,
