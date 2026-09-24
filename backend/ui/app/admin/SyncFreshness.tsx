@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import styles from "./Admin.module.css";
 
 // How old the source metadata is.
@@ -27,21 +28,73 @@ interface Run {
 // rather than left to work it out from a timestamp.
 const staleAfterDays = 7;
 
+const minute = 60000;
+const hour = 60 * minute;
+const day = 24 * hour;
+
 function daysSince(iso: string): number {
-	return (Date.now() - new Date(iso).getTime()) / 86400000;
+	return (Date.now() - new Date(iso).getTime()) / day;
 }
 
-function describe(iso: string): string {
-	const days = daysSince(iso);
-	if (days < 1) {
-		const hours = Math.floor(days * 24);
-		return hours < 1 ? "less than an hour ago" : `${hours} hours ago`;
+// How long ago, at the resolution somebody can act on. A run reported only to
+// the hour read the same the moment it finished as it did fifty minutes later,
+// which is the one distinction the person who just pressed the button needs.
+function ago(iso: string): string {
+	const elapsed = Date.now() - new Date(iso).getTime();
+	if (elapsed < minute) return "just now";
+	if (elapsed < hour) {
+		const minutes = Math.floor(elapsed / minute);
+		return minutes === 1 ? "1 minute ago" : `${minutes} minutes ago`;
 	}
-	const whole = Math.floor(days);
-	return whole === 1 ? "yesterday" : `${whole} days ago`;
+	if (elapsed < day) {
+		const hours = Math.floor(elapsed / hour);
+		return hours === 1 ? "1 hour ago" : `${hours} hours ago`;
+	}
+	const days = Math.floor(elapsed / day);
+	return days === 1 ? "yesterday" : `${days} days ago`;
+}
+
+// The wall clock reading, dated once it is from a different day. This is what
+// a run gets matched against: somebody who pressed the button knows when they
+// pressed it, and an elapsed time alone leaves them working it out.
+function clock(iso: string): string {
+	const at = new Date(iso);
+	const time = at.toLocaleTimeString(undefined, {
+		hour: "numeric",
+		minute: "2-digit",
+	});
+	const now = new Date();
+	const sameDay =
+		at.getFullYear() === now.getFullYear() &&
+		at.getMonth() === now.getMonth() &&
+		at.getDate() === now.getDate();
+	if (sameDay) return time;
+	const date = at.toLocaleDateString(undefined, {
+		day: "numeric",
+		month: "short",
+	});
+	return `${time} on ${date}`;
+}
+
+// Both halves, because either one alone leaves a question open.
+function describe(iso: string): string {
+	return `at ${clock(iso)}, ${ago(iso)}`;
+}
+
+// Keeps the relative half moving. Nothing on the pane refreshes once a sync
+// has finished, so a note reading just now went on reading it for as long as
+// the tab stayed open.
+function useTick(every: number) {
+	const [, setTick] = useState(0);
+	useEffect(() => {
+		const id = setInterval(() => setTick((n) => n + 1), every);
+		return () => clearInterval(id);
+	}, [every]);
 }
 
 export function SyncFreshness({ run }: { run: Run | null }) {
+	useTick(30000);
+
 	if (!run) {
 		return (
 			<div className={`${styles.notice} ${styles.noticeWarn}`}>
@@ -108,7 +161,7 @@ export function SyncFreshness({ run }: { run: Run | null }) {
 					<div className={styles.noticeTitle}>A sync is running</div>
 					<p className={styles.noticeBody}>
 						{run.completed} of {run.total} sources, started by{" "}
-						{run.startedBy}.
+						{run.startedBy} {describe(run.startedOn)}.
 					</p>
 				</div>
 			</div>
