@@ -115,8 +115,20 @@ export function SyncFreshness({ run }: { run: Run | null }) {
 		);
 	}
 
+	// A finished run is always reported, not only once it is old enough to
+	// complain about. Saying nothing after a successful sync left the one
+	// question somebody presses the button to answer, whether it worked,
+	// answerable only by the message that disappeared when they navigated
+	// away.
 	const stale = daysSince(run.finishedOn) > staleAfterDays;
-	if (!stale) return null;
+	if (!stale) {
+		return (
+			<p className={styles.paneNote}>
+				Last synced {describe(run.finishedOn)} by {run.startedBy},{" "}
+				{run.total} {run.total === 1 ? "source" : "sources"}.
+			</p>
+		);
+	}
 
 	return (
 		<div className={`${styles.notice} ${styles.noticeWarn}`}>

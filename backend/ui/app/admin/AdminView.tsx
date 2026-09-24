@@ -107,6 +107,9 @@ interface PlatformResponse {
 		total: number;
 		completed: number;
 		error: string | null;
+		// Neither finished nor heard from recently, so nothing is running and
+		// the button should offer to start one.
+		abandoned?: boolean;
 	} | null;
 	sources: {
 		sourceKey: string;
@@ -145,7 +148,7 @@ export default function AdminView() {
 			: section === "usage"
 				? `/api/admin?days=${days}`
 				: `/api/admin?section=${section}`;
-	const { data, error, isLoading } = useSWR(key);
+	const { data, error, isLoading, mutate } = useSWR(key);
 	// Both admin sections answer from cache, so a placeholder shown on every
 	// tab change would blink rather than inform.
 	const showSkeleton = useDeferredLoading(isLoading);
@@ -220,7 +223,10 @@ export default function AdminView() {
 				<SecuritySection data={data as SecurityResponse} />
 			)}
 			{!isLoading && section === "platform" && data && (
-				<PlatformSection data={data as PlatformResponse} />
+				<PlatformSection
+					data={data as PlatformResponse}
+					onRefresh={() => void mutate()}
+				/>
 			)}
 		</div>
 	);
@@ -2040,10 +2046,31 @@ const groupOrigins: Record<string, string> = {
 // a view definition takes SELECT on the view, which the application does not
 // hold and a person running a sync does. So the walk stays blocked until
 // somebody runs this once, and again whenever a view is re-pointed.
-function SyncSources() {
+function SyncSources({
+	inFlight,
+	onFinished,
+}: {
+	// A run the server says is still going, which is how this survives the
+	// person who started it navigating away: the button state came from a
+	// local flag, so a refresh showed an idle button while a walk was still
+	// running, and a second press started another.
+	inFlight: boolean;
+	onFinished: () => void;
+}) {
 	const [running, setRunning] = useState(false);
 	const [result, setResult] = useState<string | null>(null);
 	const [failure, setFailure] = useState<string | null>(null);
+
+	// Polled while a walk is going, so the count moves and the page settles by
+	// itself when it ends rather than waiting for somebody to reload.
+	useEffect(() => {
+		if (!inFlight) return;
+		const timer = setInterval(() => onFinished(), 4000);
+		return () => clearInterval(timer);
+		// onFinished is read at call time; depending on it would restart the
+		// interval on every render of the parent.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [inFlight]);
 
 	const run = async () => {
 		setRunning(true);
@@ -2072,8 +2099,13 @@ function SyncSources() {
 			setFailure(error instanceof Error ? error.message : "Sync failed");
 		} finally {
 			setRunning(false);
+			// So the line under the button reports this run rather than the
+			// one before it.
+			onFinished();
 		}
 	};
+
+	const busy = running || inFlight;
 
 	return (
 		<>
@@ -2081,10 +2113,10 @@ function SyncSources() {
 				<button
 					type="button"
 					className={styles.saveButton}
-					disabled={running}
+					disabled={busy}
 					onClick={run}
 				>
-					{running ? "Syncing" : "Sync from catalogue"}
+					{busy ? "Syncing" : "Sync from catalogue"}
 				</button>
 			</div>
 			{result && <p className={styles.paneNote}>{result}</p>}
@@ -2153,7 +2185,13 @@ function counterTiles(replica: Record<string, unknown>) {
 	return tiles;
 }
 
-function PlatformSection({ data }: { data: PlatformResponse }) {
+function PlatformSection({
+	data,
+	onRefresh,
+}: {
+	data: PlatformResponse;
+	onRefresh: () => void;
+}) {
 	const [pane, setPane] = useState<PlatformPane>("health");
 	const [editingSource, setEditingSource] = useState<string | null>(null);
 
@@ -2238,7 +2276,14 @@ function PlatformSection({ data }: { data: PlatformResponse }) {
 							className={styles.actionPrimary}
 							onAdded={() => window.location.reload()}
 						/>
-						<SyncSources />
+						<SyncSources
+							inFlight={Boolean(
+								data.lastSync &&
+								!data.lastSync.finishedOn &&
+								!data.lastSync.abandoned,
+							)}
+							onFinished={onRefresh}
+						/>
 					</div>
 
 					<SyncFreshness run={data.lastSync ?? null} />
