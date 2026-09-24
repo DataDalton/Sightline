@@ -7,6 +7,8 @@ import {
 	distributeRects,
 	findFreeSlot,
 	gridColumns,
+	gridGap,
+	rowHeight,
 	tidyLayout,
 	type AlignMode,
 	type Rect,
@@ -49,17 +51,78 @@ import styles from "./Editor.module.css";
 // would be a write per pointer move, and would make the version number a
 // contention point rather than a safety net.
 
-// How many grid rows a visual needs before its own content starts scrolling.
+// What a scorecard's contents measure, in pixels, from the styles that draw
+// them. A tile is its padding twice, a label, a gap and a figure at the display
+// size; a band adds a heading over its tiles; and bands are separated.
 //
-// Zero means no opinion, which leaves the height the author chose alone. Only a
-// note raises it, because a note renders inside the visual's box underneath
-// everything else and the grid has no way to see it. One row covers a note up
-// to about a hundred characters and two covers the longer ones, measured
-// against the 52 pixel row and the notice's own line height.
+// A scorecard is the one visual whose height is settled entirely by what is in
+// it rather than by how much room it is given, so it is the one the grid cannot
+// work out for itself. Every other type fills whatever height it has.
+const kpiTile = 106;
+const kpiTileWithChange = 127;
+const kpiBandHeading = 28;
+const kpiBetweenBands = 26;
+const kpiTileGap = 18;
+const kpiBodyPadding = 36;
+
+// Tiles are laid out with auto-fit at a minimum width, so how many sit across
+// depends on how wide the visual is. Six across a full width row is what a
+// normal screen gives, and narrower is proportional.
+function kpiTilesAcross(width: number): number {
+	return Math.max(1, Math.round((width / gridColumns) * 6));
+}
+
+function kpiPixels(
+	config: { measures?: unknown; options?: Record<string, unknown> },
+	width: number,
+): number {
+	const measures = Array.isArray(config.measures) ? config.measures : [];
+	const groups = Array.isArray(config.options?.groups)
+		? (config.options.groups as { count?: number }[])
+		: [];
+	const across = kpiTilesAcross(width);
+	const tile = config.options?.compareTo ? kpiTileWithChange : kpiTile;
+
+	const band = (count: number) => {
+		const lines = Math.max(1, Math.ceil(count / across));
+		return lines * tile + (lines - 1) * kpiTileGap;
+	};
+
+	if (groups.length === 0) return kpiBodyPadding + band(measures.length);
+
+	return (
+		kpiBodyPadding +
+		groups.reduce(
+			(total, group) => total + kpiBandHeading + band(group.count ?? 0),
+			0,
+		) +
+		(groups.length - 1) * kpiBetweenBands
+	);
+}
+
+// How many grid rows a visual needs before its own content starts scrolling.
+// Zero means no opinion, which leaves the height the author chose alone.
 function minRowsFor(visual: {
 	visualType: string;
-	config: { options?: Record<string, unknown> };
+	layout: Rect;
+	config: { measures?: unknown; options?: Record<string, unknown> };
 }): number {
+	// A scorecard is sized by its tiles and its bands. Adding a band to one
+	// used to leave the last row of tiles clipped and the visual under it hard
+	// against them, because nothing between the config and the grid knew a
+	// band had appeared.
+	if (visual.visualType === "kpiRow") {
+		const pixels = kpiPixels(visual.config, visual.layout.w);
+		return Math.max(
+			1,
+			Math.ceil((pixels + gridGap) / (rowHeight + gridGap)),
+		);
+	}
+
+	// A note renders inside the visual's box underneath everything else, and
+	// the grid has no way to see it either. One row covers a note up to about a
+	// hundred characters and two covers the longer ones, measured against the
+	// row height and the notice's own line height.
 	const note = visual.config.options?.note;
 	if (typeof note !== "string" || note.trim() === "") return 0;
 
