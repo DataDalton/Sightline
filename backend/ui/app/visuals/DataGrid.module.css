@@ -525,6 +525,9 @@
 	border-radius: var(--radius-lg);
 	box-shadow: var(--shadow-lg);
 	overflow: hidden;
+	/* Always under its column heading, so it only grows one way. */
+	transform-origin: top left;
+	animation: popoverIn var(--transition-fast);
 }
 
 .popoverSort {

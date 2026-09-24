@@ -13,7 +13,10 @@ export async function POST(request: NextRequest) {
 
 	const identity = getIdentity(request);
 	if (!identity) {
-		return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+		return NextResponse.json(
+			{ error: "Not authenticated" },
+			{ status: 401 },
+		);
 	}
 
 	try {
@@ -24,6 +27,7 @@ export async function POST(request: NextRequest) {
 			search: typeof body?.search === "string" ? body.search : undefined,
 			filters: Array.isArray(body?.filters) ? body.filters : [],
 			limit: Number(body?.limit) || undefined,
+			offset: Number(body?.offset) || undefined,
 		});
 
 		const response = NextResponse.json(result);

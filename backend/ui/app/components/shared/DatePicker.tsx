@@ -299,6 +299,9 @@ export function DatePicker({
 					<div
 						ref={panelRef}
 						className={styles.panel}
+						data-placement={
+							box.bottom === undefined ? "below" : "above"
+						}
 						role="dialog"
 						aria-label={ariaLabel ?? "Choose a date"}
 						style={{

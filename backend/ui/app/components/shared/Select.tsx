@@ -292,6 +292,9 @@ export function Select({
 				createPortal(
 					<div
 						className={styles.list}
+						data-placement={
+							box.bottom === undefined ? "below" : "above"
+						}
 						id={listId}
 						role="listbox"
 						ref={listRef}
