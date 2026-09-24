@@ -270,8 +270,8 @@ export default function CategoriesPane() {
 				</table>
 			</div>
 
-			<header className={styles.paneHeader}>
-				<h2 className={styles.paneTitle}>
+			<header className={styles.sectionHead}>
+				<h2 className={styles.sectionTitle}>
 					{editing
 						? `Editing ${draft.name || draft.categoryId}`
 						: "A new category"}

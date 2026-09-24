@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
+import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { describeFetchError } from "../../lib/swr";
 import { formatCompact } from "../../lib/format";
@@ -12,7 +13,6 @@ import {
 import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { Select } from "../components/shared/Select";
-import { TabStrip } from "../components/shared/TabStrip";
 import { Toggle } from "../components/shared/Toggle";
 import { ErrorBoundary } from "../components/shared/ErrorBoundary";
 import { AccessSettings } from "./AccessSettings";
@@ -24,15 +24,19 @@ import { SyncFreshness } from "./SyncFreshness";
 import CategoriesPane from "./CategoriesPane";
 import PersonalPagesPane from "./PersonalPagesPane";
 import RolesPane from "./RolesPane";
+import { AdminRail } from "./AdminRail";
+import { DailyActivity } from "./DailyActivity";
+import { ago, clock } from "./when";
+import { groupOf, paneDetail, paneFrom, type PaneId } from "./nav";
 import styles from "./Admin.module.css";
 
 // Administration: adoption, cost, failures, and who can reach what.
 //
-// The sections answer three different questions and are kept apart because the
-// audiences differ. Usage is for whoever owns the reporting estate; Security is
-// for whoever answers an access review; Platform is for whoever gets paged.
-
-type Section = "usage" | "security" | "platform" | "configuration";
+// One rail lists every destination under a group heading and one pane answers
+// at a time. The groups exist because the audiences differ: Activity is for
+// whoever owns the reporting estate, Access and Audit for whoever answers an
+// access review, Content for whoever curates what people open, and Platform for
+// whoever gets paged.
 
 interface Summary {
 	activeUsers: number;
@@ -123,500 +127,447 @@ interface PlatformResponse {
 	}[];
 }
 
-function timeAgo(iso: string | null): string {
-	if (!iso) return "-";
-	const ms = Date.now() - new Date(iso).getTime();
-	const minutes = Math.floor(ms / 60000);
-	if (minutes < 1) return "just now";
-	if (minutes < 60) return `${minutes}m ago`;
-	const hours = Math.floor(minutes / 60);
-	if (hours < 24) return `${hours}h ago`;
-	return `${Math.floor(hours / 24)}d ago`;
+// An instant in a table cell. The elapsed time is what gets scanned down the
+// column, and the clock reading is one hover away rather than widening every
+// row that carries one.
+function When({ iso }: { iso: string | null }) {
+	if (!iso) return <>-</>;
+	return <span title={clock(iso)}>{ago(iso)}</span>;
 }
 
 export default function AdminView() {
 	usePageTitle("Administration");
 
-	const [section, setSection] = useState<Section>("usage");
-	const [days, setDays] = useState(7);
+	// Null while the router has not settled, which is a state the hook admits
+	// and every read below would otherwise throw on.
+	const params = useSearchParams() ?? new URLSearchParams();
+	const pane = paneFrom(params.get("pane"));
+	const detail = paneDetail(pane);
+	const feed = detail.feed;
+	const days = windowFrom(params.get("days"));
 
-	// Configuration reads its own endpoint, so the shared query is skipped for
-	// it rather than fetching a section the server does not serve.
+	// The open pane and the window live in the address, so a pane can be linked,
+	// bookmarked and reached with the back button. Held in component state they
+	// could be none of those, and every save that reloaded the page dropped the
+	// reader back on the first pane of the first group.
+	//
+	// Written through the history API rather than the router: the page is
+	// already mounted and a route transition would remount it to change a
+	// string. Next reads these back through useSearchParams either way.
+	const go = (patch: Record<string, string>) => {
+		const next = new URLSearchParams(params.toString());
+		for (const [name, value] of Object.entries(patch))
+			next.set(name, value);
+		window.history.pushState(null, "", `?${next.toString()}`);
+	};
+
+	// One request for whichever pane is open. Panes marked "own" fetch for
+	// themselves and panes marked "settings" read the settings endpoint through
+	// ConfigurationSection, so the shell asks for nothing on their behalf.
 	const key =
-		section === "configuration"
-			? null
-			: section === "usage"
-				? `/api/admin?days=${days}`
-				: `/api/admin?section=${section}`;
+		feed === "usage"
+			? `/api/admin?days=${days}`
+			: feed === "security"
+				? "/api/admin?section=security"
+				: feed === "platform"
+					? "/api/admin?section=platform"
+					: null;
+
 	const { data, error, isLoading, mutate } = useSWR(key);
 	// Both admin sections answer from cache, so a placeholder shown on every
-	// tab change would blink rather than inform.
+	// pane change would blink rather than inform.
 	const showSkeleton = useDeferredLoading(isLoading);
 
-	if (error) {
-		return (
-			<div className={styles.page}>
+	const waiting = Boolean(key) && (isLoading || !data);
+
+	const body = () => {
+		if (error) {
+			return (
 				<div className={styles.state}>
-					{describeFetchError(error, "section")}
+					{describeFetchError(error, "pane")}
 				</div>
-			</div>
+			);
+		}
+
+		switch (pane) {
+			case "roles":
+				return <RolesPane show="roles" />;
+			case "assignments":
+				return <RolesPane show="assignments" />;
+			case "grants":
+				return <AccessGrants />;
+			case "review":
+				return <AccessReview />;
+			case "baseline":
+				return <AccessSettings />;
+			case "changes":
+				return <ActivityPane />;
+			case "categories":
+				return <CategoriesPane />;
+			case "personal":
+				return <PersonalPagesPane />;
+			case "branding":
+			case "warehouse":
+			case "caching":
+				return <ConfigurationSection group={pane} />;
+		}
+
+		if (waiting) {
+			return showSkeleton ? (
+				<>
+					<SkeletonText lines={2} />
+					<SkeletonTable rows={5} columns={4} />
+				</>
+			) : null;
+		}
+
+		if (feed === "usage") {
+			return (
+				<UsageSection
+					data={data as UsageResponse}
+					pane={pane}
+					days={days}
+				/>
+			);
+		}
+		if (feed === "security") {
+			return (
+				<SecuritySection data={data as SecurityResponse} pane={pane} />
+			);
+		}
+		return (
+			<PlatformSection
+				data={data as PlatformResponse}
+				pane={pane}
+				onRefresh={() => void mutate()}
+			/>
 		);
-	}
+	};
 
 	return (
 		<div className={styles.page}>
-			<h1 className={styles.title}>Administration</h1>
-			<p className={styles.subtitle}>
-				Adoption, access and platform health.
-			</p>
+			<AdminRail active={pane} onSelect={(id) => go({ pane: id })} />
 
-			<div className={styles.tabs} role="tablist">
-				{(
-					[
-						["usage", "Usage & observability"],
-						["security", "Security & access"],
-						["platform", "Platform"],
-						["configuration", "Configuration"],
-					] as [Section, string][]
-				).map(([id, label]) => (
-					<button
-						key={id}
-						type="button"
-						role="tab"
-						aria-selected={section === id}
-						className={`${styles.tab} ${
-							section === id ? styles.tabActive : ""
-						}`}
-						onClick={() => setSection(id)}
-					>
-						{label}
-					</button>
-				))}
-			</div>
-
-			{/* Configuration reads its own endpoint, so it does not wait on the
-			    usage query that the other sections share. */}
-			{section === "configuration" && <ConfigurationSection />}
-
-			{showSkeleton && section !== "configuration" && (
-				<div className={styles.config}>
-					<nav className={styles.configNav} aria-hidden="true">
-						{Array.from({ length: 4 }, (_, i) => (
-							<Skeleton key={i} height={28} />
-						))}
-					</nav>
-					<div className={styles.configPane}>
-						<SkeletonText lines={2} />
-						<SkeletonTable rows={5} columns={4} />
-					</div>
-				</div>
-			)}
-
-			{!isLoading && section === "usage" && data && (
-				<UsageSection
-					data={data as UsageResponse}
-					days={days}
-					onDays={setDays}
-				/>
-			)}
-			{!isLoading && section === "security" && data && (
-				<SecuritySection data={data as SecurityResponse} />
-			)}
-			{!isLoading && section === "platform" && data && (
-				<PlatformSection
-					data={data as PlatformResponse}
-					onRefresh={() => void mutate()}
-				/>
-			)}
-		</div>
-	);
-}
-
-// A tab split into panes, with a list of them down the side.
-//
-// A page that stacks every section reads as a wall and gets skimmed, and the
-// thing somebody came for is found by scrolling rather than by looking. One
-// pane at a time means each is short enough to read, and the blurb says what
-// the pane answers so the choice can be made without opening it.
-function Panes<T extends string>({
-	panes,
-	active,
-	onSelect,
-	label,
-	wide,
-	children,
-}: {
-	panes: readonly { id: T; label: string; blurb: string }[];
-	active: T;
-	onSelect: (id: T) => void;
-	label: string;
-	// Set where the pane is mostly tables rather than fields.
-	wide?: boolean;
-	children: ReactNode;
-}) {
-	const current = panes.find((p) => p.id === active);
-
-	return (
-		<div className={styles.config}>
-			<nav className={styles.configNav} aria-label={label}>
-				{panes.map((p) => (
-					<button
-						key={p.id}
-						type="button"
-						className={`${styles.configNavItem} ${
-							active === p.id ? styles.configNavActive : ""
-						}`}
-						onClick={() => onSelect(p.id)}
-						aria-current={active === p.id}
-					>
-						{p.label}
-					</button>
-				))}
-			</nav>
-
-			<div
-				className={`${styles.configPane} ${wide ? styles.configPaneWide : ""}`}
-			>
+			<div className={styles.main}>
 				<header className={styles.paneHeader}>
-					<h2 className={styles.paneTitle}>{current?.label}</h2>
-					<p className={styles.paneBlurb}>{current?.blurb}</p>
+					<div className={styles.paneHeading}>
+						{/* The group the open pane sits in. The rail shows it too,
+						    and on a narrow screen where the rail has collapsed to a
+						    strip this is the only thing that does. */}
+						<p className={styles.paneGroup}>{groupOf(pane)}</p>
+						<h1 className={styles.paneTitle}>{detail.label}</h1>
+						<p className={styles.paneBlurb}>{detail.blurb}</p>
+					</div>
+
+					{/* Beside the heading of the pane it filters rather than above
+					    the whole page, where it read as applying to panes that do
+					    not have a window at all. */}
+					{feed === "usage" && (
+						<div className={styles.controls}>
+							{usageWindows.map((d) => (
+								<button
+									key={d}
+									type="button"
+									className={`${styles.rangeButton} ${
+										days === d ? styles.rangeActive : ""
+									}`}
+									aria-pressed={days === d}
+									onClick={() => go({ days: String(d) })}
+								>
+									{d === 1 ? "24 hours" : `${d} days`}
+								</button>
+							))}
+						</div>
+					)}
 				</header>
+
 				{/* Every pane reads a different endpoint, and any of them can
 				    answer with an error object where the pane expects a list.
-				    Reading a property off that throws during render, which
-				    without this takes the whole administration page including
-				    the nav that would let somebody open a pane that works.
-				    Keyed on the pane, so switching away and back retries. */}
-				<ErrorBoundary
-					label={current?.label ?? "This pane"}
-					resetKey={active}
-				>
-					{children}
+				    Reading a property off that throws during render, which without
+				    this takes the whole administration page including the rail that
+				    would let somebody open a pane that works. Keyed on the pane, so
+				    switching away and back retries. */}
+				<ErrorBoundary label={detail.label} resetKey={pane}>
+					{body()}
 				</ErrorBoundary>
 			</div>
 		</div>
 	);
 }
 
-const usagePanes = [
-	{
-		id: "overview",
-		label: "Overview",
-		blurb: "Adoption, cost and failures across the window.",
-	},
-	{
-		id: "reports",
-		label: "Reports",
-		blurb: "What is being used, and by how many different people.",
-	},
-	{
-		id: "people",
-		label: "People",
-		blurb: "Who is using it, and what they have been doing.",
-	},
-	{
-		id: "performance",
-		label: "Performance",
-		blurb: "Where warehouse time and cost accumulate.",
-	},
-] as const;
+// The windows the activity panes can be read over.
+const usageWindows = [1, 7, 30, 90] as const;
 
-type UsagePane = (typeof usagePanes)[number]["id"];
+function windowFrom(value: string | null): number {
+	const asked = Number(value);
+	return usageWindows.includes(asked as (typeof usageWindows)[number])
+		? asked
+		: 7;
+}
+
+// The access review needs a report to ask about, and the grants pane already
+// assembles that list for its own scope picker. Reading the same key shares
+// that answer rather than asking for it a second time.
+function AccessReview() {
+	const { data } = useSWR<Partial<AccessResponse>>("/api/admin/access");
+	return <AccessReviewPane reports={data?.reports ?? []} />;
+}
+
+// Where the overview tiles change colour. The hint under each value is built
+// from the same numbers the tone is, so the line being shown and the line being
+// applied cannot drift apart.
+//
+// Below the warn mark on cache hits, most interactions still reach the
+// warehouse, which is the cost driver worth watching.
+const cacheHitGood = 70;
+const cacheHitWarn = 40;
+const slowQueryMs = 5000;
+const verySlowQueryMs = 10000;
 
 function UsageSection({
 	data,
+	pane,
 	days,
-	onDays,
 }: {
 	data: UsageResponse;
+	pane: PaneId;
 	days: number;
-	onDays: (d: number) => void;
 }) {
 	const { summary, daily } = data;
-	const [pane, setPane] = useState<UsagePane>("overview");
 	// Which row an admin has opened. A drawer rather than a separate page: the
 	// question is always why that row looks like that, so the row it came from
 	// should stay on screen behind it.
 	const [drill, setDrill] = useState<Drill | null>(null);
-	const peak = Math.max(1, ...daily.map((d) => d.events));
 
 	return (
 		<>
-			{/* Above the panes, because it applies to all of them. Inside one it
-			    would read as a filter on that pane alone. */}
-			<div className={styles.controls}>
-				{[1, 7, 30, 90].map((d) => (
-					<button
-						key={d}
-						type="button"
-						className={`${styles.rangeButton} ${
-							days === d ? styles.rangeActive : ""
-						}`}
-						onClick={() => onDays(d)}
-					>
-						{d === 1 ? "24 hours" : `${d} days`}
-					</button>
-				))}
-			</div>
+			{pane === "overview" && (
+				<>
+					<div className={styles.tiles}>
+						<Tile
+							label="Active users"
+							value={summary.activeUsers.toLocaleString()}
+							hint="Signed in and did something"
+						/>
+						<Tile
+							label="Page views"
+							value={formatCompact(summary.pageViews, "integer")}
+							hint="One per report page opened"
+						/>
+						<Tile
+							label="Queries"
+							value={formatCompact(summary.queries, "integer")}
+							hint="Includes answers served from cache"
+						/>
+						<Tile
+							label="Exports"
+							value={summary.exports.toLocaleString()}
+							hint="Downloads of underlying rows"
+						/>
+						<Tile
+							label="Errors"
+							value={summary.errors.toLocaleString()}
+							tone={summary.errors > 0 ? "bad" : "good"}
+							hint={
+								summary.errors > 0
+									? "Each one is a query somebody watched fail"
+									: "No query failed in this window"
+							}
+						/>
+						<Tile
+							label="Cache hit rate"
+							value={`${summary.cacheHitRate.toFixed(1)}%`}
+							tone={
+								summary.cacheHitRate >= cacheHitGood
+									? "good"
+									: summary.cacheHitRate >= cacheHitWarn
+										? "warn"
+										: "bad"
+							}
+							hint={`Answered without the warehouse. Healthy from ${cacheHitGood}%`}
+						/>
+						<Tile
+							label="Median query"
+							value={`${summary.medianQueryMs}ms`}
+							hint="Half of queries finished faster"
+						/>
+						<Tile
+							label="p95 query"
+							value={`${summary.p95QueryMs}ms`}
+							tone={
+								summary.p95QueryMs > verySlowQueryMs
+									? "bad"
+									: summary.p95QueryMs > slowQueryMs
+										? "warn"
+										: "good"
+							}
+							hint={`One in twenty was slower. Slow past ${slowQueryMs / 1000}s`}
+						/>
+					</div>
 
-			<Panes
-				panes={usagePanes}
-				active={pane}
-				onSelect={setPane}
-				label="Usage and observability"
-				wide
-			>
-				{pane === "overview" && (
-					<>
-						<div className={styles.tiles}>
-							<Tile
-								label="Active users"
-								value={summary.activeUsers.toLocaleString()}
-							/>
-							<Tile
-								label="Page views"
-								value={formatCompact(
-									summary.pageViews,
-									"integer",
-								)}
-							/>
-							<Tile
-								label="Queries"
-								value={formatCompact(
-									summary.queries,
-									"integer",
-								)}
-							/>
-							<Tile
-								label="Exports"
-								value={summary.exports.toLocaleString()}
-							/>
-							<Tile
-								label="Errors"
-								value={summary.errors.toLocaleString()}
-								tone={summary.errors > 0 ? "bad" : "good"}
-							/>
-							<Tile
-								label="Cache hit rate"
-								value={`${summary.cacheHitRate.toFixed(1)}%`}
-								// Below half means most interactions still
-								// reach the warehouse, which is the cost driver
-								// worth watching.
-								tone={
-									summary.cacheHitRate >= 70
-										? "good"
-										: summary.cacheHitRate >= 40
-											? "warn"
-											: "bad"
-								}
-							/>
-							<Tile
-								label="Median query"
-								value={`${summary.medianQueryMs}ms`}
-							/>
-							<Tile
-								label="p95 query"
-								value={`${summary.p95QueryMs}ms`}
-								tone={
-									summary.p95QueryMs > 10000
-										? "bad"
-										: summary.p95QueryMs > 5000
-											? "warn"
-											: "good"
-								}
-							/>
-						</div>
+					<DailyActivity daily={daily} />
+				</>
+			)}
 
-						{daily.length > 0 && (
-							<div
-								className={styles.sparkRow}
-								title="Events per day"
-							>
-								{daily.map((d) => (
-									<div
-										key={d.day}
-										className={styles.sparkBar}
-										style={{
-											height: `${Math.max(3, (d.events / peak) * 100)}%`,
-										}}
-										title={`${d.day}: ${d.events} events, ${d.users} users`}
-									/>
+			{pane === "reports" && (
+				<>
+					<div className={styles.tableWrap}>
+						<table className={styles.table}>
+							<thead>
+								<tr>
+									<th>Report</th>
+									<th>Category</th>
+									<th className={styles.numeric}>Views</th>
+									<th className={styles.numeric}>Users</th>
+									<th className={styles.numeric}>Avg load</th>
+									<th>Last viewed</th>
+								</tr>
+							</thead>
+							<tbody>
+								{data.reports.map((r) => (
+									<tr
+										key={r.reportId}
+										className={styles.rowClickable}
+										onClick={() =>
+											setDrill({
+												kind: "report",
+												id: r.reportId,
+												label: r.title,
+											})
+										}
+										title="See who viewed this and when"
+									>
+										<td>{r.title}</td>
+										<td>{r.categoryId ?? "-"}</td>
+										<td className={styles.numeric}>
+											{r.views.toLocaleString()}
+										</td>
+										<td className={styles.numeric}>
+											{r.distinctUsers}
+										</td>
+										<td className={styles.numeric}>
+											{r.avgDurationMs}ms
+										</td>
+										<td>
+											<When iso={r.lastViewed} />
+										</td>
+									</tr>
 								))}
-							</div>
-						)}
-					</>
-				)}
-
-				{pane === "reports" && (
-					<>
-						<div className={styles.tableWrap}>
-							<table className={styles.table}>
-								<thead>
+								{data.reports.length === 0 && (
 									<tr>
-										<th>Report</th>
-										<th>Category</th>
-										<th className={styles.numeric}>
-											Views
-										</th>
-										<th className={styles.numeric}>
-											Users
-										</th>
-										<th className={styles.numeric}>
-											Avg load
-										</th>
-										<th>Last viewed</th>
+										<td colSpan={6}>
+											No activity in this window
+										</td>
 									</tr>
-								</thead>
-								<tbody>
-									{data.reports.map((r) => (
-										<tr
-											key={r.reportId}
-											className={styles.rowClickable}
-											onClick={() =>
-												setDrill({
-													kind: "report",
-													id: r.reportId,
-													label: r.title,
-												})
-											}
-											title="See who viewed this and when"
-										>
-											<td>{r.title}</td>
-											<td>{r.categoryId ?? "-"}</td>
-											<td className={styles.numeric}>
-												{r.views.toLocaleString()}
-											</td>
-											<td className={styles.numeric}>
-												{r.distinctUsers}
-											</td>
-											<td className={styles.numeric}>
-												{r.avgDurationMs}ms
-											</td>
-											<td>{timeAgo(r.lastViewed)}</td>
-										</tr>
-									))}
-									{data.reports.length === 0 && (
-										<tr>
-											<td colSpan={6}>
-												No activity in this window
-											</td>
-										</tr>
-									)}
-								</tbody>
-							</table>
-						</div>
-					</>
-				)}
+								)}
+							</tbody>
+						</table>
+					</div>
+				</>
+			)}
 
-				{pane === "people" && (
-					<>
-						<div className={styles.tableWrap}>
-							<table className={styles.table}>
-								<thead>
-									<tr>
-										<th>User</th>
-										<th className={styles.numeric}>
-											Events
-										</th>
-										<th className={styles.numeric}>
-											Reports
-										</th>
-										<th className={styles.numeric}>
-											Exports
-										</th>
-										<th>Last seen</th>
+			{pane === "people" && (
+				<>
+					<div className={styles.tableWrap}>
+						<table className={styles.table}>
+							<thead>
+								<tr>
+									<th>User</th>
+									<th className={styles.numeric}>Events</th>
+									<th className={styles.numeric}>Reports</th>
+									<th className={styles.numeric}>Exports</th>
+									<th>Last seen</th>
+								</tr>
+							</thead>
+							<tbody>
+								{data.users.map((u) => (
+									<tr
+										key={u.userEmail}
+										className={styles.rowClickable}
+										onClick={() =>
+											setDrill({
+												kind: "user",
+												id: u.userEmail,
+												label: u.userEmail,
+											})
+										}
+										title="See everything this person has done"
+									>
+										<td>{u.userEmail}</td>
+										<td className={styles.numeric}>
+											{u.events.toLocaleString()}
+										</td>
+										<td className={styles.numeric}>
+											{u.reports}
+										</td>
+										<td className={styles.numeric}>
+											{u.exports}
+										</td>
+										<td>
+											<When iso={u.lastSeen} />
+										</td>
 									</tr>
-								</thead>
-								<tbody>
-									{data.users.map((u) => (
-										<tr
-											key={u.userEmail}
-											className={styles.rowClickable}
-											onClick={() =>
-												setDrill({
-													kind: "user",
-													id: u.userEmail,
-													label: u.userEmail,
-												})
-											}
-											title="See everything this person has done"
-										>
-											<td>{u.userEmail}</td>
-											<td className={styles.numeric}>
-												{u.events.toLocaleString()}
-											</td>
-											<td className={styles.numeric}>
-												{u.reports}
-											</td>
-											<td className={styles.numeric}>
-												{u.exports}
-											</td>
-											<td>{timeAgo(u.lastSeen)}</td>
-										</tr>
-									))}
-									{data.users.length === 0 && (
-										<tr>
-											<td colSpan={5}>
-												No activity in this window
-											</td>
-										</tr>
-									)}
-								</tbody>
-							</table>
-						</div>
-					</>
-				)}
+								))}
+								{data.users.length === 0 && (
+									<tr>
+										<td colSpan={5}>
+											No activity in this window
+										</td>
+									</tr>
+								)}
+							</tbody>
+						</table>
+					</div>
+				</>
+			)}
 
-				{pane === "performance" && (
-					<>
-						<div className={styles.tableWrap}>
-							<table className={styles.table}>
-								<thead>
-									<tr>
-										<th>Source</th>
-										<th className={styles.numeric}>
-											Queries
-										</th>
-										<th className={styles.numeric}>Avg</th>
-										<th className={styles.numeric}>Max</th>
-										<th className={styles.numeric}>
-											Cache hit
-										</th>
+			{pane === "performance" && (
+				<>
+					<div className={styles.tableWrap}>
+						<table className={styles.table}>
+							<thead>
+								<tr>
+									<th>Source</th>
+									<th className={styles.numeric}>Queries</th>
+									<th className={styles.numeric}>Avg</th>
+									<th className={styles.numeric}>Max</th>
+									<th className={styles.numeric}>
+										Cache hit
+									</th>
+								</tr>
+							</thead>
+							<tbody>
+								{data.slow.map((s) => (
+									<tr key={s.sourceKey ?? "unknown"}>
+										<td className={styles.mono}>
+											{s.sourceKey ?? "-"}
+										</td>
+										<td className={styles.numeric}>
+											{s.queries.toLocaleString()}
+										</td>
+										<td className={styles.numeric}>
+											{s.avgQueryMs}ms
+										</td>
+										<td className={styles.numeric}>
+											{s.maxQueryMs}ms
+										</td>
+										<td className={styles.numeric}>
+											{s.cacheHitRate.toFixed(0)}%
+										</td>
 									</tr>
-								</thead>
-								<tbody>
-									{data.slow.map((s) => (
-										<tr key={s.sourceKey ?? "unknown"}>
-											<td className={styles.mono}>
-												{s.sourceKey ?? "-"}
-											</td>
-											<td className={styles.numeric}>
-												{s.queries.toLocaleString()}
-											</td>
-											<td className={styles.numeric}>
-												{s.avgQueryMs}ms
-											</td>
-											<td className={styles.numeric}>
-												{s.maxQueryMs}ms
-											</td>
-											<td className={styles.numeric}>
-												{s.cacheHitRate.toFixed(0)}%
-											</td>
-										</tr>
-									))}
-									{data.slow.length === 0 && (
-										<tr>
-											<td colSpan={5}>
-												No queries in this window
-											</td>
-										</tr>
-									)}
-								</tbody>
-							</table>
-						</div>
-					</>
-				)}
-			</Panes>
+								))}
+								{data.slow.length === 0 && (
+									<tr>
+										<td colSpan={5}>
+											No queries in this window
+										</td>
+									</tr>
+								)}
+							</tbody>
+						</table>
+					</div>
+				</>
+			)}
 
 			{drill && (
 				<DrillDrawer
@@ -774,8 +725,12 @@ function DrillDrawer({
 										<td className={styles.numeric}>
 											{v.avgDurationMs}ms
 										</td>
-										<td>{timeAgo(v.firstViewed)}</td>
-										<td>{timeAgo(v.lastViewed)}</td>
+										<td>
+											<When iso={v.firstViewed} />
+										</td>
+										<td>
+											<When iso={v.lastViewed} />
+										</td>
 									</tr>
 								))}
 								{(data?.viewers ?? []).length === 0 && (
@@ -808,7 +763,7 @@ function DrillDrawer({
 								{(data?.activity ?? []).map((event, i) => (
 									<tr key={`${event.occurredOn}-${i}`}>
 										<td title={event.occurredOn}>
-											{timeAgo(event.occurredOn)}
+											<When iso={event.occurredOn} />
 										</td>
 										<td>
 											<span
@@ -911,25 +866,6 @@ interface ConfigValues {
 // which is how a cache budget gets changed by somebody looking for the app
 // name. Splitting by what an administrator came to do means each pane is short
 // enough to read, and the one they want is a click rather than a scroll.
-const configGroups = [
-	{
-		id: "branding",
-		label: "Branding",
-		blurb: "The name and mark in the header of every page.",
-	},
-	{
-		id: "data",
-		label: "Data source",
-		blurb: "Which warehouse runs the queries and which catalogue they read.",
-	},
-	{
-		id: "performance",
-		label: "Performance",
-		blurb: "How long answers and memberships are reused before being asked again.",
-	},
-] as const;
-
-type ConfigGroup = (typeof configGroups)[number]["id"];
 
 // One field. The hint is a line, not a paragraph: an explanation long enough
 // to need reading twice is documentation, and it belongs where documentation
@@ -1039,7 +975,10 @@ function SwitchSetting({
 	);
 }
 
-function ConfigurationSection() {
+// The three settings panes. Each is a rail destination, so this renders the one
+// it is handed rather than choosing between them, and the save bar spans all
+// three because a draft can hold edits from any of them.
+function ConfigurationSection({ group }: { group: PaneId }) {
 	const { data, isLoading, mutate } = useSWR<{
 		settings: ConfigValues;
 		maxLogoBytes: number;
@@ -1047,7 +986,6 @@ function ConfigurationSection() {
 
 	const showSkeleton = useDeferredLoading(isLoading);
 
-	const [group, setGroup] = useState<ConfigGroup>("branding");
 	const [draft, setDraft] = useState<ConfigValues | null>(null);
 	const [saving, setSaving] = useState(false);
 	const [failure, setFailure] = useState<string | null>(null);
@@ -1118,32 +1056,10 @@ function ConfigurationSection() {
 
 	const logoKb = Math.round(new Blob([values.appLogo ?? ""]).size / 1024);
 	const limitKb = Math.round((data?.maxLogoBytes ?? 0) / 1024);
-	const active = configGroups.find((g) => g.id === group);
 
 	return (
-		<div className={styles.config}>
-			<nav className={styles.configNav} aria-label="Settings">
-				{configGroups.map((g) => (
-					<button
-						key={g.id}
-						type="button"
-						className={`${styles.configNavItem} ${
-							group === g.id ? styles.configNavActive : ""
-						}`}
-						onClick={() => setGroup(g.id)}
-						aria-current={group === g.id}
-					>
-						{g.label}
-					</button>
-				))}
-			</nav>
-
-			<div className={styles.configPane}>
-				<header className={styles.paneHeader}>
-					<h2 className={styles.paneTitle}>{active?.label}</h2>
-					<p className={styles.paneBlurb}>{active?.blurb}</p>
-				</header>
-
+		<div className={styles.settings}>
+			<div className={styles.settingsFields}>
 				{group === "branding" && (
 					<>
 						<div className={styles.fieldRow}>
@@ -1296,7 +1212,7 @@ function ConfigurationSection() {
 					</>
 				)}
 
-				{group === "data" && (
+				{group === "warehouse" && (
 					<>
 						<div className={styles.fieldRow}>
 							<Field
@@ -1354,7 +1270,7 @@ function ConfigurationSection() {
 					</>
 				)}
 
-				{group === "performance" && (
+				{group === "caching" && (
 					<>
 						{/* Grouped by what each number governs rather than laid out as
 						    one grid of inputs. Eight controls with no grouping meant
@@ -1498,101 +1414,13 @@ function ConfigurationSection() {
 	);
 }
 
-const accessViews = [
-	{ id: "roles", label: "Roles" },
-	{ id: "holders", label: "Who holds what" },
-	{ id: "review", label: "Review" },
-	{ id: "grants", label: "Direct grants" },
-	{ id: "activity", label: "Activity" },
-	{ id: "settings", label: "Settings" },
-] as const;
-
-type AccessView = (typeof accessViews)[number]["id"];
-
-function AccessPane() {
-	const [view, setView] = useState<AccessView>("roles");
-
-	// The same keys the panes below fetch, so this shares their answer rather
-	// than asking again.
-	// Optional all the way down. These endpoints answer with an error object
-	// rather than an array when the caller cannot use them, and reading .length
-	// off the missing array throws during render, which blanks the whole page.
-	// A pane that cannot load should show no count, not take the page with it.
-	const { data: roleData } = useSWR<{
-		roles?: unknown[];
-		assignments?: unknown[];
-	}>("/api/admin/roles");
-	const { data: grantData } =
-		useSWR<Partial<AccessResponse>>("/api/admin/access");
-	// The review needs a report list to choose from. The grants endpoint
-	// already assembles one for its own scope picker, and this reads the same
-	// key rather than asking for it a second time.
-
-	return (
-		<>
-			<div className={styles.paneNav}>
-				<TabStrip
-					label="Access"
-					value={view}
-					onChange={setView}
-					tabs={[
-						{
-							id: "roles",
-							label: "Roles",
-							count: roleData?.roles?.length,
-						},
-						{
-							id: "holders",
-							label: "Who holds what",
-							count: roleData?.assignments?.length,
-						},
-						{ id: "review", label: "Review" },
-						{
-							id: "grants",
-							label: "Direct grants",
-							count: grantData?.grants?.length,
-						},
-						{ id: "activity", label: "Activity" },
-						{ id: "settings", label: "Settings" },
-					]}
-				/>
-			</div>
-
-			{view === "roles" && <RolesPane show="roles" />}
-			{view === "holders" && <RolesPane show="assignments" />}
-			{view === "review" && (
-				<AccessReviewPane reports={grantData?.reports ?? []} />
-			)}
-			{view === "grants" && <AccessGrants />}
-			{view === "activity" && <ActivityPane />}
-			{view === "settings" && <AccessSettings />}
-		</>
-	);
-}
-
-const securityPanes = [
-	{
-		id: "access",
-		label: "Access",
-		blurb: "What each role allows, who holds it, and who can open what.",
-	},
-	{
-		id: "cache",
-		label: "Cache partitioning",
-		blurb: "Which memberships decide who may be served a stored answer.",
-	},
-	{
-		id: "exports",
-		label: "Export audit",
-		blurb: "Every request to take data out of the platform.",
-	},
-] as const;
-
-type SecurityPane = (typeof securityPanes)[number]["id"];
-
-function SecuritySection({ data }: { data: SecurityResponse }) {
-	const [pane, setPane] = useState<SecurityPane>("access");
-
+function SecuritySection({
+	data,
+	pane,
+}: {
+	data: SecurityResponse;
+	pane: PaneId;
+}) {
 	const incomplete = data.exports.filter(
 		(e) => e.action === "requested",
 	).length;
@@ -1610,16 +1438,8 @@ function SecuritySection({ data }: { data: SecurityResponse }) {
 		(unreadable.length === 0 && fromFilters > 0);
 
 	return (
-		<Panes
-			panes={securityPanes}
-			active={pane}
-			onSelect={setPane}
-			label="Security and access"
-			wide
-		>
-			{pane === "access" && <AccessPane />}
-
-			{pane === "cache" && (
+		<>
+			{pane === "partitioning" && (
 				<>
 					<p
 						className={`${styles.paneNote} ${
@@ -1711,7 +1531,9 @@ function SecuritySection({ data }: { data: SecurityResponse }) {
 							<tbody>
 								{data.exports.map((e) => (
 									<tr key={e.logId}>
-										<td>{timeAgo(e.changedOn)}</td>
+										<td>
+											<When iso={e.changedOn} />
+										</td>
 										<td>{e.changedBy}</td>
 										<td>
 											<span
@@ -1756,7 +1578,7 @@ function SecuritySection({ data }: { data: SecurityResponse }) {
 					</p>
 				</>
 			)}
-		</Panes>
+		</>
 	);
 }
 
@@ -2125,36 +1947,6 @@ function SyncSources({
 	);
 }
 
-const platformPanes = [
-	{
-		id: "health",
-		label: "Health",
-		blurb: "What the instance that served this request is holding.",
-	},
-	{
-		id: "sources",
-		label: "Sources",
-		blurb: "The datasets reports are built on, and how each is read.",
-	},
-	{
-		id: "categories",
-		label: "Categories",
-		blurb: "The sections navigation is built from, and what sits in each.",
-	},
-	{
-		id: "personal",
-		label: "Personal pages",
-		blurb: "What people have built for themselves, and who they shared it with.",
-	},
-	{
-		id: "runtime",
-		label: "Runtime",
-		blurb: "Where this deployment is connected, and how it is configured.",
-	},
-] as const;
-
-type PlatformPane = (typeof platformPanes)[number]["id"];
-
 // Counters arrive nested, one object per subsystem. Flattened to one label per
 // number, because a tile reading {"entries":1,"degraded":0} is a value somebody
 // has to parse rather than read.
@@ -2187,27 +1979,22 @@ function counterTiles(replica: Record<string, unknown>) {
 
 function PlatformSection({
 	data,
+	pane,
 	onRefresh,
 }: {
 	data: PlatformResponse;
+	pane: PaneId;
 	onRefresh: () => void;
 }) {
-	const [pane, setPane] = useState<PlatformPane>("health");
 	const [editingSource, setEditingSource] = useState<string | null>(null);
 
 	const loaded = (value: unknown) =>
 		typeof value === "number" && value > 0
-			? timeAgo(new Date(value).toISOString())
+			? ago(new Date(value).toISOString())
 			: "not yet";
 
 	return (
-		<Panes
-			panes={platformPanes}
-			active={pane}
-			onSelect={setPane}
-			label="Platform"
-			wide
-		>
+		<>
 			{pane === "health" && (
 				<>
 					{/* Every counter below describes whichever instance
@@ -2262,9 +2049,13 @@ function PlatformSection({
 				<EditSourceDialog
 					sourceKey={editingSource}
 					onClose={() => setEditingSource(null)}
+					// Refetches the source list rather than reloading the
+					// document. A reload threw away the open pane along with
+					// everything else on it, which put somebody who had just
+					// edited a source back on the first pane of the rail.
 					onSaved={() => {
 						setEditingSource(null);
-						window.location.reload();
+						onRefresh();
 					}}
 				/>
 			)}
@@ -2274,7 +2065,7 @@ function PlatformSection({
 					<div className={styles.actionBar}>
 						<AddSourceButton
 							className={styles.actionPrimary}
-							onAdded={() => window.location.reload()}
+							onAdded={onRefresh}
 						/>
 						<SyncSources
 							inFlight={Boolean(
@@ -2351,17 +2142,37 @@ function PlatformSection({
 				</>
 			)}
 
-			{pane === "categories" && <CategoriesPane />}
-
-			{pane === "personal" && <PersonalPagesPane />}
-
 			{pane === "runtime" && (
 				<>
+					<header className={styles.sectionHead}>
+						<h2 className={styles.sectionTitle}>Connections</h2>
+						<p className={styles.paneBlurb}>
+							Where this replica reaches the platform store. No
+							credential is ever returned here.
+						</p>
+					</header>
+
 					<div className={styles.definition}>
 						{Object.entries(data.runtime).map(([key, value]) => (
 							<Row key={key} label={key} value={value} />
 						))}
 					</div>
+
+					{/* Read-only, and not the same question the settings panes
+					    answer. Those show what is stored; this shows what this
+					    one replica has loaded, which lags a change made
+					    elsewhere until it rereads. It also carries the settings
+					    that have no editor. */}
+					<header className={styles.sectionHead}>
+						<h2 className={styles.sectionTitle}>
+							Effective settings
+						</h2>
+						<p className={styles.paneBlurb}>
+							What this replica is running on. A change saved
+							elsewhere appears here once it rereads, which the
+							Health pane dates.
+						</p>
+					</header>
 
 					<div className={styles.definition}>
 						{Object.entries(data.settings).map(([key, value]) => (
@@ -2389,7 +2200,7 @@ function PlatformSection({
 					</div>
 				</>
 			)}
-		</Panes>
+		</>
 	);
 }
 
@@ -2410,10 +2221,14 @@ function Tile({
 	label,
 	value,
 	tone,
+	hint,
 }: {
 	label: string;
 	value: string;
 	tone?: "good" | "warn" | "bad";
+	// What the colour is measured against. A tile that turns red without
+	// saying where the line is reports a verdict nobody can check or act on.
+	hint?: string;
 }) {
 	const toneClass =
 		tone === "good"
@@ -2427,6 +2242,7 @@ function Tile({
 		<div className={styles.tile}>
 			<div className={styles.tileLabel}>{label}</div>
 			<div className={`${styles.tileValue} ${toneClass}`}>{value}</div>
+			{hint && <div className={styles.tileHint}>{hint}</div>}
 		</div>
 	);
 }

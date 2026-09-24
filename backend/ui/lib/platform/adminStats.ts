@@ -267,15 +267,34 @@ export async function getExportAudit(limit = 100): Promise<ExportRecord[]> {
 }
 
 // Daily activity, for a trend line rather than a single number.
+//
+// Every day in the window, including the ones nobody used. Grouping the rollup
+// alone returns a row only where there was something to count, so a quiet
+// weekend was not drawn as two short bars, it was not drawn at all: the days on
+// either side of it sat next to each other and the axis stopped being a time
+// axis. A month with activity on twelve days came back as twelve evenly spaced
+// bars that looked like a month of steady use.
 export async function getDailyActivity(
 	days = 30,
 ): Promise<{ day: string; events: number; users: number }[]> {
+	const span = Math.max(1, Math.min(days, 365));
+	// The series is cast back to a date before anything else touches it. A date
+	// plus an interval is a timestamp, which would both join against the DATE
+	// column through a coercion and reach the caller as a stamp where every
+	// other day in this file is a plain day.
 	const rows = await sql<{ day: string; events: string; users: string }>(
-		`SELECT day::text AS day,
-		        sum(events)::text AS events,
-		        count(DISTINCT user_email)::text AS users
-		 FROM usage_daily
-		 WHERE ${rolledWindow(days)}
+		`WITH calendar AS (
+		     SELECT generate_series(
+		                current_date - ${span - 1},
+		                current_date,
+		                interval '1 day'
+		            )::date AS day
+		 )
+		 SELECT calendar.day::text AS day,
+		        coalesce(sum(usage_daily.events), 0)::text AS events,
+		        count(DISTINCT usage_daily.user_email)::text AS users
+		 FROM calendar
+		 LEFT JOIN usage_daily ON usage_daily.day = calendar.day
 		 GROUP BY 1
 		 ORDER BY 1`,
 	);
