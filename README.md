@@ -160,17 +160,23 @@ columns wanted, then conditions:
 
 | Typed | Means |
 | --- | --- |
-| `Division = Hardware` | equals, also `is`, `!=`, `>`, `>=`, `<`, `<=` |
-| `Division in Hardware, Software` | any of the values, `not in` for none of them |
-| `Customer contains Health` | also `starts with` and `ends with` |
+| `Category = Hardware` | equals, also `is`, `!=`, `>`, `>=`, `<`, `<=` |
+| `Category in Hardware, Software` | any of the values, `not in` for none of them |
+| `Customer contains North` | also `starts with` and `ends with` |
 | `Region is empty` | blank, also `is not empty` |
 | `not Status = DRAFT` | keeps every row the condition does not match, blanks included |
 | `or Region = East` | joins this condition to the last with OR |
+| `(Category = Hardware` ... `or Category = Software)` | groups conditions, nested as deep as needed |
 
-AND is applied before OR, so `A and B or C` reads as either both A and B, or C.
-An OR has to stay on one kind of field, dimensions or measures, because a
-dimension is tested per row and a measure per group. Every field in the list
-also has a Filter button, and the bar has one of its own.
+Brackets are read first, then AND before OR, so `A and B or C` is either both A
+and B, or C, while `A and (B or C)` is A with either B or C. Brackets show either
+side of the filters they group, and clicking one removes it and its pair.
+
+Everything inside one OR, or under a NOT, has to be the same kind of field,
+dimensions or measures, because a dimension is tested per row before grouping
+and a totalled measure after it. AND has no such limit, so `Region = West and
+(Revenue > 1000000 or Units > 50)` works. Every field in the list also has a
+Filter button, and the bar has one of its own.
 
 The table follows the bar as it changes, through the same query endpoint every
 report uses, so row filters, caching and the export audit all apply. The

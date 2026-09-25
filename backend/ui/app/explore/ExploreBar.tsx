@@ -3,6 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
 	describeCondition,
+	openDepth,
+	withoutBracket,
+	withoutCondition,
 	parseCondition,
 	type Condition,
 	type KnownField,
@@ -13,7 +16,7 @@ import styles from "./Explore.module.css";
 // One bar that holds the whole question.
 //
 // A source, the columns wanted, and the conditions on them, each as a chip in
-// the order it reads: "Sales · Division, Revenue · where Region is West
+// the order it reads: "Sales · Category, Revenue · where Region is West
 // or Region is East". Typing does everything: a field name adds a column, a
 // field followed by an operator becomes a condition, "or" and "not" in front of
 // a condition join or invert it, and a source name switches to that source.
@@ -205,7 +208,7 @@ export function ExploreBar({
 				out.push({
 					key: "f:typed",
 					group: "Filter",
-					label: describeCondition(condition),
+					label: describeCondition(condition, true),
 					hint:
 						condition.join === "or" && conditions.length > 0
 							? "or"
@@ -227,7 +230,7 @@ export function ExploreBar({
 				out.push({
 					key: `v:${v}`,
 					group: "Values",
-					label: describeCondition(chosen),
+					label: describeCondition(chosen, true),
 					apply: () => addCondition(chosen),
 				});
 			}
@@ -250,7 +253,7 @@ export function ExploreBar({
 			// operator, so the next thing typed is the value.
 			const filter = () => {
 				setText(
-					`${text.match(/^\s*(or|and)\s+/i)?.[0] ?? ""}${f.name} ${
+					`${text.match(/^\s*((or|and)\s+)?(\(+\s*)?(not\s+)?(\(+\s*)?/i)?.[0] ?? ""}${f.name} ${
 						kind === "measure" ? ">" : "="
 					} `,
 				);
@@ -460,6 +463,27 @@ export function ExploreBar({
 								{condition.join}
 							</button>
 						)}
+						{Array.from({ length: condition.open ?? 0 }, (_, b) => (
+							<button
+								key={`o${b}`}
+								type="button"
+								className={styles.bracket}
+								title="Remove this bracket and its pair"
+								onClick={(e) => {
+									e.stopPropagation();
+									onConditions(
+										withoutBracket(
+											conditions,
+											i,
+											"open",
+											b,
+										),
+									);
+								}}
+							>
+								(
+							</button>
+						))}
 						<span
 							className={`${styles.chip} ${styles.chipCondition} ${
 								condition.negate ? styles.chipNegated : ""
@@ -495,8 +519,10 @@ export function ExploreBar({
 								onClick={(e) => {
 									e.stopPropagation();
 									setText(
-										`${i > 0 && condition.join === "or" ? "or " : ""}${describeCondition(condition)}`,
+										`${i > 0 && condition.join === "or" ? "or " : ""}${describeCondition(condition, true)}`,
 									);
+									// Taken out whole, brackets and all, since
+									// the text carries them back in.
 									onConditions(
 										conditions.filter((_, n) => n !== i),
 									);
@@ -516,13 +542,37 @@ export function ExploreBar({
 								onClick={(e) => {
 									e.stopPropagation();
 									onConditions(
-										conditions.filter((_, n) => n !== i),
+										withoutCondition(conditions, i),
 									);
 								}}
 							>
 								×
 							</button>
 						</span>
+						{Array.from(
+							{ length: condition.close ?? 0 },
+							(_, b) => (
+								<button
+									key={`c${b}`}
+									type="button"
+									className={styles.bracket}
+									title="Remove this bracket and its pair"
+									onClick={(e) => {
+										e.stopPropagation();
+										onConditions(
+											withoutBracket(
+												conditions,
+												i,
+												"close",
+												b,
+											),
+										);
+									}}
+								>
+									)
+								</button>
+							),
+						)}
 					</span>
 				))}
 
@@ -534,7 +584,7 @@ export function ExploreBar({
 						!source
 							? "Search a dataset or a field"
 							: columns.length === 0
-								? "Add columns, or type a filter like Division = Hardware"
+								? "Add columns, or type a filter like Category = Hardware"
 								: "Add a column, or a filter: Region = West, or Revenue > 1000, not Status = DRAFT"
 					}
 					aria-label="Build a query"
@@ -617,6 +667,62 @@ export function ExploreBar({
 								{nextJoin === "and"
 									? "rows must match every filter"
 									: "rows may match either side"}
+							</span>
+							<span
+								className={styles.bracketTools}
+								role="group"
+								aria-label="Group filters"
+							>
+								<button
+									type="button"
+									className={styles.joinOption}
+									title="Open a bracket before the next filter"
+									onMouseDown={(e) => e.preventDefault()}
+									onClick={() => {
+										setText((t) => {
+											const lead =
+												/^\s*((or|and)\s+)?/i.exec(
+													t,
+												)?.[0] ?? "";
+											return `${lead}(${t.slice(lead.length)}`;
+										});
+										inputRef.current?.focus();
+									}}
+								>
+									(
+								</button>
+								<button
+									type="button"
+									className={styles.joinOption}
+									title="Close the open bracket after the last filter"
+									disabled={
+										openDepth(conditions) === 0 &&
+										!text.includes("(")
+									}
+									onMouseDown={(e) => e.preventDefault()}
+									onClick={() => {
+										if (text.trim()) {
+											setText((t) => `${t.trimEnd()})`);
+										} else if (openDepth(conditions) > 0) {
+											const last = conditions.length - 1;
+											onConditions(
+												conditions.map((c, n) =>
+													n === last
+														? {
+																...c,
+																close:
+																	(c.close ??
+																		0) + 1,
+															}
+														: c,
+												),
+											);
+										}
+										inputRef.current?.focus();
+									}}
+								>
+									)
+								</button>
 							</span>
 						</li>
 					)}
@@ -713,7 +819,7 @@ export function ExploreBar({
 						>
 							{mode === "filter"
 								? "Choose a field to filter by"
-								: "Enter adds a column · Shift+Enter or Filter narrows the rows"}
+								: "Enter adds a column · Shift+Enter or Filter narrows the rows · ( ) groups filters"}
 						</li>
 					)}
 				</ul>

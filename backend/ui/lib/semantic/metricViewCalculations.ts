@@ -2,7 +2,7 @@
 //
 // A field's comment says what it means. Its expression says what it actually
 // does, and the two drift: a comment reading "revenue less cost" over an
-// expression that also subtracts rebate is the kind of thing only the
+// expression that also subtracts discount is the kind of thing only the
 // expression settles. Both live in the view definition, so this reads the
 // expression out of the same YAML the field list comes from.
 //

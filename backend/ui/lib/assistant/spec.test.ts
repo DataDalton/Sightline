@@ -11,7 +11,7 @@ import type { SemanticField, SemanticSource } from "../semantic/types";
 
 const field = (name: string, kind: "dimension" | "measure"): SemanticField => ({
 	fieldId: name,
-	sourceKey: "deals",
+	sourceKey: "orders",
 	name,
 	displayName: null,
 	kind,
@@ -26,19 +26,19 @@ const field = (name: string, kind: "dimension" | "measure"): SemanticField => ({
 });
 
 const source: SemanticSource = {
-	sourceKey: "deals",
-	title: "Deals",
+	sourceKey: "orders",
+	title: "Orders",
 	description: null,
 	catalog: "c",
 	schema: "s",
-	object: "deals",
+	object: "orders",
 	kind: "metric_view",
 	accessMode: "direct",
 	hasRowFilter: true,
 	cacheTtlSeconds: 0,
 	defaultTimeField: null,
 	dimensions: [field("Division", "dimension"), field("Region", "dimension")],
-	measures: [field("Revenue", "measure"), field("Deal Count", "measure")],
+	measures: [field("Revenue", "measure"), field("Order Count", "measure")],
 };
 
 const reply = (body: unknown) => JSON.stringify(body);
@@ -55,7 +55,7 @@ test("a well formed proposal is accepted", () => {
 		}),
 		source,
 	);
-	assert.equal(p.sourceKey, "deals");
+	assert.equal(p.sourceKey, "orders");
 	assert.deepEqual(p.dimensions, ["Division"]);
 	assert.deepEqual(p.measures, ["Revenue"]);
 	assert.equal(p.limit, 10);
@@ -87,7 +87,7 @@ test("a measure asked for as a dimension is refused", () => {
 			parseProposal(
 				reply({
 					dimensions: ["Revenue"],
-					measures: ["Deal Count"],
+					measures: ["Order Count"],
 					visualType: "barChart",
 				}),
 				source,

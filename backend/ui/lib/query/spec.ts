@@ -61,12 +61,18 @@ export interface QuerySpec {
 	filters: QueryFilter[];
 	// Alternatives. Each inner list is a set of conditions that must all hold,
 	// and a row passes when any one set does. The whole of it applies on top of
-	// filters, so "Region is West, and either Division is Hardware or Revenue
+	// filters, so "Region is West, and either Category is Hardware or Revenue
 	// is over a million" is filters plus two groups.
 	//
 	// Absent on everything but a query somebody built by hand. A report's
 	// filters are all conditions that narrow together, which is the plain list.
 	anyOf?: QueryFilter[][];
+	// Conditions nested to any depth, for a query written with brackets:
+	// "Region is West and (Category is Hardware or Revenue over a million)".
+	// Applied on top of filters and anyOf. A plain list and one level of
+	// alternatives cover everything a report and the assistant ask, so this is
+	// set only when somebody grouped conditions by hand.
+	where?: FilterNode;
 	sort: QuerySort[];
 	limit: number;
 	offset: number;
@@ -176,6 +182,53 @@ function parseFilters(raw: unknown): QueryFilter[] {
 		throw new QuerySpecError(`at most ${maxFilters} filters are allowed`);
 	}
 	return raw.map((item, i) => parseFilter(item, `filter ${i}`));
+}
+
+// A condition, or conditions combined. "all" holds when every child holds, "any"
+// when one does, "not" when its child does not.
+export type FilterNode =
+	| QueryFilter
+	| { all: FilterNode[] }
+	| { any: FilterNode[] }
+	| { not: FilterNode };
+
+// How deep brackets may nest. Far past anything written by hand, and low enough
+// that a crafted request cannot recurse the parser into the ground.
+export const maxFilterDepth = 8;
+
+function parseNode(
+	raw: unknown,
+	label: string,
+	depth: number,
+	count: { leaves: number },
+): FilterNode {
+	if (depth > maxFilterDepth) {
+		throw new QuerySpecError(
+			`conditions nest more than ${maxFilterDepth} deep`,
+		);
+	}
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+		throw new QuerySpecError(`${label} must be an object`);
+	}
+	const o = raw as Record<string, unknown>;
+	for (const key of ["all", "any"] as const) {
+		if (key in o) {
+			if (!Array.isArray(o[key]) || (o[key] as unknown[]).length === 0) {
+				throw new QuerySpecError(
+					`${label} ${key} must be a non-empty list`,
+				);
+			}
+			const children = (o[key] as unknown[]).map((child, i) =>
+				parseNode(child, `${label} ${key} ${i}`, depth + 1, count),
+			);
+			return key === "all" ? { all: children } : { any: children };
+		}
+	}
+	if ("not" in o) {
+		return { not: parseNode(o.not, `${label} not`, depth + 1, count) };
+	}
+	count.leaves++;
+	return parseFilter(raw, label);
 }
 
 // Bounded together with the plain list, so splitting conditions into groups is
@@ -339,6 +392,18 @@ export function parseQuerySpec(raw: unknown): QuerySpec {
 	const distribution = parseDistribution(o.distribution);
 	const filters = parseFilters(o.filters);
 	const anyOf = parseAnyOf(o.anyOf, filters.length);
+	// Counted against the same limit, so nesting is not a way around it.
+	const count = {
+		leaves:
+			filters.length + (anyOf ?? []).reduce((n, g) => n + g.length, 0),
+	};
+	const where =
+		o.where === undefined || o.where === null
+			? null
+			: parseNode(o.where, "where", 1, count);
+	if (count.leaves > maxFilters) {
+		throw new QuerySpecError(`at most ${maxFilters} filters are allowed`);
+	}
 
 	return {
 		sourceKey: asString(o.sourceKey, "sourceKey"),
@@ -346,6 +411,7 @@ export function parseQuerySpec(raw: unknown): QuerySpec {
 		measures,
 		filters,
 		...(anyOf ? { anyOf } : {}),
+		...(where ? { where } : {}),
 		sort: parseSort(o.sort),
 		limit,
 		offset,
@@ -404,6 +470,15 @@ function filterKey(f: QueryFilter): string {
 	return f.negate ? `!${key}` : key;
 }
 
+// A condition tree as a key. Children of "all" and "any" are sorted, since the
+// order they are written in does not change which rows they keep.
+function nodeKey(node: FilterNode): string {
+	if ("all" in node) return `&(${node.all.map(nodeKey).sort().join(",")})`;
+	if ("any" in node) return `|(${node.any.map(nodeKey).sort().join(",")})`;
+	if ("not" in node) return `!(${nodeKey(node.not)})`;
+	return JSON.stringify(filterKey(node));
+}
+
 export function canonicalizeSpec(spec: QuerySpec): string {
 	const filters = spec.filters.map(filterKey).sort();
 
@@ -422,6 +497,9 @@ export function canonicalizeSpec(spec: QuerySpec): string {
 						.sort(),
 				}
 			: {}),
+		// Only present when conditions were grouped, so every other query keeps
+		// the key it had.
+		...(spec.where ? { w: nodeKey(spec.where) } : {}),
 		o: spec.sort.map((s) => `${s.field}:${s.direction}`),
 		l: spec.limit,
 		x: spec.offset,

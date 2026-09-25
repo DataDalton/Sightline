@@ -15,9 +15,9 @@ import styles from "./Assist.module.css";
 // Neutral on purpose. An example that asks what went wrong tells the reader
 // something went wrong before anybody has looked.
 const examples = [
-	"Show revenue by business unit this year",
-	"Summarise order volume by division",
-	"How are rebate payouts split across programs?",
+	"Show revenue by region this year",
+	"Summarise order volume by category",
+	"How is revenue split across channels?",
 ];
 
 export default function AssistView() {

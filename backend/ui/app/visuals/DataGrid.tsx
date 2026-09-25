@@ -52,6 +52,8 @@ interface DataGridProps {
 	// together and applied on top of the filters above. Set only by a query
 	// somebody builds by hand.
 	anyOf?: unknown[][];
+	// Conditions nested with brackets, applied on top of the rest.
+	where?: unknown;
 	// Figures worked out from the answer, declared on the visual. Part of the
 	// query, so a derived column arrives with the rows and sorts and exports
 	// like any other.
@@ -140,6 +142,7 @@ export function DataGrid({
 	measures,
 	baseFilters = [],
 	anyOf,
+	where,
 	transforms,
 	fields,
 	pageSize = 200,
@@ -340,7 +343,14 @@ export function DataGrid({
 		[anyOfKey],
 	);
 
-	const filterKey = JSON.stringify(activeFilters) + anyOfKey;
+	const whereKey = JSON.stringify(where ?? null);
+	const tree = useMemo(
+		() => where ?? undefined,
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[whereKey],
+	);
+
+	const filterKey = JSON.stringify(activeFilters) + anyOfKey + whereKey;
 	const sortKey = sort ? `${sort.field}:${sort.direction}` : "";
 
 	// Everything that shapes the query, which is exactly what makes a
@@ -365,6 +375,7 @@ export function DataGrid({
 						measures,
 						filters: activeFilters,
 						anyOf: logic,
+						where: tree,
 						sort: sort
 							? [{ field: sort.field, direction: sort.direction }]
 							: [],
@@ -410,6 +421,7 @@ export function DataGrid({
 			measures,
 			activeFilters,
 			logic,
+			tree,
 			sort,
 			pageSize,
 			transforms,
@@ -445,6 +457,7 @@ export function DataGrid({
 				measures,
 				filters: activeFilters,
 				anyOf: logic,
+				where: tree,
 				sort: [],
 				limit: 1,
 				offset: 0,
@@ -510,6 +523,7 @@ export function DataGrid({
 				measures,
 				filters: comparisonFilters,
 				anyOf: logic,
+				where: tree,
 				sort: [],
 				limit: pageSize,
 				offset: 0,
@@ -535,6 +549,7 @@ export function DataGrid({
 	}, [
 		JSON.stringify(comparisonFilters),
 		anyOfKey,
+		whereKey,
 		sourceKey,
 		dimensions.join(","),
 		measures.join(","),
@@ -983,6 +998,7 @@ export function DataGrid({
 				measures,
 				filters: activeFilters,
 				anyOf: logic,
+				where: tree,
 				sort: sort
 					? [{ field: sort.field, direction: sort.direction }]
 					: [],

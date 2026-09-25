@@ -222,6 +222,7 @@ export default function ExploreView() {
 					measures={measures}
 					baseFilters={logic.filters}
 					anyOf={logic.anyOf}
+					where={logic.where}
 					fields={fields}
 					height="calc(100vh - var(--header-height) - 300px)"
 					showTotals={measures.length > 0}

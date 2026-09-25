@@ -1,17 +1,22 @@
 import assert from "node:assert/strict";
+import { cleanState } from "./state";
 import { test } from "node:test";
 import {
+	bracketProblem,
 	describeCondition,
+	openDepth,
 	parseCondition,
 	toFilterLogic,
+	withoutBracket,
+	withoutCondition,
 	type Condition,
 	type KnownField,
 } from "./conditions";
 
 const fields: KnownField[] = [
 	{ name: "Division", kind: "dimension" },
-	{ name: "Deal", kind: "dimension" },
-	{ name: "Deal Status", kind: "dimension" },
+	{ name: "Order", kind: "dimension" },
+	{ name: "Order Status", kind: "dimension" },
 	{ name: "Region", kind: "dimension" },
 	{ name: "Revenue", kind: "measure" },
 	{ name: "Revenue PY", kind: "measure" },
@@ -34,10 +39,13 @@ test("a simple equality is read", () => {
 // Field names contain spaces and prefix one another, so the longest match wins.
 test("the longest matching field name is chosen", () => {
 	assert.equal(
-		parseCondition("Deal Status is DRAFT", fields)?.condition.field,
-		"Deal Status",
+		parseCondition("Order Status is DRAFT", fields)?.condition.field,
+		"Order Status",
 	);
-	assert.equal(parseCondition("Deal = 12", fields)?.condition.field, "Deal");
+	assert.equal(
+		parseCondition("Order = 12", fields)?.condition.field,
+		"Order",
+	);
 	assert.equal(
 		parseCondition("Revenue PY > 5", fields)?.condition.field,
 		"Revenue PY",
@@ -46,21 +54,15 @@ test("the longest matching field name is chosen", () => {
 
 test("matching is case insensitive but keeps the field's own spelling", () => {
 	assert.equal(
-		parseCondition("division = Hardware", fields)?.condition.field,
+		parseCondition("division = hardware", fields)?.condition.field,
 		"Division",
 	);
 });
 
 test("comparison operators are read longest first", () => {
-	assert.equal(
-		parseCondition("Revenue >= 10", fields)?.condition.op,
-		"gte",
-	);
+	assert.equal(parseCondition("Revenue >= 10", fields)?.condition.op, "gte");
 	assert.equal(parseCondition("Revenue > 10", fields)?.condition.op, "gt");
-	assert.equal(
-		parseCondition("Revenue <= 10", fields)?.condition.op,
-		"lte",
-	);
+	assert.equal(parseCondition("Revenue <= 10", fields)?.condition.op, "lte");
 	assert.equal(parseCondition("Region != West", fields)?.condition.op, "neq");
 	assert.equal(parseCondition("Region <> West", fields)?.condition.op, "neq");
 	assert.equal(
@@ -144,9 +146,9 @@ test("AND binds tighter than OR", () => {
 		kinds,
 	);
 	assert.equal(logic.filters.length, 0);
-	assert.equal(logic.anyOf?.length, 2);
-	assert.equal(logic.anyOf?.[0].length, 2);
-	assert.equal(logic.anyOf?.[1].length, 1);
+	const where = logic.where as { any: unknown[] } | undefined;
+	assert.equal(where?.any.length, 2);
+	assert.equal((where?.any[0] as { all: unknown[] }).all.length, 2);
 });
 
 test("an OR across a dimension and a measure is reported, not sent", () => {
@@ -195,4 +197,267 @@ test("every described condition parses back into itself", () => {
 		const plain = (v: unknown) => JSON.parse(JSON.stringify(v));
 		assert.deepEqual(plain(back), plain(condition), text);
 	}
+});
+
+// Brackets. Typed around conditions, read into a tree with brackets first and
+// AND before OR, and refused in words when they do not pair up.
+
+test("brackets typed around a condition are read off it", () => {
+	const open = parseCondition("(Division = Hardware", fields)?.condition;
+	assert.equal(open?.open, 1);
+	assert.equal(open?.value, "Hardware");
+
+	const close = parseCondition("or Division = Software)", fields)?.condition;
+	assert.equal(close?.close, 1);
+	assert.equal(close?.value, "Software");
+	assert.equal(close?.join, "or");
+
+	const both = parseCondition(
+		"not ((Region in West, East))",
+		fields,
+	)?.condition;
+	assert.equal(both?.open, 2);
+	assert.equal(both?.close, 2);
+	assert.equal(both?.negate, true);
+	assert.deepEqual(both?.values, ["West", "East"]);
+});
+
+// A value can hold brackets of its own, and those are part of the value.
+test("brackets that belong to the value stay in it", () => {
+	const c = parseCondition("Region = ACME (US)", fields)?.condition;
+	assert.equal(c?.value, "ACME (US)");
+	assert.equal(c?.close, undefined);
+
+	const closing = parseCondition("Region = ACME (US))", fields)?.condition;
+	assert.equal(closing?.value, "ACME (US)");
+	assert.equal(closing?.close, 1);
+});
+
+test("a bracketed condition reads back as typed", () => {
+	const typed = "(not Region = West))";
+	const c = parseCondition(typed, fields)?.condition;
+	assert.ok(c);
+	assert.equal(describeCondition(c, true), "(not Region is West))");
+	assert.equal(describeCondition(c), "not Region is West");
+});
+
+const leaf = (value: string, over: Partial<Condition> = {}): Condition =>
+	c({ value, ...over });
+
+test("a bracket groups an OR inside an AND", () => {
+	const logic = toFilterLogic(
+		[
+			leaf("West"),
+			leaf("Hardware", { field: "Division", open: 1 }),
+			leaf("Software", { field: "Division", join: "or", close: 1 }),
+		],
+		kinds,
+	);
+	assert.deepEqual(logic.where, {
+		all: [
+			{ field: "Region", op: "eq", value: "West" },
+			{
+				any: [
+					{ field: "Division", op: "eq", value: "Hardware" },
+					{ field: "Division", op: "eq", value: "Software" },
+				],
+			},
+		],
+	});
+});
+
+test("without brackets AND still binds tighter than OR", () => {
+	const logic = toFilterLogic(
+		[
+			leaf("West"),
+			leaf("Hardware", { field: "Division" }),
+			leaf("East", { join: "or" }),
+		],
+		kinds,
+	);
+	assert.deepEqual(logic.where, {
+		any: [
+			{
+				all: [
+					{ field: "Region", op: "eq", value: "West" },
+					{ field: "Division", op: "eq", value: "Hardware" },
+				],
+			},
+			{ field: "Region", op: "eq", value: "East" },
+		],
+	});
+});
+
+test("brackets nest, and one condition can close several", () => {
+	const logic = toFilterLogic(
+		[
+			leaf("A", { open: 2 }),
+			leaf("B", { join: "or", close: 1 }),
+			leaf("C", { close: 1 }),
+			leaf("D", { join: "or" }),
+		],
+		kinds,
+	);
+	// ((A or B) and C) or D
+	assert.deepEqual(logic.where, {
+		any: [
+			{
+				all: [
+					{
+						any: [
+							{ field: "Region", op: "eq", value: "A" },
+							{ field: "Region", op: "eq", value: "B" },
+						],
+					},
+					{ field: "Region", op: "eq", value: "C" },
+				],
+			},
+			{ field: "Region", op: "eq", value: "D" },
+		],
+	});
+});
+
+test("a bracket around one condition is just that condition", () => {
+	const logic = toFilterLogic(
+		[leaf("A", { open: 1, close: 1 }), leaf("B")],
+		kinds,
+	);
+	assert.deepEqual(logic.where, {
+		all: [
+			{ field: "Region", op: "eq", value: "A" },
+			{ field: "Region", op: "eq", value: "B" },
+		],
+	});
+});
+
+test("unpaired brackets are reported, not sent", () => {
+	for (const row of [
+		[leaf("A", { open: 1 }), leaf("B")],
+		[leaf("A"), leaf("B", { close: 1 })],
+		[leaf("A", { close: 1 }), leaf("B", { open: 1 })],
+	]) {
+		const logic = toFilterLogic(row, kinds);
+		assert.ok(logic.problem, JSON.stringify(row));
+		assert.equal(logic.where, undefined);
+	}
+});
+
+// The case brackets exist for: a row condition beside a choice between totals.
+test("a bracketed OR of totals beside a row condition is allowed", () => {
+	const logic = toFilterLogic(
+		[
+			leaf("West"),
+			c({ field: "Revenue", op: "gt", value: "1", open: 1 }),
+			c({
+				field: "Revenue PY",
+				op: "gt",
+				value: "1",
+				join: "or",
+				close: 1,
+			}),
+		],
+		kinds,
+	);
+	assert.equal(logic.problem, undefined);
+	assert.ok(logic.where);
+});
+
+test("an OR mixing kinds inside a bracket is reported", () => {
+	const logic = toFilterLogic(
+		[
+			c({ open: 1 }),
+			c({
+				field: "Revenue",
+				op: "gt",
+				value: "1",
+				join: "or",
+				close: 1,
+			}),
+		],
+		kinds,
+	);
+	assert.ok(logic.problem);
+});
+
+test("a row with no brackets and no OR stays a plain list", () => {
+	const logic = toFilterLogic(
+		[leaf("West"), leaf("Hardware", { field: "Division" })],
+		kinds,
+	);
+	assert.equal(logic.where, undefined);
+	assert.equal(logic.filters.length, 2);
+});
+
+// Editing a bracketed row. Removing a chip or a bracket must never leave the
+// row with a bracket that does not pair, or the table stops loading on a click.
+
+const row = () => [
+	leaf("West"),
+	leaf("Hardware", { field: "Division", open: 1 }),
+	leaf("Software", { field: "Division", join: "or", close: 1 }),
+];
+
+test("removing the chip that opened a bracket hands it to the next", () => {
+	const after = withoutCondition(row(), 1);
+	assert.equal(bracketProblem(after), null);
+	assert.equal(after[1].open, 1);
+	// The group still joins what came before the way it did.
+	assert.equal(after[1].join, "and");
+});
+
+test("removing the chip that closed a bracket hands it to the one before", () => {
+	const after = withoutCondition(row(), 2);
+	assert.equal(bracketProblem(after), null);
+	assert.equal(after[1].close, 1);
+});
+
+test("a bracket around a single chip goes with it", () => {
+	const after = withoutCondition(
+		[leaf("A", { open: 1, close: 1 }), leaf("B")],
+		0,
+	);
+	assert.equal(bracketProblem(after), null);
+	assert.equal(after[0].open, undefined);
+});
+
+test("removing a bracket removes its pair", () => {
+	for (const [i, side] of [
+		[1, "open"],
+		[2, "close"],
+	] as const) {
+		const after = withoutBracket(row(), i, side);
+		assert.equal(bracketProblem(after), null);
+		assert.equal(openDepth(after), 0);
+		assert.ok(after.every((c) => !c.open && !c.close));
+	}
+});
+
+test("removing an outer bracket leaves the inner pair", () => {
+	const nested = [
+		leaf("A", { open: 2 }),
+		leaf("B", { join: "or", close: 1 }),
+		leaf("C", { close: 1 }),
+	];
+	const after = withoutBracket(nested, 0, "open", 0);
+	assert.equal(bracketProblem(after), null);
+	assert.equal(after[0].open, 1);
+	assert.equal(after[1].close, 1);
+	assert.equal(after[2].close, undefined);
+
+	// The second "(" is the inner one, and pairs with B.
+	const inner = withoutBracket(nested, 0, "open", 1);
+	assert.equal(bracketProblem(inner), null);
+	assert.equal(inner[1].close, undefined);
+	assert.equal(inner[2].close, 1);
+});
+
+test("brackets survive a saved view and a link", () => {
+	const kept = cleanState({
+		sourceKey: "s",
+		columns: [],
+		conditions: row(),
+	});
+	assert.equal(kept?.conditions[1].open, 1);
+	assert.equal(kept?.conditions[2].close, 1);
+	assert.equal(kept?.conditions[0].open, undefined);
 });

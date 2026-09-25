@@ -1,6 +1,6 @@
 // Conditions typed into the explore bar, and how a row of them becomes a query.
 //
-// Somebody types "Division = Hardware" or "or Revenue > 1000000" or "not Region
+// Somebody types "Category = Hardware" or "or Revenue > 1000000" or "not Region
 // in West, East" and gets a condition. The field names contain spaces, so the
 // field is found by matching the known names against the start of the text,
 // longest first, rather than by splitting on whitespace.
@@ -28,6 +28,11 @@ export interface Condition {
 	negate: boolean;
 	// How this condition joins the one before it. Ignored on the first.
 	join: "and" | "or";
+	// Brackets opened just before this condition and closed just after it, so
+	// "West and (Hardware or Software)" is West, then Hardware opening one, then Software
+	// closing it. Absent means none.
+	open?: number;
+	close?: number;
 }
 
 export interface KnownField {
@@ -81,6 +86,22 @@ export interface ParsedCondition {
 	typedValue: string;
 }
 
+// Closing brackets at the end of what was typed, taken off the value. Only
+// the ones the value does not account for itself: "ACME (US)" is a customer
+// name, while "Software)" is Software closing a bracket.
+function closingBrackets(text: string): [string, number] {
+	let body = text.trimEnd();
+	let close = 0;
+	while (body.endsWith(")")) {
+		const opens = (body.match(/\(/g) ?? []).length;
+		const closes = (body.match(/\)/g) ?? []).length;
+		if (closes <= opens) break;
+		body = body.slice(0, -1).trimEnd();
+		close++;
+	}
+	return [body, close];
+}
+
 function splitValues(text: string): string[] {
 	return text
 		.split(",")
@@ -104,11 +125,28 @@ export function parseCondition(
 		join = joinWord[1].toLowerCase() as "and" | "or";
 		rest = rest.slice(joinWord[0].length);
 	}
+	// Brackets can come before or after "not": "(not Region = West" and
+	// "not (Region = West" both read as a bracket opening on a negated
+	// condition.
+	let open = 0;
+	const takeOpens = () => {
+		const opens = /^\(+\s*/.exec(rest);
+		if (opens) {
+			open += (opens[0].match(/\(/g) ?? []).length;
+			rest = rest.slice(opens[0].length);
+		}
+	};
+	takeOpens();
 	const notWord = /^not\s+/i.exec(rest);
 	if (notWord) {
 		negate = true;
 		rest = rest.slice(notWord[0].length);
 	}
+	takeOpens();
+	const brackets = (close: number) => ({
+		...(open ? { open } : {}),
+		...(close ? { close } : {}),
+	});
 
 	const lower = rest.toLowerCase();
 	const field = [...fields]
@@ -132,10 +170,18 @@ export function parseCondition(
 		// is not read as "Region is olated".
 		if (!symbol && next !== "" && !/\s/.test(next)) continue;
 
-		const typed = afterField.slice(word.length).trim();
+		const [typed, close] = closingBrackets(
+			afterField.slice(word.length).trim(),
+		);
 		if (arity === "none") {
 			return {
-				condition: { field: field.name, op, negate, join },
+				condition: {
+					field: field.name,
+					op,
+					negate,
+					join,
+					...brackets(close),
+				},
 				partial: false,
 				typedValue: "",
 			};
@@ -143,14 +189,28 @@ export function parseCondition(
 		if (arity === "many") {
 			const values = splitValues(typed);
 			return {
-				condition: { field: field.name, op, values, negate, join },
+				condition: {
+					field: field.name,
+					op,
+					values,
+					negate,
+					join,
+					...brackets(close),
+				},
 				partial: values.length === 0,
 				typedValue: typed.split(",").pop()?.trim() ?? "",
 			};
 		}
 		const value = typed.replace(/^["']|["']$/g, "");
 		return {
-			condition: { field: field.name, op, value, negate, join },
+			condition: {
+				field: field.name,
+				op,
+				value,
+				negate,
+				join,
+				...brackets(close),
+			},
 			partial: value.length === 0,
 			typedValue: value,
 		};
@@ -160,8 +220,12 @@ export function parseCondition(
 }
 
 // Written in the same words the bar reads, so a chip put back into the box to
-// edit parses into the condition it came from.
-export function describeCondition(condition: Condition): string {
+// edit parses into the condition it came from. Brackets are included only when
+// asked for: a chip draws them as marks of their own either side of it.
+export function describeCondition(
+	condition: Condition,
+	withBrackets = false,
+): string {
 	const body = condition.values?.length
 		? `${condition.field} ${condition.op === "neq" ? "not in" : "in"} ${condition.values.join(", ")}`
 		: `${condition.field} ${operatorLabel[condition.op]}${
@@ -169,7 +233,9 @@ export function describeCondition(condition: Condition): string {
 					? ` ${condition.value}`
 					: ""
 			}`;
-	return condition.negate ? `not ${body}` : body;
+	const text = condition.negate ? `not ${body}` : body;
+	if (!withBrackets) return text;
+	return `${"(".repeat(condition.open ?? 0)}${text}${")".repeat(condition.close ?? 0)}`;
 }
 
 interface SpecFilter {
@@ -193,11 +259,108 @@ function toFilter(condition: Condition): SpecFilter {
 	};
 }
 
+// A condition tree in the shape the query takes.
+export type SpecNode =
+	| SpecFilter
+	| { all: SpecNode[] }
+	| { any: SpecNode[] }
+	| { not: SpecNode };
+
 export interface FilterLogic {
 	filters: SpecFilter[];
 	anyOf?: SpecFilter[][];
+	where?: SpecNode;
 	// Set when the row cannot be run as written, with the reason in words.
 	problem?: string;
+}
+
+// Where the brackets in a row do not pair up, in words, or null when they do.
+export function bracketProblem(conditions: Condition[]): string | null {
+	let depth = 0;
+	for (const c of conditions) {
+		depth += c.open ?? 0;
+		depth -= c.close ?? 0;
+		if (depth < 0) return "A bracket is closed before one was opened.";
+	}
+	if (depth > 0) {
+		return depth === 1
+			? "A bracket is opened and not closed."
+			: `${depth} brackets are opened and not closed.`;
+	}
+	return null;
+}
+
+// Reads a row of conditions into a tree: brackets first, then AND before OR,
+// the way the row is read aloud. "A and B or C" is either both A and B, or C,
+// and "A and (B or C)" is A with either B or C.
+//
+// Written as a small recursive reader over the row, one level per bracket.
+function toTree(conditions: Condition[]): SpecNode {
+	let at = 0;
+	// Brackets still to open before the condition at `at`, and still to close
+	// after the one before it, since one condition can carry several.
+	let opensLeft = conditions[0]?.open ?? 0;
+	let closesOwed = 0;
+
+	const leaf = (): SpecNode => {
+		if (opensLeft > 0) {
+			opensLeft--;
+			const inner = disjunction();
+			// The bracket this opened is closed by one owed from the last
+			// condition read inside it.
+			if (closesOwed > 0) closesOwed--;
+			return inner;
+		}
+		const c = conditions[at];
+		at++;
+		closesOwed += c.close ?? 0;
+		opensLeft = conditions[at]?.open ?? 0;
+		return toFilter(c);
+	};
+
+	// Stops at the end of the row, or where a bracket closes.
+	const more = () => at < conditions.length && closesOwed === 0;
+
+	const conjunction = (): SpecNode => {
+		const parts = [leaf()];
+		while (more() && conditions[at].join === "and") parts.push(leaf());
+		return parts.length === 1 ? parts[0] : { all: parts };
+	};
+
+	const disjunction = (): SpecNode => {
+		const parts = [conjunction()];
+		while (more() && conditions[at].join === "or")
+			parts.push(conjunction());
+		return parts.length === 1 ? parts[0] : { any: parts };
+	};
+
+	return disjunction();
+}
+
+// What kind each part of a tree tests, or "mixed" where an OR inside it holds
+// both. Mirrors the rule the query applies, so the problem is shown as the row
+// is typed rather than when the table fails to load.
+function kindOf(
+	node: SpecNode,
+	kinds: Map<string, "dimension" | "measure">,
+): "dimension" | "measure" | "mixed" {
+	if ("all" in node || "any" in node) {
+		const seen = new Set(
+			("all" in node ? node.all : node.any).map((n) => kindOf(n, kinds)),
+		);
+		return seen.size === 1 ? [...seen][0] : "mixed";
+	}
+	if ("not" in node) return kindOf(node.not, kinds);
+	return kinds.get(node.field) ?? "dimension";
+}
+
+function placeable(
+	node: SpecNode,
+	kinds: Map<string, "dimension" | "measure">,
+): boolean {
+	// A top-level AND is split into its parts, so only they need to be whole.
+	if ("all" in node) return node.all.every((n) => placeable(n, kinds));
+	return kindOf(node, kinds) !== "mixed";
 }
 
 // A row of conditions joined by AND and OR, read the way it is read aloud: AND
@@ -213,24 +376,113 @@ export function toFilterLogic(
 ): FilterLogic {
 	if (conditions.length === 0) return { filters: [] };
 
-	const groups: Condition[][] = [[]];
-	conditions.forEach((condition, i) => {
-		if (i > 0 && condition.join === "or") groups.push([]);
-		groups[groups.length - 1].push(condition);
-	});
+	const unpaired = bracketProblem(conditions);
+	if (unpaired) return { filters: [], problem: unpaired };
 
-	if (groups.length === 1) {
-		return { filters: groups[0].map(toFilter) };
+	const grouped = conditions.some((c) => c.open || c.close);
+	const alternatives = conditions.some((c, i) => i > 0 && c.join === "or");
+
+	// No brackets and no OR is a plain list, the same query a report would
+	// send, so it shares the report's cache.
+	if (!grouped && !alternatives) {
+		return { filters: conditions.map(toFilter) };
 	}
 
-	const seen = new Set(conditions.map((c) => kinds.get(c.field)));
-	if (seen.size > 1) {
+	const where = toTree(conditions);
+	if (!placeable(where, kinds)) {
 		return {
 			filters: [],
 			problem:
-				"An OR can't mix a column that groups rows with one that totals them. Keep both sides of the OR to one kind.",
+				"An OR can't mix a column that groups rows with one that totals them. Keep everything inside one OR to one kind, or join them with AND.",
 		};
 	}
+	return { filters: [], where };
+}
 
-	return { filters: [], anyOf: groups.map((g) => g.map(toFilter)) };
+// Removes one condition without leaving its brackets unpaired. A bracket it
+// opened moves to the condition after it, which also takes over how the group
+// joins what came before. A bracket it closed moves to the one before it. A
+// bracket it both opened and closed held only it, and goes with it.
+export function withoutCondition(
+	conditions: Condition[],
+	index: number,
+): Condition[] {
+	const gone = conditions[index];
+	if (!gone) return conditions;
+	let open = gone.open ?? 0;
+	let close = gone.close ?? 0;
+	const both = Math.min(open, close);
+	open -= both;
+	close -= both;
+
+	const rest = conditions.map((c) => ({ ...c }));
+	const next = rest[index + 1];
+	const prev = rest[index - 1];
+	if (open > 0 && next) {
+		next.open = (next.open ?? 0) + open;
+		next.join = gone.join;
+	}
+	if (close > 0 && prev) prev.close = (prev.close ?? 0) + close;
+	return tidy(rest.filter((_, i) => i !== index));
+}
+
+// Takes away one bracket and the one it pairs with.
+//
+// A condition can carry several brackets on one side, so which one was meant
+// is given by its position among them, counted from the left: the first "(" is
+// the outermost, the first ")" the innermost.
+export function withoutBracket(
+	conditions: Condition[],
+	index: number,
+	side: "open" | "close",
+	position = 0,
+): Condition[] {
+	const rest = conditions.map((c) => ({ ...c }));
+	const at = rest[index];
+	if (!at) return conditions;
+
+	let pair = -1;
+	if (side === "open") {
+		// This bracket and every one inside it opened at the same condition,
+		// less those the condition closes again itself.
+		let depth = (at.open ?? 0) - position - (at.close ?? 0);
+		if (depth <= 0) pair = index;
+		for (let i = index + 1; pair < 0 && i < rest.length; i++) {
+			depth += (rest[i].open ?? 0) - (rest[i].close ?? 0);
+			if (depth <= 0) pair = i;
+		}
+		at.open = (at.open ?? 0) - 1;
+		if (pair >= 0) rest[pair].close = (rest[pair].close ?? 0) - 1;
+	} else {
+		let depth = position + 1 - (at.open ?? 0);
+		if (depth <= 0) pair = index;
+		for (let i = index - 1; pair < 0 && i >= 0; i--) {
+			depth += (rest[i].close ?? 0) - (rest[i].open ?? 0);
+			if (depth <= 0) pair = i;
+		}
+		at.close = (at.close ?? 0) - 1;
+		if (pair >= 0) rest[pair].open = (rest[pair].open ?? 0) - 1;
+	}
+	return tidy(rest);
+}
+
+// Brackets not yet closed at the end of the row.
+export function openDepth(conditions: Condition[]): number {
+	return conditions.reduce(
+		(depth, c) => depth + (c.open ?? 0) - (c.close ?? 0),
+		0,
+	);
+}
+
+// Counts at zero are left off, so a row with no brackets is spelled exactly as
+// it was before brackets existed.
+function tidy(conditions: Condition[]): Condition[] {
+	return conditions.map((c) => {
+		const { open, close, ...rest } = c;
+		return {
+			...rest,
+			...(open && open > 0 ? { open } : {}),
+			...(close && close > 0 ? { close } : {}),
+		};
+	});
 }

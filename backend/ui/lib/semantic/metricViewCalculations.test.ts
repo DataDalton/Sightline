@@ -9,8 +9,8 @@ import {
 // in the same file, so a reader that handles only the plain spelling shows
 // half of the expressions with backslashes in them.
 
-const definition = `CREATE VIEW c.s.deals (
-  Deal ID COMMENT 'Identifier'
+const definition = `CREATE VIEW c.s.orders (
+  Order ID COMMENT 'Identifier'
 )
 WITH METRICS
 LANGUAGE YAML
@@ -22,9 +22,9 @@ source: c.gold.order_lines
 filter: ROW_TYPE IS NOT NULL
 
 joins:
-  - name: dim_deal
+  - name: dim_order
     source: c.gold.orders
-    "on": source.DEAL_ID = dim_deal.DEAL_ID
+    "on": source.ORDER_ID = dim_order.ORDER_ID
     cardinality: many_to_one
 
 comment: |-
@@ -32,13 +32,13 @@ comment: |-
   over two lines.
 
 dimensions:
-  - name: Deal ID
-    expr: DEAL_ID
-    comment: Identifier of the deal
+  - name: Order ID
+    expr: ORDER_ID
+    comment: Identifier of the order
 
-  - name: Deal Status
-    expr: dim_deal.STATUS
-    comment: "Where the deal sits in the workflow, DRAFT on one still being\\
+  - name: Order Status
+    expr: dim_order.STATUS
+    comment: "Where the order sits in the workflow, DRAFT on one still being\\
       \\ built"
 
 measures:
@@ -50,21 +50,21 @@ measures:
     expr: "100 * (MEASURE(\`Margin\`) / NULLIF(MEASURE(\`Revenue\`), 0))"
     comment: "Margin divided by Revenue"
 
-  - name: Expected Spend
+  - name: Budget To Date
     expr: "SUM(CASE WHEN DATEKEY <= last_day(add_months(current_date(), -1)) THEN\\
       \\ BUDGET END)"
-    comment: "Proposed cost to date"
+    comment: "Budget to date"
 
   - name: Revenue YTD
     expr: SUM(REVENUE)
     window:
-      - order: Deal Year
+      - order: Order Year
         semiadditive: last
         range: current
-      - order: Deal Month
+      - order: Order Month
         semiadditive: last
         range: cumulative
-    comment: "Accumulated across Deal Month"
+    comment: "Accumulated across Order Month"
 
   - name: Quoted With Apostrophe
     expr: 'COUNT(CASE WHEN BCS = ''BASE'' THEN 1 END)'
@@ -82,8 +82,8 @@ const parsed = parseMetricViewCalculations(definition);
 
 test("a plain expression is read as written", () => {
 	assert.equal(parsed.fields.get("Revenue")?.expr, "SUM(REVENUE)");
-	assert.equal(parsed.fields.get("Deal ID")?.expr, "DEAL_ID");
-	assert.equal(parsed.fields.get("Deal Status")?.expr, "dim_deal.STATUS");
+	assert.equal(parsed.fields.get("Order ID")?.expr, "ORDER_ID");
+	assert.equal(parsed.fields.get("Order Status")?.expr, "dim_order.STATUS");
 });
 
 test("a double quoted expression loses its quotes and keeps its backticks", () => {
@@ -97,7 +97,7 @@ test("a double quoted expression loses its quotes and keeps its backticks", () =
 // wrongly it comes back as the first half with a trailing backslash.
 test("an escaped line continuation joins with the space it kept", () => {
 	assert.equal(
-		parsed.fields.get("Expected Spend")?.expr,
+		parsed.fields.get("Budget To Date")?.expr,
 		"SUM(CASE WHEN DATEKEY <= last_day(add_months(current_date(), -1)) THEN BUDGET END)",
 	);
 });
@@ -119,7 +119,7 @@ test("a literal block keeps its lines", () => {
 test("a windowed measure carries its window as written", () => {
 	const ytd = parsed.fields.get("Revenue YTD");
 	assert.equal(ytd?.expr, "SUM(REVENUE)");
-	assert.ok(ytd?.window?.includes("order: Deal Month"));
+	assert.ok(ytd?.window?.includes("order: Order Month"));
 	assert.ok(ytd?.window?.includes("range: cumulative"));
 	assert.equal(parsed.fields.get("Revenue")?.window, null);
 });
@@ -136,9 +136,9 @@ test("the view's source, filter and joins are read", () => {
 	assert.equal(parsed.filter, "ROW_TYPE IS NOT NULL");
 	assert.deepEqual(parsed.joins, [
 		{
-			name: "dim_deal",
+			name: "dim_order",
 			source: "c.gold.orders",
-			on: "source.DEAL_ID = dim_deal.DEAL_ID",
+			on: "source.ORDER_ID = dim_order.ORDER_ID",
 		},
 	]);
 });

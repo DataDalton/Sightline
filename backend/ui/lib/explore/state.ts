@@ -39,6 +39,20 @@ function text(value: unknown): string | null {
 	return typeof value === "string" ? value.slice(0, maxText) : null;
 }
 
+// Brackets on one condition. More than a handful at one place is not a query
+// anybody wrote.
+const maxBrackets = 8;
+
+function bracketCount(
+	key: "open" | "close",
+	value: unknown,
+): Partial<Record<"open" | "close", number>> {
+	const n = Number(value);
+	return Number.isInteger(n) && n > 0
+		? { [key]: Math.min(n, maxBrackets) }
+		: {};
+}
+
 export function cleanState(raw: unknown): ExploreState | null {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
 	const o = raw as Record<string, unknown>;
@@ -77,6 +91,8 @@ export function cleanState(raw: unknown): ExploreState | null {
 					: {}),
 			negate: c.negate === true,
 			join: c.join === "or" ? "or" : "and",
+			...bracketCount("open", c.open),
+			...bracketCount("close", c.close),
 		});
 	}
 

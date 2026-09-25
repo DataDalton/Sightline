@@ -10,6 +10,7 @@ import {
 	defaultBins,
 	type QueryFilter,
 	type QuerySpec,
+	type FilterNode,
 } from "./spec";
 import { distributionColumns } from "./visualSpec";
 
@@ -264,6 +265,49 @@ function resolveFilters(
 		if (kinds.has("measure")) havingParts.push(`(${either})`);
 		else whereParts.push(`(${either})`);
 	}
+
+	// A condition tree. Every part of it has to land in one clause: a
+	// dimension is tested per row before grouping and a measure per group
+	// after it, so a bracket holding both kinds under OR or NOT has no single
+	// place in the statement where it means anything. Under AND it does not
+	// need one: a top-level AND is split, each side going to its own clause,
+	// so "Region is West and (Revenue over 1m or Units over 50)" is a WHERE
+	// and a HAVING.
+	const whole = (
+		node: FilterNode,
+	): { kind: "dimension" | "measure"; sql: string } => {
+		if ("all" in node || "any" in node) {
+			const children = ("all" in node ? node.all : node.any).map(whole);
+			const kinds = new Set(children.map((c) => c.kind));
+			if (kinds.size > 1) {
+				throw new QuerySpecError(
+					"A bracketed OR cannot mix a dimension and a measure. Keep everything inside one OR to one kind, or join them with AND.",
+				);
+			}
+			const joiner = "all" in node ? " AND " : " OR ";
+			return {
+				kind: children[0].kind,
+				sql: `(${children.map((c) => c.sql).join(joiner)})`,
+			};
+		}
+		if ("not" in node) {
+			const inner = whole(node.not);
+			return { kind: inner.kind, sql: `((${inner.sql}) IS NOT TRUE)` };
+		}
+		return compile(node);
+	};
+
+	const place = (node: FilterNode) => {
+		if ("all" in node) {
+			for (const child of node.all) place(child);
+			return;
+		}
+		const { kind, sql } = whole(node);
+		if (kind === "measure") havingParts.push(sql);
+		else whereParts.push(sql);
+	};
+
+	if (spec.where) place(spec.where);
 
 	return { params, whereParts, havingParts };
 }
