@@ -706,3 +706,46 @@
 	color: var(--text-muted);
 	font-size: var(--text-xs);
 }
+
+/* --- Brackets ------------------------------------------------------------ */
+
+/* A bracket either side of a filter, drawn large enough to see the grouping
+   at a glance. A click takes it and its pair away. */
+.bracket {
+	padding: 0 2px;
+	border: none;
+	border-radius: var(--radius-sm);
+	background: none;
+	color: var(--brand);
+	font-family: var(--font-mono, ui-monospace, monospace);
+	font-size: var(--text-lg);
+	font-weight: 700;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.bracket:hover {
+	background: var(--state-hover);
+	color: var(--danger);
+}
+
+.bracketTools {
+	display: inline-flex;
+	gap: 2px;
+	margin-left: auto;
+	padding: 2px;
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-sm);
+	background: var(--surface-sunken);
+}
+
+.bracketTools .joinOption {
+	font-family: var(--font-mono, ui-monospace, monospace);
+	font-size: var(--text-sm);
+	letter-spacing: 0;
+}
+
+.bracketTools .joinOption:disabled {
+	opacity: 0.4;
+	cursor: not-allowed;
+}

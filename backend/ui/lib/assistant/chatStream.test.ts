@@ -25,14 +25,14 @@ test("text is handed on piece by piece and collected", async () => {
 	const seen: string[] = [];
 	const turn = await readChatStream(
 		streamOf([
-			event({ role: "assistant", content: "Gross " }),
-			event({ content: "sale rose" }),
+			event({ role: "assistant", content: "Revenue " }),
+			event({ content: "rose" }),
 			event({ content: " 12%." }),
 			"data: [DONE]\n\n",
 		]),
 		(d) => seen.push(d),
 	);
-	assert.deepEqual(seen, ["Gross ", "sale rose", " 12%."]);
+	assert.deepEqual(seen, ["Revenue ", "rose", " 12%."]);
 	assert.equal(turn.content, "Revenue rose 12%.");
 	assert.deepEqual(turn.toolCalls, []);
 });
@@ -64,7 +64,9 @@ test("a tool call assembled from fragments", async () => {
 				],
 			}),
 			event({
-				tool_calls: [{ index: 0, function: { arguments: '"deals"}' } }],
+				tool_calls: [
+					{ index: 0, function: { arguments: '"orders"}' } },
+				],
 			}),
 			"data: [DONE]\n\n",
 		]),
@@ -73,7 +75,7 @@ test("a tool call assembled from fragments", async () => {
 	assert.equal(turn.toolCalls[0].id, "call_1");
 	assert.equal(turn.toolCalls[0].function.name, "run_query");
 	assert.deepEqual(JSON.parse(turn.toolCalls[0].function.arguments), {
-		sourceKey: "deals",
+		sourceKey: "orders",
 	});
 });
 

@@ -36,7 +36,7 @@ test("text with no step after it is the answer", () => {
 // thinking out loud, and belongs with the working rather than in the answer.
 test("text before a step becomes narration, not answer", () => {
 	const m = play([
-		{ type: "text", delta: "Checking the deals data." },
+		{ type: "text", delta: "Checking the orders data." },
 		{ type: "step", id: "1", kind: "describe_source", label: "Reading" },
 		{ type: "stepDone", id: "1", ok: true, summary: "107 fields" },
 		{ type: "text", delta: "Revenue is up." },
@@ -48,7 +48,7 @@ test("text before a step becomes narration, not answer", () => {
 	);
 	assert.equal(
 		m.activity[0].type === "narration" && m.activity[0].text,
-		"Checking the deals data.",
+		"Checking the orders data.",
 	);
 	assert.equal(m.answer, "Revenue is up.");
 	assert.equal(m.ranAs, "caller");

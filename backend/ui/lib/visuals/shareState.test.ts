@@ -69,7 +69,7 @@ test("the whole thing stays short", () => {
 				{
 					field: "Business Unit",
 					op: "eq",
-					values: ["Hardware", "Software", "Medical"],
+					values: ["Hardware", "Software", "Services"],
 				},
 			],
 		},
