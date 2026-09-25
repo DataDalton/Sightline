@@ -1,0 +1,1176 @@
+/* A conversation column with the question box pinned to the foot, the way
+   every chat somebody has used before is laid out. */
+.page {
+	width: 100%;
+	max-width: 1000px;
+	margin: 0 auto;
+	min-height: calc(100vh - var(--header-height));
+	padding: var(--space-6) var(--space-5) 0;
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-4);
+}
+
+@media (max-width: 720px) {
+	.page {
+		padding: var(--space-4) var(--space-3) 0;
+	}
+}
+
+.header {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: var(--space-4);
+}
+
+.title {
+	font-size: var(--text-2xl);
+	font-weight: 600;
+	letter-spacing: -0.02em;
+}
+
+.subtitle {
+	color: var(--text-secondary);
+	max-width: 70ch;
+	line-height: 1.5;
+}
+
+.newChat {
+	flex-shrink: 0;
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font-family: inherit;
+	font-size: var(--text-sm);
+	cursor: pointer;
+}
+
+.newChat:hover {
+	background: var(--state-hover);
+}
+
+.thread {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-4);
+}
+
+.examples {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: var(--space-2);
+}
+
+.example {
+	padding: var(--space-2) var(--space-4);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-full);
+	background: var(--surface-raised);
+	color: var(--text-secondary);
+	font-family: inherit;
+	font-size: var(--text-sm);
+	text-align: left;
+	cursor: pointer;
+}
+
+.example:hover {
+	border-color: var(--border-default);
+	color: var(--text-primary);
+}
+
+.userTurn {
+	align-self: flex-end;
+	max-width: 80%;
+	padding: var(--space-3) var(--space-4);
+	border-radius: var(--radius-lg);
+	background: var(--surface-sunken);
+	color: var(--text-primary);
+	line-height: 1.5;
+	white-space: pre-wrap;
+}
+
+.assistantTurn {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+}
+
+.failure {
+	padding: var(--space-3) var(--space-4);
+	border: 1px solid var(--border-default);
+	border-left: 3px solid var(--warning);
+	border-radius: 0 var(--radius-md) var(--radius-md) 0;
+	background: var(--surface-sunken);
+	color: var(--text-primary);
+	line-height: 1.5;
+}
+
+.working {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	color: var(--text-secondary);
+	font-size: var(--text-sm);
+}
+
+.dots::after {
+	content: "";
+	animation: dots 1.2s steps(4, end) infinite;
+}
+
+@keyframes dots {
+	0% {
+		content: "";
+	}
+	25% {
+		content: ".";
+	}
+	50% {
+		content: "..";
+	}
+	75% {
+		content: "...";
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.dots::after {
+		animation: none;
+		content: "...";
+	}
+}
+
+.result {
+	padding: var(--space-3);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-lg);
+	background: var(--surface-raised);
+}
+
+.chartTitle {
+	margin-bottom: var(--space-2);
+	font-size: var(--text-md);
+	font-weight: 600;
+	color: var(--text-primary);
+}
+
+.query {
+	font-size: var(--text-sm);
+	color: var(--text-secondary);
+}
+
+.query summary {
+	cursor: pointer;
+	padding: var(--space-1) 0;
+}
+
+.query summary:hover {
+	color: var(--text-primary);
+}
+
+.queryList {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	margin-top: var(--space-2);
+	padding: var(--space-3) var(--space-3) var(--space-3) var(--space-6);
+	border-radius: var(--radius-md);
+	background: var(--surface-sunken);
+	line-height: 1.5;
+}
+
+.queryRows {
+	margin-left: var(--space-2);
+	color: var(--text-muted);
+}
+
+.mono {
+	font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+/* Pinned to the foot of the viewport rather than the foot of the thread, so a
+   long answer never pushes the next question off screen. */
+.ask {
+	position: sticky;
+	bottom: 0;
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	padding: var(--space-3) 0 var(--space-4);
+	background: var(--surface-base);
+	border-top: 1px solid var(--border-subtle);
+}
+
+.question {
+	width: 100%;
+	min-height: 56px;
+	padding: var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font-family: inherit;
+	font-size: var(--text-md);
+	line-height: 1.5;
+	resize: vertical;
+}
+
+.question:focus-visible {
+	outline: 2px solid var(--brand);
+	outline-offset: 1px;
+}
+
+.askControls {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-2);
+}
+
+.submit {
+	padding: var(--space-2) var(--space-5);
+	border: 1px solid var(--brand);
+	border-radius: var(--radius-md);
+	background: var(--brand);
+	color: var(--brand-contrast);
+	font-family: inherit;
+	font-size: var(--text-md);
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.submit:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+/* --- Written answer ------------------------------------------------------ */
+
+.md {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+	color: var(--text-primary);
+	line-height: 1.6;
+	min-width: 0;
+}
+
+.mdP {
+	margin: 0;
+}
+
+.mdH2 {
+	font-size: var(--text-lg);
+	font-weight: 600;
+}
+
+.mdH3 {
+	font-size: var(--text-md);
+	font-weight: 600;
+}
+
+.mdList {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	padding-left: var(--space-5);
+}
+
+.md code {
+	padding: 1px 4px;
+	border-radius: var(--radius-sm);
+	background: var(--surface-sunken);
+	font-family: var(--font-mono, ui-monospace, monospace);
+	font-size: 0.92em;
+}
+
+.mdTableWrap {
+	overflow-x: auto;
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-md);
+}
+
+.mdTable {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: var(--text-sm);
+	font-variant-numeric: tabular-nums;
+}
+
+.mdTable th,
+.mdTable td {
+	padding: var(--space-2) var(--space-3);
+	border-bottom: 1px solid var(--border-subtle);
+	text-align: left;
+}
+
+.mdTable th {
+	background: var(--surface-sunken);
+	font-weight: 600;
+}
+
+.mdTable tbody tr:last-child td {
+	border-bottom: none;
+}
+
+/* --- Working, shown as it happens --------------------------------------- */
+
+.activity {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+
+.activityToggle {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1);
+	align-self: flex-start;
+	padding: 0;
+	border: none;
+	background: none;
+	color: var(--text-secondary);
+	font-family: inherit;
+	font-size: var(--text-sm);
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.activityToggle:hover {
+	color: var(--text-primary);
+}
+
+.chevron {
+	transition: transform var(--transition-fast);
+}
+
+.chevronOpen {
+	transform: rotate(90deg);
+	transition: transform var(--transition-fast);
+}
+
+/* A rule down the left ties the steps to the answer they led to. */
+.activityList {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	margin-left: 5px;
+	padding-left: var(--space-3);
+	border-left: 2px solid var(--border-subtle);
+	list-style: none;
+}
+
+.narration {
+	padding: var(--space-1) 0;
+	color: var(--text-secondary);
+	font-size: var(--text-sm);
+	font-style: italic;
+	line-height: 1.5;
+}
+
+.step {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+}
+
+.stepHead {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	width: 100%;
+	padding: var(--space-1) var(--space-2);
+	border: none;
+	border-radius: var(--radius-sm);
+	background: none;
+	color: var(--text-primary);
+	font-family: inherit;
+	font-size: var(--text-sm);
+	text-align: left;
+	cursor: pointer;
+}
+
+.stepHead:disabled {
+	cursor: default;
+}
+
+.stepHead:not(:disabled):hover {
+	background: var(--state-hover);
+}
+
+.stepLabel {
+	flex: 1;
+	min-width: 0;
+	line-height: 1.4;
+	overflow-wrap: anywhere;
+}
+
+.stepMeta {
+	display: inline-flex;
+	gap: var(--space-2);
+	flex-shrink: 0;
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+	font-variant-numeric: tabular-nums;
+}
+
+.stepOk {
+	flex-shrink: 0;
+	color: var(--success);
+}
+
+.stepFailed {
+	flex-shrink: 0;
+	color: var(--danger);
+}
+
+.spinner {
+	flex-shrink: 0;
+	width: 14px;
+	height: 14px;
+	border: 2px solid var(--border-default);
+	border-top-color: var(--brand);
+	border-radius: 50%;
+	animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.spinner {
+		animation-duration: 2.4s;
+	}
+}
+
+.previewWrap {
+	margin: 0 0 var(--space-2) var(--space-6);
+	overflow-x: auto;
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-md);
+}
+
+.preview {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: var(--text-xs);
+	font-variant-numeric: tabular-nums;
+}
+
+.preview th,
+.preview td {
+	padding: var(--space-1) var(--space-2);
+	border-bottom: 1px solid var(--border-subtle);
+	text-align: left;
+	white-space: nowrap;
+}
+
+.preview th {
+	background: var(--surface-sunken);
+	font-weight: 600;
+}
+
+.previewMore {
+	padding: var(--space-1) var(--space-2);
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+}
+
+/* The point the answer is being written at. */
+.caret {
+	display: inline-block;
+	width: 8px;
+	height: 16px;
+	margin-top: -8px;
+	background: var(--brand);
+	animation: blink 1s steps(2, start) infinite;
+}
+
+@keyframes blink {
+	to {
+		visibility: hidden;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.caret {
+		animation: none;
+	}
+}
+
+.stopped {
+	color: var(--text-muted);
+	font-size: var(--text-sm);
+}
+
+.answerFoot {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+}
+
+/* The follow-up the model suggests, asked with one click. Often a whole
+   sentence, so it is a card that wraps rather than a pill that crowds its text
+   into the curve of its ends. */
+.next {
+	max-width: 100%;
+	padding: var(--space-3) var(--space-4);
+	border: 1px solid color-mix(in srgb, var(--brand) 45%, transparent);
+	border-radius: var(--radius-lg);
+	line-height: 1.5;
+	background: color-mix(in srgb, var(--brand) 10%, transparent);
+	color: var(--text-primary);
+	font-family: inherit;
+	font-size: var(--text-sm);
+	text-align: left;
+	cursor: pointer;
+}
+
+.next:hover:not(:disabled) {
+	border-color: var(--brand);
+}
+
+.footActions {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+	margin-left: auto;
+}
+
+.footMeta {
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+	font-variant-numeric: tabular-nums;
+}
+
+.footButton {
+	padding: 2px var(--space-2);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-sm);
+	background: none;
+	color: var(--text-secondary);
+	font-family: inherit;
+	font-size: var(--text-xs);
+	cursor: pointer;
+}
+
+.footButton:hover:not(:disabled) {
+	color: var(--text-primary);
+	border-color: var(--border-default);
+}
+
+.stop {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+	padding: var(--space-2) var(--space-4);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font-family: inherit;
+	font-size: var(--text-md);
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.stop:hover {
+	border-color: var(--danger);
+	color: var(--danger);
+}
+
+/* --- The panel on every page -------------------------------------------- */
+
+.dockButton {
+	position: fixed;
+	right: var(--space-5);
+	bottom: var(--space-5);
+	z-index: 60;
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+	padding: var(--space-3) var(--space-4);
+	border: none;
+	border-radius: var(--radius-full);
+	background: var(--brand);
+	color: var(--brand-contrast);
+	font-family: inherit;
+	font-size: var(--text-md);
+	font-weight: 600;
+	box-shadow: var(--shadow-lg);
+	cursor: pointer;
+	transition: transform var(--transition-fast);
+}
+
+.dockButton:hover {
+	transform: translateY(-1px);
+}
+
+/* Still working after the panel was closed, so the reader knows to look. */
+.dockBusy::after {
+	content: "";
+	position: absolute;
+	inset: -4px;
+	border: 2px solid var(--brand);
+	border-radius: var(--radius-full);
+	animation: pulse 1.4s ease-out infinite;
+}
+
+@keyframes pulse {
+	from {
+		opacity: 0.8;
+		transform: scale(1);
+	}
+	to {
+		opacity: 0;
+		transform: scale(1.15);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.dockBusy::after {
+		animation: none;
+	}
+}
+
+/* Below the header and down the right edge, so the page it is asking about
+   stays visible beside it. */
+.dock {
+	position: fixed;
+	top: calc(var(--header-height) + var(--space-3));
+	right: var(--space-3);
+	bottom: var(--space-3);
+	z-index: 60;
+	max-width: calc(100vw - var(--space-6));
+	display: flex;
+	flex-direction: column;
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-lg);
+	background: var(--surface-base);
+	box-shadow: var(--shadow-lg);
+	overflow: hidden;
+	animation: popoverIn 140ms ease-out;
+}
+
+.dockHead {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-2);
+	padding: var(--space-3) var(--space-4);
+	border-bottom: 1px solid var(--border-subtle);
+}
+
+.dockTitle {
+	font-weight: 600;
+}
+
+.dockActions {
+	display: inline-flex;
+	gap: var(--space-1);
+}
+
+.iconButton {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 30px;
+	height: 30px;
+	border: none;
+	border-radius: var(--radius-sm);
+	background: none;
+	color: var(--text-secondary);
+	cursor: pointer;
+}
+
+.iconButton:hover:not(:disabled) {
+	background: var(--state-hover);
+	color: var(--text-primary);
+}
+
+.dockBody {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	padding: var(--space-4);
+}
+
+.dockFoot {
+	padding: 0 var(--space-3) var(--space-3);
+	border-top: 1px solid var(--border-subtle);
+}
+
+.askCompact {
+	position: static;
+	border-top: none;
+	padding: var(--space-3) 0 0;
+	background: none;
+}
+
+/* The panel's left edge, which can be dragged. */
+.dockResize {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: -4px;
+	z-index: 1;
+	width: 8px;
+	cursor: ew-resize;
+}
+
+.dockResize:hover,
+.dockResize:active {
+	background: linear-gradient(
+		to right,
+		transparent 3px,
+		var(--brand) 3px,
+		var(--brand) 5px,
+		transparent 5px
+	);
+}
+
+.iconButtonOn {
+	background: var(--surface-sunken);
+	color: var(--text-primary);
+}
+
+/* --- Full page with history ---------------------------------------------- */
+
+.fullPage {
+	display: grid;
+	grid-template-columns: 260px minmax(0, 1fr);
+	min-height: calc(100vh - var(--header-height));
+}
+
+@media (max-width: 900px) {
+	.fullPage {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.fullSide {
+		display: none;
+	}
+}
+
+.fullSide {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	padding: var(--space-5) var(--space-3);
+	border-right: 1px solid var(--border-subtle);
+	position: sticky;
+	top: 0;
+	max-height: calc(100vh - var(--header-height));
+	overflow-y: auto;
+}
+
+.newChatWide {
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font-family: inherit;
+	font-size: var(--text-sm);
+	font-weight: 600;
+	text-align: left;
+	cursor: pointer;
+}
+
+.newChatWide:hover:not(:disabled) {
+	background: var(--state-hover);
+}
+
+.sideLink {
+	padding: var(--space-2) var(--space-3);
+	border: none;
+	border-radius: var(--radius-sm);
+	background: none;
+	color: var(--text-secondary);
+	font-family: inherit;
+	font-size: var(--text-sm);
+	text-align: left;
+	cursor: pointer;
+}
+
+.sideLink:hover,
+.sideLinkOn {
+	background: var(--surface-sunken);
+	color: var(--text-primary);
+}
+
+/* --- Conversation history ------------------------------------------------ */
+
+.history {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+
+.historySearch {
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font-family: inherit;
+	font-size: var(--text-sm);
+}
+
+.historyEmpty {
+	padding: var(--space-2) var(--space-1);
+	color: var(--text-muted);
+	font-size: var(--text-sm);
+	line-height: 1.5;
+}
+
+.historyList {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	list-style: none;
+}
+
+.historyItem {
+	display: flex;
+	align-items: center;
+	gap: var(--space-1);
+	border-radius: var(--radius-sm);
+}
+
+.historyItem:hover {
+	background: var(--state-hover);
+}
+
+.historyCurrent {
+	background: var(--surface-sunken);
+}
+
+.historyOpen {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: var(--space-2);
+	border: none;
+	background: none;
+	color: var(--text-primary);
+	font-family: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.historyTitle {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: var(--text-sm);
+}
+
+.historyMeta {
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+}
+
+.historyConfirm {
+	display: inline-flex;
+	gap: var(--space-1);
+	padding-right: var(--space-1);
+}
+
+.historyDelete {
+	padding: 2px var(--space-2);
+	border: 1px solid var(--danger);
+	border-radius: var(--radius-sm);
+	background: none;
+	color: var(--danger);
+	font-family: inherit;
+	font-size: var(--text-xs);
+	cursor: pointer;
+}
+
+.memoryText {
+	flex: 1;
+	min-width: 0;
+	padding: var(--space-2);
+	font-size: var(--text-sm);
+	line-height: 1.5;
+}
+
+/* --- Preferences ---------------------------------------------------------- */
+
+.prefs {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-5);
+	max-width: 720px;
+}
+
+.prefsSection {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+
+.prefsTitle {
+	font-size: var(--text-md);
+	font-weight: 600;
+}
+
+.prefsHint {
+	color: var(--text-secondary);
+	font-size: var(--text-sm);
+	line-height: 1.5;
+}
+
+.prefsActions {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-2);
+}
+
+/* --- Pointing at the page ------------------------------------------------- */
+
+.attachments {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-1);
+}
+
+.attachment {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1);
+	max-width: 100%;
+	padding: 2px 2px 2px var(--space-2);
+	border: 1px solid color-mix(in srgb, var(--brand) 45%, transparent);
+	border-radius: var(--radius-full);
+	background: color-mix(in srgb, var(--brand) 10%, transparent);
+	color: var(--text-primary);
+	font-size: var(--text-xs);
+}
+
+.attachmentLabel {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	max-width: 260px;
+}
+
+.chipX {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	border: none;
+	border-radius: 50%;
+	background: none;
+	color: var(--text-muted);
+	font-size: var(--text-sm);
+	line-height: 1;
+	cursor: pointer;
+}
+
+.chipX:hover {
+	background: var(--state-hover);
+	color: var(--text-primary);
+}
+
+.userAttached {
+	display: block;
+	margin-bottom: var(--space-1);
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+}
+
+.pickButton {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1);
+	flex-shrink: 0;
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	color: var(--text-secondary);
+	font-family: inherit;
+	font-size: var(--text-sm);
+	cursor: pointer;
+}
+
+.pickButton:hover {
+	color: var(--text-primary);
+}
+
+.pickButtonOn {
+	border-color: var(--brand);
+	color: var(--brand);
+}
+
+/* Everything outside the assistant shows the picking cursor while it is on. */
+.pickingPage,
+.pickingPage * {
+	cursor: crosshair !important;
+}
+
+.pickOutline {
+	position: fixed;
+	z-index: 70;
+	pointer-events: none;
+	border: 2px solid var(--brand);
+	border-radius: var(--radius-md);
+	background: color-mix(in srgb, var(--brand) 8%, transparent);
+	transition:
+		top 60ms,
+		left 60ms,
+		width 60ms,
+		height 60ms;
+}
+
+.pickLabel {
+	position: absolute;
+	top: -24px;
+	left: -2px;
+	max-width: 320px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	padding: 2px var(--space-2);
+	border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+	background: var(--brand);
+	color: var(--brand-contrast);
+	font-size: var(--text-xs);
+	font-weight: 600;
+}
+
+.pickBanner {
+	position: fixed;
+	top: calc(var(--header-height) + var(--space-3));
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: 71;
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+	border-radius: var(--radius-full);
+	background: var(--surface-overlay);
+	border: 1px solid var(--brand);
+	box-shadow: var(--shadow-lg);
+	color: var(--text-primary);
+	font-size: var(--text-sm);
+}
+
+.pickCancel {
+	padding: var(--space-1) var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-full);
+	background: none;
+	color: var(--text-secondary);
+	font-family: inherit;
+	font-size: var(--text-xs);
+	cursor: pointer;
+}
+
+/* --- Conversations inside the panel -------------------------------------- */
+
+.dockTitleRow {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+	min-width: 0;
+}
+
+.dockColumns {
+	flex: 1;
+	min-height: 0;
+	display: flex;
+}
+
+.dockSide {
+	flex-shrink: 0;
+	overflow-y: auto;
+	padding: var(--space-3) var(--space-2);
+	border-right: 1px solid var(--border-subtle);
+	background: var(--surface-sunken);
+}
+
+.dockMain {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+/* One line per conversation in the narrow list. The date sits under the title
+   only where there is room for it. */
+.historyCompact .historyOpen {
+	padding: var(--space-2);
+}
+
+.historyCompact .historyMeta {
+	font-size: 11px;
+}
+
+.historyEmptyState {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: var(--space-2);
+	padding: var(--space-6) var(--space-3);
+	text-align: center;
+}
+
+.historyEmptyIcon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 44px;
+	height: 44px;
+	margin-bottom: var(--space-1);
+	border-radius: 50%;
+	background: color-mix(in srgb, var(--brand) 12%, transparent);
+	color: var(--brand);
+}
+
+.historyEmptyTitle {
+	font-size: var(--text-sm);
+	font-weight: 600;
+	color: var(--text-primary);
+}
+
+.historyEmptyText {
+	max-width: 24ch;
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+	line-height: 1.5;
+}
+
+/* Everything in the conversation follows the panel's width as it is dragged.
+   A flex child is otherwise at least as wide as its content, so a chart drawn
+   at one width held the column open and never shrank back, and a capped text
+   measure never grew. */
+.thread,
+.assistantTurn,
+.userTurn {
+	min-width: 0;
+}
+
+.result {
+	min-width: 0;
+	margin: 0;
+	overflow: hidden;
+}

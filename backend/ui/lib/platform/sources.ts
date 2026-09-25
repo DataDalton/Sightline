@@ -22,7 +22,9 @@ import type { SemanticField } from "../semantic/types";
 //   local development   no filtering: the query runs as the developer's own
 //                       credentials, and those decide at query time
 //   deployed, no token  nothing, because no query could run either
-async function reachableSet(identity: Identity): Promise<Set<string> | null> {
+export async function reachableSet(
+	identity: Identity,
+): Promise<Set<string> | null> {
 	if (identity.userToken) {
 		return catalogAccessEnabled() ? await readableSources(identity) : null;
 	}
