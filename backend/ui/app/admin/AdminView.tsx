@@ -209,6 +209,7 @@ export default function AdminView() {
 			case "branding":
 			case "warehouse":
 			case "caching":
+			case "assistant":
 				return <ConfigurationSection group={pane} />;
 		}
 
@@ -848,6 +849,8 @@ interface ConfigValues {
 	editorGroups: string[];
 	adminGroups: string[];
 	accessModel: "catalog" | "grants";
+	assistantEndpoint: string;
+	assistantEndpointUrl: string;
 }
 
 // What an admin can change without a redeploy.
@@ -1368,6 +1371,64 @@ function ConfigurationSection({ group }: { group: PaneId }) {
 								onChange={(v) => set({ telemetryEnabled: v })}
 							/>
 						</SettingGroup>
+					</>
+				)}
+
+				{group === "assistant" && (
+					<>
+						<SettingGroup
+							title="Model endpoint"
+							blurb="Naming one turns the assistant on. Leaving it empty removes it: no navigation entry, and the route answers as though it were never built."
+						>
+							<Field
+								label="Serving endpoint name"
+								hint="A serving endpoint in this workspace. The address is derived from the workspace the app is already connected to, so a name is enough."
+							>
+								<input
+									className={styles.input}
+									value={values.assistantEndpoint}
+									placeholder="databricks-claude-sonnet-4-5"
+									onChange={(e) =>
+										set({
+											assistantEndpoint: e.target.value,
+										})
+									}
+								/>
+							</Field>
+							<Field
+								label="Full address"
+								hint="Only for a model hosted outside this workspace. Set, it is used instead of the name above."
+							>
+								<input
+									className={styles.input}
+									value={values.assistantEndpointUrl}
+									placeholder="https://example.com/v1/chat/completions"
+									onChange={(e) =>
+										set({
+											assistantEndpointUrl:
+												e.target.value,
+										})
+									}
+								/>
+							</Field>
+						</SettingGroup>
+
+						<p className={styles.paneNote}>
+							The model is shown field names, the definitions
+							written on each source, and the rows its queries
+							return. Every query runs as the person asking, so it
+							only ever sees what they could already see.
+						</p>
+
+						<p className={styles.paneNote}>
+							Each model call goes out under the caller&apos;s own
+							token when the app holds the model-serving user
+							authorization scope, and under the app&apos;s
+							service principal when it does not. The scope is set
+							on the app in the workspace, under User
+							authorization. The data queries the assistant runs
+							are always made as the caller.
+						</p>
 					</>
 				)}
 			</div>

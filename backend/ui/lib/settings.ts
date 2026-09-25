@@ -96,6 +96,19 @@ export interface PlatformSettings {
 	// "grants": only what the access grants name is reachable. For a deployment
 	// where reaching a report is a narrower decision than reading its data.
 	accessModel: "catalog" | "grants";
+
+	// The data assistant, off unless an endpoint is named.
+	//
+	// Modular on purpose: no model, no vendor and no second platform is
+	// assumed. Empty means the feature does not exist, the navigation entry is
+	// absent and the route answers as though it were never built, so a
+	// deployment that wants none of this carries none of it.
+	//
+	// A name rather than a URL, because the URL is derivable from the
+	// workspace the app is already connected to. A full address is accepted
+	// under assistantEndpointUrl for anything hosted elsewhere.
+	assistantEndpoint: string;
+	assistantEndpointUrl: string;
 }
 
 export const defaultSettings: PlatformSettings = {
@@ -126,6 +139,9 @@ export const defaultSettings: PlatformSettings = {
 	telemetryMaxBuffer: 10000,
 
 	accessModel: "catalog",
+
+	assistantEndpoint: "",
+	assistantEndpointUrl: "",
 
 	trackedGroups: [],
 	// Databricks account group names. is_account_group_member is
@@ -284,6 +300,8 @@ export const writableSettings = [
 	"editorGroups",
 	"adminGroups",
 	"accessModel",
+	"assistantEndpoint",
+	"assistantEndpointUrl",
 ] as const satisfies readonly (keyof PlatformSettings)[];
 
 export type WritableSetting = (typeof writableSettings)[number];

@@ -38,6 +38,8 @@ export interface User {
 	// scoped capability still shows the affordance and the server decides when
 	// it is used. Hiding a button is a courtesy, never the control.
 	capabilities?: string[];
+	// Whether this deployment has a data assistant configured.
+	assistant?: boolean;
 	policy: UserPolicy;
 }
 

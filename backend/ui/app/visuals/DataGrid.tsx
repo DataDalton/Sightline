@@ -48,6 +48,10 @@ interface DataGridProps {
 	dimensions: string[];
 	measures: string[];
 	baseFilters?: unknown[];
+	// Alternatives, each a set of conditions that must all hold, ORed
+	// together and applied on top of the filters above. Set only by a query
+	// somebody builds by hand.
+	anyOf?: unknown[][];
 	// Figures worked out from the answer, declared on the visual. Part of the
 	// query, so a derived column arrives with the rows and sorts and exports
 	// like any other.
@@ -135,6 +139,7 @@ export function DataGrid({
 	dimensions,
 	measures,
 	baseFilters = [],
+	anyOf,
 	transforms,
 	fields,
 	pageSize = 200,
@@ -326,7 +331,16 @@ export function DataGrid({
 		return result;
 	}, [baseFilters, columnFilters, debouncedSearch, dimensions]);
 
-	const filterKey = JSON.stringify(activeFilters);
+	// Held by value, so a new array with the same conditions is the same
+	// query rather than a refetch.
+	const anyOfKey = JSON.stringify(anyOf && anyOf.length > 0 ? anyOf : null);
+	const logic = useMemo(
+		() => (anyOf && anyOf.length > 0 ? anyOf : undefined),
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[anyOfKey],
+	);
+
+	const filterKey = JSON.stringify(activeFilters) + anyOfKey;
 	const sortKey = sort ? `${sort.field}:${sort.direction}` : "";
 
 	// Everything that shapes the query, which is exactly what makes a
@@ -350,6 +364,7 @@ export function DataGrid({
 						dimensions,
 						measures,
 						filters: activeFilters,
+						anyOf: logic,
 						sort: sort
 							? [{ field: sort.field, direction: sort.direction }]
 							: [],
@@ -394,6 +409,7 @@ export function DataGrid({
 			dimensions,
 			measures,
 			activeFilters,
+			logic,
 			sort,
 			pageSize,
 			transforms,
@@ -428,6 +444,7 @@ export function DataGrid({
 				dimensions: [],
 				measures,
 				filters: activeFilters,
+				anyOf: logic,
 				sort: [],
 				limit: 1,
 				offset: 0,
@@ -492,6 +509,7 @@ export function DataGrid({
 				dimensions,
 				measures,
 				filters: comparisonFilters,
+				anyOf: logic,
 				sort: [],
 				limit: pageSize,
 				offset: 0,
@@ -516,6 +534,7 @@ export function DataGrid({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [
 		JSON.stringify(comparisonFilters),
+		anyOfKey,
 		sourceKey,
 		dimensions.join(","),
 		measures.join(","),
@@ -963,6 +982,7 @@ export function DataGrid({
 				dimensions,
 				measures,
 				filters: activeFilters,
+				anyOf: logic,
 				sort: sort
 					? [{ field: sort.field, direction: sort.direction }]
 					: [],

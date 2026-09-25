@@ -165,6 +165,12 @@ export const adminNav = [
 				blurb: "How long answers and memberships are reused before being asked again.",
 				feed: "settings",
 			},
+			{
+				id: "assistant",
+				label: "Assistant",
+				blurb: "The model endpoint questions are composed by, and what it is shown.",
+				feed: "settings",
+			},
 		],
 	},
 ] as const satisfies readonly { label: string; panes: readonly Pane[] }[];

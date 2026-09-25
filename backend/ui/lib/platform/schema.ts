@@ -638,6 +638,52 @@ const statements: string[] = [
 	// every visual of the page they just opened, in one query.
 	`CREATE INDEX IF NOT EXISTS visual_notes_page_idx
 		ON visual_notes (page_id, visual_id, created_on)`,
+
+	// Conversations with the data assistant, one row each, private to the
+	// person who had them.
+	//
+	// The transcript is kept whole as JSON, including the steps each answer
+	// took and the first rows they returned, because reopening a conversation
+	// is reopening what was seen, not a replay: the queries would run again
+	// against today's data and could say something else.
+	`CREATE TABLE IF NOT EXISTS assistant_conversations (
+		conversation_id UUID PRIMARY KEY,
+		owner_email     TEXT NOT NULL,
+		title           TEXT NOT NULL,
+		messages        JSONB NOT NULL DEFAULT '[]'::jsonb,
+		created_on      TIMESTAMPTZ NOT NULL DEFAULT now(),
+		modified_on     TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS assistant_conversations_owner_idx
+		ON assistant_conversations (owner_email, modified_on DESC)`,
+
+	// Explorations somebody saved to come back to: the dataset, the columns and
+	// the conditions, by name. Private to whoever saved them. A saved view is a
+	// question rather than an answer, so opening one runs it again against the
+	// data as it is now.
+	`CREATE TABLE IF NOT EXISTS explore_views (
+		view_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		owner_email TEXT NOT NULL,
+		name        TEXT NOT NULL,
+		state       JSONB NOT NULL,
+		created_on  TIMESTAMPTZ NOT NULL DEFAULT now(),
+		modified_on TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS explore_views_owner_idx
+		ON explore_views (owner_email, modified_on DESC)`,
+
+	// How one person wants the assistant to work with them, carried into every
+	// conversation. Instructions are what they wrote themselves; memories are
+	// the things they asked it to remember along the way. The email is stored
+	// lowercased, since that is how every lookup spells it.
+	`CREATE TABLE IF NOT EXISTS assistant_profiles (
+		owner_email  TEXT PRIMARY KEY,
+		instructions TEXT NOT NULL DEFAULT '',
+		memories     JSONB NOT NULL DEFAULT '[]'::jsonb,
+		modified_on  TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
 ];
 
 // Columns added after the initial schema shipped. CREATE TABLE IF NOT EXISTS

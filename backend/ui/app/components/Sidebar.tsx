@@ -44,6 +44,10 @@ const iconPaths: Record<string, string> = {
 	asc: "M3 3v18h18M7 16l3-6 4 4 4-8",
 	market: "M18 20V10M12 20V4M6 20v-6",
 	mine: "M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z",
+	dictionary:
+		"M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2zM9 7h7M9 11h5",
+	explore: "M3 3h18v4H3zM3 10h18M3 15h18M3 20h18M9 10v10M15 10v10",
+	assist: "M12 3a9 9 0 0 0-9 9 8.9 8.9 0 0 0 1.4 4.8L3 21l4.4-1.3A9 9 0 1 0 12 3zM9 10h6M9 14h4",
 	admin: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z",
 	default: "M3 7h7v6H3zM14 7h7v6h-7zM3 16h18v5H3z",
 };
@@ -187,6 +191,38 @@ export default memo(function Sidebar() {
 						<NavIcon name="mine" />
 						<span className={styles.label}>My pages</span>
 					</Link>
+					<Link
+						href="/dictionary"
+						className={`${styles.navItem} ${
+							isActive("/dictionary") ? styles.active : ""
+						}`}
+					>
+						<NavIcon name="dictionary" />
+						<span className={styles.label}>Dictionary</span>
+					</Link>
+					<Link
+						href="/explore"
+						className={`${styles.navItem} ${
+							isActive("/explore") ? styles.active : ""
+						}`}
+					>
+						<NavIcon name="explore" />
+						<span className={styles.label}>Explore</span>
+					</Link>
+					{/* Absent unless this deployment names a model endpoint.
+					    An assistant nobody configured is not a disabled
+					    feature, it is one that was never built. */}
+					{user?.assistant && (
+						<Link
+							href="/assist"
+							className={`${styles.navItem} ${
+								isActive("/assist") ? styles.active : ""
+							}`}
+						>
+							<NavIcon name="assist" />
+							<span className={styles.label}>Assistant</span>
+						</Link>
+					)}
 				</nav>
 			</div>
 

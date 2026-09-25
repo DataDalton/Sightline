@@ -23,6 +23,7 @@ import { bootstrapReadyAt, ensureReadyOrDegrade } from "./bootstrap";
 import { appIdentity, isDatabricksApp } from "../runtime";
 import { settings, settingsLoadedAt } from "../settings";
 import { registryLoadedAt } from "../semantic/registry";
+import { assistantConfigured } from "../assistant/endpoint";
 
 // What each page needs, answered once and used twice.
 //
@@ -102,6 +103,10 @@ export interface UserPayload {
 	// capability still shows the affordance, and the server decides when it is
 	// used. Hiding a button is a courtesy, never the control.
 	capabilities: Capability[];
+	// Whether this deployment has a data assistant at all. Off unless an
+	// endpoint is named, and the client uses this to leave the entry out
+	// rather than offering a page that answers as though it were never built.
+	assistant: boolean;
 }
 
 export async function userPayload(
@@ -134,6 +139,7 @@ export async function userPayload(
 			(context.baseline !== null && context.baseline !== "view"),
 		canAdminister: isAdmin(policy) || context.baseline === "admin",
 		capabilities: [...context.capabilities.keys()],
+		assistant: assistantConfigured(),
 	};
 }
 

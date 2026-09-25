@@ -37,6 +37,11 @@ at hardest:
 - **Query building.** A client sends field keys, never SQL. Anything that gets
   a client-supplied string into a query other than as a bound parameter is in
   scope.
+- **The data assistant.** A model's reply is a query request checked against
+  the source's own fields before it runs, and every query runs as the person
+  asking. Anything that lets model output reach the warehouse other than
+  through that check, lets it read a source the asker cannot, or lets one
+  person's conversations, instructions or memories reach another, is in scope.
 
 ## Response
 

@@ -1,0 +1,399 @@
+.page {
+	width: 100%;
+	padding: var(--space-6) var(--space-5);
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-4);
+}
+
+@media (max-width: 720px) {
+	.page {
+		padding: var(--space-4) var(--space-3);
+	}
+}
+
+.header {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: var(--space-4);
+}
+
+.title {
+	font-size: var(--text-2xl);
+	font-weight: 600;
+	letter-spacing: -0.02em;
+	margin-bottom: var(--space-1);
+}
+
+.subtitle {
+	color: var(--text-secondary);
+	max-width: 70ch;
+}
+
+.state {
+	padding: var(--space-6);
+	text-align: center;
+	color: var(--text-muted);
+	border: 1px dashed var(--border-default);
+	border-radius: var(--radius-lg);
+}
+
+/* Search, source and kind on one line. All three narrow the same list, so
+   splitting them across rows would read as three unrelated controls. */
+.controls {
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	flex-wrap: wrap;
+}
+
+.search {
+	flex: 1 1 280px;
+	min-width: 0;
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font-family: inherit;
+	font-size: var(--text-md);
+}
+
+.search:focus-visible {
+	outline: 2px solid var(--brand);
+	outline-offset: 1px;
+}
+
+.segmented {
+	display: flex;
+	gap: 2px;
+	padding: 2px;
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-sunken);
+}
+
+.segment {
+	padding: var(--space-1) var(--space-3);
+	border: none;
+	border-radius: var(--radius-sm);
+	background: none;
+	color: var(--text-secondary);
+	font-family: inherit;
+	font-size: var(--text-sm);
+	cursor: pointer;
+}
+
+.segment:hover {
+	color: var(--text-primary);
+}
+
+.segmentOn {
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font-weight: 600;
+}
+
+.count {
+	font-size: var(--text-sm);
+	color: var(--text-secondary);
+	font-variant-numeric: tabular-nums;
+}
+
+/* The list scrolls inside its own frame, so the search and filters above it
+   stay in reach however far down somebody has read, and the header row stays
+   pinned to the top of the frame. */
+.tableWrap {
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-lg);
+	overflow: auto;
+	max-height: calc(100vh - var(--header-height) - 260px);
+	min-height: 320px;
+}
+
+.table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: var(--text-sm);
+}
+
+.table th {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	padding: var(--space-3);
+	background: var(--surface-sunken);
+	border-bottom: 1px solid var(--border-subtle);
+	text-align: left;
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.table td {
+	padding: var(--space-3);
+	border-bottom: 1px solid var(--border-subtle);
+	vertical-align: top;
+}
+
+.table tbody tr:last-child td {
+	border-bottom: none;
+}
+
+.row {
+	cursor: pointer;
+}
+
+.row:hover {
+	background: var(--state-hover);
+}
+
+.numeric {
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+
+.fieldName {
+	font-weight: 600;
+	color: var(--text-primary);
+}
+
+/* Whether the field groups or aggregates, which decides where it can go in a
+   visual and is the first thing an author needs to know about it. */
+.kind {
+	display: inline-block;
+	margin-left: var(--space-2);
+	padding: 1px var(--space-2);
+	border-radius: var(--radius-full);
+	background: var(--surface-sunken);
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+	text-transform: lowercase;
+	vertical-align: middle;
+}
+
+.kindMeasure {
+	background: color-mix(in srgb, var(--brand) 16%, transparent);
+	color: var(--brand);
+}
+
+.muted {
+	color: var(--text-secondary);
+	white-space: nowrap;
+}
+
+.definition {
+	color: var(--text-secondary);
+	max-width: 60ch;
+	line-height: 1.5;
+}
+
+.missing {
+	color: var(--text-muted);
+	font-style: italic;
+}
+
+.mono {
+	font-family: var(--font-mono, ui-monospace, monospace);
+	font-size: var(--text-sm);
+}
+
+/* --- Usage panel -------------------------------------------------------- */
+
+/* Starts under the header rather than at the top of the viewport. The header
+   is fixed and stacks above this, so a panel anchored to 0 has its own heading
+   hidden behind the banner. */
+.scrim {
+	position: fixed;
+	inset: var(--header-height) 0 0 0;
+	background: var(--scrim, rgba(0, 0, 0, 0.45));
+	z-index: 40;
+}
+
+.panel {
+	position: fixed;
+	top: var(--header-height);
+	right: 0;
+	bottom: 0;
+	width: min(480px, 100vw);
+	z-index: 41;
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+	padding: var(--space-5);
+	overflow-y: auto;
+	background: var(--surface-raised);
+	border-left: 1px solid var(--border-default);
+	box-shadow: var(--shadow-lg);
+}
+
+.panelHead {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: var(--space-3);
+}
+
+.panelTitle {
+	font-size: var(--text-xl);
+	font-weight: 600;
+	letter-spacing: -0.01em;
+}
+
+.panelMeta {
+	font-size: var(--text-sm);
+	color: var(--text-secondary);
+}
+
+.panelClose {
+	padding: 0 var(--space-2);
+	border: none;
+	background: none;
+	color: var(--text-secondary);
+	font-size: var(--text-xl);
+	line-height: 1;
+	cursor: pointer;
+}
+
+.panelClose:hover {
+	color: var(--text-primary);
+}
+
+.panelBody {
+	color: var(--text-primary);
+	line-height: 1.6;
+}
+
+.panelSection {
+	margin-top: var(--space-2);
+	font-size: var(--text-md);
+	font-weight: 600;
+}
+
+.panelNote {
+	font-size: var(--text-sm);
+	color: var(--text-secondary);
+	line-height: 1.5;
+}
+
+.facts {
+	display: grid;
+	grid-template-columns: 120px minmax(0, 1fr);
+	gap: var(--space-1) var(--space-3);
+	padding: var(--space-3);
+	border-radius: var(--radius-md);
+	background: var(--surface-sunken);
+	font-size: var(--text-sm);
+}
+
+/* Tag pairs arrive as a list of unknown length, so each is its own two column
+   row inside the same grid rather than a second grid beside it. */
+.factPair {
+	display: contents;
+}
+
+.facts dt {
+	color: var(--text-muted);
+}
+
+.facts dd {
+	color: var(--text-primary);
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.usageGroup {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	padding-bottom: var(--space-3);
+	border-bottom: 1px solid var(--border-subtle);
+}
+
+.usageGroup:last-child {
+	border-bottom: none;
+}
+
+.usageReport {
+	font-weight: 600;
+	color: var(--text-primary);
+	text-decoration: none;
+}
+
+.usageReport:hover {
+	color: var(--brand);
+	text-decoration: underline;
+}
+
+.usageList {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	list-style: none;
+	font-size: var(--text-sm);
+}
+
+.usageList li {
+	display: flex;
+	justify-content: space-between;
+	gap: var(--space-3);
+}
+
+.usageVisual {
+	color: var(--text-secondary);
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.usageWhere {
+	color: var(--text-muted);
+	white-space: nowrap;
+}
+
+.more {
+	text-align: center;
+	color: var(--text-muted);
+	font-size: var(--text-sm);
+}
+
+/* The expression as the view declares it. Wrapped rather than scrolled, since
+   most are one line and a long CASE is easier read broken than panned. */
+.expr {
+	margin: 0;
+	padding: var(--space-3);
+	border-radius: var(--radius-md);
+	background: var(--surface-sunken);
+	color: var(--text-primary);
+	font-family: var(--font-mono, ui-monospace, monospace);
+	font-size: var(--text-sm);
+	line-height: 1.5;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.builtFrom {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+}
+
+.builtFromLabel {
+	font-size: var(--text-sm);
+	color: var(--text-muted);
+}
+
+.measureLink {
+	padding: 2px var(--space-2);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-full);
+	background: var(--surface-raised);
+	color: var(--brand);
+	font-family: inherit;
+	font-size: var(--text-sm);
+	cursor: pointer;
+}
+
+.measureLink:hover {
+	border-color: var(--brand);
+}

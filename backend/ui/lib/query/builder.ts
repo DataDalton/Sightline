@@ -219,18 +219,51 @@ function resolveFilters(
 	const params: Record<string, unknown> = {};
 	const whereParts: string[] = [];
 	const havingParts: string[] = [];
+	// One counter across every condition, so no two share a parameter marker.
+	let index = 0;
 
-	spec.filters.forEach((filter, i) => {
+	const compile = (filter: QueryFilter) => {
 		const field = findField(source, filter.field);
 		if (!field) {
 			throw new QuerySpecError(
 				`Unknown field "${filter.field}" on source "${source.sourceKey}"`,
 			);
 		}
-		const sqlText = buildFilterSql(source, field, filter, i, params);
-		if (field.kind === "measure") havingParts.push(sqlText);
-		else whereParts.push(sqlText);
-	});
+		const text = buildFilterSql(source, field, filter, index++, params);
+		// IS NOT TRUE rather than NOT, because NOT of a comparison with a
+		// blank is blank and the row would be dropped. Excluding a value is
+		// meant to keep the rows that do not have it, blanks included.
+		return {
+			kind: field.kind,
+			sql: filter.negate ? `((${text}) IS NOT TRUE)` : text,
+		};
+	};
+
+	for (const filter of spec.filters) {
+		const { kind, sql } = compile(filter);
+		if (kind === "measure") havingParts.push(sql);
+		else whereParts.push(sql);
+	}
+
+	if (spec.anyOf && spec.anyOf.length > 0) {
+		const groups = spec.anyOf.map((group) => group.map(compile));
+		const kinds = new Set(groups.flat().map((c) => c.kind));
+
+		// A dimension is tested per row before grouping and a measure per
+		// group after it, so an alternative between the two has no single
+		// place in the statement where both halves mean anything.
+		if (kinds.size > 1) {
+			throw new QuerySpecError(
+				"An OR cannot mix a dimension and a measure. Keep either side of it to one kind.",
+			);
+		}
+
+		const either = groups
+			.map((group) => `(${group.map((c) => c.sql).join(" AND ")})`)
+			.join(" OR ");
+		if (kinds.has("measure")) havingParts.push(`(${either})`);
+		else whereParts.push(`(${either})`);
+	}
 
 	return { params, whereParts, havingParts };
 }

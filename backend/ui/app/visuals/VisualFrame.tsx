@@ -84,7 +84,13 @@ export function VisualFrame({
 	const isExpanded = canExpand && expand?.expandedId === visualId;
 
 	return (
-		<div className={styles.visual}>
+		// Named on the element, so the assistant's picker can say which
+		// visual somebody pointed at rather than only what text it holds.
+		<div
+			className={styles.visual}
+			data-visual-id={visualId ?? undefined}
+			data-visual-title={typeof title === "string" ? title : undefined}
+		>
 			{(title ||
 				meta ||
 				showDrill ||

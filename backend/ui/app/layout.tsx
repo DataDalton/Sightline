@@ -16,6 +16,8 @@ import { ShellProvider } from "./context/ShellContext";
 import NavScrim from "./components/NavScrim";
 import PaletteHost from "./components/PaletteHost";
 import styles from "./layout.module.css";
+import { AssistantProvider } from "./assist/AssistantContext";
+import { AssistantDock } from "./assist/AssistantDock";
 
 // The document title before the settings table has been read, and while a
 // deployment is still unnamed. What an installation calls itself is set in the
@@ -94,22 +96,25 @@ export default async function RootLayout({
 					<SWRProvider fallback={shell.fallback}>
 						<UserProvider initial={shell.user}>
 							<ShellProvider>
-								<a href="#main" className={styles.skipLink}>
-									Skip to content
-								</a>
-								<Header />
-								<div className={styles.container}>
-									<Sidebar />
-									<NavScrim />
-									<main
-										id="main"
-										tabIndex={-1}
-										className={styles.main}
-									>
-										{children}
-									</main>
-								</div>
-								<PaletteHost />
+								<AssistantProvider>
+									<a href="#main" className={styles.skipLink}>
+										Skip to content
+									</a>
+									<Header />
+									<div className={styles.container}>
+										<Sidebar />
+										<NavScrim />
+										<main
+											id="main"
+											tabIndex={-1}
+											className={styles.main}
+										>
+											{children}
+										</main>
+									</div>
+									<PaletteHost />
+									<AssistantDock />
+								</AssistantProvider>
 							</ShellProvider>
 						</UserProvider>
 					</SWRProvider>

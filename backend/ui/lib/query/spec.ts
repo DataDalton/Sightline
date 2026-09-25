@@ -18,6 +18,11 @@ export interface QueryFilter {
 	// Present for operators that take a set, such as an "in" style filter
 	// expressed by the UI as multiple accepted values.
 	values?: string[];
+	// Keeps the rows the condition does not match. A row whose value is blank
+	// does not match anything, so it is kept: "not Hardware" includes the rows
+	// with no division at all, which is what somebody excluding one value
+	// expects.
+	negate?: boolean;
 }
 
 export interface QuerySort {
@@ -54,6 +59,14 @@ export interface QuerySpec {
 	dimensions: string[];
 	measures: string[];
 	filters: QueryFilter[];
+	// Alternatives. Each inner list is a set of conditions that must all hold,
+	// and a row passes when any one set does. The whole of it applies on top of
+	// filters, so "Region is West, and either Division is Hardware or Revenue
+	// is over a million" is filters plus two groups.
+	//
+	// Absent on everything but a query somebody built by hand. A report's
+	// filters are all conditions that narrow together, which is the plain list.
+	anyOf?: QueryFilter[][];
 	sort: QuerySort[];
 	limit: number;
 	offset: number;
@@ -115,6 +128,45 @@ function asString(value: unknown, label: string): string {
 	return value.trim();
 }
 
+function parseFilter(item: unknown, label: string): QueryFilter {
+	if (!item || typeof item !== "object") {
+		throw new QuerySpecError(`${label} must be an object`);
+	}
+	const o = item as Record<string, unknown>;
+	const field = asString(o.field, `${label} field`);
+	const op = asString(o.op, `${label} op`);
+	if (!isValidOperator(op)) {
+		throw new QuerySpecError(
+			`${label} operator must be one of ${Object.keys(operatorLabels).join(", ")}`,
+		);
+	}
+	// Only carried when set, so a filter that is not negated is spelled the
+	// same way it always has been.
+	const negate = o.negate === true ? { negate: true } : {};
+
+	const operator = op as SearchOperator;
+	if (valuelessOperators.has(operator)) {
+		return { field, op: operator, ...negate };
+	}
+
+	if (Array.isArray(o.values)) {
+		const values = o.values.map((v, j) =>
+			asString(v, `${label} value ${j}`),
+		);
+		if (values.length === 0) {
+			throw new QuerySpecError(`${label} has no values`);
+		}
+		return { field, op: operator, values, ...negate };
+	}
+
+	return {
+		field,
+		op: operator,
+		value: asString(o.value, `${label} value`),
+		...negate,
+	};
+}
+
 function parseFilters(raw: unknown): QueryFilter[] {
 	if (raw === undefined || raw === null) return [];
 	if (!Array.isArray(raw)) {
@@ -123,41 +175,32 @@ function parseFilters(raw: unknown): QueryFilter[] {
 	if (raw.length > maxFilters) {
 		throw new QuerySpecError(`at most ${maxFilters} filters are allowed`);
 	}
+	return raw.map((item, i) => parseFilter(item, `filter ${i}`));
+}
 
-	return raw.map((item, i) => {
-		if (!item || typeof item !== "object") {
-			throw new QuerySpecError(`filter ${i} must be an object`);
-		}
-		const o = item as Record<string, unknown>;
-		const field = asString(o.field, `filter ${i} field`);
-		const op = asString(o.op, `filter ${i} op`);
-		if (!isValidOperator(op)) {
+// Bounded together with the plain list, so splitting conditions into groups is
+// not a way around the limit on how many a query may carry.
+function parseAnyOf(raw: unknown, plain: number): QueryFilter[][] | null {
+	if (raw === undefined || raw === null) return null;
+	if (!Array.isArray(raw)) {
+		throw new QuerySpecError("anyOf must be an array of condition lists");
+	}
+	let total = plain;
+	const groups = raw.map((group, g) => {
+		if (!Array.isArray(group) || group.length === 0) {
 			throw new QuerySpecError(
-				`filter ${i} operator must be one of ${Object.keys(operatorLabels).join(", ")}`,
+				`anyOf group ${g} must be a non-empty list`,
 			);
 		}
-
-		const operator = op as SearchOperator;
-		if (valuelessOperators.has(operator)) {
-			return { field, op: operator };
-		}
-
-		if (Array.isArray(o.values)) {
-			const values = o.values.map((v, j) =>
-				asString(v, `filter ${i} value ${j}`),
-			);
-			if (values.length === 0) {
-				throw new QuerySpecError(`filter ${i} has no values`);
-			}
-			return { field, op: operator, values };
-		}
-
-		return {
-			field,
-			op: operator,
-			value: asString(o.value, `filter ${i} value`),
-		};
+		total += group.length;
+		return group.map((item, i) =>
+			parseFilter(item, `anyOf group ${g} condition ${i}`),
+		);
 	});
+	if (total > maxFilters) {
+		throw new QuerySpecError(`at most ${maxFilters} filters are allowed`);
+	}
+	return groups.length > 0 ? groups : null;
 }
 
 function parseSort(raw: unknown): QuerySort[] {
@@ -294,12 +337,15 @@ export function parseQuerySpec(raw: unknown): QuerySpec {
 	const measures = parseNameList(o.measures, "measures", maxMeasures);
 
 	const distribution = parseDistribution(o.distribution);
+	const filters = parseFilters(o.filters);
+	const anyOf = parseAnyOf(o.anyOf, filters.length);
 
 	return {
 		sourceKey: asString(o.sourceKey, "sourceKey"),
 		dimensions,
 		measures,
-		filters: parseFilters(o.filters),
+		filters,
+		...(anyOf ? { anyOf } : {}),
 		sort: parseSort(o.sort),
 		limit,
 		offset,
@@ -346,22 +392,36 @@ function parseDistribution(raw: unknown): QueryDistribution | null {
 // Canonical string for cache keying. Field order matters to the SQL, so it is
 // preserved rather than sorted; filters are sorted so that two logically
 // identical requests share a cache entry.
+// One condition as a key. A negated one is marked, and one that is not is
+// spelled exactly as it was before negation existed, so every query already
+// cached keeps its key.
+function filterKey(f: QueryFilter): string {
+	const key = [
+		f.field,
+		f.op,
+		f.values ? f.values.join("") : (f.value ?? ""),
+	].join("\u0000");
+	return f.negate ? `!${key}` : key;
+}
+
 export function canonicalizeSpec(spec: QuerySpec): string {
-	const filters = spec.filters
-		.map((f) =>
-			[
-				f.field,
-				f.op,
-				f.values ? f.values.join("") : (f.value ?? ""),
-			].join("\u0000"),
-		)
-		.sort();
+	const filters = spec.filters.map(filterKey).sort();
 
 	return JSON.stringify({
 		s: spec.sourceKey,
 		d: spec.dimensions,
 		m: spec.measures,
 		f: filters,
+		// Only present when there are alternatives, for the same reason.
+		...(spec.anyOf
+			? {
+					a: spec.anyOf
+						.map((group) =>
+							group.map(filterKey).sort().join("\u0001"),
+						)
+						.sort(),
+				}
+			: {}),
 		o: spec.sort.map((s) => `${s.field}:${s.direction}`),
 		l: spec.limit,
 		x: spec.offset,
