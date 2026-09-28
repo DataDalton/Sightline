@@ -179,6 +179,7 @@ export type PushPreferences = Record<NotificationKind, boolean>;
 export const defaultPushPreferences: PushPreferences = {
 	alert: true,
 	share: true,
+	message: true,
 	system: true,
 };
 

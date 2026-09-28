@@ -26,6 +26,11 @@ const kinds: { kind: keyof PushPreferences; label: string; hint: string }[] = [
 		hint: "When somebody shares a page with you.",
 	},
 	{
+		kind: "message",
+		label: "Conversations",
+		hint: "When somebody asks about a category you maintain, or replies to you.",
+	},
+	{
 		kind: "system",
 		label: "Announcements",
 		hint: "Notices from the people who run the app.",

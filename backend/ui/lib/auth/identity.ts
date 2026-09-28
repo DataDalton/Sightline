@@ -5,6 +5,7 @@ import {
 	emailHeader,
 	localIdentityEmail,
 } from "../runtime";
+import { displayNameFromEmail } from "./names";
 
 // Identity of the caller, resolved from proxy-injected headers. Databricks
 // Apps authenticates the user upstream and forwards the result, so these
@@ -24,15 +25,6 @@ export interface Identity {
 	// Catalog row filters and column masks apply. Null means the caller can
 	// only reach import-mode datasets.
 	userToken: string | null;
-}
-
-function displayNameFromEmail(email: string): string {
-	const localPart = email.split("@")[0] ?? email;
-	return localPart
-		.replace(/[._-]+/g, " ")
-		.replace(/\s+/g, " ")
-		.trim()
-		.replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 function initialsFromName(name: string): string {
@@ -71,8 +63,7 @@ export function getIdentity(request: NextRequest): Identity | null {
 	// example when a websocket connects) is a known failure mode: the token
 	// goes stale across reconnects and long-lived sessions, and every
 	// subsequent on-behalf-of query fails with an auth error.
-	const userToken =
-		request.headers.get(accessTokenHeader)?.trim() || null;
+	const userToken = request.headers.get(accessTokenHeader)?.trim() || null;
 
 	if (email) {
 		return buildIdentity(email, userToken, true);

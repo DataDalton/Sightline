@@ -8,17 +8,19 @@ import { deliverPush } from "./push";
 // device that is off, a browser that never allowed pushes, or a deployment
 // with pushes turned off all still end with the message in the inbox.
 
-export type NotificationKind = "alert" | "share" | "system";
+export type NotificationKind = "alert" | "share" | "message" | "system";
 
 export const notificationKinds: NotificationKind[] = [
 	"alert",
 	"share",
+	"message",
 	"system",
 ];
 
 export const kindLabel: Record<NotificationKind, string> = {
 	alert: "Alerts",
 	share: "Pages shared with you",
+	message: "Conversations",
 	system: "Announcements",
 };
 

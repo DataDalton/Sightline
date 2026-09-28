@@ -838,6 +838,70 @@ const statements: string[] = [
 		PRIMARY KEY (sheet_id, session_id)
 	)`,
 
+	// --- Conversations ------------------------------------------------------
+
+	// A question somebody asked the people who maintain a category, and the
+	// replies to it. See lib/messages/store.
+	`CREATE TABLE IF NOT EXISTS threads (
+		thread_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		subject         TEXT NOT NULL,
+		-- What it is about. The category decides who it was sent to. The
+		-- report, when there is one, is where it was asked from.
+		category_id     TEXT NOT NULL,
+		report_slug     TEXT,
+		created_by      TEXT NOT NULL,
+		created_on      TIMESTAMPTZ NOT NULL DEFAULT now(),
+		last_message_on TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS threads_creator_idx
+		ON threads (created_by, created_on DESC)`,
+
+	// Who a conversation is between. A person by address, or a group by name,
+	// whose members are whoever belongs to it when they look.
+	`CREATE TABLE IF NOT EXISTS thread_members (
+		thread_id   UUID NOT NULL REFERENCES threads (thread_id) ON DELETE CASCADE,
+		member_type TEXT NOT NULL CHECK (member_type IN ('user', 'group')),
+		member_id   TEXT NOT NULL,
+		PRIMARY KEY (thread_id, member_type, member_id)
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS thread_members_member_idx
+		ON thread_members (member_type, member_id)`,
+
+	`CREATE TABLE IF NOT EXISTS thread_messages (
+		message_id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		thread_id    UUID NOT NULL REFERENCES threads (thread_id) ON DELETE CASCADE,
+		author_email TEXT NOT NULL,
+		body         TEXT NOT NULL,
+		created_on   TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS thread_messages_thread_idx
+		ON thread_messages (thread_id, created_on)`,
+
+	// When each person last read each conversation, per person rather than per
+	// member, since one group is several readers.
+	`CREATE TABLE IF NOT EXISTS thread_reads (
+		thread_id  UUID NOT NULL REFERENCES threads (thread_id) ON DELETE CASCADE,
+		user_email TEXT NOT NULL,
+		read_on    TIMESTAMPTZ NOT NULL DEFAULT now(),
+		PRIMARY KEY (thread_id, user_email)
+	)`,
+
+	// The groups each person was last found in, kept for as long as they have
+	// used the application at all rather than for the probe lifetime, so a
+	// message to a group reaches every member who has ever signed in. Written
+	// every time their membership is probed. See lib/auth/policy.
+	`CREATE TABLE IF NOT EXISTS member_groups (
+		user_email TEXT PRIMARY KEY,
+		grants     JSONB NOT NULL,
+		checked_on TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS member_groups_grants_idx
+		ON member_groups USING gin (grants)`,
+
 	// What one person could see of a row-filtered dataset when they were last
 	// here: every combination of the columns its filter decides on, read under
 	// their own token. Lets their alerts on it be checked while they are away.
@@ -957,6 +1021,15 @@ const migrations: string[] = [
 	// died stopped instantly. Silence is the signal, which is the same reading
 	// the export jobs use, and it needs a timestamp that moves.
 	`ALTER TABLE sync_runs ADD COLUMN IF NOT EXISTS progress_on TIMESTAMPTZ`,
+
+	// Starts member_groups from the stored policies still held, so people who
+	// signed in before it existed count as members straight away. A row
+	// already there is newer, so it is left alone.
+	`INSERT INTO member_groups (user_email, grants, checked_on)
+	 SELECT DISTINCT ON (user_email) user_email, grants, computed_on
+	 FROM reader_policy
+	 ORDER BY user_email, computed_on DESC
+	 ON CONFLICT (user_email) DO NOTHING`,
 ];
 
 // Creates anything missing. Safe to run on every startup.

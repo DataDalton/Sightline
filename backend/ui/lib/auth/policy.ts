@@ -364,6 +364,29 @@ async function writeStoredPolicy(
 	}
 }
 
+// Keeps the groups a person was just found in after the stored policy above
+// has expired. Only messages read it, to know who is in a group without asking
+// the workspace directory. It grants nothing, since every read of a
+// conversation checks membership again.
+async function recordMemberGroups(
+	email: string,
+	grants: string[],
+): Promise<void> {
+	try {
+		const { sql } = await import("../data/lakebase");
+		await sql(
+			`INSERT INTO member_groups (user_email, grants, checked_on)
+			 VALUES ($1, $2::jsonb, now())
+			 ON CONFLICT (user_email) DO UPDATE SET
+			   grants = EXCLUDED.grants,
+			   checked_on = EXCLUDED.checked_on`,
+			[email, JSON.stringify(grants)],
+		);
+	} catch (error) {
+		console.warn("Member groups write failed:", error);
+	}
+}
+
 export async function resolvePolicyClass(
 	identity: Identity,
 ): Promise<PolicyClass> {
@@ -387,7 +410,10 @@ export async function resolvePolicyClass(
 			// grace window still covers a lookup outage.
 			const stored = await readStoredPolicy(key, now);
 			const grants = stored ?? (await probeGrants(identity));
-			if (!stored) void writeStoredPolicy(key, grants, now);
+			if (!stored) {
+				void writeStoredPolicy(key, grants, now);
+				void recordMemberGroups(key, grants);
+			}
 			const value: PolicyClass = {
 				id: policyIdFor(grants),
 				grants,

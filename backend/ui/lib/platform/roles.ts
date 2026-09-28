@@ -1,4 +1,5 @@
 import { sql, transaction } from "../data/lakebase";
+import { toContacts, type CategoryContact } from "./categoryContacts";
 import type { PolicyClass } from "../auth/policy";
 import { effectiveAdminGroups, settings } from "../settings";
 import {
@@ -123,6 +124,24 @@ export interface AssignmentRecord {
 // role everyone recognises by name is owned by the code and cannot drift by
 // hand. Custom roles are untouched, and so are the assignments pointing at
 // built-in ones.
+// Who holds a category's editor role, as the people to ask about it. See
+// lib/platform/categoryContacts.
+export async function categoryContacts(
+	categoryId: string,
+): Promise<CategoryContact[]> {
+	const rows = await sql<{
+		subject_type: "user" | "group";
+		subject_id: string;
+	}>(
+		`SELECT ra.subject_type, ra.subject_id
+		 FROM role_assignments ra
+		 JOIN roles r ON r.role_id = ra.role_id
+		 WHERE ra.role_id = $1 AND ra.is_active AND r.is_active`,
+		[categoryRoleId(categoryId)],
+	);
+	return toContacts(rows);
+}
+
 export async function syncBuiltinRoles(): Promise<void> {
 	await transaction(async (client) => {
 		for (const role of builtinRoles) {

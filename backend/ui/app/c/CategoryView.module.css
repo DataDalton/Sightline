@@ -35,6 +35,16 @@
 	max-width: 70ch;
 }
 
+.contacts:not(:empty) {
+	margin-bottom: var(--space-5);
+}
+
+/* Closer to the description above it when there is one, so the two read as
+   one header rather than two blocks. */
+.description + .contacts:not(:empty) {
+	margin-top: calc(var(--space-3) - var(--space-5));
+}
+
 .grid {
 	display: grid;
 	grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));

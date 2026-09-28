@@ -66,7 +66,7 @@ export async function DELETE(request: NextRequest) {
 	return privateJson({ devices: await listDevices(identity.email) });
 }
 
-// { preferences: { alert: boolean, share: boolean, system: boolean } }
+// { preferences: { alert: boolean, share: boolean, message: boolean, system: boolean } }
 export async function PUT(request: NextRequest) {
 	const identity = await caller(request);
 	if (identity instanceof NextResponse) return identity;

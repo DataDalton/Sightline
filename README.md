@@ -372,6 +372,24 @@ listed under **Access -> Roles** with who holds each, and an assignment of one
 always applies in its own category whatever scope the request named. Scoped
 assignments of other roles remain for anything these do not cover.
 
+Whoever holds a category's editor role is also who readers take questions to.
+The category page shows them in a panel, and every report in it shows them as
+an **Ask** button beside its title. Asking opens a message addressed to all of
+them, or to the one person or group pressed, and sends it through the
+application rather than by email. It lands in their inbox under
+**Conversations**, and both sides reply there. Every message is also a
+notification, so it reaches a phone the way an alert does.
+
+A group is asked as one conversation that everyone in it shares. Who is in the
+group is read when each person looks, so somebody who joins the team sees what
+was already asked, and somebody who leaves stops seeing it. Every member who
+has ever used the application is notified, from the groups they were in the
+last time they signed in. Somebody who has never used it is not.
+
+Only the maintainers of a category someone can open can be written to this
+way, and one person can start a limited number of conversations an hour.
+Nothing is shown for a category with no editor assigned.
+
 **Notifications** turns alerts and pushes on or off, sets how many alerts one
 person may keep, shows how many alerts and devices there are and which alerts
 are failing and why, sends an announcement to everyone who used the app in the

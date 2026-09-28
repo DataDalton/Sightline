@@ -7,6 +7,10 @@ import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { useUser } from "../context/UserContext";
 import { SkeletonCards } from "../components/shared/Skeleton";
+import {
+	CategoryContacts,
+	type CategoryContact,
+} from "../components/CategoryContacts";
 import styles from "./CategoryView.module.css";
 
 interface ReportSummary {
@@ -23,6 +27,8 @@ interface CategoryDetail {
 	name: string;
 	description: string | null;
 	reports: ReportSummary[];
+	// Who holds this category's editor role.
+	contacts?: CategoryContact[];
 }
 
 // initial is the listing the server resolved while rendering the document. See
@@ -72,6 +78,18 @@ export default function CategoryView({
 			<h1 className={styles.title}>{data?.name ?? " "}</h1>
 			{data?.description && (
 				<p className={styles.description}>{data.description}</p>
+			)}
+			{data && (
+				<div className={styles.contacts}>
+					<CategoryContacts
+						contacts={data.contacts}
+						context={{
+							categoryId: data.categoryId,
+							about: data.name,
+						}}
+						variant="panel"
+					/>
+				</div>
 			)}
 
 			{showSkeleton ? (

@@ -10,13 +10,15 @@ import { usePageTitle } from "../hooks/usePageTitle";
 import { InboxList } from "../notify/InboxList";
 import { useNotify } from "../notify/NotifyContext";
 import { NotificationSettings } from "./NotificationSettings";
+import { Conversations, conversationsKey } from "../messages/Conversations";
 import styles from "./Inbox.module.css";
 
 // One place for everything the reader is told and everything they asked to be
 // told about, laid out the way a mail program is: the views down the side,
 // the one chosen beside them.
 //
-//   Messages   everything, what is unread, what alerts sent, what was shared
+//   Messages   everything, what is unread, what alerts sent, what was shared,
+//              and conversations with the people who maintain categories
 //   Alerts     what they are watching, and a way to watch something else
 //   Settings   which of it also reaches their phone or computer
 //
@@ -28,6 +30,7 @@ export type InboxViewId =
 	| "unread"
 	| "alert"
 	| "share"
+	| "conversations"
 	| "alerts"
 	| "settings";
 
@@ -36,6 +39,7 @@ const views: InboxViewId[] = [
 	"unread",
 	"alert",
 	"share",
+	"conversations",
 	"alerts",
 	"settings",
 ];
@@ -56,6 +60,10 @@ const heading: Record<InboxViewId, { title: string; blurb: string }> = {
 		title: "Shared with you",
 		blurb: "Pages and sheets other people have given you.",
 	},
+	conversations: {
+		title: "Conversations",
+		blurb: "Questions asked of the people who maintain a category, and their answers. Both sides reply here.",
+	},
 	alerts: {
 		title: "Alerts",
 		blurb: "Measures you are watching. Each one checks on its schedule and writes here when something crosses a line or moves.",
@@ -74,7 +82,9 @@ const emptyText: Record<"all" | "unread" | "alert" | "share", string> = {
 };
 
 function keyFor(view: InboxViewId): string | null {
-	if (view === "alerts" || view === "settings") return null;
+	if (view === "alerts" || view === "settings" || view === "conversations") {
+		return null;
+	}
 	const params = new URLSearchParams({ limit: String(pageSize) });
 	if (view === "unread") params.set("unread", "1");
 	if (view === "alert" || view === "share") params.set("kind", view);
@@ -111,6 +121,8 @@ const icons = {
 	unread: "M12 12m-4 0a4 4 0 1 0 8 0a4 4 0 1 0-8 0",
 	alert: "M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0",
 	share: "M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8M16 6l-4-4-4 4M12 2v13",
+	conversations:
+		"M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
 	alerts: "M3 3v18h18M7 14l4-4 3 3 5-6",
 	settings:
 		"M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6",
@@ -125,9 +137,13 @@ export default function InboxView({
 	const { unread, alertsEnabled, refresh } = useNotify();
 
 	const [view, setView] = useState<InboxViewId>(initial);
+	// The conversation open in the conversations view, kept in the address
+	// beside the view so a notification can link straight to it.
+	const [threadId, setThreadId] = useState<string | null>(null);
 	useEffect(() => {
 		const asked = viewFrom(search);
 		if (asked) setView(asked);
+		setThreadId(search?.get("thread") ?? null);
 	}, [search]);
 
 	usePageTitle(heading[view].title);
@@ -143,23 +159,38 @@ export default function InboxView({
 
 	const choose = (next: InboxViewId) => {
 		setView(next);
+		setThreadId(null);
 		const url = new URL(window.location.href);
 		url.pathname = "/inbox/";
 		url.searchParams.delete("tab");
+		url.searchParams.delete("thread");
 		if (next === "all") url.searchParams.delete("view");
 		else url.searchParams.set("view", next);
 		window.history.pushState(null, "", url.toString());
 	};
 
+	const openThread = (id: string | null) => {
+		setThreadId(id);
+		const url = new URL(window.location.href);
+		url.pathname = "/inbox/";
+		url.searchParams.set("view", "conversations");
+		if (id) url.searchParams.set("thread", id);
+		else url.searchParams.delete("thread");
+		window.history.pushState(null, "", url.toString());
+	};
+
 	// The browser's back button moves between views.
 	useEffect(() => {
-		const onPop = () =>
+		const onPop = () => {
+			const params = new URLSearchParams(window.location.search);
+			setThreadId(params.get("thread"));
 			setView(
-				viewFrom(new URLSearchParams(window.location.search)) ??
+				viewFrom(params) ??
 					(window.location.pathname.startsWith("/alerts")
 						? "alerts"
 						: "all"),
 			);
+		};
 		window.addEventListener("popstate", onPop);
 		return () => window.removeEventListener("popstate", onPop);
 	}, []);
@@ -168,6 +199,10 @@ export default function InboxView({
 		alertsEnabled ? alertsKey : null,
 	);
 	const alertCount = alertList?.alerts.length ?? 0;
+
+	const { data: conversationList } = useSWR<{ unread: number }>(
+		conversationsKey,
+	);
 	const failing =
 		alertList?.alerts.filter((a) => a.enabled && a.lastStatus === "error")
 			.length ?? 0;
@@ -266,6 +301,12 @@ export default function InboxView({
 					{item("unread", "Unread", unread, "brand")}
 					{alertsEnabled && item("alert", "From alerts")}
 					{item("share", "Shared with you")}
+					{item(
+						"conversations",
+						"Conversations",
+						conversationList?.unread,
+						"brand",
+					)}
 				</div>
 				{alertsEnabled && (
 					<div className={styles.railGroup}>
@@ -314,7 +355,9 @@ export default function InboxView({
 					)}
 				</header>
 
-				{view === "alerts" ? (
+				{view === "conversations" ? (
+					<Conversations threadId={threadId} onOpen={openThread} />
+				) : view === "alerts" ? (
 					<AlertsPanel />
 				) : view === "settings" ? (
 					<NotificationSettings />

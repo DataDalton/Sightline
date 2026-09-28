@@ -37,6 +37,10 @@ import {
 	ZoomControl,
 	type VisualSize,
 } from "./ViewScale";
+import {
+	CategoryContacts,
+	type CategoryContact,
+} from "../components/CategoryContacts";
 import styles from "./ReportView.module.css";
 
 interface StoredVisual extends VisualSpec {
@@ -91,6 +95,13 @@ interface ReportDetail {
 interface ReportResponse {
 	report: ReportDetail;
 	sources: Record<string, SourceMeta>;
+	// The category it sits in, for the trail above the title and the people
+	// to ask about it. Null for a report outside any category.
+	category?: {
+		categoryId: string;
+		name: string;
+		contacts: CategoryContact[];
+	} | null;
 	// Answers the server already had for this page's opening visuals, keyed the
 	// same way the client asks for them.
 	seeded?: Record<string, unknown>;
@@ -612,7 +623,8 @@ export default function ReportView({
 								{report.categoryId && (
 									<>
 										<Link href={`/c/${report.categoryId}`}>
-											{report.categoryId}
+											{data?.category?.name ??
+												report.categoryId}
 										</Link>
 										<span aria-hidden="true">/</span>
 									</>
@@ -640,6 +652,19 @@ export default function ReportView({
 								    reader does with the report rather than to
 								    it. */}
 								<ShareLinkButton />
+								{/* Who maintains it, as a way of asking them.
+								    In the title row because it is about the
+								    report, and small because the report is what
+								    the page is for. */}
+								{data?.category && (
+									<CategoryContacts
+										contacts={data.category.contacts}
+										context={{
+											reportSlug: report.slug,
+											about: report.title,
+										}}
+									/>
+								)}
 							</div>
 							{report.description && (
 								<p className={styles.description}>

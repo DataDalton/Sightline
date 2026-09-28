@@ -19,6 +19,7 @@ import { cachedDefinition } from "./definitionCache";
 import { sql } from "../data/lakebase";
 import { listFavourites } from "./search";
 import { getCategory, getReport } from "./reports";
+import { categoryContacts } from "./roles";
 import { bootstrapReadyAt, ensureReadyOrDegrade } from "./bootstrap";
 import { appIdentity, isDatabricksApp } from "../runtime";
 import { settings, settingsLoadedAt } from "../settings";
@@ -351,10 +352,39 @@ export async function reportPayload(
 	identity: Identity,
 	policy: PolicyClass,
 	slug: string,
-): Promise<{ report: unknown; sources: Record<string, unknown> } | null> {
+): Promise<{
+	report: unknown;
+	sources: Record<string, unknown>;
+	category: unknown;
+} | null> {
 	const report = await getReport(policy, identity, slug);
 	if (!report) return null;
-	return { report, sources: sourcesFor(report) };
+	return {
+		report,
+		sources: sourcesFor(report),
+		category: report.categoryId
+			? await categorySummary(report.categoryId)
+			: null,
+	};
+}
+
+// The category a report sits in, as its page shows it. The name for the trail
+// above the title, and who to ask about the report.
+async function categorySummary(categoryId: string): Promise<{
+	categoryId: string;
+	name: string;
+	contacts: Awaited<ReturnType<typeof categoryContacts>>;
+} | null> {
+	const [rows, contacts] = await Promise.all([
+		sql<{ name: string }>(
+			`SELECT name FROM categories
+			 WHERE category_id = $1 AND is_active = TRUE`,
+			[categoryId],
+		),
+		categoryContacts(categoryId),
+	]);
+	if (!rows[0]) return null;
+	return { categoryId, name: rows[0].name, contacts };
 }
 
 export interface InfoPayload {
@@ -396,7 +426,9 @@ export async function categoryPayload(
 	policy: PolicyClass,
 	categoryId: string,
 ): Promise<unknown | null> {
-	return await getCategory(policy, identity, categoryId);
+	const category = await getCategory(policy, identity, categoryId);
+	if (!category) return null;
+	return { ...category, contacts: await categoryContacts(categoryId) };
 }
 
 // Everything the shell needs, resolved once for a document request.
