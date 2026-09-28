@@ -27,6 +27,13 @@ function env(name: string, fallback = ""): string {
 // guards below.
 export const isDatabricksApp = Boolean(process.env.DATABRICKS_APP_PORT?.trim());
 
+// True when running the self-contained demonstration started by
+// scripts/demo.mjs. Warehouse queries then run against sample tables in the
+// local Postgres that also holds the platform tables, and no Databricks
+// workspace is contacted. Never true in a deployed app, whatever the
+// environment says.
+export const demoMode = !isDatabricksApp && env("DEMO_MODE") === "1";
+
 // --- Injected by Databricks Apps -------------------------------------------
 
 export const workspaceHost = (() => {

@@ -1,4 +1,4 @@
-import { assertDeploymentConfigured } from "../runtime";
+import { assertDeploymentConfigured, demoMode } from "../runtime";
 import { loadSettings, startSettingsPolling } from "../settings";
 import { loadRegistry, startRegistryPolling } from "../semantic/registry";
 import { startTelemetryFlushing } from "../telemetry/usage";
@@ -58,6 +58,13 @@ async function initialize(): Promise<void> {
 	// After the settings, which is where the configured admin and editor groups
 	// a first install converts into assignments are read from.
 	await bootstrapRoleAssignments();
+
+	// Seeded here as well as at startup, since under the development server
+	// requests are served by a separate module instance that prepares itself.
+	if (demoMode) {
+		const { seedDemo } = await import("../demo/seed");
+		await seedDemo();
+	}
 
 	await loadRegistry();
 

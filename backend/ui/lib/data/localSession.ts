@@ -1,4 +1,4 @@
-import { isDatabricksApp, resolveWarehousePath } from "../runtime";
+import { demoMode, isDatabricksApp, resolveWarehousePath } from "../runtime";
 import type { QueryParams, Row } from "./types";
 
 // Warehouse access for local development only.
@@ -48,11 +48,20 @@ function toStatementParameters(params?: QueryParams) {
 	});
 }
 
+// asEmail is who the query is for. The warehouse ignores it, since it runs as
+// the local credentials whoever asks. The demonstration's warehouse answers
+// group checks for that person instead.
 export async function queryLocally(
 	sql: string,
 	params?: QueryParams,
+	asEmail?: string,
 ): Promise<Row[]> {
 	assertLocalOnly();
+
+	if (demoMode) {
+		const { queryDemo } = await import("../demo/warehouse");
+		return queryDemo(sql, params, asEmail);
+	}
 
 	// Resolved per query, so a warehouse changed in the administration
 	// settings applies here the same way it does on the deployed path.

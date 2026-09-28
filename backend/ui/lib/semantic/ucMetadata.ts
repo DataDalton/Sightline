@@ -1,5 +1,5 @@
 import { sql } from "../data/lakebase";
-import { isDatabricksApp } from "../runtime";
+import { demoMode, isDatabricksApp } from "../runtime";
 import type { Identity } from "../auth/identity";
 
 // Pulls column descriptions, data types and tags from Unity Catalog into the
@@ -46,6 +46,9 @@ export async function runCatalogQuery(
 	statement: string,
 	params: Record<string, unknown> = {},
 ): Promise<Record<string, unknown>[]> {
+	// The demonstration has no catalogue. Its sources are registered with
+	// their fields already defined, and nothing it reads carries a row filter.
+	if (demoMode) return [];
 	if (identity?.userToken) {
 		const { queryAsUser } = await import("../data/userSession");
 		return queryAsUser(

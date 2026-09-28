@@ -21,6 +21,7 @@ import {
 } from "@/lib/semantic/syncRun";
 import { insertLog } from "@/lib/activityLog";
 import { checkWriteRateLimit } from "@/lib/rateLimit";
+import { demoMode } from "@/lib/runtime";
 
 // Refreshes the semantic layer from Unity Catalog.
 //
@@ -49,6 +50,17 @@ export async function POST(request: NextRequest) {
 	const policy = await resolvePolicyClass(identity);
 	if (!(await canDo(policy, identity, "semantic.sync"))) {
 		return NextResponse.json({ error: "Not found" }, { status: 404 });
+	}
+
+	// A sync rebuilds fields from the catalogue, and the demonstration has
+	// none. Running one would replace the sample fields with nothing.
+	if (demoMode) {
+		return NextResponse.json(
+			{
+				error: "The demo has no Databricks catalogue to sync from. Its sample sources are already up to date.",
+			},
+			{ status: 409 },
+		);
 	}
 
 	const body = await request.json().catch(() => ({}));

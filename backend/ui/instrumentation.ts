@@ -64,6 +64,14 @@ export async function register() {
 		// who removes one does not find it back after a restart.
 		await bootstrapRoleAssignments();
 
+		// The self-contained demonstration writes its sample data, sources
+		// and reports, once the tables they go into exist. See lib/demo/seed.
+		const { demoMode } = await import("@/lib/runtime");
+		if (demoMode) {
+			const { seedDemo } = await import("@/lib/demo/seed");
+			await seedDemo();
+		}
+
 		await loadRegistry();
 
 		// Saved questions predate personal pages and lived in a table only the

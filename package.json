@@ -1,19 +1,20 @@
 {
-  "name": "sightline",
-  "version": "1.0.0",
-  "description": "Self-serve reporting and analytics on Databricks",
-  "scripts": {
-    "dev": "cd backend/ui && npm run dev",
-    "build": "cd backend/ui && npm run build",
-    "start": "cd backend/ui && npm run start",
-    "install:all": "npm install && cd backend/ui && npm install",
-    "postinstall": "cd backend/ui && npm install"
-  },
-  "keywords": [
-    "nextjs",
-    "react",
-    "databricks"
-  ],
-  "author": "",
-  "license": "ISC"
+	"name": "sightline",
+	"version": "1.0.0",
+	"description": "Self-serve reporting and analytics on Databricks",
+	"scripts": {
+		"dev": "cd backend/ui && npm run dev",
+		"dev2": "cd backend/ui && npm run dev2 --",
+		"build": "cd backend/ui && npm run build",
+		"start": "cd backend/ui && npm run start",
+		"install:all": "npm install && cd backend/ui && npm install",
+		"postinstall": "cd backend/ui && npm install"
+	},
+	"keywords": [
+		"nextjs",
+		"react",
+		"databricks"
+	],
+	"author": "",
+	"license": "ISC"
 }

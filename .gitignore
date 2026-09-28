@@ -272,6 +272,8 @@ web_modules/
 
 # dotenv environment variable files
 .env
+# The self-contained demonstration. See backend/ui/scripts/demo.mjs.
+.demo/
 .env.development.local
 .env.test.local
 .env.production.local

@@ -215,6 +215,12 @@
 	margin-bottom: var(--space-4);
 }
 
+/* A page with no controls and nothing selected draws no bar, and the strip
+   around it would still hold its margin above the first visual. */
+.filterStrip:empty {
+	display: none;
+}
+
 /*
  * Kept in view while the page scrolls.
  *

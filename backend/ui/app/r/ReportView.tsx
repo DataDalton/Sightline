@@ -21,6 +21,7 @@ import { filterWidgetsOf } from "../../lib/visuals/filterWidgets";
 import { openingFilters } from "../../lib/visuals/pageDefaults";
 import { FilterBar } from "../visuals/FilterWidgets";
 import { isPageControl, visualByType } from "../../lib/visuals/catalog";
+import { compactRows } from "../../lib/visuals/layout";
 import { ReportEditor } from "./editorEntry";
 import { PageActions } from "../authoring/PageActions";
 import type { EditableVisual } from "../editor/types";
@@ -45,6 +46,26 @@ import styles from "./ReportView.module.css";
 
 interface StoredVisual extends VisualSpec {
 	layout?: { x: number; y: number; w: number; h: number };
+}
+
+// The strip above the page holds the filters, so the rows they filled on the
+// canvas are empty on the page, and the first visual would start a filter's
+// height below the strip. Every empty row is closed, the same way the editor
+// closes a row left behind when something moves off the grid. Only visuals
+// placed directly on the page move, since a group's children are placed
+// within the group.
+function closeLiftedRows(visuals: StoredVisual[]): StoredVisual[] {
+	const placed = visuals.flatMap((v) =>
+		v.layout && typeof v.config.parentId !== "string"
+			? [{ id: v.visualId, rect: v.layout }]
+			: [],
+	);
+	const moved = new Map(
+		compactRows(placed).map((item) => [item.id, item.rect]),
+	);
+	return visuals.map((v) =>
+		moved.has(v.visualId) ? { ...v, layout: moved.get(v.visualId) } : v,
+	);
 }
 
 interface PageDefinition {
@@ -454,23 +475,24 @@ export default function ReportView({
 		(v) => isPageControl(v.visualType) && !heldByGroup.has(v.visualId),
 	);
 
-	const visuals = allVisuals
-		.filter((v) => !isPageControl(v.visualType))
-		.map((v) =>
-			// Column choices apply to tables. A chart's encoding is part of
-			// its definition, so overriding it would produce something the
-			// author never designed.
-			custom && v.visualType === "table"
-				? {
-						...v,
-						config: {
-							...v.config,
-							dimensions: custom.dimensions,
-							measures: custom.measures,
-						},
-					}
-				: v,
-		);
+	const onPage = allVisuals.filter((v) => !isPageControl(v.visualType));
+	const visuals = (
+		filterWidgets.length > 0 ? closeLiftedRows(onPage) : onPage
+	).map((v) =>
+		// Column choices apply to tables. A chart's encoding is part of
+		// its definition, so overriding it would produce something the
+		// author never designed.
+		custom && v.visualType === "table"
+			? {
+					...v,
+					config: {
+						...v.config,
+						dimensions: custom.dimensions,
+						measures: custom.measures,
+					},
+				}
+			: v,
+	);
 
 	// The data-through stamp. The source is whichever one the page is built on;
 	// the column is the editor's choice, falling back to the source's own time

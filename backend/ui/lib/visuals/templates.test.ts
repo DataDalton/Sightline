@@ -11,6 +11,7 @@ import {
 	templateFits,
 	templatesFor,
 } from "./templates";
+import { describeProblems, hasError, validateVisual } from "./validate";
 
 const source = {
 	dimensions: [
@@ -147,11 +148,56 @@ test("a single measure is suggested because there is nothing to choose", () => {
 	assert.equal(suggested.measure, "Net Sales");
 });
 
+test("every template, fully filled, builds visuals the catalogue accepts", () => {
+	// The failure this catches: an option a template sets that the visual
+	// refuses, which makes the template fail on every source it is offered for.
+	const dimensions = ["Order Date", "Division", "Region", "Channel"];
+	const measures = ["Net Sales", "Units", "Margin", "Orders"];
+	for (const template of pageTemplates) {
+		const filled: Record<string, string> = {};
+		let d = 1;
+		let m = 0;
+		for (const slot of template.slots) {
+			filled[slot.key] =
+				slot.scope === "measure"
+					? measures[m++]
+					: slot.role === "temporal"
+						? dimensions[0]
+						: dimensions[d++];
+		}
+		const page = buildPage(template, filled);
+		for (const visual of page.visuals) {
+			const problems = validateVisual(
+				visual.visualType,
+				{
+					dimensions: visual.dimensions,
+					measures: visual.measures,
+					options: visual.options,
+				},
+				{ dimensions, measures },
+			);
+			assert.ok(
+				!hasError(problems),
+				`${template.key} / ${visual.visualType}: ${describeProblems(problems)}`,
+			);
+		}
+	}
+});
+
 // --- Building ---------------------------------------------------------------
 
 test("an unfilled required slot is reported and the page is not built", () => {
 	const page = buildPage(templateByKey.trend, { date: "Order Date" });
 	assert.deepEqual(page.unfilled, ["measure"]);
+});
+
+test("the rows a filter held are closed, since filters draw above the page", () => {
+	const page = buildPage(templateByKey.trend, {
+		date: "Order Date",
+		measure: "Net Sales",
+	});
+	const onGrid = page.visuals.filter((v) => v.visualType !== "dateRangeFilter");
+	assert.equal(Math.min(...onGrid.map((v) => v.layout.y)), 0);
 });
 
 test("an unfilled optional slot narrows the page rather than breaking it", () => {

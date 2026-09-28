@@ -1,4 +1,5 @@
-import { visualByType } from "./catalog";
+import { isPageControl, visualByType } from "./catalog";
+import { compactRows } from "./layout";
 
 // Arrangements a page can start from.
 //
@@ -162,6 +163,7 @@ export const pageTemplates: PageTemplate[] = [
 			},
 			{
 				type: "table",
+				title: "The numbers",
 				dimensions: ["{by}"],
 				measures: ["{measure}"],
 				layout: { x: 0, y: 9, w: 12, h: 6 },
@@ -201,6 +203,7 @@ export const pageTemplates: PageTemplate[] = [
 			},
 			{
 				type: "matrixTable",
+				title: "Side by side",
 				dimensions: ["{rows}", "{columns}"],
 				measures: ["{measure}"],
 				options: { columnDimension: "{columns}" },
@@ -242,6 +245,7 @@ export const pageTemplates: PageTemplate[] = [
 			},
 			{
 				type: "table",
+				title: "Every row",
 				dimensions: ["{primary}", "{filter}"],
 				measures: ["{measure}"],
 				layout: { x: 0, y: 1, w: 12, h: 12 },
@@ -675,7 +679,7 @@ export const pageTemplates: PageTemplate[] = [
 				title: "Crossed over",
 				dimensions: ["{from}", "{to}"],
 				measures: ["{measure}"],
-				options: { columnDimension: true },
+				options: { columnDimension: "{to}" },
 				layout: { x: 7, y: 2, w: 5, h: 6 },
 			},
 		],
@@ -970,7 +974,24 @@ export function buildPage(
 		});
 	}
 
-	return { templateKey: template.key, visuals, unfilled };
+	return { templateKey: template.key, visuals: closeControlRows(visuals), unfilled };
+}
+
+// A template lays its filters out on the grid like any other visual, but a
+// page draws them in the strip above it, so the rows they held would open the
+// page empty. Those rows are closed before the page is stored, so the editor
+// and the reader both start with the first visual at the top.
+function closeControlRows(visuals: BuiltVisual[]): BuiltVisual[] {
+	const onGrid = visuals.flatMap((visual, index) =>
+		isPageControl(visual.visualType) ? [] : [{ index, rect: visual.layout }],
+	);
+	const moved = new Map(
+		compactRows(onGrid).map((item) => [item.index, item.rect]),
+	);
+	return visuals.map((visual, index) => {
+		const rect = moved.get(index);
+		return rect ? { ...visual, layout: rect } : visual;
+	});
 }
 
 // Whether a source can fill every required slot at all.

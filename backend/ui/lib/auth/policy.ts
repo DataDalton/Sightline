@@ -271,7 +271,11 @@ async function probeGrants(identity: Identity): Promise<string[]> {
 			)
 		: await (
 				await import("../data/localSession")
-			).queryLocally(`SELECT ${selects}`, params);
+			).queryLocally(
+					`SELECT ${selects}`,
+					params,
+					identity.email.toLowerCase(),
+				);
 	const row = rows[0] ?? {};
 
 	// The two query paths disagree on type. The SQL driver returns a real

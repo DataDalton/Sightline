@@ -75,6 +75,8 @@
 		"lib/platform/categoryContacts.test.ts",
 		"lib/messages/rules.ts",
 		"lib/messages/rules.test.ts",
+		"lib/demo/dialect.ts",
+		"lib/demo/dialect.test.ts",
 		"lib/platform/searchMatch.ts",
 		"lib/platform/searchMatch.test.ts",
 		"lib/platform/versionDiff.ts",

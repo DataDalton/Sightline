@@ -331,6 +331,25 @@ Local development runs queries as whoever your Databricks credentials belong
 to. It does **not** reproduce another user's row filtering, and the module that
 does it refuses to load in a deployed app.
 
+### A second environment
+
+The development server can run against another workspace, such as one holding
+sample data for a demonstration, without touching `.env`:
+
+```bash
+cp .env.example .env.demo    # point it at the other workspace
+databricks auth login --host <other workspace> --profile demo
+npm run dev:demo
+```
+
+`.env.demo` names the login profile in `DATABRICKS_CONFIG_PROFILE` and its own
+port in `PORT`, so it opens at a different address with its own sign-in,
+service worker and notifications. Any setting it leaves out stays unset rather
+than being taken from `.env`. Another name works the same way through
+`node scripts/dev.mjs <name>`, which reads `.env.<name>`. Every `.env.*` file
+except the example is ignored by git. Run one server at a time, since both
+build into the same `.next` folder.
+
 ### Creating reports
 
 Reports are edited in the app, but a migration needs bulk creation. The
