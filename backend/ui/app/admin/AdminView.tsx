@@ -15,6 +15,7 @@ import { usePageTitle } from "../hooks/usePageTitle";
 import { Select } from "../components/shared/Select";
 import { Toggle } from "../components/shared/Toggle";
 import { ErrorBoundary } from "../components/shared/ErrorBoundary";
+import { ConfirmDialog } from "../components/shared/ConfirmDialog";
 import { AccessSettings } from "./AccessSettings";
 import { AccessReviewPane } from "./AccessReviewPane";
 import { ActivityPane } from "./ActivityPane";
@@ -210,6 +211,7 @@ export default function AdminView() {
 			case "warehouse":
 			case "caching":
 			case "assistant":
+			case "notifications":
 				return <ConfigurationSection group={pane} />;
 		}
 
@@ -851,6 +853,9 @@ interface ConfigValues {
 	accessModel: "catalog" | "grants";
 	assistantEndpoint: string;
 	assistantEndpointUrl: string;
+	alertsEnabled: boolean;
+	maxAlertsPerUser: number;
+	pushEnabled: boolean;
 }
 
 // What an admin can change without a redeploy.
@@ -1431,6 +1436,43 @@ function ConfigurationSection({ group }: { group: PaneId }) {
 						</p>
 					</>
 				)}
+
+				{group === "notifications" && (
+					<>
+						<SettingGroup
+							title="Alerts"
+							blurb="People watch a measure and are told when it crosses a line or moves. Each alert is a warehouse query on its schedule, checked on the hour so one warehouse start serves every alert due then."
+						>
+							<SwitchSetting
+								label="Alerts"
+								hint="Off stops every check and hides the feature. Nobody's alerts are deleted."
+								checked={values.alertsEnabled}
+								onChange={(v) => set({ alertsEnabled: v })}
+							/>
+							<NumberSetting
+								label="Alerts per person"
+								hint="The most one person may keep."
+								unit="alerts"
+								value={values.maxAlertsPerUser}
+								onChange={(v) => set({ maxAlertsPerUser: v })}
+							/>
+						</SettingGroup>
+
+						<SettingGroup
+							title="Phone and desktop notifications"
+							blurb="Everything lands in each person's inbox either way. With this on, people can also have it pushed to their phone or computer."
+						>
+							<SwitchSetting
+								label="Push notifications"
+								hint="Pushes travel through the push service of each person's browser, run by Google, Apple, Mozilla or Microsoft, so the app needs outbound access to them. The message is encrypted to the device, and the service cannot read it."
+								checked={values.pushEnabled}
+								onChange={(v) => set({ pushEnabled: v })}
+							/>
+						</SettingGroup>
+
+						<NotificationsActivity />
+					</>
+				)}
 			</div>
 
 			{/* The bar appears only when there is something to save, so the page
@@ -1472,6 +1514,220 @@ function ConfigurationSection({ group }: { group: PaneId }) {
 				</div>
 			)}
 		</div>
+	);
+}
+
+interface NotificationsStats {
+	alerts: {
+		total: number;
+		enabled: number;
+		owners: number;
+		failing: number;
+		firedThisWeek: number;
+	};
+	inbox: { sentThisWeek: number; unread: number };
+	push: {
+		devices: number;
+		people: number;
+		failing: number;
+		keysCreatedOn: string | null;
+	};
+	announceReach: number;
+	failing: { name: string; owner: string; error: string | null }[];
+}
+
+// What alerts and notifications are doing across everyone, and the two
+// actions that reach everyone: an announcement, and new push keys.
+function NotificationsActivity() {
+	const { data, mutate } = useSWR<NotificationsStats>(
+		"/api/admin/notifications",
+	);
+	const [title, setTitle] = useState("");
+	const [body, setBody] = useState("");
+	const [link, setLink] = useState("");
+	const [sending, setSending] = useState(false);
+	const [sent, setSent] = useState<string | null>(null);
+	const [rotating, setRotating] = useState(false);
+
+	if (!data) return <SkeletonText lines={3} />;
+
+	const post = (payload: unknown) =>
+		fetch("/api/admin/notifications", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(payload),
+		});
+
+	const announce = async () => {
+		setSending(true);
+		setSent(null);
+		try {
+			const response = await post({
+				action: "announce",
+				title,
+				body,
+				link,
+			});
+			const result = await response.json();
+			if (!response.ok) {
+				setSent(result?.error ?? "Could not send.");
+				return;
+			}
+			setSent(
+				`Sent to ${result.sent.toLocaleString()} ${result.sent === 1 ? "person" : "people"}.`,
+			);
+			setTitle("");
+			setBody("");
+			setLink("");
+			void mutate();
+		} finally {
+			setSending(false);
+		}
+	};
+
+	const rotate = async () => {
+		setRotating(false);
+		await post({ action: "rotate" });
+		void mutate();
+	};
+
+	return (
+		<>
+			<div className={styles.tiles}>
+				<Tile
+					label="Alerts on"
+					value={data.alerts.enabled.toLocaleString()}
+					hint={`Of ${data.alerts.total.toLocaleString()}, kept by ${data.alerts.owners.toLocaleString()} people`}
+				/>
+				<Tile
+					label="Fired this week"
+					value={data.alerts.firedThisWeek.toLocaleString()}
+				/>
+				<Tile
+					label="Failing"
+					value={data.alerts.failing.toLocaleString()}
+					tone={data.alerts.failing > 0 ? "warn" : undefined}
+					hint="Alerts whose last check could not run"
+				/>
+				<Tile
+					label="Devices"
+					value={data.push.devices.toLocaleString()}
+					hint={`Receiving pushes, for ${data.push.people.toLocaleString()} people`}
+				/>
+				<Tile
+					label="Inbox this week"
+					value={data.inbox.sentThisWeek.toLocaleString()}
+					hint={`${data.inbox.unread.toLocaleString()} unread across everyone`}
+				/>
+			</div>
+
+			{data.failing.length > 0 && (
+				<SettingGroup
+					title="Alerts that could not run"
+					blurb="The reason each last check gave. Most are a field renamed or removed on the dataset."
+				>
+					<div className={styles.tableWrap}>
+						<table className={styles.table}>
+							<thead>
+								<tr>
+									<th>Alert</th>
+									<th>Owner</th>
+									<th>Reason</th>
+								</tr>
+							</thead>
+							<tbody>
+								{data.failing.map((f) => (
+									<tr key={`${f.owner}:${f.name}`}>
+										<td>{f.name}</td>
+										<td>{f.owner}</td>
+										<td>{f.error ?? "Unknown"}</td>
+									</tr>
+								))}
+							</tbody>
+						</table>
+					</div>
+				</SettingGroup>
+			)}
+
+			<SettingGroup
+				title="Announcement"
+				blurb={`Lands in the inbox of everyone who used the app in the last 90 days, ${data.announceReach.toLocaleString()} people now, and on their devices if they allow announcements.`}
+			>
+				<Field label="Title">
+					<input
+						className={styles.input}
+						value={title}
+						maxLength={200}
+						onChange={(e) => setTitle(e.target.value)}
+						placeholder="Planned maintenance on Saturday"
+					/>
+				</Field>
+				<Field label="Message">
+					<textarea
+						className={styles.input}
+						value={body}
+						rows={3}
+						maxLength={2000}
+						onChange={(e) => setBody(e.target.value)}
+					/>
+				</Field>
+				<Field
+					label="Link"
+					hint="Optional. A page in this app, such as /explore/."
+				>
+					<input
+						className={styles.input}
+						value={link}
+						onChange={(e) => setLink(e.target.value)}
+						placeholder="/"
+					/>
+				</Field>
+				<div className={styles.inlineActions}>
+					<button
+						type="button"
+						className={styles.saveButton}
+						onClick={announce}
+						disabled={sending || !title.trim()}
+					>
+						{sending ? "Sending" : "Send announcement"}
+					</button>
+					{sent && <span className={styles.saveNote}>{sent}</span>}
+				</div>
+			</SettingGroup>
+
+			{data.push.keysCreatedOn && (
+				<SettingGroup
+					title="Push keys"
+					blurb="The key pair pushes are signed with. Replacing it stops pushes to every device until each person turns them on again from their inbox settings."
+				>
+					<div className={styles.inlineActions}>
+						<button
+							type="button"
+							className={styles.linkButton}
+							onClick={() => setRotating(true)}
+						>
+							Replace the keys
+						</button>
+						<span className={styles.fieldHint}>
+							In use since{" "}
+							{new Date(
+								data.push.keysCreatedOn,
+							).toLocaleDateString()}
+						</span>
+					</div>
+				</SettingGroup>
+			)}
+
+			{rotating && (
+				<ConfirmDialog
+					title="Replace the push keys?"
+					body={`Every device stops receiving pushes, ${data.push.devices.toLocaleString()} now, until its owner turns them on again. Inboxes are not affected.`}
+					confirmLabel="Replace"
+					onConfirm={rotate}
+					onCancel={() => setRotating(false)}
+				/>
+			)}
+		</>
 	);
 }
 

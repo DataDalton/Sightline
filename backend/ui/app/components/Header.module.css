@@ -6,7 +6,9 @@
 	align-items: center;
 	gap: var(--space-4);
 	height: var(--header-height);
-	padding: 0 var(--space-4);
+	/* Clear of the status bar once installed and drawn edge to edge. The
+	   height above already includes it. */
+	padding: env(safe-area-inset-top, 0px) var(--space-4) 0;
 	background: var(--chrome-bg);
 	border-bottom: 1px solid var(--chrome-border);
 	color: var(--chrome-text);
@@ -173,6 +175,14 @@
 
 	.searchLabel,
 	.shortcut {
+		display: none;
+	}
+}
+
+/* A phone opens the menu from its tab bar, within reach of a thumb, so the
+   button up here would be a second way to the same place. */
+@media (max-width: 720px) {
+	.menuButton {
 		display: none;
 	}
 }

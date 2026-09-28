@@ -27,7 +27,11 @@ import {
 export interface PresentUser {
 	userEmail: string;
 	sessionId: string;
-	state: { pageId?: string | null; visualId?: string | null; editing?: boolean };
+	state: {
+		pageId?: string | null;
+		visualId?: string | null;
+		editing?: boolean;
+	};
 	isSelf: boolean;
 }
 
@@ -142,7 +146,11 @@ export function useLiveSync({
 				),
 			);
 			if (restore) {
-				seqRef.current = Math.max(seqRef.current, restore.seq, data.seq ?? 0);
+				seqRef.current = Math.max(
+					seqRef.current,
+					restore.seq,
+					data.seq ?? 0,
+				);
 				handlers.current.onReload(restore.actor);
 				return;
 			}
@@ -155,7 +163,11 @@ export function useLiveSync({
 				{ protectedIds: handlers.current.protectedIds() },
 			);
 
-			seqRef.current = Math.max(seqRef.current, result.seq, data.seq ?? 0);
+			seqRef.current = Math.max(
+				seqRef.current,
+				result.seq,
+				data.seq ?? 0,
+			);
 			setDeferred(result.deferred);
 
 			// Reported even when only this session's own ops came back, because
@@ -190,19 +202,29 @@ export function useLiveSync({
 
 		void poll().then(schedule);
 
-		return () => {
-			cancelled = true;
-			if (timerRef.current) clearTimeout(timerRef.current);
-
-			// Leaving deliberately removes the presence row rather than
-			// waiting out the lease, so other editors see the departure
-			// promptly. keepalive lets it survive the page unloading.
+		// Leaving deliberately removes the presence row rather than waiting
+		// out the lease, so other editors see the departure promptly.
+		// keepalive lets it survive the page unloading.
+		const leave = () =>
 			void fetch(`/api/report/${encodeURIComponent(slug)}/live`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ sessionId, leaving: true }),
 				keepalive: true,
 			}).catch(() => {});
+
+		// A reload or a closed tab never unmounts anything, so the cleanup
+		// below does not run for either. Without this the old session stayed
+		// listed until its lease ran out, beside the new one the reload
+		// started, and one person showed as several. A page restored from the
+		// back-forward cache heartbeats again on its next poll.
+		window.addEventListener("pagehide", leave);
+
+		return () => {
+			cancelled = true;
+			if (timerRef.current) clearTimeout(timerRef.current);
+			window.removeEventListener("pagehide", leave);
+			leave();
 		};
 		// present.length rather than present, so the loop restarts when
 		// somebody joins or leaves but not on every heartbeat.

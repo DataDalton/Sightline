@@ -216,6 +216,108 @@ reopened, and each person can give it standing instructions and ask it to
 remember things. None of that is visible to anybody else, administrators
 included.
 
+### Sheets
+
+A sheet is a live table from one dataset with the reader's own columns on
+top, for the work people used to export to a spreadsheet for. The rows come
+from the same search bar as Explore and are read again whenever the sheet is
+opened, so it stays current. The dataset is never changed.
+
+- **Formula columns** are worked out from each row with a small spreadsheet
+  language: columns by name in square brackets, arithmetic and comparison, `&`
+  to join text, and functions such as `IF`, `ROUND`, `IFERROR` and `COALESCE`.
+  `SHARE`, `RANK`, `PREVIOUS`, `RUNNING` and `TOTAL` look down the whole
+  column. Formulas may read each other, and a loop reads as `#CYCLE!` rather
+  than hanging.
+- **Notes columns** hold text typed beside a row, kept with the sheet and tied
+  to the row's grouping values, so a note stays with its row across refreshes.
+- **Pivot** lays out fields down the side, one across the top and measures in
+  the cells. Every total is asked of the warehouse at its own grain rather than
+  added up from the cells, so an average's total is the average.
+- The grid selects and copies ranges, moves with the keyboard, sorts, resizes,
+  freezes columns and formats numbers, and sums what is selected.
+
+Sheets are shared with named people, to view or to edit, and each person sees
+their own rows of the data under their own access, as with a report. Notes are
+returned only for the rows in that person's answer, and written only to a row
+they can see, so a note's row cannot show somebody a value their filter hides.
+Everyone with a sheet open sees who else has, and which cell each has
+selected, and a change made by one reaches the others within a few seconds. A
+change made from an out of date copy is refused and reloaded rather than
+silently overwriting the other one.
+
+**Download** returns the sheet as CSV with its formulas worked out on the
+server, up to the query ceiling, and is recorded in the export audit like any
+other export. A note beginning with `=` is written as text so a spreadsheet
+program does not run it.
+
+### Alerts and the inbox
+
+An alert watches one measure, either as a total or for each value of a field,
+narrowed by the same conditions Explore writes. It says something when the
+value goes above or below a line, when it rises or falls by more than a
+percentage since the last check, or when it changes at all. A line is reported
+once when it is crossed, not on every check it stays crossed, and optionally
+again when the value is back. When several values cross at once the alert sends
+one message listing them.
+
+Alerts are made from **Alerts**, or from **Explore** with the numbers already
+on screen, and the dialog shows the current value before anything is saved.
+Checks land on the hour, hourly, daily, on weekdays or weekly, in the owner's
+own time zone, so a warehouse that stops when idle is started once for every
+alert due at that hour.
+
+A check needs somebody's authority to query, and a person's token only exists
+while they are using the app. So:
+
+- On a dataset that shows everybody the same rows, with no row filter and no
+  column mask, a check runs on its schedule as the app. That is the same answer
+  the owner would get, for the same reason the result cache shares one answer
+  between every reader of such a dataset. It runs only while the owner has been
+  seen able to read the dataset within the last day, so a withdrawn grant stops
+  their alerts no later than it stops everything else.
+- On a row-filtered dataset, the app records what the owner can see while they
+  are using it. A row filter decides each row from a few of that row's columns,
+  so the app asks, under the owner's own token, for every combination of those
+  columns they can see. A scheduled check then runs as the app, narrowed to
+  exactly those combinations, which returns the owner's rows. The recording is
+  taken again at most hourly while they are here and is not used once it is a
+  day old. A value that appears after it was taken is left out until the next
+  one, which errs towards showing less.
+- That needs every column the filter reads to be a field of the dataset as it
+  stands, with the filter on the table the dataset reads rather than on a
+  joined one, no column mask, and no more than 500 combinations for the person.
+  The filter walk works this out for each dataset. Anything else is checked
+  under the owner's own token while they are using the app, and the alert says
+  so. Exposing a filter's columns as fields on the dataset is what moves it
+  from one to the other.
+
+Everything anybody is told lands in their **Inbox**: alerts, pages shared with
+them, and announcements an administrator sends. A bell in the header carries
+the unread count. Entries can be marked read or unread and cleared, and each
+one opens the page it is about. An alert's message opens Explore on the numbers
+it read.
+
+### On a phone, and installed
+
+Every page works at phone width. A tab bar at the foot of the screen carries
+Home, Explore, the assistant, the inbox and the menu, dialogs rise from the
+bottom, tables become cards, and an opened visual takes the screen.
+
+The app can be installed, from the browser's install button on a desktop or
+Android, or with **Add to Home Screen** on iPhone and iPad, where **Install on
+this device** in the account menu shows the steps. Installed, it opens in its
+own window with its unread count on its icon. A service worker keeps the
+build's assets on the device so it opens quickly, and shows a page saying so
+when there is no connection. It keeps nothing else: every page and every answer
+is specific to the person and their access, so none of it is stored on the
+device.
+
+With push turned on by an administrator, anyone can have their inbox sent to
+their phone or computer from **Inbox -> Settings**, choosing which kinds, and
+seeing and removing the devices that receive them. On iPhone and iPad a push
+only reaches the installed app.
+
 ## Getting started
 
 ```bash
@@ -258,7 +360,22 @@ five groups, and each pane has its own address so it can be linked.
 | Access | Roles and what they allow, who holds what, direct grants, an access review for one person and one report, and the groups that hold access before any role does |
 | Audit | Every recorded change, every export, and cache partitioning |
 | Content | Registered sources and the catalogue sync, categories, and personal pages |
-| Platform | What this replica holds, where it is connected, branding, the warehouse, cache budgets and the assistant endpoint |
+| Platform | What this replica holds, where it is connected, branding, the warehouse, cache budgets, the assistant endpoint, and notifications |
+
+Every category has an editor role of its own, named after it, such as "Sales
+Performance - Editor". Whoever holds one builds and maintains the reports in that
+category and nowhere else, with what the Editor role grants. The platform keeps
+these roles itself. Each one is created with its category, renamed when it is
+renamed and retired when it is removed, and nobody can change or delete one by
+hand, so they cannot drift from each other or from the Editor role. They are
+listed under **Access -> Roles** with who holds each, and an assignment of one
+always applies in its own category whatever scope the request named. Scoped
+assignments of other roles remain for anything these do not cover.
+
+**Notifications** turns alerts and pushes on or off, sets how many alerts one
+person may keep, shows how many alerts and devices there are and which alerts
+are failing and why, sends an announcement to everyone who used the app in the
+last 90 days, and replaces the push keys.
 
 The catalogue sync refreshes what the platform knows about its sources, and walks
 the row filters again. It runs to completion on the server, so leaving the page
@@ -281,7 +398,7 @@ Configuration lives in several places, and they hold different things:
 | The Lakebase instance | A login role for the service principal, and ownership of the platform schema |
 | Unity Catalog | What each reader may select, and what the service principal may read to walk the filters |
 | Model serving | Who may query the assistant's endpoint, when it is used |
-| **Administration** in the app | Name, description, logo, SQL warehouse, cache budgets, assistant endpoint, editor and admin groups, extra policy groups |
+| **Administration** in the app | Name, description, logo, SQL warehouse, cache budgets, assistant endpoint, alerts and push notifications, editor and admin groups, extra policy groups |
 
 Connection targets have to be known **before** the platform can read its own
 settings table, so they cannot live in it. A field for the database connection
@@ -411,7 +528,37 @@ Two things have to be true for it to work:
 
 The assistant's conversations, standing instructions and saved memories are kept
 in the platform schema, per person, in `assistant_conversations` and
-`assistant_profiles`. Saved Explore views are in `explore_views`.
+`assistant_profiles`. Saved Explore views are in `explore_views`, and sheets
+in `sheets`, `sheet_shares`, `sheet_cells` and `sheet_presence`.
+
+### Notifications
+
+The inbox and alerts need nothing beyond the platform schema. They are in
+`notifications`, `alert_rules` and `alert_events`, and what each person was
+recorded seeing of a row-filtered dataset is in `alert_access`. The filter walk
+writes, per dataset, which fields its filters decide on and whether a column is
+masked, which needs the same `SELECT` the walk already has.
+
+Pushes to phones and computers are off until turned on under **Administration
+-> Platform -> Notifications**. Turning them on generates the key pair pushes
+are signed with and stores it in `push_keys`. Keep that row: every device
+subscribed against its public half, and a new pair means everybody turns
+pushes on again. Devices are in `push_subscriptions`, and what each person
+wants pushed in `notification_prefs`.
+
+A push is sent from the app to the push service of the browser that subscribed,
+run by Google, Apple, Mozilla or Microsoft, which delivers it to the device. The
+app therefore needs outbound HTTPS to `*.googleapis.com`, `*.push.apple.com`,
+`*.push.services.mozilla.com` and `*.notify.windows.com`. It posts to nothing
+else, whatever address a browser hands it. The message is encrypted to the
+device, so the push service carries it without being able to read it. A device
+that the service reports gone is forgotten, and one that keeps failing is
+dropped.
+
+The manifest and the service worker are served by the app behind the same sign
+in as everything else. The manifest is requested with credentials, because
+without the session cookie the sign in intercepts it and the install fails
+without saying why.
 
 ## Tests
 
@@ -419,23 +566,33 @@ in the platform schema, per person, in `assistant_conversations` and
 npm test
 ```
 
-Covers the query builder including NOT and OR, the saved-view overlay, layout
+Covers the query builder including NOT, OR and the recorded-access restriction, the saved-view overlay, layout
 arithmetic, conditional formatting, brush selection geometry, version diffing,
 row filter group discovery, metric view calculation parsing, field usage
 lookup, hostname parsing, CSV encoding and the SVG sanitiser. For Explore it
 covers condition parsing and the address encoding. For the assistant it covers
 the refusal of every malformed or out of catalogue query, the streamed response
 format as a Databricks endpoint sends it, and how streamed events build the
-transcript.
+transcript. For alerts it covers when each condition fires and when it stays
+quiet, the wording of what it sends, schedules across a daylight saving
+change, reading a filter's columns out of the catalogue and mapping them onto
+fields. Push encryption is checked byte for byte against the worked example in
+RFC 8291, and the push signature against its own public key. For sheets it
+covers the formula language, including errors, cycles and the functions that
+read down a column, and pivot layout with totals taken from the warehouse.
 
 ## Repository layout
 
 ```text
 backend/ui/
   app/          Routes, the reader, the editor, the admin section,
-                the dictionary, explore and the assistant
+                the dictionary, explore, sheets, the assistant, the
+                inbox and alerts
   lib/          Query building, semantic layer, auth, platform tables,
-                the assistant's agent and its query validation
+                the assistant's agent and its query validation,
+                alert checks, push delivery, and the sheet formula
+                language
+  public/       The service worker and the offline page
   scripts/      Maintenance and the manifest importer
 examples/       A worked import manifest
 docs/           Logo and documentation assets

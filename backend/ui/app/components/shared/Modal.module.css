@@ -72,3 +72,21 @@
 	padding: 16px 20px;
 	border-top: 1px solid var(--border-default);
 }
+
+/* On a phone a dialog rises from the foot of the screen, where a thumb can
+   reach its buttons, and takes the full width. */
+@media (max-width: 560px) {
+	.overlay {
+		align-items: flex-end;
+		padding: 0;
+	}
+
+	.modal {
+		max-width: none !important;
+		max-height: calc(100dvh - var(--header-height));
+		border-radius: 16px 16px 0 0;
+		border-bottom: none;
+		padding-bottom: var(--safe-bottom);
+		animation: popoverInUp 180ms ease-out;
+	}
+}

@@ -7,6 +7,13 @@ import {
 	type FilterGroups,
 } from "./rowFilterGroups";
 import { runCatalogQuery } from "./ucMetadata";
+import {
+	accessFields,
+	filterColumns,
+	type FoundFilter,
+} from "../alerts/access";
+import { parseMetricViewCalculations } from "./metricViewCalculations";
+import { getSource } from "./registry";
 
 // Discovering which groups change what a reader sees.
 //
@@ -116,7 +123,12 @@ export async function discoverSourceGroups(
 		kind: string;
 		base_tables: string[] | null;
 	},
-): Promise<{ groups: FilterGroups; tables: string[] }> {
+): Promise<{
+	groups: FilterGroups;
+	tables: string[];
+	filters: FoundFilter[];
+	masked: boolean;
+}> {
 	const tables = await tablesBehind(
 		identity,
 		source.catalog_name,
@@ -127,19 +139,37 @@ export async function discoverSourceGroups(
 	);
 
 	const parts: FilterGroups[] = [];
+	const found: FoundFilter[] = [];
+	let masked = false;
 	for (const table of tables) {
 		const [catalog, schema, name] = table.split(".");
 		if (!catalog || !schema || !name) continue;
 
 		const filters = await runCatalogQuery(
 			identity,
-			`SELECT filter_name
+			`SELECT filter_name, target_columns
 			 FROM ${catalog}.information_schema.row_filters
 			 WHERE table_schema = :schema AND table_name = :name`,
 			{ schema, name },
 		);
 
+		// A mask changes what a column holds for one reader, which no
+		// restriction on rows can reproduce.
+		const masks = await runCatalogQuery(
+			identity,
+			`SELECT count(*) AS n
+			 FROM ${catalog}.information_schema.column_masks
+			 WHERE table_schema = :schema AND table_name = :name`,
+			{ schema, name },
+		);
+		if (Number(masks[0]?.n ?? 0) > 0) masked = true;
+
 		for (const row of filters) {
+			found.push({
+				table,
+				columns: filterColumns(String(row.target_columns ?? "")),
+			});
+
 			const qualified = String(row.filter_name ?? "");
 			const segments = qualified.split(".");
 			const routineSchema = segments[segments.length - 2];
@@ -164,7 +194,50 @@ export async function discoverSourceGroups(
 		}
 	}
 
-	return { groups: mergeFilterGroups(parts), tables };
+	return { groups: mergeFilterGroups(parts), tables, filters: found, masked };
+}
+
+// Which fields hold what a source's filters decide on, for alerts checked
+// while their owner is away. Null when they cannot be mapped exactly.
+async function mapAccessFields(
+	identity: Identity | null,
+	source: {
+		source_key: string;
+		catalog_name: string;
+		schema_name: string;
+		object_name: string;
+		kind: string;
+	},
+	filters: FoundFilter[],
+): Promise<string[] | null> {
+	const registered = getSource(source.source_key);
+	if (!registered) return null;
+
+	let view = null;
+	if (source.kind === "metric_view") {
+		// Read on every walk rather than kept, because a field whose
+		// expression moved to another column would otherwise go on being
+		// compared against the old one.
+		const rows = await runCatalogQuery(
+			identity,
+			`SHOW CREATE TABLE ${source.catalog_name}.${source.schema_name}.${source.object_name}`,
+		);
+		view = parseMetricViewCalculations(
+			String(Object.values(rows[0] ?? {})[0] ?? ""),
+		);
+	}
+
+	return accessFields(
+		{
+			kind: registered.kind,
+			catalog: source.catalog_name,
+			schema: source.schema_name,
+			object: source.object_name,
+			dimensions: registered.dimensions,
+		},
+		filters,
+		view,
+	);
 }
 
 // Which groups the row filters across every source branch on.
@@ -226,11 +299,27 @@ async function runWalk(identity: Identity | null): Promise<DiscoveredGroups> {
 
 	for (const source of sources) {
 		try {
-			const { groups, tables } = await discoverSourceGroups(
-				identity,
-				source,
-			);
+			const { groups, tables, filters, masked } =
+				await discoverSourceGroups(identity, source);
 			parts.push(groups);
+
+			// Cleared first, so a walk that fails to map a source leaves it
+			// on signed-in checks rather than on the last mapping.
+			const fields = masked
+				? null
+				: await mapAccessFields(identity, source, filters).catch(
+						() => null,
+					);
+			await sql(
+				`UPDATE data_sources
+				 SET access_fields = $2::jsonb, has_column_mask = $3
+				 WHERE source_key = $1`,
+				[
+					source.source_key,
+					fields ? JSON.stringify(fields) : null,
+					masked,
+				],
+			).catch(() => {});
 
 			// Derived rather than read, so keep it for next time.
 			if (!source.base_tables && source.kind === "metric_view") {

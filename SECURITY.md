@@ -30,7 +30,13 @@ at hardest:
   issue.
 - **On behalf of the user.** Every data query runs under the caller's
   forwarded token. Any path that reaches user-facing data with the service
-  principal instead is in scope.
+  principal instead is in scope. The one exception is a scheduled alert check,
+  for an owner seen able to read the dataset within the last day, on a dataset
+  with no row filter and no column mask, or on a row-filtered one narrowed to
+  the combinations of filter columns the owner was recorded seeing under their
+  own token within the last day. Anything that lets such a check return a row
+  the owner could not see, run on a masked dataset, or run for anybody else, is
+  in scope.
 - **The SVG sanitiser.** An uploaded logo is placed in the page of every
   reader. Anything that survives `lib/visuals/svgSanitize.ts` and executes is
   in scope.
@@ -42,6 +48,15 @@ at hardest:
   asking. Anything that lets model output reach the warehouse other than
   through that check, lets it read a source the asker cannot, or lets one
   person's conversations, instructions or memories reach another, is in scope.
+- **Sheets.** Each person reads a shared sheet's data under their own token.
+  Anything that returns a note, or accepts one, for a row outside the caller's
+  own answer, lets somebody change a sheet shared with them to view, or gets a
+  formula to do more than the functions in `lib/sheets/formula.ts`, is in
+  scope.
+- **Notifications.** An inbox entry, an alert and a push device belong to one
+  person. Anything that lets somebody read, change or receive another person's,
+  makes the app post to an address other than a browser push service, or puts
+  a link to another site in a notification, is in scope.
 
 ## Response
 

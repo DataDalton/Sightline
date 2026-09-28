@@ -16,6 +16,10 @@ import {
 } from "../../lib/explore/state";
 import { ExploreBar } from "./ExploreBar";
 import { SavedViews, type SavedView } from "./SavedViews";
+import { AlertDialog } from "../alerts/AlertDialog";
+import { createSheet } from "../sheets/SheetsList";
+import type { AlertRecord } from "../../lib/alerts/store";
+import { useNotify } from "../notify/NotifyContext";
 import styles from "./Explore.module.css";
 
 // A table of whatever somebody wants to see, built from one search bar.
@@ -50,6 +54,15 @@ export default function ExploreView() {
 		saved: string;
 	} | null>(null);
 	const [restored, setRestored] = useState(false);
+	const [alertOpen, setAlertOpen] = useState(false);
+	// An alert whose filters are being changed here, when Explore was opened
+	// from one.
+	const [alertId, setAlertId] = useState<string | null>(null);
+	const [alertSaved, setAlertSaved] = useState(false);
+	const { alertsEnabled } = useNotify();
+	const { data: editingAlert } = useSWR<{ alert: AlertRecord }>(
+		alertId ? `/api/alerts/${alertId}` : null,
+	);
 
 	const apply = (state: ExploreState) => {
 		setSourceKey(state.sourceKey);
@@ -60,9 +73,11 @@ export default function ExploreView() {
 	// Read once on arrival, after mount so the server render and the first
 	// client render agree.
 	useEffect(() => {
-		const q = new URLSearchParams(window.location.search).get("q");
+		const params = new URLSearchParams(window.location.search);
+		const q = params.get("q");
 		const state = q ? decodeState(q) : null;
 		if (state) apply(state);
+		setAlertId(params.get("alert"));
 		setRestored(true);
 	}, []);
 
@@ -165,23 +180,149 @@ export default function ExploreView() {
 						and click a condition to change it.
 					</p>
 				</div>
-				<SavedViews
-					current={current}
-					currentView={openView}
-					modified={Boolean(openView && openView.saved !== encoded)}
-					sourceTitle={(key) =>
-						sources.find((s) => s.sourceKey === key)?.title ?? key
-					}
-					onOpen={openSaved}
-					onSaved={(view) =>
-						setOpenView({
-							id: view.id,
-							name: view.name,
-							saved: encodeState(view.state),
-						})
-					}
-				/>
+				<div className={styles.headerActions}>
+					{source && columns.length > 0 && (
+						<button
+							type="button"
+							className={styles.headerButton}
+							onClick={async () => {
+								const id = await createSheet(
+									openView?.name ?? `${source.title} sheet`,
+									{ sourceKey, columns, conditions },
+								);
+								if (id)
+									window.location.assign(`/sheets/${id}/`);
+							}}
+							title="Open these rows as a sheet, to add formulas, notes and pivots"
+						>
+							<svg
+								width="15"
+								height="15"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								strokeWidth="2"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								aria-hidden="true"
+							>
+								<path d="M3 3h18v18H3zM3 9h18M3 15h18M9 3v18" />
+							</svg>
+							Open as sheet
+						</button>
+					)}
+					{alertsEnabled && source && (
+						<button
+							type="button"
+							className={styles.headerButton}
+							onClick={() => setAlertOpen(true)}
+							title="Be told when a number here crosses a line"
+						>
+							<svg
+								width="15"
+								height="15"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								strokeWidth="2"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								aria-hidden="true"
+							>
+								<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0" />
+							</svg>
+							Alert
+						</button>
+					)}
+					<SavedViews
+						current={current}
+						currentView={openView}
+						modified={Boolean(
+							openView && openView.saved !== encoded,
+						)}
+						sourceTitle={(key) =>
+							sources.find((s) => s.sourceKey === key)?.title ??
+							key
+						}
+						onOpen={openSaved}
+						onSaved={(view) =>
+							setOpenView({
+								id: view.id,
+								name: view.name,
+								saved: encodeState(view.state),
+							})
+						}
+					/>
+				</div>
 			</header>
+
+			{editingAlert && (
+				<div className={styles.alertBanner}>
+					<span>
+						Changing the filters of the alert{" "}
+						<b>{editingAlert.alert.name}</b>.
+					</span>
+					<span className={styles.alertBannerActions}>
+						{alertSaved ? (
+							<a
+								href="/alerts/"
+								className={styles.alertBannerLink}
+							>
+								Saved. Back to alerts
+							</a>
+						) : (
+							<button
+								type="button"
+								className={styles.alertBannerButton}
+								disabled={
+									!source ||
+									source.sourceKey !==
+										editingAlert.alert.definition
+											.sourceKey ||
+									Boolean(logic.problem)
+								}
+								onClick={async () => {
+									const response = await fetch(
+										`/api/alerts/${editingAlert.alert.id}`,
+										{
+											method: "PUT",
+											headers: {
+												"Content-Type":
+													"application/json",
+											},
+											body: JSON.stringify({
+												...editingAlert.alert
+													.definition,
+												conditions,
+											}),
+										},
+									);
+									if (response.ok) setAlertSaved(true);
+								}}
+							>
+								Save filters to alert
+							</button>
+						)}
+					</span>
+				</div>
+			)}
+
+			{alertOpen && source && (
+				<AlertDialog
+					sources={sources}
+					prefill={{
+						sourceKey: source.sourceKey,
+						measure: measures[0] ?? "",
+						groupBy: dimensions[0] ?? null,
+						conditions,
+					}}
+					onClose={() => setAlertOpen(false)}
+					onSaved={() => {
+						setAlertOpen(false);
+						window.location.assign("/alerts/");
+					}}
+				/>
+			)}
 
 			{showSkeleton && isLoading && <SkeletonText lines={2} />}
 

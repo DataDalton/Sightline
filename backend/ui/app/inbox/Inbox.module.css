@@ -1,0 +1,377 @@
+/* The views down the side and the chosen one beside them, filling the page
+   under the header like the rest of the app. */
+.hub {
+	display: grid;
+	grid-template-columns: 232px minmax(0, 1fr);
+	min-height: 100%;
+}
+
+.rail {
+	position: sticky;
+	top: 0;
+	align-self: start;
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-4);
+	max-height: calc(100dvh - var(--header-height));
+	padding: var(--space-6) var(--space-3);
+	overflow-y: auto;
+	border-right: 1px solid var(--border-subtle);
+}
+
+.railGroup {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.railHeading {
+	padding: 0 var(--space-3) var(--space-1);
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+
+.railItem {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	width: 100%;
+	padding: var(--space-2) var(--space-3);
+	border-radius: var(--radius-md);
+	color: var(--text-secondary);
+	font-size: var(--text-md);
+	text-align: left;
+	transition:
+		background var(--transition-fast),
+		color var(--transition-fast);
+}
+
+.railItem:hover {
+	background: var(--state-hover);
+	color: var(--text-primary);
+}
+
+/* The chosen view: filled, bolder and marked in the brand colour, as the
+   navigation marks the page it is on. */
+.railOn {
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font-weight: 600;
+	box-shadow: var(--shadow-sm);
+}
+
+.railOn::before {
+	content: "";
+	position: absolute;
+	left: 0;
+	top: 50%;
+	width: 3px;
+	height: 16px;
+	transform: translateY(-50%);
+	border-radius: var(--radius-full);
+	background: var(--brand);
+}
+
+.railLabel {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.railCount {
+	min-width: 20px;
+	padding: 0 6px;
+	border-radius: var(--radius-full);
+	background: var(--surface-sunken);
+	color: var(--text-secondary);
+	font-size: var(--text-xs);
+	font-weight: 600;
+	line-height: 20px;
+	text-align: center;
+	font-variant-numeric: tabular-nums;
+}
+
+.railCountBrand {
+	background: var(--brand);
+	color: var(--brand-contrast);
+}
+
+.railCountWarn {
+	background: var(--warning-subtle);
+	color: var(--warning);
+}
+
+.main {
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-4);
+	padding: var(--space-6) var(--space-5);
+}
+
+/* On a phone the views become a row of chips above the content, which
+   scrolls sideways rather than taking the height of a column. */
+@media (max-width: 720px) {
+	.hub {
+		grid-template-columns: minmax(0, 1fr);
+		/* The chips take their own height and the view the rest, rather
+		   than the two sharing the page between them. */
+		grid-template-rows: auto 1fr;
+	}
+
+	.rail {
+		position: static;
+		flex-direction: row;
+		gap: var(--space-1);
+		max-height: none;
+		padding: var(--space-3);
+		overflow-x: auto;
+		border-right: none;
+		border-bottom: 1px solid var(--border-subtle);
+		scrollbar-width: none;
+	}
+
+	.railGroup {
+		flex-direction: row;
+		gap: var(--space-1);
+	}
+
+	.railHeading {
+		display: none;
+	}
+
+	.railItem {
+		width: auto;
+		padding: var(--space-1) var(--space-3);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-full);
+		white-space: nowrap;
+		font-size: var(--text-sm);
+	}
+
+	.railOn::before {
+		display: none;
+	}
+
+	.railOn {
+		border-color: var(--brand);
+	}
+
+	.main {
+		padding: var(--space-4) var(--space-3);
+	}
+}
+
+.header {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: var(--space-4);
+	flex-wrap: wrap;
+}
+
+.title {
+	font-size: var(--text-2xl);
+	font-weight: 600;
+	letter-spacing: -0.02em;
+	text-wrap: balance;
+}
+
+.subtitle {
+	margin-top: var(--space-1);
+	color: var(--text-secondary);
+	max-width: 72ch;
+	text-wrap: pretty;
+}
+
+.bulk {
+	display: inline-flex;
+	gap: var(--space-1);
+}
+
+.bulkButton {
+	padding: var(--space-1) var(--space-3);
+	border-radius: var(--radius-md);
+	color: var(--text-link);
+	font-size: var(--text-sm);
+}
+
+.bulkButton:hover {
+	background: var(--state-hover);
+}
+
+.listFrame {
+	display: flex;
+	flex-direction: column;
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-lg);
+	background: var(--surface-raised);
+	overflow: hidden;
+}
+
+.more {
+	padding: var(--space-3);
+	border-top: 1px solid var(--border-subtle);
+	color: var(--text-secondary);
+	font-size: var(--text-sm);
+	font-weight: 500;
+}
+
+.more:hover:not(:disabled) {
+	background: var(--state-hover);
+	color: var(--text-primary);
+}
+
+.state {
+	padding: var(--space-6);
+	border: 1px dashed var(--border-default);
+	border-radius: var(--radius-lg);
+	color: var(--text-muted);
+	text-align: center;
+}
+
+/* --- Settings ---------------------------------------------------------- */
+
+/* Side by side where there is room, so a wide screen does not show four
+   short sections each stretched across it. */
+.settings {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr));
+	gap: var(--space-4);
+	align-items: start;
+}
+
+.card {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+	padding: var(--space-4) var(--space-5);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-lg);
+	background: var(--surface-raised);
+}
+
+@media (max-width: 720px) {
+	.card {
+		padding: var(--space-4);
+	}
+}
+
+.cardTitle {
+	font-size: var(--text-lg);
+	font-weight: 600;
+}
+
+.note {
+	color: var(--text-secondary);
+	font-size: var(--text-sm);
+	line-height: 1.55;
+	max-width: 64ch;
+}
+
+.stack {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+	align-items: flex-start;
+}
+
+.settingRow {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-4);
+	width: 100%;
+}
+
+.settingLabel {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+	font-weight: 500;
+}
+
+.settingHint {
+	color: var(--text-muted);
+	font-size: var(--text-sm);
+}
+
+.inline {
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	flex-wrap: wrap;
+}
+
+.primary,
+.secondary {
+	padding: var(--space-2) var(--space-4);
+	border-radius: var(--radius-md);
+	font-size: var(--text-sm);
+	font-weight: 600;
+}
+
+.primary {
+	background: var(--brand);
+	color: var(--brand-contrast);
+}
+
+.primary:hover {
+	background: var(--brand-strong);
+}
+
+.secondary {
+	border: 1px solid var(--border-default);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+}
+
+.secondary:hover {
+	background: var(--state-hover);
+}
+
+.error {
+	color: var(--danger);
+	font-size: var(--text-sm);
+}
+
+.devices {
+	display: flex;
+	flex-direction: column;
+	list-style: none;
+}
+
+.device {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-3);
+	padding: var(--space-3) 0;
+	border-top: 1px solid var(--border-subtle);
+}
+
+.device:first-child {
+	border-top: none;
+	padding-top: 0;
+}
+
+.deviceText {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.thisDevice {
+	padding: 1px var(--space-2);
+	border-radius: var(--radius-full);
+	background: var(--brand-subtle);
+	color: var(--text-primary);
+	font-size: var(--text-xs);
+	font-weight: 600;
+}

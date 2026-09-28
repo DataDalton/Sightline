@@ -24,7 +24,7 @@ import styles from "./Explore.module.css";
 
 interface Suggestion {
 	key: string;
-	group: "Filter" | "Fields" | "Sources" | "Values";
+	group: "Filter" | "Operator" | "Fields" | "Sources" | "Values";
 	label: string;
 	hint?: string;
 	// Shown beside the name for a field, so what picking it does is read in
@@ -32,6 +32,8 @@ interface Suggestion {
 	kind?: "dimension" | "measure";
 	// Already a column in the table.
 	added?: boolean;
+	// The comparison's sign, drawn in front of an operator choice.
+	symbol?: string;
 	apply: () => void;
 	// Starts a condition on this field rather than adding it as a column.
 	filter?: () => void;
@@ -40,6 +42,91 @@ interface Suggestion {
 // Values offered while a condition's value is typed. A handful: this is for
 // finding the spelling, not browsing the column.
 const valueSuggestions = 8;
+
+// The comparisons offered once a field is chosen to filter by, so nobody has
+// to know that "not equal" is typed != or that a range is >=. Each is written
+// into the box in the spelling the bar reads, so what was picked can still be
+// edited by hand.
+interface OperatorChoice {
+	// What is typed after the field.
+	word: string;
+	symbol: string;
+	label: string;
+	// Takes no value, so choosing it adds the condition at once.
+	valueless?: boolean;
+	// Takes a list of values separated by commas.
+	many?: boolean;
+}
+
+const operators: Record<string, OperatorChoice> = {
+	eq: { word: "=", symbol: "=", label: "is" },
+	neq: { word: "!=", symbol: "≠", label: "is not" },
+	gt: { word: ">", symbol: ">", label: "greater than" },
+	gte: { word: ">=", symbol: "≥", label: "at least" },
+	lt: { word: "<", symbol: "<", label: "less than" },
+	lte: { word: "<=", symbol: "≤", label: "at most" },
+	in: { word: "in", symbol: "∈", label: "any of", many: true },
+	notIn: { word: "not in", symbol: "∉", label: "none of", many: true },
+	contains: { word: "contains", symbol: "⊃", label: "contains" },
+	starts: { word: "starts with", symbol: "a…", label: "starts with" },
+	ends: { word: "ends with", symbol: "…z", label: "ends with" },
+	empty: {
+		word: "is empty",
+		symbol: "∅",
+		label: "is empty",
+		valueless: true,
+	},
+	filled: {
+		word: "is not empty",
+		symbol: "≠∅",
+		label: "is not empty",
+		valueless: true,
+	},
+};
+
+// Which comparisons make sense for a field. A measure is a number worked out
+// per group, so it is compared, never searched. A dimension holding numbers or
+// dates is compared and matched, and one holding text is matched and
+// searched.
+function operatorsFor(
+	kind: "dimension" | "measure" | undefined,
+	dataType: string | null | undefined,
+): OperatorChoice[] {
+	const o = operators;
+	if (kind === "measure") return [o.gt, o.gte, o.lt, o.lte, o.eq, o.neq];
+	const ordered =
+		/int|double|decimal|float|long|numeric|date|timestamp/i.test(
+			dataType ?? "",
+		);
+	return ordered
+		? [
+				o.eq,
+				o.neq,
+				o.gt,
+				o.gte,
+				o.lt,
+				o.lte,
+				o.in,
+				o.notIn,
+				o.empty,
+				o.filled,
+			]
+		: [
+				o.eq,
+				o.neq,
+				o.contains,
+				o.starts,
+				o.ends,
+				o.in,
+				o.notIn,
+				o.empty,
+				o.filled,
+			];
+}
+
+// What leads a condition in the box: a join, brackets, a "not". Kept when the
+// field or the operator is written after it.
+const leadPattern = /^\s*((or|and)\s+)?(\(+\s*)?(not\s+)?(\(+\s*)?/i;
 
 export function ExploreBar({
 	sources,
@@ -68,6 +155,13 @@ export function ExploreBar({
 	const [nextJoin, setNextJoin] = useState<"and" | "or">("and");
 	const [active, setActive] = useState(0);
 	const [values, setValues] = useState<string[]>([]);
+	// A column chip whose menu is open.
+	const [chipMenu, setChipMenu] = useState<string | null>(null);
+	// A column being swapped for another: the next field picked takes its
+	// place rather than being added at the end.
+	const [replacing, setReplacing] = useState<string | null>(null);
+	// Datasets offered on their own, after a click on the dataset chip.
+	const [switching, setSwitching] = useState(false);
 	const inputRef = useRef<HTMLInputElement | null>(null);
 	const wrapRef = useRef<HTMLDivElement | null>(null);
 
@@ -90,6 +184,16 @@ export function ExploreBar({
 	const kindOf = useMemo(
 		() => new Map(known.map((f) => [f.name, f.kind])),
 		[known],
+	);
+	const typeOf = useMemo(
+		() =>
+			new Map(
+				[
+					...(source?.dimensions ?? []),
+					...(source?.measures ?? []),
+				].map((f) => [f.name, f.dataType]),
+			),
+		[source],
 	);
 
 	const parsed = useMemo(
@@ -145,6 +249,28 @@ export function ExploreBar({
 	const reset = () => {
 		setText("");
 		setActive(0);
+		setReplacing(null);
+		setSwitching(false);
+		inputRef.current?.focus();
+	};
+
+	// A field named with nothing after it yet, which is the moment to offer
+	// the comparisons.
+	const lead = leadPattern.exec(text)?.[0] ?? "";
+	const fieldOnly = useMemo(() => {
+		if (!source) return null;
+		const rest = text.slice(lead.length).trim().toLowerCase();
+		if (!rest) return null;
+		return known.find((f) => f.name.toLowerCase() === rest) ?? null;
+	}, [text, lead, known, source]);
+
+	// Starts a filter on a field: its name in the box, the comparisons in the
+	// list.
+	const startFilter = (name: string) => {
+		setText(`${lead}${name} `);
+		setMode("all");
+		setOpen(true);
+		setChipMenu(null);
 		inputRef.current?.focus();
 	};
 
@@ -160,6 +286,24 @@ export function ExploreBar({
 	const suggestions: Suggestion[] = useMemo(() => {
 		const out: Suggestion[] = [];
 		const needle = text.trim().toLowerCase();
+
+		if (switching && source) {
+			for (const s of sources) {
+				if (needle && !s.title.toLowerCase().includes(needle)) continue;
+				out.push({
+					key: `s:${s.sourceKey}`,
+					group: "Sources",
+					label: s.title,
+					added: s.sourceKey === source.sourceKey,
+					apply: () => {
+						if (s.sourceKey !== source.sourceKey)
+							onSource(s.sourceKey);
+						reset();
+					},
+				});
+			}
+			return out.slice(0, 60);
+		}
 
 		// No source yet: the first thing to choose. Fields across every
 		// source are offered too, so somebody who knows the measure but not
@@ -201,6 +345,32 @@ export function ExploreBar({
 			return out.slice(0, 60);
 		}
 
+		// A field on its own: how to compare it.
+		if (fieldOnly && !parsed) {
+			for (const o of operatorsFor(
+				fieldOnly.kind,
+				typeOf.get(fieldOnly.name),
+			)) {
+				const body = `${lead}${fieldOnly.name} ${o.word}`;
+				out.push({
+					key: `o:${o.word}`,
+					group: "Operator",
+					label: `${fieldOnly.name} ${o.label}`,
+					symbol: o.symbol,
+					apply: () => {
+						if (o.valueless) {
+							const done = parseCondition(body, known);
+							if (done) addCondition(done.condition);
+							return;
+						}
+						setText(`${body} `);
+						inputRef.current?.focus();
+					},
+				});
+			}
+			return out;
+		}
+
 		// A condition, complete or with its value still being typed.
 		if (parsed) {
 			const { condition, partial } = parsed;
@@ -234,6 +404,40 @@ export function ExploreBar({
 					apply: () => addCondition(chosen),
 				});
 			}
+
+			// The other comparisons for the same field, keeping what was typed
+			// after the operator, so changing "is" to "is not" is a click.
+			const typed = condition.values?.join(", ") ?? condition.value ?? "";
+			for (const o of operatorsFor(
+				kindOf.get(condition.field),
+				typeOf.get(condition.field),
+			)) {
+				const body = `${lead}${condition.field} ${o.word}`;
+				const next = o.valueless ? body : `${body} ${typed}`;
+				const reparsed = parseCondition(next, known);
+				if (
+					reparsed &&
+					reparsed.condition.op === condition.op &&
+					Boolean(reparsed.condition.values) ===
+						Boolean(condition.values)
+				) {
+					continue;
+				}
+				out.push({
+					key: `o:${o.word}`,
+					group: "Operator",
+					label: `${condition.field} ${o.label}${!o.valueless && typed ? ` ${typed}` : ""}`,
+					symbol: o.symbol,
+					apply: () => {
+						if (reparsed && !reparsed.partial) {
+							setText(next);
+						} else {
+							setText(`${body} `);
+						}
+						inputRef.current?.focus();
+					},
+				});
+			}
 			return out;
 		}
 
@@ -249,18 +453,8 @@ export function ExploreBar({
 			if (needle && !label.toLowerCase().includes(needle)) continue;
 			const added = columns.includes(f.name);
 
-			// Finishes the field name and leaves the cursor after an
-			// operator, so the next thing typed is the value.
-			const filter = () => {
-				setText(
-					`${text.match(/^\s*((or|and)\s+)?(\(+\s*)?(not\s+)?(\(+\s*)?/i)?.[0] ?? ""}${f.name} ${
-						kind === "measure" ? ">" : "="
-					} `,
-				);
-				setMode("all");
-				setOpen(true);
-				inputRef.current?.focus();
-			};
+			// Names the field and lists how it can be compared.
+			const filter = () => startFilter(f.name);
 
 			out.push({
 				key: `f:${f.name}`,
@@ -269,8 +463,18 @@ export function ExploreBar({
 				kind: kind as "dimension" | "measure",
 				added,
 				filter,
-				apply:
-					mode === "filter" || added
+				apply: replacing
+					? () => {
+							onColumns(
+								added
+									? columns.filter((c) => c !== replacing)
+									: columns.map((c) =>
+											c === replacing ? f.name : c,
+										),
+							);
+							reset();
+						}
+					: mode === "filter" || added
 						? filter
 						: () => {
 								onColumns([...columns, f.name]);
@@ -297,12 +501,23 @@ export function ExploreBar({
 
 		// Filters first when the text is heading that way, columns first
 		// otherwise, which is the order somebody reading down expects.
-		const order = ["Filter", "Values", "Fields", "Sources"];
+		const order = ["Filter", "Values", "Operator", "Fields", "Sources"];
 		return out
 			.sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group))
 			.slice(0, 60);
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [text, source, sources, columns, conditions, parsed, values, mode]);
+	}, [
+		text,
+		source,
+		sources,
+		columns,
+		conditions,
+		parsed,
+		values,
+		mode,
+		fieldOnly,
+		replacing,
+		switching,
+	]);
 
 	useEffect(() => {
 		setActive(0);
@@ -315,11 +530,21 @@ export function ExploreBar({
 			if (!wrapRef.current?.contains(e.target as Node)) {
 				setOpen(false);
 				setMode("all");
+				setReplacing(null);
+				setSwitching(false);
 			}
 		};
 		document.addEventListener("mousedown", away);
 		return () => document.removeEventListener("mousedown", away);
 	}, [open]);
+
+	// A column's menu closes on a press anywhere outside it.
+	useEffect(() => {
+		if (!chipMenu) return;
+		const away = () => setChipMenu(null);
+		document.addEventListener("mousedown", away);
+		return () => document.removeEventListener("mousedown", away);
+	}, [chipMenu]);
 
 	const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
 		if (e.key === "ArrowDown") {
@@ -338,6 +563,9 @@ export function ExploreBar({
 			else chosen?.apply();
 		} else if (e.key === "Escape") {
 			setOpen(false);
+			setChipMenu(null);
+			setReplacing(null);
+			setSwitching(false);
 		} else if (e.key === "Backspace" && text === "") {
 			// Takes back the last thing added, the way removing the last
 			// token works in any address field.
@@ -386,7 +614,36 @@ export function ExploreBar({
 
 				{source && (
 					<span className={`${styles.chip} ${styles.chipSource}`}>
-						{source.title}
+						<button
+							type="button"
+							className={styles.chipText}
+							title="Switch to another dataset"
+							onClick={(e) => {
+								e.stopPropagation();
+								setText("");
+								setSwitching(true);
+								setChipMenu(null);
+								setOpen(true);
+								inputRef.current?.focus();
+							}}
+						>
+							<svg
+								className={styles.sourceIcon}
+								width="13"
+								height="13"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								strokeWidth="2.2"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								aria-hidden="true"
+							>
+								<ellipse cx="12" cy="5" rx="8" ry="3" />
+								<path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" />
+							</svg>
+							{source.title}
+						</button>
 						<button
 							type="button"
 							className={styles.chipX}
@@ -401,14 +658,111 @@ export function ExploreBar({
 					</span>
 				)}
 
-				{columns.map((name) => (
+				{columns.map((name, index) => (
 					<span
 						key={name}
-						className={`${styles.chip} ${
+						className={`${styles.chip} ${styles.chipColumn} ${
 							measureNames.has(name) ? styles.chipMeasure : ""
-						}`}
+						} ${replacing === name ? styles.chipReplacing : ""}`}
 					>
-						{label(name)}
+						<button
+							type="button"
+							className={styles.chipText}
+							aria-haspopup="menu"
+							aria-expanded={chipMenu === name}
+							onMouseDown={(e) => e.stopPropagation()}
+							title="Filter, replace, move or remove"
+							onClick={(e) => {
+								e.stopPropagation();
+								setChipMenu(chipMenu === name ? null : name);
+								setOpen(false);
+							}}
+						>
+							{label(name)}
+						</button>
+						{chipMenu === name && (
+							<span
+								className={styles.chipMenu}
+								role="menu"
+								onClick={(e) => e.stopPropagation()}
+								onMouseDown={(e) => e.stopPropagation()}
+							>
+								<button
+									type="button"
+									role="menuitem"
+									className={styles.chipMenuItem}
+									onClick={() => startFilter(name)}
+								>
+									Filter by {label(name)}
+								</button>
+								<button
+									type="button"
+									role="menuitem"
+									className={styles.chipMenuItem}
+									onClick={() => {
+										setChipMenu(null);
+										setReplacing(name);
+										setText("");
+										setMode("all");
+										setOpen(true);
+										inputRef.current?.focus();
+									}}
+								>
+									Replace with another field
+								</button>
+								{index > 0 && (
+									<button
+										type="button"
+										role="menuitem"
+										className={styles.chipMenuItem}
+										onClick={() => {
+											const next = [...columns];
+											next.splice(
+												index - 1,
+												0,
+												next.splice(index, 1)[0],
+											);
+											onColumns(next);
+											setChipMenu(null);
+										}}
+									>
+										Move left
+									</button>
+								)}
+								{index < columns.length - 1 && (
+									<button
+										type="button"
+										role="menuitem"
+										className={styles.chipMenuItem}
+										onClick={() => {
+											const next = [...columns];
+											next.splice(
+												index + 1,
+												0,
+												next.splice(index, 1)[0],
+											);
+											onColumns(next);
+											setChipMenu(null);
+										}}
+									>
+										Move right
+									</button>
+								)}
+								<button
+									type="button"
+									role="menuitem"
+									className={`${styles.chipMenuItem} ${styles.chipMenuDanger}`}
+									onClick={() => {
+										onColumns(
+											columns.filter((c) => c !== name),
+										);
+										setChipMenu(null);
+									}}
+								>
+									Remove
+								</button>
+							</span>
+						)}
 						<button
 							type="button"
 							className={styles.chipX}
@@ -581,11 +935,15 @@ export function ExploreBar({
 					className={styles.barInput}
 					value={text}
 					placeholder={
-						!source
-							? "Search a dataset or a field"
-							: columns.length === 0
-								? "Add columns, or type a filter like Category = Hardware"
-								: "Add a column, or a filter: Region = West, or Revenue > 1000, not Status = DRAFT"
+						switching
+							? "Search the datasets"
+							: replacing
+								? `Replace ${label(replacing)} with`
+								: !source
+									? "Search a dataset or a field"
+									: columns.length === 0
+										? "Add columns, or type a filter like Category = Hardware"
+										: "Add a column, or a filter: Region = West, or Revenue > 1000, not Status = DRAFT"
 					}
 					aria-label="Build a query"
 					aria-expanded={open}
@@ -750,6 +1108,14 @@ export function ExploreBar({
 										onMouseDown={(e) => e.preventDefault()}
 										onClick={s.apply}
 									>
+										{s.symbol && (
+											<span
+												className={styles.operatorSign}
+												aria-hidden="true"
+											>
+												{s.symbol}
+											</span>
+										)}
 										<span
 											className={styles.suggestionLabel}
 										>
@@ -817,9 +1183,11 @@ export function ExploreBar({
 							className={styles.suggestionFoot}
 							role="presentation"
 						>
-							{mode === "filter"
-								? "Choose a field to filter by"
-								: "Enter adds a column · Shift+Enter or Filter narrows the rows · ( ) groups filters"}
+							{replacing
+								? `Choose the field to put in place of ${label(replacing)}`
+								: mode === "filter"
+									? "Choose a field to filter by"
+									: "Enter adds a column · Shift+Enter or Filter narrows the rows · ( ) groups filters"}
 						</li>
 					)}
 				</ul>

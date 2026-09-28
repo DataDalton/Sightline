@@ -109,11 +109,13 @@
 	gap: var(--space-4);
 }
 
+/* Less padding above and below than at the sides, so a tile with its change
+   line fits two grid rows rather than spilling into a third. */
 .kpi {
 	display: flex;
 	flex-direction: column;
 	gap: var(--space-1);
-	padding: var(--space-4);
+	padding: var(--space-3) var(--space-4);
 	background: var(--surface-raised);
 	border: 1px solid var(--border-subtle);
 	border-radius: var(--radius-lg);
@@ -523,6 +525,23 @@
 	background: var(--surface-raised);
 	box-shadow: var(--shadow-lg);
 	overflow: hidden;
+}
+
+/* On a phone the figures take the screen between the header and the tab
+   bar, like an expanded visual does. */
+@media (max-width: 720px) {
+	.tableOverlay {
+		top: var(--header-height);
+		bottom: var(--tabbar-height);
+		padding: 0;
+	}
+
+	.tableOverlayBox {
+		width: 100vw;
+		height: 100%;
+		border: none;
+		border-radius: 0;
+	}
 }
 
 .tableOverlayHead {

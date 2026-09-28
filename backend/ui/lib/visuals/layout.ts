@@ -15,6 +15,11 @@ export const gridColumns = 12;
 export const rowHeight = 52;
 export const gridGap = 12;
 
+// Below this width a twelve column grid stops being readable and the page
+// stacks into one column. The editor's narrow previews read it too, so they
+// stack exactly where the published page does.
+export const stackBelow = 900;
+
 export interface Rect {
 	x: number;
 	y: number;
@@ -229,6 +234,109 @@ export function resolveVerticalOverlaps<T extends { rect: Rect }>(
 		placed.push({ ...item, rect: { ...item.rect, y } });
 	}
 	return placed;
+}
+
+// Gives visuals new heights and moves what sits under them to match.
+//
+// A visual sized by its content can need more rows than the author drew or
+// fewer, so what is below it moves down or up by the difference. Each visual
+// keeps the gap the author left between it and whatever it sat under, and
+// takes the lowest of those positions, so side by side pairings and deliberate
+// space survive. A visual with nothing above it stays where it was.
+//
+// Heights missing from the map keep their rectangle's own. Visuals are placed
+// in the author's reading order, so everything above one has been placed
+// before it is.
+export function refitHeights<T extends { id: string; rect: Rect }>(
+	items: T[],
+	heights: Record<string, number>,
+): T[] {
+	const sorted = [...items].sort(
+		(a, b) => a.rect.y - b.rect.y || a.rect.x - b.rect.x,
+	);
+	const placed: { from: Rect; to: Rect }[] = [];
+	const result: T[] = [];
+
+	for (const item of sorted) {
+		const from = item.rect;
+		let y = from.y;
+		let above = false;
+		for (const earlier of placed) {
+			const sharesColumns =
+				from.x < earlier.from.x + earlier.from.w &&
+				from.x + from.w > earlier.from.x;
+			const gap = from.y - (earlier.from.y + earlier.from.h);
+			if (!sharesColumns || gap < 0) continue;
+			const candidate = earlier.to.y + earlier.to.h + gap;
+			y = above ? Math.max(y, candidate) : candidate;
+			above = true;
+		}
+		const to = { ...from, y, h: heights[item.id] ?? from.h };
+		placed.push({ from, to });
+		result.push({ ...item, rect: to });
+	}
+	return result;
+}
+
+// True when two rectangles share at least one column.
+function sideBySide(a: Rect, b: Rect): boolean {
+	return a.x < b.x + b.w && a.x + a.w > b.x;
+}
+
+// Pixel boxes for an arrangement, with some visuals drawn at an exact height.
+//
+// Rows are the unit an arrangement is made in, but a tile or a heading is
+// rarely a whole number of rows tall, and drawing it in whole rows leaves the
+// rest of its last row empty under it. Visuals with a height in the map are
+// drawn that tall instead, and what sits under them closes up by the
+// difference while keeping the gap the arrangement had between them.
+//
+// With an empty map every box is exactly rectToPixels of its rectangle.
+export function placeInPixels<T extends { id: string; rect: Rect }>(
+	items: T[],
+	heights: Record<string, number>,
+	metrics: CanvasMetrics,
+): Map<string, { left: number; top: number; width: number; height: number }> {
+	const sorted = [...items].sort(
+		(a, b) => a.rect.y - b.rect.y || a.rect.x - b.rect.x,
+	);
+	const placed: { rect: Rect; bottom: number }[] = [];
+	const boxes = new Map<
+		string,
+		{ left: number; top: number; width: number; height: number }
+	>();
+
+	for (const item of sorted) {
+		const box = rectToPixels(item.rect, metrics);
+		const height = heights[item.id] ?? box.height;
+		let top = box.top;
+		let above = false;
+		const under = placed.filter(
+			(earlier) =>
+				sideBySide(item.rect, earlier.rect) &&
+				earlier.rect.y + earlier.rect.h <= item.rect.y,
+		);
+		for (const earlier of under) {
+			// Only what is directly above counts. Something further up with a
+			// visual between is spaced by that visual, and the rows between
+			// are not a gap anyone left.
+			const covered = under.some(
+				(between) =>
+					between !== earlier &&
+					sideBySide(between.rect, earlier.rect) &&
+					between.rect.y >= earlier.rect.y + earlier.rect.h,
+			);
+			if (covered) continue;
+			const gapRows = item.rect.y - (earlier.rect.y + earlier.rect.h);
+			const candidate =
+				earlier.bottom + gapRows * (rowHeight + gridGap) + gridGap;
+			top = above ? Math.max(top, candidate) : candidate;
+			above = true;
+		}
+		placed.push({ rect: item.rect, bottom: top + height });
+		boxes.set(item.id, { ...box, top, height });
+	}
+	return boxes;
 }
 
 // Converting between a pixel height and a number of grid rows, so a height a

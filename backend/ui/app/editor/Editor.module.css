@@ -411,7 +411,10 @@
 	font-weight: 400;
 }
 
+/* Laid out as the published page lays out its cells, so a chart told the
+   height of its box has a box whose height it can take. */
 .itemBody {
+	display: flex;
 	width: 100%;
 	height: 100%;
 	overflow: hidden;
@@ -420,6 +423,11 @@
 	   selects the visual rather than cross-filtering the page. Which is also
 	   what leaves the whole box free to be the drag target. */
 	pointer-events: none;
+}
+
+.itemBody > * {
+	width: 100%;
+	min-width: 0;
 }
 
 /* Every visual except a text panel being typed into. The grips sit above this

@@ -309,3 +309,18 @@
 	font-size: var(--text-sm);
 	text-align: center;
 }
+
+/* Who holds a category's editor role, as names in a row. */
+.holderList {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-1);
+}
+
+.holderChip {
+	padding: 1px var(--space-2);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-full);
+	background: var(--surface-sunken);
+	font-size: var(--text-xs);
+}

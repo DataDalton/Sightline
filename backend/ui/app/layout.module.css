@@ -28,7 +28,8 @@
 
 .container {
 	display: flex;
-	height: calc(100vh - var(--header-height));
+	height: calc(100vh - var(--header-height) - var(--tabbar-height));
+	height: calc(100dvh - var(--header-height) - var(--tabbar-height));
 	overflow: hidden;
 }
 
@@ -49,7 +50,7 @@
 
 .scrim {
 	position: fixed;
-	inset: var(--header-height) 0 0 0;
+	inset: var(--header-height) 0 var(--tabbar-height) 0;
 	z-index: 80;
 	background: rgba(0, 0, 0, 0.45);
 	border: none;

@@ -5,6 +5,7 @@ import {
 	clampRect,
 	findFreeSlot,
 	gridColumns,
+	gridGap,
 	measureCanvas,
 	overlaps,
 	pixelsToCell,
@@ -13,6 +14,8 @@ import {
 	stackForNarrow,
 	compactRows,
 	resolveVerticalOverlaps,
+	refitHeights,
+	placeInPixels,
 	heightForRows,
 	rowsForHeight,
 	fillToViewport,
@@ -179,6 +182,111 @@ test("a visual beside another is not pushed by it", () => {
 		{ id: "b", rect: { x: 6, y: 0, w: 6, h: 4 } },
 	]);
 	assert.equal(resolved.find((i) => i.id === "b")?.rect.y, 0);
+});
+
+test("a visual that needs fewer rows pulls what is under it up", () => {
+	const fitted = refitHeights(
+		[
+			{ id: "tiles", rect: { x: 0, y: 0, w: 12, h: 3 } },
+			{ id: "left", rect: { x: 0, y: 3, w: 6, h: 5 } },
+			{ id: "right", rect: { x: 6, y: 3, w: 6, h: 5 } },
+			{ id: "table", rect: { x: 0, y: 8, w: 12, h: 8 } },
+		],
+		{ tiles: 2 },
+	);
+	const at = (id: string) => fitted.find((i) => i.id === id)?.rect;
+	assert.deepEqual(at("tiles"), { x: 0, y: 0, w: 12, h: 2 });
+	assert.equal(at("left")?.y, 2);
+	assert.equal(at("right")?.y, 2);
+	assert.equal(at("table")?.y, 7);
+});
+
+test("a visual that needs more rows pushes what is under it down", () => {
+	const fitted = refitHeights(
+		[
+			{ id: "tiles", rect: { x: 0, y: 0, w: 12, h: 2 } },
+			{ id: "chart", rect: { x: 0, y: 2, w: 12, h: 5 } },
+		],
+		{ tiles: 6 },
+	);
+	assert.equal(fitted.find((i) => i.id === "chart")?.rect.y, 6);
+});
+
+test("the gap an author left under a visual is kept when it is refitted", () => {
+	const fitted = refitHeights(
+		[
+			{ id: "tiles", rect: { x: 0, y: 0, w: 12, h: 3 } },
+			{ id: "chart", rect: { x: 0, y: 4, w: 12, h: 5 } },
+		],
+		{ tiles: 2 },
+	);
+	assert.equal(fitted.find((i) => i.id === "chart")?.rect.y, 3);
+});
+
+test("a visual under two others stays below the taller of them", () => {
+	const fitted = refitHeights(
+		[
+			{ id: "short", rect: { x: 0, y: 0, w: 6, h: 3 } },
+			{ id: "tall", rect: { x: 6, y: 0, w: 6, h: 3 } },
+			{ id: "below", rect: { x: 0, y: 3, w: 12, h: 4 } },
+		],
+		{ short: 2 },
+	);
+	assert.equal(fitted.find((i) => i.id === "below")?.rect.y, 3);
+});
+
+test("with no heights to apply the arrangement is unchanged", () => {
+	const items = [
+		{ id: "a", rect: { x: 0, y: 1, w: 6, h: 4 } },
+		{ id: "b", rect: { x: 6, y: 0, w: 6, h: 4 } },
+		{ id: "c", rect: { x: 0, y: 6, w: 12, h: 6 } },
+	];
+	assert.deepEqual(
+		refitHeights(items, {}).sort((p, q) => p.id.localeCompare(q.id)),
+		items,
+	);
+});
+
+test("with no exact heights every box is its rectangle in pixels", () => {
+	const metrics = measureCanvas(1200);
+	const items = [
+		{ id: "a", rect: { x: 0, y: 0, w: 12, h: 2 } },
+		{ id: "b", rect: { x: 0, y: 2, w: 6, h: 5 } },
+		{ id: "c", rect: { x: 6, y: 4, w: 6, h: 3 } },
+	];
+	const boxes = placeInPixels(items, {}, metrics);
+	for (const item of items) {
+		assert.deepEqual(boxes.get(item.id), rectToPixels(item.rect, metrics));
+	}
+});
+
+test("a visual drawn shorter than its rows closes up what is under it", () => {
+	const metrics = measureCanvas(1200);
+	const boxes = placeInPixels(
+		[
+			{ id: "tiles", rect: { x: 0, y: 0, w: 12, h: 2 } },
+			{ id: "chart", rect: { x: 0, y: 2, w: 12, h: 5 } },
+		],
+		{ tiles: 100 },
+		metrics,
+	);
+	assert.equal(boxes.get("tiles")?.height, 100);
+	assert.equal(boxes.get("chart")?.top, 100 + gridGap);
+});
+
+test("a heading drawn short closes up what is under it, not what is beside it", () => {
+	const metrics = measureCanvas(1200);
+	const boxes = placeInPixels(
+		[
+			{ id: "chart", rect: { x: 0, y: 0, w: 12, h: 5 } },
+			{ id: "heading", rect: { x: 0, y: 5, w: 12, h: 1 } },
+			{ id: "table", rect: { x: 0, y: 6, w: 12, h: 8 } },
+		],
+		{ heading: 30 },
+		metrics,
+	);
+	const heading = boxes.get("heading");
+	assert.equal(boxes.get("table")?.top, (heading?.top ?? 0) + 30 + gridGap);
 });
 
 test("a height in pixels round trips through rows", () => {

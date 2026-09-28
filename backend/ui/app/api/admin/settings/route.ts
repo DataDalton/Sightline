@@ -7,6 +7,7 @@ import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
 import { insertLog } from "@/lib/activityLog";
 import { checkWriteRateLimit } from "@/lib/rateLimit";
 import { sanitizeSvg } from "@/lib/visuals/svgSanitize";
+import { ensureVapidKeys } from "@/lib/notify/push";
 import {
 	maxLogoBytes,
 	saveSettings,
@@ -114,6 +115,12 @@ export async function POST(request: NextRequest) {
 			}
 
 			changes.appLogo = cleaned.markup;
+		}
+
+		// Pushes are signed, and the keys are made the first time they are
+		// turned on, before the setting says they are available.
+		if (changes.pushEnabled === true || changes.pushEnabled === "true") {
+			await ensureVapidKeys(identity.email);
 		}
 
 		const next = await saveSettings(changes, identity.email);

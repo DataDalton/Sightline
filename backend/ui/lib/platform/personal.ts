@@ -333,6 +333,16 @@ export async function sharePage(
 		throw new AuthoringError("You already have this page.");
 	}
 
+	// Whether they could already open it, so a second share of the same page
+	// does not tell them twice.
+	const already = await sql(
+		`SELECT 1 FROM access_policies
+		 WHERE resource_type = 'report' AND resource_id = $2
+		   AND subject_type = 'user' AND lower(subject_id) = lower($1)
+		   AND is_active = TRUE`,
+		[target, reportId],
+	);
+
 	// One row per person, so sharing twice does not leave two rows whose
 	// combined meaning has to be worked out at read time, and re-sharing
 	// something revoked makes it active again.
@@ -372,6 +382,36 @@ export async function sharePage(
 		newValue: target,
 	});
 	invalidateAccessCache();
+
+	if (already.length === 0) {
+		void tellSharedWith(identity, reportId, target).catch((error) => {
+			console.warn("Share notification failed:", error);
+		});
+	}
+}
+
+// Lands in the inbox of whoever a page was shared with, and on their phone if
+// they asked for that. The page is theirs to open from the moment the share
+// is written, so naming it tells them nothing they may not see.
+async function tellSharedWith(
+	identity: Identity,
+	reportId: string,
+	target: string,
+): Promise<void> {
+	const rows = await sql<{ slug: string; title: string }>(
+		`SELECT slug, title FROM reports WHERE report_id = $1`,
+		[reportId],
+	);
+	const report = rows[0];
+	if (!report) return;
+	const { notify } = await import("../notify/store");
+	await notify(target, {
+		kind: "share",
+		title: `${identity.name} shared ${report.title} with you`,
+		body: "It is under My pages, in Shared with me.",
+		link: `/r/${encodeURIComponent(report.slug)}/`,
+		data: { reportId, from: identity.email },
+	});
 }
 
 export async function unsharePage(

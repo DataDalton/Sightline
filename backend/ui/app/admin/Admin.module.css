@@ -1180,3 +1180,11 @@
 	color: var(--text-muted);
 	font-variant-numeric: tabular-nums;
 }
+
+/* A button with a note beside it, inside a settings group. */
+.inlineActions {
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	flex-wrap: wrap;
+}

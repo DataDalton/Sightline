@@ -238,6 +238,16 @@ export function describeCondition(
 	return `${"(".repeat(condition.open ?? 0)}${text}${")".repeat(condition.close ?? 0)}`;
 }
 
+// A whole row of conditions as one line, the way it would be typed.
+export function describeConditions(conditions: Condition[]): string {
+	return conditions
+		.map(
+			(c, i) =>
+				`${i > 0 ? `${c.join} ` : ""}${describeCondition(c, true)}`,
+		)
+		.join(" ");
+}
+
 interface SpecFilter {
 	field: string;
 	op: ConditionOp;

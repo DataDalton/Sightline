@@ -148,7 +148,15 @@
 	--text-2xl: 28px;
 	--text-3xl: 38px;
 
-	--header-height: 58px;
+	/* The bar's own height plus whatever the device reserves above it. The
+	   inset is zero in a browser tab and is the status bar or the camera
+	   cutout once the app is installed and drawn edge to edge, so everything
+	   placed below the header moves down with it. */
+	--header-height: calc(58px + env(safe-area-inset-top, 0px));
+	/* The tab bar a phone gets at the foot of the screen. Zero where there is
+	   none, so a layout can subtract it everywhere without asking first. */
+	--tabbar-height: 0px;
+	--safe-bottom: env(safe-area-inset-bottom, 0px);
 	--sidebar-width: 264px;
 	--sidebar-collapsed: 62px;
 
@@ -315,7 +323,16 @@ html,
 body {
 	max-width: 100vw;
 	min-height: 100vh;
+	min-height: 100dvh;
 	overflow-x: hidden;
+}
+
+/* A phone gets a tab bar at the foot of the screen, which also covers the home
+   indicator strip where the device has one. */
+@media (max-width: 720px) {
+	:root {
+		--tabbar-height: calc(56px + var(--safe-bottom));
+	}
 }
 
 body {
@@ -330,6 +347,16 @@ body {
 a {
 	color: inherit;
 	text-decoration: none;
+}
+
+/* A tap on a touch screen flashes a grey box over whatever was pressed, which
+   every control here already answers with its own pressed state. */
+html {
+	-webkit-tap-highlight-color: transparent;
+	/* Phones enlarge text they judge too small, one block at a time, which
+	   breaks the type scale on rotation. */
+	-webkit-text-size-adjust: 100%;
+	text-size-adjust: 100%;
 }
 
 button {

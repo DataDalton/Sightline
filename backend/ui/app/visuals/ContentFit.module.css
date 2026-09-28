@@ -1,0 +1,8 @@
+/* A visual whose height comes from its content, left at its natural height
+   so useContentFit can measure how many rows it needs. */
+.fitBox {
+	display: flex;
+	flex-direction: column;
+	align-self: flex-start;
+	width: 100%;
+}

@@ -47,7 +47,7 @@ export async function POST(
 		}
 
 		if (body?.leaving) {
-			await leave(report.reportId, sessionId);
+			await leave(report.reportId, identity.email, sessionId);
 			return NextResponse.json({ left: true });
 		}
 

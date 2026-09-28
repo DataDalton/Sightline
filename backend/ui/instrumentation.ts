@@ -15,7 +15,7 @@ export async function register() {
 		await import("@/lib/runtime");
 	const { initPlatformSchema, sweepExpired } =
 		await import("@/lib/platform/schema");
-	const { bootstrapRoleAssignments, syncBuiltinRoles } =
+	const { bootstrapRoleAssignments, syncBuiltinRoles, syncCategoryRoles } =
 		await import("@/lib/platform/roles");
 	const { migrateExplorations } = await import("@/lib/platform/personal");
 	const { loadSettings, startSettingsPolling, stopSettingsPolling } =
@@ -29,6 +29,7 @@ export async function register() {
 	const { closePool } = await import("@/lib/data/lakebase");
 	const { closeAllUserSessions } = await import("@/lib/data/userSession");
 	const { onShutdown } = await import("@/lib/platform/shutdown");
+	const { runScheduledAlerts } = await import("@/lib/alerts/runner");
 
 	// Named before anything is attempted, because "LAKEBASE_INSTANCE is not
 	// set" is a fixable sentence and a connection timeout is not.
@@ -52,6 +53,8 @@ export async function register() {
 		// capability set of a role everyone recognises by name cannot drift by
 		// hand.
 		await syncBuiltinRoles();
+		// And one editor role per category, named after it.
+		await syncCategoryRoles();
 
 		await loadSettings();
 
@@ -125,6 +128,20 @@ export async function register() {
 	}, 30 * 1000);
 	firstRollup.unref?.();
 
+	// Alerts that can run while their owners are away.
+	//
+	// Every minute, though an alert is only ever due on the hour: an alert
+	// that fell due while every replica was restarting is caught on the next
+	// tick, and a batch too large for one tick finishes on the one after.
+	// Every replica ticks, and the claim in the runner hands each alert to
+	// exactly one of them.
+	const alertTimer = setInterval(() => {
+		void runScheduledAlerts().catch((error) => {
+			console.warn("Scheduled alerts failed:", error);
+		});
+	}, 60 * 1000);
+	alertTimer.unref?.();
+
 	// Shutting down.
 	//
 	// The teardown functions were all written and none was called, because
@@ -134,6 +151,7 @@ export async function register() {
 	onShutdown(async () => {
 		clearInterval(sweepTimer);
 		clearInterval(rollupTimer);
+		clearInterval(alertTimer);
 		clearTimeout(firstRollup);
 		stopSettingsPolling();
 		stopRegistryPolling();

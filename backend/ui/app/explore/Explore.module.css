@@ -104,10 +104,83 @@
 	white-space: nowrap;
 }
 
-/* The dataset leads the query and everything after it belongs to it. */
+/* The dataset leads the query and everything after it belongs to it, so it
+   is the one solid chip: the text colour as a fill, the page colour as its
+   text, which reads as the strongest mark in either theme. */
 .chipSource {
+	padding-left: var(--space-1);
 	border-color: var(--text-primary);
+	background: var(--text-primary);
+	color: var(--surface-base);
 	font-weight: 600;
+	box-shadow: 0 0 0 3px
+		color-mix(in srgb, var(--text-primary) 18%, transparent);
+}
+
+.chipSource .chipText {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+}
+
+.chipSource .chipX {
+	color: inherit;
+	opacity: 0.7;
+}
+
+.chipSource .chipX:hover {
+	background: color-mix(in srgb, var(--surface-base) 20%, transparent);
+	color: inherit;
+	opacity: 1;
+}
+
+.sourceIcon {
+	flex-shrink: 0;
+}
+
+/* A column chip opens a menu of what can be done with it. */
+.chipColumn {
+	position: relative;
+}
+
+.chipReplacing {
+	border-color: var(--focus-ring);
+	border-style: dashed;
+}
+
+.chipMenu {
+	position: absolute;
+	top: calc(100% + 6px);
+	left: 0;
+	z-index: 45;
+	display: flex;
+	flex-direction: column;
+	min-width: 200px;
+	padding: var(--space-1);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-overlay);
+	box-shadow: var(--shadow-lg);
+	font-weight: 400;
+	animation: popoverIn 120ms ease-out;
+}
+
+.chipMenuItem {
+	padding: var(--space-2) var(--space-3);
+	border-radius: var(--radius-sm);
+	color: var(--text-primary);
+	font-size: var(--text-sm);
+	text-align: left;
+	white-space: nowrap;
+}
+
+.chipMenuItem:hover,
+.chipMenuItem:focus-visible {
+	background: var(--state-hover);
+}
+
+.chipMenuDanger {
+	color: var(--danger);
 }
 
 /* A measure is counted over the rows rather than splitting them, and the
@@ -748,4 +821,71 @@
 .bracketTools .joinOption:disabled {
 	opacity: 0.4;
 	cursor: not-allowed;
+}
+
+/* --- Alerts ---------------------------------------------------------------- */
+
+.headerActions {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--space-2);
+}
+
+/* Shown when Explore was opened to change an alert's filters. */
+.alertBanner {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-3);
+	flex-wrap: wrap;
+	padding: var(--space-3) var(--space-4);
+	border: 1px solid color-mix(in srgb, var(--brand) 45%, transparent);
+	border-radius: var(--radius-lg);
+	background: var(--brand-subtle);
+	font-size: var(--text-sm);
+}
+
+.alertBannerActions {
+	display: inline-flex;
+	gap: var(--space-2);
+}
+
+.alertBannerButton {
+	padding: var(--space-1) var(--space-3);
+	border-radius: var(--radius-md);
+	background: var(--brand);
+	color: var(--brand-contrast);
+	font-weight: 600;
+}
+
+.alertBannerButton:disabled {
+	opacity: 0.5;
+}
+
+.alertBannerLink {
+	font-weight: 600;
+	text-decoration: underline;
+	text-underline-offset: 3px;
+}
+
+/* The sign of a comparison, in front of its name in words, so both the
+   people who know the symbols and the people who do not read it at once. */
+.operatorSign {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	min-width: 28px;
+	height: 22px;
+	padding: 0 var(--space-1);
+	border-radius: var(--radius-sm);
+	background: var(--surface-sunken);
+	color: var(--text-primary);
+	font-family: var(--font-mono);
+	font-size: var(--text-sm);
+	font-weight: 600;
+}
+
+.operatorSign + .suggestionLabel {
+	flex: 1;
 }

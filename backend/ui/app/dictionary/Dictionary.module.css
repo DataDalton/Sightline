@@ -205,7 +205,7 @@
    hidden behind the banner. */
 .scrim {
 	position: fixed;
-	inset: var(--header-height) 0 0 0;
+	inset: var(--header-height) 0 var(--tabbar-height) 0;
 	background: var(--scrim, rgba(0, 0, 0, 0.45));
 	z-index: 40;
 }
@@ -214,7 +214,7 @@
 	position: fixed;
 	top: var(--header-height);
 	right: 0;
-	bottom: 0;
+	bottom: var(--tabbar-height);
 	width: min(480px, 100vw);
 	z-index: 41;
 	display: flex;
@@ -396,4 +396,69 @@
 
 .measureLink:hover {
 	border-color: var(--brand);
+}
+
+/* On a phone each field is a card rather than a row of five columns, which
+   would otherwise scroll sideways and push the definition off the screen. */
+@media (max-width: 720px) {
+	.tableWrap {
+		max-height: none;
+		min-height: 0;
+		overflow: visible;
+	}
+
+	.table thead {
+		display: none;
+	}
+
+	.table,
+	.table tbody {
+		display: block;
+	}
+
+	.table tr.row {
+		display: grid;
+		grid-template-columns: auto 1fr auto;
+		grid-template-areas:
+			"name name uses"
+			"source type type"
+			"definition definition definition";
+		gap: var(--space-1) var(--space-2);
+		padding: var(--space-3);
+		border-bottom: 1px solid var(--border-subtle);
+	}
+
+	.table tr.row td {
+		padding: 0;
+		border: none;
+	}
+
+	.table tr.row td:nth-child(1) {
+		grid-area: name;
+	}
+
+	.table tr.row td:nth-child(2) {
+		grid-area: source;
+		font-size: var(--text-xs);
+	}
+
+	.table tr.row td:nth-child(3) {
+		grid-area: type;
+		font-size: var(--text-xs);
+	}
+
+	.table tr.row td:nth-child(3)::before {
+		content: "·";
+		margin-right: var(--space-2);
+	}
+
+	.table tr.row td:nth-child(4) {
+		grid-area: definition;
+		max-width: none;
+		margin-top: var(--space-1);
+	}
+
+	.table tr.row td:nth-child(5) {
+		grid-area: uses;
+	}
 }

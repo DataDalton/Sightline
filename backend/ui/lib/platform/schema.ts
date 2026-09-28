@@ -684,12 +684,196 @@ const statements: string[] = [
 		memories     JSONB NOT NULL DEFAULT '[]'::jsonb,
 		modified_on  TIMESTAMPTZ NOT NULL DEFAULT now()
 	)`,
+
+	// Somebody's inbox. One row per thing they were told, whether or not it
+	// also reached a device, so the inbox is the whole record and a push is
+	// only a way of noticing it sooner.
+	`CREATE TABLE IF NOT EXISTS notifications (
+		notification_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		owner_email     TEXT NOT NULL,
+		kind            TEXT NOT NULL,
+		title           TEXT NOT NULL,
+		body            TEXT NOT NULL DEFAULT '',
+		link            TEXT,
+		data            JSONB NOT NULL DEFAULT '{}'::jsonb,
+		created_on      TIMESTAMPTZ NOT NULL DEFAULT now(),
+		read_on         TIMESTAMPTZ
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS notifications_owner_idx
+		ON notifications (owner_email, created_on DESC)`,
+
+	`CREATE INDEX IF NOT EXISTS notifications_unread_idx
+		ON notifications (owner_email) WHERE read_on IS NULL`,
+
+	// The browsers and phones somebody allowed to receive pushes. Keyed by the
+	// endpoint the push service issued, which is unique to one browser
+	// profile on one device.
+	`CREATE TABLE IF NOT EXISTS push_subscriptions (
+		endpoint     TEXT PRIMARY KEY,
+		owner_email  TEXT NOT NULL,
+		p256dh       TEXT NOT NULL,
+		auth         TEXT NOT NULL,
+		device       TEXT NOT NULL DEFAULT '',
+		created_on   TIMESTAMPTZ NOT NULL DEFAULT now(),
+		last_sent_on TIMESTAMPTZ,
+		failures     INTEGER NOT NULL DEFAULT 0
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS push_subscriptions_owner_idx
+		ON push_subscriptions (owner_email)`,
+
+	// The key pair this deployment signs pushes with. One row. Generated the
+	// first time an administrator turns pushes on, and kept, because every
+	// subscription was made against its public half and a new pair orphans
+	// all of them.
+	`CREATE TABLE IF NOT EXISTS push_keys (
+		key_id      INTEGER PRIMARY KEY CHECK (key_id = 1),
+		public_key  TEXT NOT NULL,
+		private_key TEXT NOT NULL,
+		subject     TEXT NOT NULL,
+		created_on  TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
+	// Which kinds of notification somebody wants on their devices as well as
+	// in the inbox. Absent means the defaults.
+	`CREATE TABLE IF NOT EXISTS notification_prefs (
+		owner_email TEXT PRIMARY KEY,
+		push        JSONB NOT NULL DEFAULT '{}'::jsonb,
+		modified_on TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
+	// Alerts. The definition is what the owner wrote, and state is what the last
+	// check saw for each group, which is what the next check compares with.
+	`CREATE TABLE IF NOT EXISTS alert_rules (
+		rule_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		owner_email     TEXT NOT NULL,
+		name            TEXT NOT NULL,
+		source_key      TEXT NOT NULL,
+		definition      JSONB NOT NULL,
+		enabled         BOOLEAN NOT NULL DEFAULT TRUE,
+		state           JSONB NOT NULL DEFAULT '{}'::jsonb,
+		last_checked_on TIMESTAMPTZ,
+		last_status     TEXT NOT NULL DEFAULT 'waiting',
+		last_error      TEXT,
+		next_check_on   TIMESTAMPTZ NOT NULL DEFAULT now(),
+		-- When the owner was last seen able to read the dataset, which is
+		-- what lets a check run while they are away.
+		access_confirmed_on TIMESTAMPTZ,
+		created_on      TIMESTAMPTZ NOT NULL DEFAULT now(),
+		modified_on     TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS alert_rules_owner_idx
+		ON alert_rules (owner_email, created_on DESC)`,
+
+	`CREATE INDEX IF NOT EXISTS alert_rules_due_idx
+		ON alert_rules (next_check_on) WHERE enabled`,
+
+	// Every time an alert fired or came back, so the alert can show its own
+	// history without reading through the inbox.
+	`CREATE TABLE IF NOT EXISTS alert_events (
+		event_id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		rule_id    UUID NOT NULL REFERENCES alert_rules (rule_id) ON DELETE CASCADE,
+		fired_on   TIMESTAMPTZ NOT NULL DEFAULT now(),
+		title      TEXT NOT NULL,
+		body       TEXT NOT NULL DEFAULT '',
+		firings    INTEGER NOT NULL DEFAULT 1
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS alert_events_rule_idx
+		ON alert_events (rule_id, fired_on DESC)`,
+
+	// Sheets: a question asked of one dataset with the reader's own columns on
+	// top. The data is never stored here, only what the sheet asks for and the
+	// notes people wrote beside it. Version goes up on every change, which is
+	// what an open copy polls to know it should reload.
+	`CREATE TABLE IF NOT EXISTS sheets (
+		sheet_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		owner_email TEXT NOT NULL,
+		title       TEXT NOT NULL,
+		definition  JSONB NOT NULL,
+		version     BIGINT NOT NULL DEFAULT 1,
+		created_on  TIMESTAMPTZ NOT NULL DEFAULT now(),
+		modified_on TIMESTAMPTZ NOT NULL DEFAULT now(),
+		modified_by TEXT NOT NULL
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS sheets_owner_idx
+		ON sheets (owner_email, modified_on DESC)`,
+
+	// Who else a sheet is shared with, one person at a time, and whether they
+	// may change it or only look.
+	`CREATE TABLE IF NOT EXISTS sheet_shares (
+		sheet_id   UUID NOT NULL REFERENCES sheets (sheet_id) ON DELETE CASCADE,
+		email      TEXT NOT NULL,
+		permission TEXT NOT NULL,
+		granted_by TEXT NOT NULL,
+		granted_on TIMESTAMPTZ NOT NULL DEFAULT now(),
+		PRIMARY KEY (sheet_id, email)
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS sheet_shares_email_idx
+		ON sheet_shares (email)`,
+
+	// A note in a note column, keyed by the row it sits on. See rowKey in
+	// lib/sheets/definition.
+	`CREATE TABLE IF NOT EXISTS sheet_cells (
+		sheet_id    UUID NOT NULL REFERENCES sheets (sheet_id) ON DELETE CASCADE,
+		row_key     TEXT NOT NULL,
+		note_id     TEXT NOT NULL,
+		value       TEXT NOT NULL,
+		modified_by TEXT NOT NULL,
+		modified_on TIMESTAMPTZ NOT NULL DEFAULT now(),
+		PRIMARY KEY (sheet_id, row_key, note_id)
+	)`,
+
+	// Who has a sheet open, as a lease each open copy renews while it polls.
+	`CREATE TABLE IF NOT EXISTS sheet_presence (
+		sheet_id   UUID NOT NULL REFERENCES sheets (sheet_id) ON DELETE CASCADE,
+		session_id TEXT NOT NULL,
+		user_email TEXT NOT NULL,
+		state      JSONB NOT NULL DEFAULT '{}'::jsonb,
+		expires_on TIMESTAMPTZ NOT NULL,
+		PRIMARY KEY (sheet_id, session_id)
+	)`,
+
+	// What one person could see of a row-filtered dataset when they were last
+	// here: every combination of the columns its filter decides on, read under
+	// their own token. Lets their alerts on it be checked while they are away.
+	// See lib/alerts/access.
+	`CREATE TABLE IF NOT EXISTS alert_access (
+		owner_email TEXT NOT NULL,
+		source_key  TEXT NOT NULL,
+		fields      JSONB NOT NULL,
+		tuples      JSONB NOT NULL,
+		too_many    BOOLEAN NOT NULL DEFAULT FALSE,
+		captured_on TIMESTAMPTZ NOT NULL DEFAULT now(),
+		PRIMARY KEY (owner_email, source_key)
+	)`,
 ];
 
 // Columns added after the initial schema shipped. CREATE TABLE IF NOT EXISTS
 // does nothing to a table that already exists, so new columns need their own
 // idempotent statement.
 const migrations: string[] = [
+	// When a session said it was leaving. The row is kept until its lease
+	// runs out so a heartbeat still in flight cannot list it again. See leave
+	// in lib/platform/presence and leaveSheet in lib/sheets/store.
+	`ALTER TABLE presence ADD COLUMN IF NOT EXISTS left_on TIMESTAMPTZ`,
+	`ALTER TABLE sheet_presence ADD COLUMN IF NOT EXISTS left_on TIMESTAMPTZ`,
+
+	// The category a role belongs to, for the editor role every category has.
+	// See syncCategoryRoles in lib/platform/roles.
+	`ALTER TABLE roles ADD COLUMN IF NOT EXISTS category_id TEXT`,
+
+	// Which fields of a row-filtered dataset hold the columns its filters
+	// decide on, and whether any column of it is masked. Written by the filter
+	// walk. Null fields means the filters could not be mapped to fields, and
+	// its alerts keep to checks while their owner is signed in.
+	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS access_fields JSONB`,
+	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS has_column_mask BOOLEAN NOT NULL DEFAULT FALSE`,
+
 	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'table'`,
 
 	// The tables a metric view reads, recorded when the view is synced.
@@ -949,6 +1133,23 @@ export async function sweepExpired(): Promise<void> {
 
 	// The chunks go with the job, by the foreign key.
 	await sql(`DELETE FROM export_jobs WHERE expires_on < now()`);
+
+	// An inbox is for what is recent. Read entries go after a quarter, unread
+	// ones after a year, so something never opened is not lost the moment it
+	// ages past the ones that were.
+	await sql(
+		`DELETE FROM notifications
+		 WHERE (read_on IS NOT NULL AND created_on < now() - interval '90 days')
+		    OR created_on < now() - interval '365 days'`,
+	);
+	await sql(
+		`DELETE FROM alert_events WHERE fired_on < now() - interval '365 days'`,
+	);
+	await sql(`DELETE FROM sheet_presence WHERE expires_on < now()`);
+	// A recording older than a day is never used, so it is not kept.
+	await sql(
+		`DELETE FROM alert_access WHERE captured_on < now() - interval '2 days'`,
+	);
 
 	// A job whose replica went away mid-run is otherwise "running" for ever,
 	// and the page waiting on it never stops waiting.

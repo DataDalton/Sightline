@@ -2,8 +2,6 @@
    every chat somebody has used before is laid out. */
 .page {
 	width: 100%;
-	max-width: 1000px;
-	margin: 0 auto;
 	min-height: calc(100vh - var(--header-height));
 	padding: var(--space-6) var(--space-5) 0;
 	display: flex;
@@ -591,15 +589,21 @@
 
 /* --- The panel on every page -------------------------------------------- */
 
+/* A round button with the mark alone, which takes the least of the page it
+   floats over. Pointed at or focused, it grows to the left to say what it
+   is, and the mark stays where it was so the target does not move away from
+   the pointer. */
 .dockButton {
 	position: fixed;
 	right: var(--space-5);
 	bottom: var(--space-5);
 	z-index: 60;
 	display: inline-flex;
+	flex-direction: row-reverse;
 	align-items: center;
-	gap: var(--space-2);
-	padding: var(--space-3) var(--space-4);
+	height: 48px;
+	min-width: 48px;
+	padding: 0 14px;
 	border: none;
 	border-radius: var(--radius-full);
 	background: var(--brand);
@@ -609,11 +613,37 @@
 	font-weight: 600;
 	box-shadow: var(--shadow-lg);
 	cursor: pointer;
-	transition: transform var(--transition-fast);
+	transition:
+		transform var(--transition-fast),
+		padding var(--transition-base);
 }
 
-.dockButton:hover {
+.dockButton svg {
+	flex-shrink: 0;
+}
+
+.dockButtonLabel {
+	max-width: 0;
+	overflow: hidden;
+	opacity: 0;
+	white-space: nowrap;
+	transition:
+		max-width var(--transition-base),
+		opacity var(--transition-base),
+		margin var(--transition-base);
+}
+
+.dockButton:hover,
+.dockButton:focus-visible {
 	transform: translateY(-1px);
+	padding-left: var(--space-4);
+}
+
+.dockButton:hover .dockButtonLabel,
+.dockButton:focus-visible .dockButtonLabel {
+	max-width: 60px;
+	margin-right: var(--space-2);
+	opacity: 1;
 }
 
 /* Still working after the panel was closed, so the reader knows to look. */
@@ -1173,4 +1203,109 @@
 	min-width: 0;
 	margin: 0;
 	overflow: hidden;
+}
+
+/* --- On a phone ---------------------------------------------------------- */
+
+/* The tab bar carries Ask, so the floating button would sit over the page
+   for nothing. The panel takes the whole screen between the header and the
+   tab bar, the way a chat opens in any phone app, and the conversation list
+   slides over it rather than beside it. */
+@media (max-width: 720px) {
+	.dockButton {
+		display: none;
+	}
+
+	.dock {
+		top: var(--header-height);
+		right: 0;
+		bottom: var(--tabbar-height);
+		left: 0;
+		width: auto !important;
+		max-width: none;
+		border: none;
+		border-radius: 0;
+		box-shadow: none;
+	}
+
+	.dockResize {
+		display: none;
+	}
+
+	.dockColumns {
+		position: relative;
+	}
+
+	.dockSide {
+		position: absolute;
+		inset: 0 auto 0 0;
+		z-index: 2;
+		width: min(300px, 86vw) !important;
+		box-shadow: var(--shadow-lg);
+	}
+
+	.fullPage {
+		min-height: calc(100dvh - var(--header-height) - var(--tabbar-height));
+	}
+}
+
+/* The conversation list on the full page, below the width where it sits
+   beside the conversation. Placed after the rules it overrides, which is
+   what decides between two rules of equal weight. */
+.historyButton {
+	display: none;
+}
+
+.headerText {
+	flex: 1;
+	min-width: 0;
+}
+
+.sideScrim {
+	display: none;
+}
+
+@media (max-width: 900px) {
+	.fullSide {
+		display: none;
+	}
+
+	.fullSideOpen {
+		position: fixed;
+		top: var(--header-height);
+		bottom: var(--tabbar-height);
+		left: 0;
+		z-index: 70;
+		display: flex;
+		width: min(300px, 86vw);
+		max-height: none;
+		background: var(--surface-base);
+		box-shadow: var(--shadow-lg);
+		animation: popoverIn 140ms ease-out;
+	}
+
+	.sideScrim {
+		position: fixed;
+		inset: var(--header-height) 0 var(--tabbar-height) 0;
+		z-index: 69;
+		display: block;
+		border: none;
+		background: rgba(0, 0, 0, 0.45);
+	}
+
+	.historyButton {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		flex-shrink: 0;
+		width: 36px;
+		height: 36px;
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md);
+		color: var(--text-secondary);
+	}
+
+	.header {
+		justify-content: flex-start;
+	}
 }

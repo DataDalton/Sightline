@@ -28,6 +28,81 @@ export interface RoleRecord {
 	permission: Permission;
 	capabilities: Capability[];
 	isBuiltin: boolean;
+	// Set on a category's own editor role. See syncCategoryRoles.
+	categoryId: string | null;
+}
+
+// --- A role per category ---------------------------------------------------
+
+// Every category has an editor role of its own, named after it, so making
+// somebody the editor of one subject area is assigning them a role that says
+// so rather than building a scoped assignment by hand.
+//
+// These are kept by the platform rather than by people. Each one exists while
+// its category does, carries its category's name, and grants what the Editor
+// role grants inside that category and nowhere else. Nobody edits or deletes
+// one, so the roles cannot drift from each other or from the Editor role, and
+// renaming or removing a category renames or retires its role with it.
+const categoryRolePrefix = "category-editor:";
+
+export function categoryRoleId(categoryId: string): string {
+	return `${categoryRolePrefix}${categoryId}`;
+}
+
+export function categoryOfRole(roleId: string): string | null {
+	return roleId.startsWith(categoryRolePrefix)
+		? roleId.slice(categoryRolePrefix.length) || null
+		: null;
+}
+
+export async function syncCategoryRoles(): Promise<void> {
+	const editor = builtinRoles.find((r) => r.roleId === "editor");
+	if (!editor) return;
+
+	const categories = await sql<{
+		category_id: string;
+		name: string;
+		is_active: boolean;
+	}>(`SELECT category_id, name, is_active FROM categories`);
+
+	await transaction(async (client) => {
+		for (const category of categories) {
+			const roleId = categoryRoleId(category.category_id);
+			// A removed category keeps its role, inactive, so the assignments
+			// on it stay readable in an audit and come back if it does.
+			await client.query(
+				`INSERT INTO roles
+				   (role_id, name, description, permission, is_builtin,
+				    is_active, category_id, created_by)
+				 VALUES ($1, $2, $3, 'edit', FALSE, $4, $5, 'platform')
+				 ON CONFLICT (role_id) DO UPDATE SET
+				   name = EXCLUDED.name,
+				   description = EXCLUDED.description,
+				   permission = 'edit',
+				   is_active = EXCLUDED.is_active,
+				   category_id = EXCLUDED.category_id`,
+				[
+					roleId,
+					`${category.name} - Editor`,
+					`Builds and maintains the reports in ${category.name}, and nowhere else. Kept in step with the category, so it is renamed and retired with it.`,
+					category.is_active,
+					category.category_id,
+				],
+			);
+			await client.query(
+				`DELETE FROM role_capabilities
+				 WHERE role_id = $1 AND capability <> ALL($2)`,
+				[roleId, editor.capabilities],
+			);
+			for (const capability of editor.capabilities) {
+				await client.query(
+					`INSERT INTO role_capabilities (role_id, capability)
+					 VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+					[roleId, capability],
+				);
+			}
+		}
+	});
 }
 
 export interface AssignmentRecord {
@@ -176,9 +251,11 @@ export async function listRoles(): Promise<RoleRecord[]> {
 		description: string | null;
 		permission: Permission;
 		is_builtin: boolean;
+		category_id: string | null;
 		capabilities: string[] | null;
 	}>(
 		`SELECT r.role_id, r.name, r.description, r.permission, r.is_builtin,
+		        r.category_id,
 		        coalesce(
 		          array_agg(rc.capability) FILTER (WHERE rc.capability IS NOT NULL),
 		          '{}'
@@ -187,7 +264,7 @@ export async function listRoles(): Promise<RoleRecord[]> {
 		 LEFT JOIN role_capabilities rc ON rc.role_id = r.role_id
 		 WHERE r.is_active = TRUE
 		 GROUP BY r.role_id
-		 ORDER BY r.is_builtin DESC, r.name`,
+		 ORDER BY r.is_builtin DESC, (r.category_id IS NOT NULL), r.name`,
 	);
 
 	return rows.map((row) => ({
@@ -197,6 +274,7 @@ export async function listRoles(): Promise<RoleRecord[]> {
 		permission: row.permission,
 		capabilities: (row.capabilities ?? []).filter(isCapability),
 		isBuiltin: row.is_builtin,
+		categoryId: row.category_id,
 	}));
 }
 
@@ -245,6 +323,11 @@ export async function saveRole(
 	},
 	actor: string,
 ): Promise<void> {
+	if (categoryOfRole(input.roleId)) {
+		throw new Error(
+			"A category's editor role is kept in step with the category and cannot be changed. Make a role of your own instead.",
+		);
+	}
 	const builtin = builtinRoles.some((r) => r.roleId === input.roleId);
 	if (builtin) {
 		throw new Error(
@@ -289,6 +372,11 @@ export async function deleteRole(roleId: string): Promise<void> {
 	if (builtinRoles.some((r) => r.roleId === roleId)) {
 		throw new Error("Built-in roles cannot be deleted.");
 	}
+	if (categoryOfRole(roleId)) {
+		throw new Error(
+			"A category's editor role is removed with the category, not on its own.",
+		);
+	}
 	// Deactivated rather than dropped, so the assignments pointing at it stay
 	// readable in an audit rather than vanishing with it.
 	await sql(`UPDATE roles SET is_active = FALSE WHERE role_id = $1`, [
@@ -306,6 +394,13 @@ export async function assignRole(
 	},
 	actor: string,
 ): Promise<string> {
+	// A category's editor role only ever applies in its category, whatever
+	// scope the request named. Holding it everywhere would make it the Editor
+	// role under a narrower name.
+	const pinned = categoryOfRole(input.roleId);
+	if (pinned) {
+		input = { ...input, scopeType: "category", scopeId: pinned };
+	}
 	const scopeId =
 		input.scopeType === "global" ? null : (input.scopeId ?? null);
 	if (input.scopeType !== "global" && !scopeId) {

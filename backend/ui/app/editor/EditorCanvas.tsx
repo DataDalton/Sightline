@@ -10,7 +10,11 @@ import {
 	measureCanvas,
 	overlaps,
 	rectToPixels,
+	placeInPixels,
+	refitHeights,
+	resolveVerticalOverlaps,
 	rowHeight,
+	stackBelow,
 	wouldLoop,
 	type CanvasMetrics,
 	type Rect,
@@ -23,11 +27,14 @@ import {
 	fillsHeight,
 	isPageControl,
 	optionValue,
+	sizedByContent,
 	visualByType,
 } from "../../lib/visuals/catalog";
 import { TextPanel } from "../visuals/TextPanel";
 import type { SourceMeta } from "../visuals/types";
 import { GroupFrame } from "../visuals/GroupFrame";
+import { useContentFit } from "../visuals/useContentFit";
+import fit from "../visuals/ContentFit.module.css";
 import { useDragResize, type GestureKind } from "./useDragResize";
 import { toVisualSpec, type EditableVisual } from "./types";
 import styles from "./Editor.module.css";
@@ -68,6 +75,26 @@ export interface PreviewWidth {
 	note: string;
 }
 
+// How wide the page's grid is on a screen of a given width.
+//
+// A preview names a screen, but the grid only gets what the screen has left
+// after the sidebar and the page's padding. Laid out at the full screen width
+// the preview would fit tiles side by side that a real phone puts one above
+// the other, and would keep a tablet on the full grid when the published page
+// has already stacked. Read from the same tokens and breakpoints the page's
+// stylesheets use, so the two cannot drift.
+function gridWidthOnScreen(screen: number): number {
+	const tokens = getComputedStyle(document.documentElement);
+	const token = (name: string, fallback: number) =>
+		parseFloat(tokens.getPropertyValue(name)) || fallback;
+	// The page is padded less on a phone, and the sidebar is a drawer until
+	// the screen is wide enough to keep it open beside the page.
+	if (screen <= 720) return screen - 2 * token("--space-3", 13);
+	const padding = 2 * token("--space-5", 26);
+	if (screen <= 900) return screen - padding;
+	return screen - token("--sidebar-width", 264) - padding;
+}
+
 export const previewWidths: PreviewWidth[] = [
 	{
 		id: "fit",
@@ -91,7 +118,7 @@ export const previewWidths: PreviewWidth[] = [
 		id: "tablet",
 		label: "Tablet",
 		width: 1024,
-		note: "Still the full grid, with much less of it",
+		note: "With the sidebar open the page is already one column",
 	},
 	{
 		id: "phone",
@@ -210,11 +237,17 @@ export function EditorCanvas({
 	}, [stage]);
 	// A preview pins the width instead of measuring it, so the grid is laid out
 	// for the screen being checked rather than for the editor window.
-	const layoutWidth = previewWidth ?? width / zoom;
+	const layoutWidth =
+		previewWidth !== null
+			? Math.max(320, gridWidthOnScreen(previewWidth))
+			: width / zoom;
 	const metrics = measureCanvas(layoutWidth);
 	// The published page stacks below this, and the canvas has to agree or the
 	// preview would show a grid the reader never gets.
-	const stacked = previewWidth !== null && previewWidth < 900;
+	const stacked = previewWidth !== null && layoutWidth < stackBelow;
+	// Rows each tile, heading or text panel needs for what it holds, as the
+	// published page sizes them.
+	const { fitted, natural, observe: observeFit } = useContentFit();
 	// The group holding a visual, or nothing. Read by the loop guard, which has
 	// to walk the whole chain rather than compare two ends.
 	const parentOfId = (id: string): string | null => {
@@ -374,19 +407,38 @@ export function EditorCanvas({
 	// A narrow preview collapses to one column exactly as the published page
 	// does, so what an author checks is what a reader gets rather than a
 	// squeezed version of the wide layout.
-	const stackedRects = stacked
-		? new Map(
-				stackForNarrow(
-					placed.map((v) => ({ id: v.visualId, rect: rectFor(v) })),
-				).map((i) => [i.id, i.rect]),
-			)
-		: null;
-
+	//
+	// Tiles and headings are sized by their content and what is under them
+	// moves to match, at every width, which is what the published page does.
+	// Not a visual being resized, whose box follows the pointer. A preview also
+	// resolves overlaps as the published page does. At the editor's own width
+	// an overlap stays where the author put it, marked, since they may be in
+	// the middle of making it.
+	const resizingId = state && state.kind !== "move" ? state.id : null;
+	const heights: Record<string, number> = {};
+	for (const v of placed) {
+		const rows = fitted[v.visualId];
+		if (rows && resizingId !== v.visualId) heights[v.visualId] = rows;
+	}
+	const items = placed.map((v) => ({ id: v.visualId, rect: rectFor(v) }));
+	const stackedRects = new Map(
+		(stacked
+			? stackForNarrow(
+					items.map((i) => ({
+						...i,
+						rect: { ...i.rect, h: heights[i.id] ?? i.rect.h },
+					})),
+				)
+			: previewWidth !== null
+				? resolveVerticalOverlaps(refitHeights(items, heights))
+				: refitHeights(items, heights)
+		).map((i) => [i.id, i.rect]),
+	);
 	const displayRects = new Map<string, Rect>(
 		fillToViewport(
 			placed.map((v) => ({
 				id: v.visualId,
-				rect: stackedRects?.get(v.visualId) ?? rectFor(v),
+				rect: stackedRects.get(v.visualId) ?? rectFor(v),
 				canFill:
 					!stacked &&
 					state?.id !== v.visualId &&
@@ -427,10 +479,30 @@ export function EditorCanvas({
 		move,
 		cancel,
 		rectFor,
+		observeFit,
 	};
 
-	const rows = canvasRows(placed.map(displayRectFor));
-	const canvasHeight = rows * (rowHeight + gridGap);
+	// Drawn at the exact height of their content, as the published page draws
+	// them, so the gap under a row of tiles is the usual gap.
+	const exact: Record<string, number> = {};
+	for (const v of placed) {
+		if (heights[v.visualId] && natural[v.visualId]) {
+			exact[v.visualId] = natural[v.visualId];
+		}
+	}
+	const boxes = placeInPixels(
+		placed.map((v) => ({ id: v.visualId, rect: displayRectFor(v) })),
+		exact,
+		metrics,
+	);
+	// The spare rows below everything are room to drop a new visual into.
+	const spareRows = canvasRows([], 4);
+	const canvasHeight =
+		[...boxes.values()].reduce(
+			(max, box) => Math.max(max, box.top + box.height + gridGap),
+			0,
+		) +
+		spareRows * (rowHeight + gridGap);
 
 	// Deselect on Escape, which is the expected way out of a selection.
 	useEffect(() => {
@@ -572,10 +644,13 @@ export function EditorCanvas({
 									key={visual.visualId}
 									visual={visual}
 									rect={rectFor(visual)}
-									pixels={rectToPixels(
-										displayRectFor(visual),
-										metrics,
-									)}
+									pixels={
+										boxes.get(visual.visualId) ??
+										rectToPixels(
+											displayRectFor(visual),
+											metrics,
+										)
+									}
 									metrics={metrics}
 									clashes={placed.some(
 										(other) =>
@@ -623,6 +698,8 @@ interface ItemContext {
 	move: (event: React.PointerEvent) => void;
 	cancel: () => void;
 	rectFor: (visual: EditableVisual) => Rect;
+	// Measures a content-sized visual, so it can be given the rows it needs.
+	observeFit: (element: HTMLElement | null) => (() => void) | undefined;
 }
 
 // One visual on the canvas, wherever it sits.
@@ -640,9 +717,12 @@ function CanvasItem({
 	ctx,
 }: {
 	visual: EditableVisual;
-	// The stored rectangle, which drives the gestures. The displayed one drives
-	// the box, so a visual set to fill is dragged by what the author set rather
-	// than by what the fill produced.
+	// The stored rectangle, which gestures start from and write back to. What
+	// is drawn is derived from the stored arrangement, by fitting content,
+	// stacking and filling, so a gesture has to work on the stored one too. Fed
+	// a drawn rectangle it would put the drawn position into the stored
+	// arrangement the moment it was pressed, and everything derived from it
+	// would move.
 	rect: Rect;
 	pixels: { left: number; top: number; width: number; height: number };
 	// The grid this item is laid out on: the page's, or its group's.
@@ -811,10 +891,27 @@ function CanvasItem({
 				</div>
 			) : (
 				<div className={styles.itemBody}>
-					<VisualRenderer
-						visual={toVisualSpec(visual)}
-						sources={ctx.sources}
-					/>
+					{sizedByContent(visual.visualType) ? (
+						<div
+							className={fit.fitBox}
+							data-fit-id={visual.visualId}
+							ref={ctx.observeFit}
+						>
+							<VisualRenderer
+								visual={toVisualSpec(visual)}
+								sources={ctx.sources}
+							/>
+						</div>
+					) : (
+						// Told the height of its box, as the published page
+						// tells it. Left to its own default a chart drew taller
+						// than the box and lost its axis to the clipping.
+						<VisualRenderer
+							visual={toVisualSpec(visual)}
+							sources={ctx.sources}
+							frameHeight={pixels.height}
+						/>
+					)}
 				</div>
 			)}
 

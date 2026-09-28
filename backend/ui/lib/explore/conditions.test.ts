@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
 	bracketProblem,
 	describeCondition,
+	describeConditions,
 	openDepth,
 	parseCondition,
 	toFilterLogic,
@@ -460,4 +461,36 @@ test("brackets survive a saved view and a link", () => {
 	assert.equal(kept?.conditions[1].open, 1);
 	assert.equal(kept?.conditions[2].close, 1);
 	assert.equal(kept?.conditions[0].open, undefined);
+});
+
+test("reads a whole row back as it would be typed", () => {
+	assert.equal(
+		describeConditions([
+			{
+				field: "Region",
+				op: "eq",
+				value: "West",
+				negate: false,
+				join: "and",
+			},
+			{
+				field: "Category",
+				op: "eq",
+				value: "Hardware",
+				negate: false,
+				join: "and",
+				open: 1,
+			},
+			{
+				field: "Category",
+				op: "eq",
+				value: "Software",
+				negate: true,
+				join: "or",
+				close: 1,
+			},
+		]),
+		"Region is West and (Category is Hardware or not Category is Software)",
+	);
+	assert.equal(describeConditions([]), "");
 });

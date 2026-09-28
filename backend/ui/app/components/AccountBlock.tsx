@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useUser } from "../context/UserContext";
 import { useTheme, type ThemePreference } from "../context/ThemeContext";
+import { useNotify } from "../notify/NotifyContext";
 import styles from "./AccountBlock.module.css";
 
 // Who you are signed in as, at the foot of the navigation.
@@ -25,6 +26,7 @@ const themeChoices: { id: ThemePreference; label: string }[] = [
 export function AccountBlock() {
 	const { user, loading, error, refresh } = useUser();
 	const { preference, setPreference } = useTheme();
+	const { standalone, install } = useNotify();
 	const [open, setOpen] = useState(false);
 	const wrapRef = useRef<HTMLDivElement | null>(null);
 
@@ -107,6 +109,22 @@ export function AccountBlock() {
 							))}
 						</div>
 					</div>
+
+					{!standalone && (
+						<div className={styles.group}>
+							<div className={styles.groupTitle}>App</div>
+							<button
+								type="button"
+								className={styles.retry}
+								onClick={() => {
+									install();
+									setOpen(false);
+								}}
+							>
+								Install on this device
+							</button>
+						</div>
+					)}
 
 					{notes.length > 0 && (
 						<div className={styles.group}>

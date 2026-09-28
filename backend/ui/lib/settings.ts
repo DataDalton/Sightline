@@ -109,6 +109,18 @@ export interface PlatformSettings {
 	// under assistantEndpointUrl for anything hosted elsewhere.
 	assistantEndpoint: string;
 	assistantEndpointUrl: string;
+
+	// Alerts somebody sets on a measure. Off stops every check and hides the
+	// feature, without deleting anybody's alerts.
+	alertsEnabled: boolean;
+	// How many alerts one person may keep. Each is a warehouse query on its
+	// schedule, so this is a ceiling on what alerts can cost.
+	maxAlertsPerUser: number;
+	// Notifications pushed to phones and browsers as well as written to the
+	// inbox. Off by default: turning it on generates the signing keys, and a
+	// push leaves the network for the browser vendor's push service, which an
+	// administrator should decide to allow.
+	pushEnabled: boolean;
 }
 
 export const defaultSettings: PlatformSettings = {
@@ -142,6 +154,10 @@ export const defaultSettings: PlatformSettings = {
 
 	assistantEndpoint: "",
 	assistantEndpointUrl: "",
+
+	alertsEnabled: true,
+	maxAlertsPerUser: 25,
+	pushEnabled: false,
 
 	trackedGroups: [],
 	// Databricks account group names. is_account_group_member is
@@ -302,6 +318,9 @@ export const writableSettings = [
 	"accessModel",
 	"assistantEndpoint",
 	"assistantEndpointUrl",
+	"alertsEnabled",
+	"maxAlertsPerUser",
+	"pushEnabled",
 ] as const satisfies readonly (keyof PlatformSettings)[];
 
 export type WritableSetting = (typeof writableSettings)[number];

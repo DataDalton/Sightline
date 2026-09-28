@@ -1,15 +1,22 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { fillsHeight, optionValue } from "../../lib/visuals/catalog";
+import {
+	fillsHeight,
+	optionValue,
+	sizedByContent,
+} from "../../lib/visuals/catalog";
 import {
 	fillToViewport,
 	gridGap,
 	heightForRows,
 	measureCanvas,
 	rectToPixels,
+	placeInPixels,
+	refitHeights,
 	resolveVerticalOverlaps,
 	rowHeight,
+	stackBelow,
 	stackForNarrow,
 	type CanvasMetrics,
 	type Rect,
@@ -21,6 +28,8 @@ import { usePageFilters } from "../visuals/PageFilters";
 import type { SourceMeta } from "../visuals/types";
 import { useDragResize } from "../editor/useDragResize";
 import { useViewScale } from "./ViewScale";
+import { useContentFit } from "../visuals/useContentFit";
+import fit from "../visuals/ContentFit.module.css";
 import styles from "./ReportView.module.css";
 
 // The published page, laid out from the arrangement an author made.
@@ -77,9 +86,6 @@ interface ReportGridProps {
 	opened?: string | null;
 	onOpen?: (visualId: string) => void;
 }
-
-// Below this a twelve column grid stops being readable and the page stacks.
-const stackBelow = 900;
 
 export function ReportGrid({
 	visuals,
@@ -157,6 +163,9 @@ export function ReportGrid({
 	const narrow = width < stackBelow;
 	const metrics = measureCanvas(width);
 
+	// Rows each tile, heading or text panel needs for what it holds.
+	const { fitted, natural, observe: observeFit } = useContentFit();
+
 	// A visual inside a group is laid out by the group, not by the page. Split
 	// before anything else runs, so the page's own arrangement never sees a
 	// child rectangle: those are measured from their group's content box and
@@ -192,6 +201,11 @@ export function ReportGrid({
 		zoom: 1,
 		onCommit: (id, rect) => setSize(id, { w: rect.w, h: rect.h }),
 	});
+
+	// A reader who dragged a visual to a size, or is dragging it now, has said
+	// how big they want it, so it is not sized by its content.
+	const readerSized = (id: string): boolean =>
+		!still && (Boolean(sizeFor(id)) || state?.id === id);
 
 	const placed = useMemo(() => {
 		// A visual authored before the canvas existed has no stored position,
@@ -240,11 +254,42 @@ export function ReportGrid({
 			};
 		});
 
+		const heights: Record<string, number> = {};
+		for (const visual of topLevel) {
+			const id = visual.visualId;
+			if (fitted[id] && !readerSized(id)) heights[id] = fitted[id];
+		}
+
 		// Stacked on a narrow screen the page scrolls anyway, so filling the
 		// screen with the last visual would only push everything else off it.
-		if (narrow) return stackForNarrow(items.map((i) => ({ ...i })));
-		return fillToViewport(resolveVerticalOverlaps(items), available);
-	}, [topLevel, narrow, sizeFor, available, state, still]);
+		if (narrow) {
+			return stackForNarrow(
+				items.map((i) => ({
+					...i,
+					rect: { ...i.rect, h: heights[i.id] ?? i.rect.h },
+				})),
+			);
+		}
+		return fillToViewport(
+			resolveVerticalOverlaps(refitHeights(items, heights)),
+			available,
+		);
+	}, [topLevel, narrow, sizeFor, available, state, still, fitted]);
+
+	// Where each visual is drawn. Tiles and headings are drawn at their exact
+	// height rather than in whole rows, so what is under them sits the usual
+	// gap below instead of below an empty band.
+	const boxes = useMemo(() => {
+		const exact: Record<string, number> = {};
+		for (const item of placed) {
+			if (natural[item.id] && !readerSized(item.id)) {
+				exact[item.id] = natural[item.id];
+			}
+		}
+		return placeInPixels(placed, exact, metrics);
+		// metrics is derived from width on every render.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [placed, natural, width]);
 
 	const byId = useMemo(
 		() => new Map(visuals.map((v) => [v.visualId, v])),
@@ -298,8 +343,8 @@ export function ReportGrid({
 		});
 	};
 
-	const rows = placed.reduce(
-		(max, i) => Math.max(max, i.rect.y + i.rect.h),
+	const gridHeight = [...boxes.values()].reduce(
+		(max, box) => Math.max(max, box.top + box.height + gridGap),
 		0,
 	);
 
@@ -385,7 +430,7 @@ export function ReportGrid({
 			<div
 				className={styles.grid}
 				ref={containerRef}
-				style={{ height: rows * (rowHeight + gridGap) }}
+				style={{ height: gridHeight }}
 				// A press on the gaps between visuals clears the selection, which
 				// is how a reader stops showing the grips without having to find
 				// something else to click.
@@ -396,7 +441,8 @@ export function ReportGrid({
 				{placed.map((item) => {
 					const visual = byId.get(item.id);
 					if (!visual) return null;
-					const pixels = rectToPixels(item.rect, metrics);
+					const pixels =
+						boxes.get(item.id) ?? rectToPixels(item.rect, metrics);
 
 					const isSelected = selected === item.id;
 					const resized = Boolean(sizeFor(item.id));
@@ -451,6 +497,25 @@ export function ReportGrid({
 										}
 										renderHeld={renderHeld}
 									/>
+								) : sizedByContent(visual.visualType) ? (
+									<div
+										className={fit.fitBox}
+										data-fit-id={item.id}
+										ref={observeFit}
+									>
+										<VisualRenderer
+											visual={visual}
+											sources={sources}
+											reportId={reportId}
+											pageId={pageId}
+											frameHeight={heightForRows(
+												item.rect.h,
+											)}
+											columnOrder={columnOrder}
+											pinnedColumns={pinnedColumns}
+											onColumnLayout={onColumnLayout}
+										/>
+									</div>
 								) : (
 									<VisualRenderer
 										visual={visual}

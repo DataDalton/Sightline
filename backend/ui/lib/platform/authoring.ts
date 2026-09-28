@@ -123,6 +123,7 @@ export async function createCategory(
 	// Navigation is cached against a key of its own, and a category nobody can
 	// see for thirty seconds reads as a create that did not work.
 	invalidateDefinitions("navigation:");
+	await keepCategoryRoles();
 
 	return rows[0].category_id;
 }
@@ -159,6 +160,7 @@ export async function updateCategory(
 		newValue: name ?? null,
 	});
 	invalidateDefinitions("navigation:");
+	await keepCategoryRoles();
 }
 
 // Deactivated rather than deleted, so the reports that point at it keep a
@@ -189,6 +191,19 @@ export async function deactivateCategory(
 		changedBy: identity.email,
 	});
 	invalidateDefinitions("navigation:");
+	await keepCategoryRoles();
+}
+
+// Each category's editor role follows the category. A failure here is
+// logged rather than raised: the category change itself has been made, and
+// the next start re-asserts every role anyway.
+async function keepCategoryRoles(): Promise<void> {
+	try {
+		const { syncCategoryRoles } = await import("./roles");
+		await syncCategoryRoles();
+	} catch (error) {
+		console.warn("Category editor roles could not be updated:", error);
+	}
 }
 
 export async function reorderCategories(

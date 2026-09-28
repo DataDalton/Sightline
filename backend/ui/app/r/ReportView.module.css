@@ -25,13 +25,38 @@
 		gap: var(--space-3);
 	}
 
+	/* The controls wrap onto as many rows as they need rather than running
+	   off the side of the screen and dragging the page sideways with them. */
 	.actions {
 		width: 100%;
+		flex-wrap: wrap;
+	}
+
+	.title {
+		font-size: var(--text-xl);
+	}
+
+	/* A long trail of categories stays on one line and scrolls. */
+	.breadcrumb {
+		overflow-x: auto;
+		white-space: nowrap;
+		scrollbar-width: none;
 	}
 }
 
+/* A touch screen zooms with two fingers, which does the same job as the zoom
+   control and needs no room in the toolbar. */
+@media (pointer: coarse) and (max-width: 720px) {
+	.zoom {
+		display: none;
+	}
+}
+
+/* Keeps room for the title before sharing a line with the controls. Once the
+   two no longer fit side by side the controls wrap below it, rather than the
+   title being squeezed into a column a word wide. */
 .headerMain {
-	flex: 1;
+	flex: 1 1 360px;
 	min-width: 0;
 }
 
@@ -341,6 +366,16 @@
 	opacity: 1;
 }
 
+/* Without a hover there is no resting state to hide them in, and a phone
+   shows every visual at full width anyway. They would only catch a scroll
+   meant for the page. */
+@media (hover: none) {
+	.readerGrip,
+	.resetSize {
+		display: none;
+	}
+}
+
 .readerGripE {
 	top: 10px;
 	bottom: 10px;
@@ -432,6 +467,22 @@
 .expandBox > * {
 	flex: 1;
 	min-height: 0;
+}
+
+/* On a phone the opened visual takes the screen, turned sideways if the
+   reader turns the phone. */
+@media (max-width: 720px) {
+	.expandBackdrop {
+		top: var(--header-height);
+		bottom: var(--tabbar-height);
+		padding: 0;
+	}
+
+	.expandBox {
+		width: 100vw;
+		height: 100%;
+		border-radius: 0;
+	}
 }
 
 @media (prefers-reduced-motion: reduce) {

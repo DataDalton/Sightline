@@ -1,0 +1,1165 @@
+/* --- The list of sheets ------------------------------------------------ */
+
+.page {
+	width: 100%;
+	padding: var(--space-6) var(--space-5);
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-4);
+}
+
+@media (max-width: 720px) {
+	.page {
+		padding: var(--space-4) var(--space-3);
+	}
+}
+
+.listHead {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: var(--space-4);
+	flex-wrap: wrap;
+}
+
+.pageTitle {
+	font-size: var(--text-2xl);
+	font-weight: 600;
+	letter-spacing: -0.02em;
+}
+
+.subtitle {
+	margin-top: var(--space-1);
+	color: var(--text-secondary);
+	max-width: 72ch;
+	text-wrap: pretty;
+}
+
+.listSection {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+
+.sectionTitle {
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+
+.sheetList {
+	display: flex;
+	flex-direction: column;
+	list-style: none;
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-lg);
+	background: var(--surface-raised);
+}
+
+/* Not clipped by the frame, so a row's menu can open past its edge. The first
+   and last rows take the frame's corners instead, so their hover colour does
+   not show square corners inside a rounded frame. */
+.sheetList li:first-child,
+.sheetList li:first-child .sheetCard {
+	border-top-left-radius: var(--radius-lg);
+	border-top-right-radius: var(--radius-lg);
+}
+
+.sheetList li:last-child,
+.sheetList li:last-child .sheetCard {
+	border-bottom-left-radius: var(--radius-lg);
+	border-bottom-right-radius: var(--radius-lg);
+}
+
+/* The row whose menu is open sits above the rows after it. */
+.sheetList li:has([aria-expanded="true"]) {
+	z-index: 2;
+}
+
+.sheetList li {
+	position: relative;
+	display: flex;
+	align-items: center;
+}
+
+.sheetList li > a {
+	flex: 1;
+	min-width: 0;
+}
+
+.sheetList li > .actionsWrap {
+	margin-right: var(--space-3);
+}
+
+.sheetList li + li {
+	border-top: 1px solid var(--border-subtle);
+}
+
+.sheetCard {
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	padding: var(--space-3) var(--space-4);
+	transition: background var(--transition-fast);
+}
+
+.sheetCard:hover {
+	background: var(--state-hover);
+}
+
+.sheetIcon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	width: 36px;
+	height: 36px;
+	border-radius: var(--radius-md);
+	background: var(--success-subtle);
+	color: var(--success);
+}
+
+.sheetText {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+.sheetTitle {
+	font-weight: 600;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sheetMeta {
+	color: var(--text-muted);
+	font-size: var(--text-sm);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sheetWhen {
+	flex-shrink: 0;
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+}
+
+.empty {
+	padding: var(--space-6);
+	border: 1px dashed var(--border-default);
+	border-radius: var(--radius-lg);
+	color: var(--text-muted);
+	text-align: center;
+}
+
+/* A card at the start of the page, in line with the heading above it, rather
+   than a box stretched across however wide the window is. */
+.emptyLarge {
+	display: flex;
+	align-items: center;
+	gap: var(--space-4);
+	max-width: 760px;
+	padding: var(--space-5);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-lg);
+	background: var(--surface-raised);
+}
+
+@media (max-width: 720px) {
+	.emptyLarge {
+		flex-direction: column;
+		align-items: flex-start;
+	}
+}
+
+.emptyText {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.emptyIcon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	width: 48px;
+	height: 48px;
+	border-radius: var(--radius-full);
+	background: var(--success-subtle);
+	color: var(--success);
+}
+
+.emptyTitle {
+	font-size: var(--text-lg);
+	font-weight: 600;
+}
+
+/* --- The editor -------------------------------------------------------- */
+
+/* Fills the space under the header, so the grid scrolls inside itself and
+   the bar above it stays put, the way a spreadsheet window does. */
+.editor {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+	height: 100%;
+	min-height: 0;
+	padding: var(--space-4) var(--space-5) var(--space-3);
+}
+
+@media (max-width: 720px) {
+	.editor {
+		padding: var(--space-3);
+	}
+}
+
+.editorHead {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-3);
+	flex-wrap: wrap;
+}
+
+.titleBlock {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	min-width: 0;
+	flex: 1;
+}
+
+.back {
+	flex-shrink: 0;
+	color: var(--text-muted);
+	font-size: var(--text-sm);
+}
+
+.back::after {
+	content: "/";
+	margin-left: var(--space-2);
+	color: var(--border-strong);
+}
+
+.back:hover {
+	color: var(--text-primary);
+}
+
+/* The name, editable where it is shown rather than in a dialog. */
+/* As wide as the name and no wider, so what follows it, the save state, sits
+   beside the name rather than wherever a fixed width happened to end. */
+.titleInput {
+	flex: 0 1 auto;
+	min-width: 8ch;
+	max-width: min(520px, 100%);
+	field-sizing: content;
+	padding: 2px var(--space-2);
+	border: 1px solid transparent;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	font-size: var(--text-xl);
+	font-weight: 600;
+	letter-spacing: -0.01em;
+}
+
+.titleInput:hover:not(:read-only) {
+	border-color: var(--border-default);
+}
+
+.titleInput:focus {
+	border-color: var(--focus-ring);
+	background: var(--surface-raised);
+	outline: none;
+}
+
+.saveState {
+	flex-shrink: 0;
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+}
+
+.headActions {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	flex-wrap: wrap;
+}
+
+.avatars {
+	display: inline-flex;
+	margin-right: var(--space-1);
+}
+
+.avatar {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	margin-left: -6px;
+	border: 2px solid var(--surface-base);
+	border-radius: var(--radius-full);
+	color: var(--chart-contrast);
+	font-size: 11px;
+	font-weight: 700;
+}
+
+.avatar:first-child {
+	margin-left: 0;
+}
+
+.segmented {
+	display: inline-flex;
+	padding: 2px;
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-sunken);
+}
+
+.segment {
+	padding: var(--space-1) var(--space-3);
+	border-radius: var(--radius-sm);
+	color: var(--text-secondary);
+	font-size: var(--text-sm);
+	font-weight: 500;
+}
+
+.segmentOn {
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	box-shadow: var(--shadow-sm);
+}
+
+.notice {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-3);
+	padding: var(--space-2) var(--space-4);
+	border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+	border-radius: var(--radius-md);
+	background: var(--warning-subtle);
+	font-size: var(--text-sm);
+}
+
+.readOnlyQuery {
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-md);
+	background: var(--surface-sunken);
+	color: var(--text-secondary);
+	font-size: var(--text-sm);
+}
+
+.problem {
+	color: var(--warning);
+	font-size: var(--text-sm);
+}
+
+.tableTools {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	flex-wrap: wrap;
+}
+
+.toolButton {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+	padding: var(--space-1) var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	font-size: var(--text-sm);
+	font-weight: 500;
+}
+
+.toolButton:hover:not(:disabled) {
+	border-color: var(--brand);
+}
+
+.toolButton:disabled {
+	opacity: 0.5;
+}
+
+/* What the selected cell holds, and its formula when it has one. */
+.formulaBar {
+	flex: 1;
+	min-width: 220px;
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	min-height: 32px;
+	padding: var(--space-1) var(--space-3);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	overflow: hidden;
+	font-size: var(--text-sm);
+}
+
+.formulaRef {
+	flex-shrink: 0;
+	padding-right: var(--space-3);
+	border-right: 1px solid var(--border-subtle);
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.formulaText,
+.formulaValue {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: var(--font-mono);
+	text-align: left;
+}
+
+.formulaText {
+	color: var(--info);
+}
+
+/* --- The grid ---------------------------------------------------------- */
+
+.gridFrame {
+	flex: 1;
+	min-height: 280px;
+	display: flex;
+	flex-direction: column;
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	overflow: hidden;
+}
+
+.gridScroller {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	font-size: var(--text-sm);
+	outline: none;
+}
+
+.gridScroller:focus-visible {
+	box-shadow: inset 0 0 0 2px var(--focus-ring);
+}
+
+.headRow {
+	position: sticky;
+	top: 0;
+	z-index: 5;
+	display: flex;
+	height: 34px;
+	background: var(--surface-sunken);
+	border-bottom: 1px solid var(--border-default);
+}
+
+.gutter {
+	position: sticky;
+	left: 0;
+	z-index: 3;
+	flex-shrink: 0;
+	width: 52px;
+	padding: 0 var(--space-2);
+	border-right: 1px solid var(--border-default);
+	background: var(--surface-sunken);
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+	font-variant-numeric: tabular-nums;
+	line-height: 32px;
+	text-align: right;
+	user-select: none;
+}
+
+.headGutter {
+	z-index: 6;
+	line-height: 34px;
+}
+
+.headCell {
+	position: relative;
+	display: flex;
+	align-items: center;
+	flex-shrink: 0;
+	height: 34px;
+	border-right: 1px solid var(--border-subtle);
+	background: var(--surface-sunken);
+}
+
+.headSelected {
+	background: color-mix(
+		in srgb,
+		var(--focus-ring) 12%,
+		var(--surface-sunken)
+	);
+}
+
+.headLabel {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	align-items: center;
+	gap: var(--space-1);
+	height: 100%;
+	padding: 0 var(--space-2);
+	font-weight: 600;
+	text-align: left;
+}
+
+.headText {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.kindTag {
+	flex-shrink: 0;
+	padding: 0 4px;
+	border-radius: 3px;
+	background: var(--info-subtle);
+	color: var(--info);
+	font-family: var(--font-mono);
+	font-size: 10px;
+	font-style: italic;
+	font-weight: 700;
+}
+
+.kindIcon {
+	flex-shrink: 0;
+	color: var(--success);
+}
+
+.sortMark {
+	flex-shrink: 0;
+	color: var(--brand-strong);
+	font-size: 9px;
+}
+
+.headMenu {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	width: 22px;
+	height: 22px;
+	margin-right: 4px;
+	border-radius: var(--radius-sm);
+	color: var(--text-muted);
+	opacity: 0;
+}
+
+.headCell:hover .headMenu,
+.headMenu:focus-visible {
+	opacity: 1;
+}
+
+@media (hover: none) {
+	.headMenu {
+		opacity: 1;
+	}
+}
+
+.headMenu:hover {
+	background: var(--state-hover);
+	color: var(--text-primary);
+}
+
+.resizeHandle {
+	position: absolute;
+	top: 0;
+	right: -3px;
+	bottom: 0;
+	z-index: 2;
+	width: 6px;
+	cursor: col-resize;
+	touch-action: none;
+}
+
+.resizeHandle:hover {
+	background: var(--focus-ring);
+}
+
+.row {
+	position: absolute;
+	top: 0;
+	left: 0;
+	display: flex;
+	height: 32px;
+	border-bottom: 1px solid var(--border-subtle);
+}
+
+.row:hover .cell:not(.cellSelected) {
+	background-color: color-mix(
+		in srgb,
+		var(--state-hover) 60%,
+		var(--surface-raised)
+	);
+}
+
+.row:hover .gutter {
+	color: var(--text-primary);
+}
+
+.cell {
+	position: relative;
+	display: flex;
+	align-items: center;
+	flex-shrink: 0;
+	height: 31px;
+	padding: 0 var(--space-2);
+	border-right: 1px solid var(--border-subtle);
+	background: var(--surface-raised);
+	cursor: cell;
+	user-select: none;
+}
+
+.cellText {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.cellNumber {
+	justify-content: flex-end;
+	font-variant-numeric: tabular-nums;
+}
+
+.cellFormula {
+	background: color-mix(in srgb, var(--info) 4%, var(--surface-raised));
+}
+
+.cellNote {
+	color: var(--text-primary);
+	background: color-mix(in srgb, var(--success) 4%, var(--surface-raised));
+}
+
+.cellError {
+	color: var(--danger);
+	font-family: var(--font-mono);
+	font-size: var(--text-xs);
+}
+
+.cellSelected {
+	background: color-mix(
+		in srgb,
+		var(--focus-ring) 13%,
+		var(--surface-raised)
+	);
+}
+
+.cellFocus {
+	box-shadow: inset 0 0 0 2px var(--focus-ring);
+}
+
+/* The last frozen column casts an edge, so it reads as fixed rather than as
+   a column that happens not to move. */
+.frozenEdge {
+	border-right: 1px solid var(--border-strong);
+	box-shadow: 4px 0 6px -4px rgba(0, 0, 0, 0.25);
+}
+
+.cellEditing {
+	padding: 0;
+	z-index: 6;
+	overflow: visible;
+}
+
+.noteInput {
+	position: absolute;
+	top: -1px;
+	left: -1px;
+	width: calc(100% + 2px);
+	min-width: 220px;
+	min-height: 96px;
+	padding: 6px var(--space-2);
+	border: 2px solid var(--focus-ring);
+	border-radius: var(--radius-sm);
+	background: var(--surface-overlay);
+	color: var(--text-primary);
+	box-shadow: var(--shadow-lg);
+	font-size: var(--text-sm);
+	line-height: 1.4;
+	resize: both;
+	outline: none;
+}
+
+.presenceTag {
+	position: absolute;
+	top: -1px;
+	right: -1px;
+	padding: 0 3px;
+	border-radius: 0 0 0 3px;
+	color: var(--chart-contrast);
+	font-size: 9px;
+	font-weight: 700;
+	line-height: 13px;
+}
+
+.statusBar {
+	display: flex;
+	align-items: center;
+	gap: var(--space-4);
+	min-height: 28px;
+	padding: 0 var(--space-3);
+	border-top: 1px solid var(--border-subtle);
+	background: var(--surface-sunken);
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+	font-variant-numeric: tabular-nums;
+}
+
+.stats {
+	display: inline-flex;
+	gap: var(--space-4);
+	margin-left: auto;
+	color: var(--text-secondary);
+}
+
+.statusError {
+	color: var(--warning);
+}
+
+.menu {
+	position: fixed;
+	z-index: 400;
+	display: flex;
+	flex-direction: column;
+	width: 220px;
+	padding: var(--space-1);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-overlay);
+	box-shadow: var(--shadow-lg);
+	animation: popoverIn 120ms ease-out;
+}
+
+.menuItem {
+	padding: var(--space-2) var(--space-3);
+	border-radius: var(--radius-sm);
+	font-size: var(--text-sm);
+	text-align: left;
+}
+
+.menuItem:hover,
+.menuItem:focus-visible {
+	background: var(--state-hover);
+}
+
+.menuDanger {
+	color: var(--danger);
+}
+
+.menuSeparator {
+	height: 1px;
+	margin: var(--space-1) 0;
+	background: var(--border-subtle);
+}
+
+/* --- Pivot ------------------------------------------------------------- */
+
+.pivotBuilder {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: var(--space-3);
+}
+
+@media (max-width: 900px) {
+	.pivotBuilder {
+		grid-template-columns: 1fr;
+	}
+}
+
+.pivotSlot {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+}
+
+.pivotSlotLabel {
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+
+.pivotChips {
+	display: flex;
+	align-items: center;
+	gap: var(--space-1);
+	flex-wrap: wrap;
+}
+
+.pivotChip {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+	padding: 2px 4px 2px var(--space-2);
+	border-radius: var(--radius-full);
+	background: var(--surface-sunken);
+	font-size: var(--text-sm);
+}
+
+.pivotChip button {
+	padding: 0 6px;
+	border-radius: var(--radius-full);
+	color: var(--text-muted);
+}
+
+.pivotChip button:hover {
+	background: var(--state-hover);
+	color: var(--text-primary);
+}
+
+.pivotScroller {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+}
+
+.pivotTable {
+	border-collapse: separate;
+	border-spacing: 0;
+	font-size: var(--text-sm);
+	font-variant-numeric: tabular-nums;
+}
+
+.pivotTable th,
+.pivotTable td {
+	height: 32px;
+	padding: 0 var(--space-3);
+	border-right: 1px solid var(--border-subtle);
+	border-bottom: 1px solid var(--border-subtle);
+	white-space: nowrap;
+}
+
+.pivotTable thead th {
+	position: sticky;
+	top: 0;
+	z-index: 2;
+	background: var(--surface-sunken);
+	font-weight: 600;
+}
+
+.pivotRowHead {
+	position: sticky;
+	z-index: 1;
+	min-width: 160px;
+	max-width: 160px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	background: var(--surface-raised);
+	font-weight: 500;
+	text-align: left;
+}
+
+.pivotTable thead .pivotRowHead {
+	z-index: 3;
+}
+
+.pivotColHead {
+	text-align: right;
+}
+
+.pivotCell {
+	text-align: right;
+}
+
+.pivotTotalCol {
+	background: color-mix(in srgb, var(--brand) 6%, var(--surface-raised));
+	font-weight: 600;
+}
+
+.pivotTable thead .pivotTotalCol {
+	background: color-mix(in srgb, var(--brand) 10%, var(--surface-sunken));
+}
+
+.pivotTotalRow th,
+.pivotTotalRow td {
+	border-top: 2px solid var(--border-strong);
+	background: var(--surface-sunken);
+	font-weight: 700;
+}
+
+/* --- Dialogs ----------------------------------------------------------- */
+
+.form {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-4);
+}
+
+.field {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+}
+
+.fieldLabel {
+	font-size: var(--text-sm);
+	font-weight: 600;
+}
+
+.fieldHint {
+	color: var(--text-muted);
+	font-size: var(--text-sm);
+}
+
+.formError {
+	color: var(--danger);
+	font-size: var(--text-sm);
+}
+
+.input {
+	width: 100%;
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+}
+
+.input:focus {
+	border-color: var(--focus-ring);
+	outline: none;
+}
+
+.formulaInput {
+	font-family: var(--font-mono);
+	font-size: var(--text-sm);
+	resize: vertical;
+}
+
+.insertList {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-1);
+	max-height: 120px;
+	overflow-y: auto;
+}
+
+.insertChip {
+	padding: 2px var(--space-2);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-full);
+	background: var(--surface-sunken);
+	font-size: var(--text-xs);
+}
+
+.insertChip:hover {
+	border-color: var(--focus-ring);
+}
+
+.previewBox {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	padding: var(--space-3);
+	border-radius: var(--radius-md);
+	background: var(--surface-sunken);
+}
+
+.previewValues {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+	list-style: none;
+	font-family: var(--font-mono);
+	font-size: var(--text-sm);
+}
+
+.previewValues li {
+	padding: 1px var(--space-2);
+	border-radius: var(--radius-sm);
+	background: var(--surface-raised);
+}
+
+.helpBox summary {
+	font-size: var(--text-sm);
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.helpList {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	margin: var(--space-2) 0;
+	list-style: none;
+	font-size: var(--text-sm);
+}
+
+.helpList li {
+	display: flex;
+	align-items: baseline;
+	gap: var(--space-3);
+	flex-wrap: wrap;
+}
+
+.helpInsert code {
+	font-family: var(--font-mono);
+	font-size: var(--text-xs);
+	color: var(--info);
+}
+
+.helpInsert:hover code {
+	text-decoration: underline;
+}
+
+.shareRow {
+	display: grid;
+	grid-template-columns: 1fr auto auto;
+	gap: var(--space-2);
+}
+
+@media (max-width: 560px) {
+	.shareRow {
+		grid-template-columns: 1fr;
+	}
+}
+
+.shareList {
+	display: flex;
+	flex-direction: column;
+	list-style: none;
+}
+
+.shareItem {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-3);
+	padding: var(--space-2) 0;
+	border-top: 1px solid var(--border-subtle);
+}
+
+.shareRole {
+	margin-left: var(--space-2);
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+}
+
+/* --- Buttons ----------------------------------------------------------- */
+
+.primary,
+.secondary {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: var(--space-2) var(--space-4);
+	border-radius: var(--radius-md);
+	font-size: var(--text-sm);
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.primary {
+	background: var(--brand);
+	color: var(--brand-contrast);
+}
+
+.primary:hover:not(:disabled) {
+	background: var(--brand-strong);
+}
+
+.primary:disabled {
+	opacity: 0.5;
+}
+
+.secondary {
+	border: 1px solid var(--border-default);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+}
+
+.secondary:hover {
+	background: var(--state-hover);
+}
+
+.linkButton {
+	padding: var(--space-1) var(--space-2);
+	border-radius: var(--radius-sm);
+	color: var(--text-link);
+	font-size: var(--text-sm);
+}
+
+.linkButton:hover {
+	background: var(--state-hover);
+}
+
+/* The floating Ask button sits over the bottom right corner of every page,
+   which here is the end of the status bar. The figures stop short of it. */
+@media (min-width: 721px) {
+	.statusBar {
+		padding-right: 84px;
+	}
+}
+
+/* --- Actions on a whole sheet ------------------------------------------ */
+
+.actionsWrap {
+	position: relative;
+	display: inline-flex;
+	flex-direction: column;
+	align-items: flex-end;
+}
+
+.actionsButton {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 34px;
+	height: 34px;
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	color: var(--text-secondary);
+}
+
+.actionsButton:hover:not(:disabled) {
+	background: var(--state-hover);
+	color: var(--text-primary);
+}
+
+.actionsMenu {
+	position: absolute;
+	top: calc(100% + 4px);
+	right: 0;
+	z-index: 50;
+	display: flex;
+	flex-direction: column;
+	min-width: 200px;
+	padding: var(--space-1);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-overlay);
+	box-shadow: var(--shadow-lg);
+	animation: popoverIn 120ms ease-out;
+}
+
+.actionsProblem {
+	position: absolute;
+	top: calc(100% + 4px);
+	right: 0;
+	white-space: nowrap;
+	color: var(--danger);
+	font-size: var(--text-xs);
+}

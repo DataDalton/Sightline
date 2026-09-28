@@ -1645,3 +1645,22 @@ export function fillsHeight(
 	if (!visualByType[type]?.supports.fillHeight) return false;
 	return options?.fillHeight !== false;
 }
+
+// Types whose height comes from what they hold rather than from the box they
+// are given. A chart or a table draws into whatever height it is handed and
+// scrolls inside it. Tiles, headers and text wrap onto more lines as the box
+// narrows, so on a phone they need more rows than the author gave them, and a
+// fixed box would let them spill under whatever sits below.
+const contentSized = new Set([
+	"kpiRow",
+	"entityHeader",
+	"sectionHeader",
+	"textPanel",
+	"blockedNotice",
+	"dimensionSwitch",
+	"periodSwitch",
+]);
+
+export function sizedByContent(type: string): boolean {
+	return contentSized.has(type);
+}

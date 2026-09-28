@@ -45,8 +45,15 @@ export async function heartbeat(
 		 ON CONFLICT (report_id, session_id) DO UPDATE SET
 		   state = EXCLUDED.state,
 		   heartbeat_on = now(),
-		   expires_on = EXCLUDED.expires_on`,
-		[reportId, email, sessionId, JSON.stringify(state), String(leaseSeconds)],
+		   expires_on = EXCLUDED.expires_on
+		 WHERE presence.left_on IS NULL`,
+		[
+			reportId,
+			email,
+			sessionId,
+			JSON.stringify(state),
+			String(leaseSeconds),
+		],
 	);
 }
 
@@ -63,7 +70,7 @@ export async function listPresent(
 		`SELECT user_email, session_id, state,
 		        EXTRACT(EPOCH FROM (now() - heartbeat_on))::text AS age_seconds
 		 FROM presence
-		 WHERE report_id = $1 AND expires_on > now()
+		 WHERE report_id = $1 AND expires_on > now() AND left_on IS NULL
 		 ORDER BY heartbeat_on DESC`,
 		[reportId],
 	);
@@ -79,12 +86,26 @@ export async function listPresent(
 
 // Called when a session leaves deliberately. The lease would expire anyway, so
 // this only removes the delay.
+//
+// Marked as left rather than deleted. A page being reloaded often has a
+// heartbeat already on its way, and requests do not arrive in the order they
+// were sent: a heartbeat landing after a delete wrote the row straight back,
+// and the session stayed listed beside the one the reload started. A marked
+// row refuses that heartbeat, and is swept once its lease is up, by which time
+// nothing sent before the leave can still be arriving. A leave that lands
+// before the session's first heartbeat writes the mark for it to meet.
 export async function leave(
 	reportId: string,
+	email: string,
 	sessionId: string,
 ): Promise<void> {
 	await sql(
-		`DELETE FROM presence WHERE report_id = $1 AND session_id = $2`,
-		[reportId, sessionId],
+		`INSERT INTO presence
+		   (report_id, user_email, session_id, heartbeat_on, expires_on, left_on)
+		 VALUES ($1, $2, $3, now(), now() + ($4 || ' seconds')::interval, now())
+		 ON CONFLICT (report_id, session_id) DO UPDATE SET
+		   left_on = now(),
+		   expires_on = EXCLUDED.expires_on`,
+		[reportId, email, sessionId, String(leaseSeconds)],
 	);
 }

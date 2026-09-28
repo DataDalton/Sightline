@@ -171,6 +171,12 @@ export const adminNav = [
 				blurb: "The model endpoint questions are composed by, and what it is shown.",
 				feed: "settings",
 			},
+			{
+				id: "notifications",
+				label: "Notifications",
+				blurb: "Alerts people set, the pushes that reach their devices, and announcements to everyone.",
+				feed: "settings",
+			},
 		],
 	},
 ] as const satisfies readonly { label: string; panes: readonly Pane[] }[];

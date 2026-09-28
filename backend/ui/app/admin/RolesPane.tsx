@@ -17,6 +17,7 @@ interface RoleRecord {
 	permission: "view" | "edit" | "admin";
 	capabilities: string[];
 	isBuiltin: boolean;
+	categoryId: string | null;
 }
 
 interface AssignmentRecord {
@@ -46,6 +47,7 @@ const capabilityInfo: Record<string, { label: string; area: string }> = {
 	"report.create": { label: "Create reports", area: "Authoring" },
 	"page.create": { label: "Add pages", area: "Authoring" },
 	"report.publish": { label: "Publish personal pages", area: "Authoring" },
+	"page.protect": { label: "Lock pages", area: "Authoring" },
 	"category.create": { label: "Create categories", area: "Navigation" },
 	"category.manage": { label: "Rename and reorder", area: "Navigation" },
 	"access.grant": { label: "Access and roles", area: "Administration" },
@@ -138,11 +140,18 @@ export default function RolesPane({
 	const showSkeleton = useDeferredLoading(isLoading);
 
 	const [editing, setEditing] = useState<Draft | null>(null);
-	const [assigning, setAssigning] = useState(false);
+	// Open, and with a role already chosen when it was opened from a
+	// category's own row.
+	const [assigning, setAssigning] = useState<{ roleId: string } | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [failure, setFailure] = useState<string | null>(null);
 
-	const roles = data?.roles ?? [];
+	const allRoles = data?.roles ?? [];
+	// A category's own editor role is listed with its category rather than as
+	// a card among the roles people made, since there is one per category and
+	// nothing about it can be changed.
+	const roles = allRoles.filter((r) => !r.categoryId);
+	const categoryRoles = allRoles.filter((r) => r.categoryId);
 	const assignments = data?.assignments ?? [];
 	const known = data?.capabilities ?? [];
 
@@ -313,6 +322,99 @@ export default function RolesPane({
 				</section>
 			)}
 
+			{show !== "assignments" && categoryRoles.length > 0 && (
+				<section className={styles.group}>
+					<div className={styles.groupHead}>
+						<div>
+							<h3 className={styles.groupTitle}>
+								Category editors
+							</h3>
+							<p className={styles.groupBlurb}>
+								Every category has an editor role of its own.
+								Whoever holds it builds and maintains the
+								reports in that category and nowhere else. The
+								role follows the category, so it is renamed and
+								retired with it.
+							</p>
+						</div>
+					</div>
+					<div className={admin.tableWrap}>
+						<table className={admin.table}>
+							<thead>
+								<tr>
+									<th>Category</th>
+									<th>Held by</th>
+									<th />
+								</tr>
+							</thead>
+							<tbody>
+								{categoryRoles.map((role) => {
+									const holders = assignments.filter(
+										(a) => a.roleId === role.roleId,
+									);
+									return (
+										<tr key={role.roleId}>
+											<td>
+												{named(role.categoryId) ??
+													role.name}
+											</td>
+											<td>
+												{holders.length === 0 ? (
+													<span
+														className={styles.scope}
+													>
+														Nobody yet
+													</span>
+												) : (
+													<span
+														className={
+															styles.holderList
+														}
+													>
+														{holders.map((h) => (
+															<span
+																key={
+																	h.assignmentId
+																}
+																className={
+																	styles.holderChip
+																}
+																title={
+																	h.subjectType ===
+																	"user"
+																		? "One person"
+																		: "Everyone in this group"
+																}
+															>
+																{h.subjectId}
+															</span>
+														))}
+													</span>
+												)}
+											</td>
+											<td>
+												<button
+													type="button"
+													className={admin.linkButton}
+													disabled={busy}
+													onClick={() =>
+														setAssigning({
+															roleId: role.roleId,
+														})
+													}
+												>
+													Assign
+												</button>
+											</td>
+										</tr>
+									);
+								})}
+							</tbody>
+						</table>
+					</div>
+				</section>
+			)}
+
 			{show !== "roles" && (
 				<section className={styles.group}>
 					<div className={styles.groupHead}>
@@ -328,7 +430,7 @@ export default function RolesPane({
 						<button
 							type="button"
 							className={form.openButton}
-							onClick={() => setAssigning(true)}
+							onClick={() => setAssigning({ roleId: "" })}
 						>
 							Assign a role
 						</button>
@@ -454,7 +556,8 @@ export default function RolesPane({
 
 			{assigning && (
 				<AssignDialog
-					roles={roles}
+					roles={allRoles}
+					presetRoleId={assigning.roleId}
 					resources={resources}
 					busy={busy}
 					onAssign={async (next) => {
@@ -462,9 +565,9 @@ export default function RolesPane({
 							{ action: "assign", ...next },
 							"Could not assign that role",
 						);
-						if (ok) setAssigning(false);
+						if (ok) setAssigning(null);
 					}}
-					onClose={() => setAssigning(false)}
+					onClose={() => setAssigning(null)}
 				/>
 			)}
 		</div>
@@ -665,18 +768,24 @@ function RoleDialog({
 
 function AssignDialog({
 	roles,
+	presetRoleId,
 	resources,
 	busy,
 	onAssign,
 	onClose,
 }: {
 	roles: RoleRecord[];
+	presetRoleId: string;
 	resources: ResourceResponse | undefined;
 	busy: boolean;
 	onAssign: (input: Record<string, unknown>) => void;
 	onClose: () => void;
 }) {
-	const [roleId, setRoleId] = useState("");
+	const [roleId, setRoleId] = useState(presetRoleId);
+	// A category's editor role carries its own scope, so there is no "where"
+	// to choose.
+	const pinnedCategory =
+		roles.find((r) => r.roleId === roleId)?.categoryId ?? null;
 	const [subjectType, setSubjectType] = useState<"group" | "user">("group");
 	const [subjectId, setSubjectId] = useState("");
 	const [scopeType, setScopeType] = useState<
@@ -694,7 +803,7 @@ function AssignDialog({
 	const ready =
 		roleId !== "" &&
 		subjectId.trim() !== "" &&
-		(scopeType === "global" || scopeId !== "");
+		(pinnedCategory !== null || scopeType === "global" || scopeId !== "");
 
 	return (
 		<Modal isOpen onClose={onClose} title="Assign a role" width="620px">
@@ -706,10 +815,14 @@ function AssignDialog({
 							value={roleId}
 							onChange={setRoleId}
 							placeholder="Choose one"
+							searchable={roles.length > 12}
 							options={roles.map((r) => ({
 								value: r.roleId,
 								label: r.name,
 								note: r.permission,
+								group: r.categoryId
+									? "Category editors"
+									: "Roles",
 							}))}
 						/>
 					</label>
@@ -750,43 +863,56 @@ function AssignDialog({
 					)}
 				</label>
 
-				<div className={form.row}>
-					<label className={form.field}>
-						<span className={form.label}>Where</span>
-						<Select
-							value={scopeType}
-							onChange={(v) => {
-								setScopeType(v as typeof scopeType);
-								setScopeId("");
-							}}
-							options={[
-								{ value: "global", label: "Everywhere" },
-								{ value: "category", label: "One category" },
-								{ value: "report", label: "One report" },
-							]}
-						/>
-					</label>
-
-					{scopeType !== "global" && (
+				{pinnedCategory !== null ? (
+					<p className={form.hint}>
+						Applies only in{" "}
+						{resources?.categories.find(
+							(c) => c.id === pinnedCategory,
+						)?.name ?? pinnedCategory}
+						.
+					</p>
+				) : (
+					<div className={form.row}>
 						<label className={form.field}>
-							<span className={form.label}>
-								{scopeType === "category"
-									? "Category"
-									: "Report"}
-							</span>
+							<span className={form.label}>Where</span>
 							<Select
-								value={scopeId}
-								onChange={setScopeId}
-								placeholder="Choose one"
-								searchable={scopeChoices.length > 12}
-								options={scopeChoices.map((c) => ({
-									value: c.id,
-									label: c.name,
-								}))}
+								value={scopeType}
+								onChange={(v) => {
+									setScopeType(v as typeof scopeType);
+									setScopeId("");
+								}}
+								options={[
+									{ value: "global", label: "Everywhere" },
+									{
+										value: "category",
+										label: "One category",
+									},
+									{ value: "report", label: "One report" },
+								]}
 							/>
 						</label>
-					)}
-				</div>
+
+						{scopeType !== "global" && (
+							<label className={form.field}>
+								<span className={form.label}>
+									{scopeType === "category"
+										? "Category"
+										: "Report"}
+								</span>
+								<Select
+									value={scopeId}
+									onChange={setScopeId}
+									placeholder="Choose one"
+									searchable={scopeChoices.length > 12}
+									options={scopeChoices.map((c) => ({
+										value: c.id,
+										label: c.name,
+									}))}
+								/>
+							</label>
+						)}
+					</div>
+				)}
 
 				<div className={form.actions}>
 					<button

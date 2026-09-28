@@ -1,0 +1,83 @@
+/* The tab bar a phone gets at the foot of the screen. Absent on anything
+   wider, where the sidebar and the header carry the same places. */
+.bar {
+	display: none;
+}
+
+@media (max-width: 720px) {
+	.bar {
+		position: fixed;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		z-index: 95;
+		display: grid;
+		grid-auto-flow: column;
+		grid-auto-columns: 1fr;
+		height: var(--tabbar-height);
+		/* The home indicator sits under the bar rather than over a tab. */
+		padding-bottom: var(--safe-bottom);
+		background: var(--chrome-bg);
+		border-top: 1px solid var(--chrome-border);
+	}
+}
+
+.tab {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 2px;
+	min-width: 0;
+	padding: 6px 0 4px;
+	border: none;
+	background: none;
+	color: var(--chrome-text-muted);
+	font-family: inherit;
+	font-size: 11px;
+	font-weight: 500;
+	letter-spacing: 0.01em;
+	text-decoration: none;
+	cursor: pointer;
+	transition: color var(--transition-fast);
+}
+
+.tab:active {
+	background: var(--chrome-hover);
+}
+
+/* Colour plus a bar above the icon, so the current place does not rely on
+   colour alone. */
+.active {
+	position: relative;
+	color: var(--chrome-text);
+}
+
+.active::before {
+	content: "";
+	position: absolute;
+	top: 0;
+	left: 50%;
+	width: 24px;
+	height: 3px;
+	transform: translateX(-50%);
+	border-radius: 0 0 var(--radius-full) var(--radius-full);
+	background: var(--brand);
+}
+
+.iconWrap {
+	position: relative;
+	display: inline-flex;
+}
+
+/* The count sits off the bell's shoulder rather than over it. */
+.iconWrap > span {
+	top: -6px;
+	right: -12px;
+}
+
+@media print {
+	.bar {
+		display: none !important;
+	}
+}

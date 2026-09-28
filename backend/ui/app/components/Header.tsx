@@ -4,6 +4,7 @@ import { memo, useEffect, useState } from "react";
 import useSWR from "swr";
 import { useUser } from "../context/UserContext";
 import { useShell } from "../context/ShellContext";
+import { InboxBell } from "../notify/InboxBell";
 import styles from "./Header.module.css";
 
 // Branding comes from the settings table rather than from a build-time
@@ -141,6 +142,8 @@ export default memo(function Header() {
 					{modifier}K
 				</span>
 			</button>
+
+			<InboxBell />
 
 			{/* The account block lives at the foot of the navigation, which is
 			    inside the drawer below this width. The mark comes back here so

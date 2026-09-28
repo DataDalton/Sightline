@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { compileQuery } from "./builder";
+import { compileDistinctValues, compileQuery } from "./builder";
 import { distributionColumns } from "./visualSpec";
 import { QuerySpecError, type QuerySpec } from "./spec";
 import type { SemanticField, SemanticSource } from "../semantic/types";
@@ -599,4 +599,85 @@ test("a distribution over a table uses the field expressions", () => {
 		/SELECT COUNT\(DISTINCT customer_id\) AS `__value`/,
 	);
 	assert.match(compiled.sql, /GROUP BY region/);
+});
+
+// --- Restricting to recorded values ----------------------------------------
+
+test("a restriction matches each recorded combination exactly, with bound values", () => {
+	const compiled = compileQuery(
+		source,
+		{
+			sourceKey: "orders",
+			dimensions: [],
+			measures: ["Revenue"],
+			filters: [],
+			sort: [],
+			limit: 10,
+			offset: 0,
+			transforms: [],
+		},
+		{
+			restriction: {
+				fields: ["Category", "Month"],
+				tuples: [
+					["Hardware", "2026-01-01"],
+					["Software", null],
+				],
+			},
+		},
+	);
+	assert.match(
+		compiled.sql,
+		/WHERE \(\(CAST\(`Category` AS STRING\) = :restrict_0_0 AND CAST\(`Month` AS STRING\) = :restrict_0_1\) OR \(CAST\(`Category` AS STRING\) = :restrict_1_0 AND `Month` IS NULL\)\)/,
+	);
+	assert.equal(compiled.params.restrict_0_0, "Hardware");
+	assert.equal(compiled.params.restrict_1_0, "Software");
+	assert.ok(!compiled.sql.includes("Hardware"));
+});
+
+test("a restriction with nothing recorded returns no rows", () => {
+	const compiled = compileQuery(
+		source,
+		{
+			sourceKey: "orders",
+			dimensions: [],
+			measures: ["Revenue"],
+			filters: [],
+			sort: [],
+			limit: 10,
+			offset: 0,
+			transforms: [],
+		},
+		{ restriction: { fields: ["Category"], tuples: [] } },
+	);
+	assert.match(compiled.sql, /WHERE FALSE/);
+});
+
+test("a restriction naming a field the source lacks is refused", () => {
+	assert.throws(
+		() =>
+			compileQuery(
+				source,
+				{
+					sourceKey: "orders",
+					dimensions: [],
+					measures: ["Revenue"],
+					filters: [],
+					sort: [],
+					limit: 10,
+					offset: 0,
+					transforms: [],
+				},
+				{ restriction: { fields: ["Nope"], tuples: [["x"]] } },
+			),
+		QuerySpecError,
+	);
+});
+
+test("distinct values are read as text, grouped and bounded", () => {
+	const compiled = compileDistinctValues(source, ["Category", "Month"], 501);
+	assert.equal(
+		compiled.sql,
+		"SELECT CAST(`Category` AS STRING) AS v0, CAST(`Month` AS STRING) AS v1\nFROM cat.sch.orders\nGROUP BY `Category`, `Month`\nLIMIT 501",
+	);
 });

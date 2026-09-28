@@ -115,14 +115,33 @@
 @media (max-width: 900px) {
 	.sidebar {
 		position: fixed;
-		inset: var(--header-height) auto 0 0;
+		inset: var(--header-height) auto var(--tabbar-height) 0;
 		z-index: 90;
+		width: min(var(--sidebar-width), 86vw);
 		transform: translateX(-100%);
 		transition: transform var(--transition-base);
 	}
 
 	.open {
 		transform: translateX(0);
+	}
+}
+
+/* Rows a finger can hit. A pointer needs far less, and the desktop density is
+   left as it was. */
+@media (pointer: coarse) {
+	.navItem {
+		min-height: 44px;
+	}
+
+	.subItem {
+		padding-top: var(--space-2);
+		padding-bottom: var(--space-2);
+	}
+
+	.disclosure {
+		width: 36px;
+		height: 36px;
 	}
 }
 
@@ -226,4 +245,20 @@
 	.sidebar {
 		display: none !important;
 	}
+}
+
+/* Something waiting to be read, in the brand colour so it is noticed from
+   anywhere in the app, unlike the grey counts beside categories. */
+.unreadCount {
+	margin-left: auto;
+	min-width: 20px;
+	padding: 0 6px;
+	border-radius: var(--radius-full);
+	background: var(--brand);
+	color: var(--brand-contrast);
+	font-size: var(--text-xs);
+	font-weight: 700;
+	line-height: 20px;
+	text-align: center;
+	font-variant-numeric: tabular-nums;
 }

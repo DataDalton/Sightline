@@ -536,9 +536,82 @@ function compileDistribution(
 	};
 }
 
+// Rows limited to given combinations of values, compared exactly as text.
+//
+// Only ever built by the server, from values it recorded, never from a
+// request. Kept apart from the filters a client can send for that reason, and
+// because it compares differently: a client filter ignores case so a reader
+// never has to guess at it, where this has to match exactly what a row filter
+// allowed and nothing more.
+export interface RowRestriction {
+	fields: string[];
+	// One entry per allowed combination, in the order of fields. Null matches
+	// a row with nothing in that field.
+	tuples: (string | null)[][];
+}
+
+function restrictionSql(
+	source: SemanticSource,
+	restriction: RowRestriction,
+	params: Record<string, unknown>,
+): string {
+	if (restriction.tuples.length === 0) return "FALSE";
+	const refs = restriction.fields.map((name) => {
+		const field = findField(source, name, "dimension");
+		if (!field) {
+			throw new QuerySpecError(
+				`Unknown dimension "${name}" on source "${source.sourceKey}"`,
+			);
+		}
+		return fieldRef(source, field);
+	});
+	const alternatives = restriction.tuples.map((tuple, t) => {
+		const parts = refs.map((ref, f) => {
+			const value = tuple[f];
+			if (value === null || value === undefined) return `${ref} IS NULL`;
+			const marker = `restrict_${t}_${f}`;
+			params[marker] = value;
+			return `CAST(${ref} AS STRING) = :${marker}`;
+		});
+		return parts.length === 1 ? parts[0] : `(${parts.join(" AND ")})`;
+	});
+	return `(${alternatives.join(" OR ")})`;
+}
+
+// Every combination of the given fields that the person running it can see,
+// as text, and at most the limit of them. Asked under that person's own token,
+// so their row filter decides the answer.
+export function compileDistinctValues(
+	source: SemanticSource,
+	fields: string[],
+	limit: number,
+): CompiledQuery {
+	const refs = fields.map((name) => {
+		const field = findField(source, name, "dimension");
+		if (!field) {
+			throw new QuerySpecError(
+				`Unknown dimension "${name}" on source "${source.sourceKey}"`,
+			);
+		}
+		return fieldRef(source, field);
+	});
+	const select = refs.map((ref, i) => `CAST(${ref} AS STRING) AS v${i}`);
+	return {
+		sql: [
+			`SELECT ${select.join(", ")}`,
+			`FROM ${sourceRef(source)}`,
+			`GROUP BY ${refs.join(", ")}`,
+			`LIMIT ${Math.max(1, Math.floor(limit))}`,
+		].join("\n"),
+		params: {},
+		columns: refs.map((_, i) => `v${i}`),
+	};
+}
+
 export function compileQuery(
 	source: SemanticSource,
 	spec: QuerySpec,
+	options: { restriction?: RowRestriction } = {},
 ): CompiledQuery {
 	if (spec.distribution) return compileDistribution(source, spec);
 
@@ -549,6 +622,9 @@ export function compileQuery(
 	}
 
 	const { params, whereParts, havingParts } = resolveFilters(source, spec);
+	if (options.restriction) {
+		whereParts.push(restrictionSql(source, options.restriction, params));
+	}
 	const selectParts: string[] = [];
 	const groupByParts: string[] = [];
 	const columns: string[] = [];

@@ -10,6 +10,7 @@ import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { useShell } from "../context/ShellContext";
 import { NewReportButton } from "../authoring/NewReport";
 import { AccountBlock } from "./AccountBlock";
+import { useNotify } from "../notify/NotifyContext";
 import styles from "./Sidebar.module.css";
 
 // Navigation comes from the categories the caller can actually open, resolved
@@ -47,8 +48,11 @@ const iconPaths: Record<string, string> = {
 	dictionary:
 		"M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2zM9 7h7M9 11h5",
 	explore: "M3 3h18v4H3zM3 10h18M3 15h18M3 20h18M9 10v10M15 10v10",
-	assist: "M12 3a9 9 0 0 0-9 9 8.9 8.9 0 0 0 1.4 4.8L3 21l4.4-1.3A9 9 0 1 0 12 3zM9 10h6M9 14h4",
+	// The same mark as the Ask button, so the two read as one feature.
+	assist: "M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9zM19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z",
 	admin: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z",
+	sheets: "M3 3h18v18H3zM3 9h18M3 15h18M9 3v18",
+	inbox: "M22 12h-6l-2 3h-4l-2-3H2M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z",
 	default: "M3 7h7v6H3zM14 7h7v6h-7zM3 16h18v5H3z",
 };
 
@@ -132,6 +136,7 @@ function NavIcon({ name }: { name: string | null }) {
 export default memo(function Sidebar() {
 	const pathname = usePathname();
 	const { user } = useUser();
+	const { unread } = useNotify();
 	const { navOpen } = useShell();
 
 	const { data, isLoading } = useSWR<{
@@ -184,6 +189,23 @@ export default memo(function Sidebar() {
 						<NavIcon name="home" />
 						<span className={styles.label}>Home</span>
 					</Link>
+					{/* The inbox and the alerts that feed it are one page. Kept
+					    in the navigation as well as behind the bell, so both
+					    are found by people who never look at the header. */}
+					<Link
+						href="/inbox"
+						className={`${styles.navItem} ${
+							isActive("/inbox") || isActive("/alerts")
+								? styles.active
+								: ""
+						}`}
+					>
+						<NavIcon name="inbox" />
+						<span className={styles.label}>Inbox</span>
+						{unread > 0 && (
+							<span className={styles.unreadCount}>{unread}</span>
+						)}
+					</Link>
 					<Link
 						href="/mine"
 						className={`${styles.navItem} ${isActive("/mine") ? styles.active : ""}`}
@@ -208,6 +230,15 @@ export default memo(function Sidebar() {
 					>
 						<NavIcon name="explore" />
 						<span className={styles.label}>Explore</span>
+					</Link>
+					<Link
+						href="/sheets"
+						className={`${styles.navItem} ${
+							isActive("/sheets") ? styles.active : ""
+						}`}
+					>
+						<NavIcon name="sheets" />
+						<span className={styles.label}>Sheets</span>
 					</Link>
 					{/* Absent unless this deployment names a model endpoint.
 					    An assistant nobody configured is not a disabled

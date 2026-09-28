@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
 import "./globals.css";
 import { getIdentityFromHeaders } from "../lib/auth/identity";
@@ -18,6 +18,8 @@ import PaletteHost from "./components/PaletteHost";
 import styles from "./layout.module.css";
 import { AssistantProvider } from "./assist/AssistantContext";
 import { AssistantDock } from "./assist/AssistantDock";
+import { NotifyProvider } from "./notify/NotifyContext";
+import { MobileTabBar } from "./components/MobileTabBar";
 
 // The document title before the settings table has been read, and while a
 // deployment is still unnamed. What an installation calls itself is set in the
@@ -33,6 +35,23 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
 	title: "Sightline",
 	description: "Analytics and reporting platform",
+	// Installed from Safari, iOS reads these rather than the manifest for how
+	// the app window looks.
+	appleWebApp: {
+		capable: true,
+		statusBarStyle: "black-translucent",
+	},
+	formatDetection: { telephone: false },
+};
+
+// Drawn edge to edge once installed, with the header clearing the status bar
+// through the safe area insets. The theme colour is the chrome, which is dark
+// in both themes, so the browser's own bar matches the header below it.
+export const viewport: Viewport = {
+	width: "device-width",
+	initialScale: 1,
+	viewportFit: "cover",
+	themeColor: "#16181d",
 };
 
 // What the shell needs, resolved while the document is being rendered.
@@ -90,31 +109,55 @@ export default async function RootLayout({
 					nonce={nonce}
 					dangerouslySetInnerHTML={{ __html: themeBootstrapScript }}
 				/>
+				{/* With credentials, because the app sits behind a sign-in
+				    and a manifest is otherwise fetched without the cookie
+				    that gets past it, which fails the install silently. */}
+				<link
+					rel="manifest"
+					href="/app-manifest/"
+					crossOrigin="use-credentials"
+				/>
+				<link
+					rel="icon"
+					type="image/png"
+					sizes="32x32"
+					href="/app-icon/icon-32.png"
+				/>
+				<link
+					rel="apple-touch-icon"
+					href="/app-icon/apple-touch-icon.png"
+				/>
 			</head>
 			<body>
 				<ThemeProvider>
 					<SWRProvider fallback={shell.fallback}>
 						<UserProvider initial={shell.user}>
 							<ShellProvider>
-								<AssistantProvider>
-									<a href="#main" className={styles.skipLink}>
-										Skip to content
-									</a>
-									<Header />
-									<div className={styles.container}>
-										<Sidebar />
-										<NavScrim />
-										<main
-											id="main"
-											tabIndex={-1}
-											className={styles.main}
+								<NotifyProvider>
+									<AssistantProvider>
+										<a
+											href="#main"
+											className={styles.skipLink}
 										>
-											{children}
-										</main>
-									</div>
-									<PaletteHost />
-									<AssistantDock />
-								</AssistantProvider>
+											Skip to content
+										</a>
+										<Header />
+										<div className={styles.container}>
+											<Sidebar />
+											<NavScrim />
+											<main
+												id="main"
+												tabIndex={-1}
+												className={styles.main}
+											>
+												{children}
+											</main>
+										</div>
+										<MobileTabBar />
+										<PaletteHost />
+										<AssistantDock />
+									</AssistantProvider>
+								</NotifyProvider>
 							</ShellProvider>
 						</UserProvider>
 					</SWRProvider>
