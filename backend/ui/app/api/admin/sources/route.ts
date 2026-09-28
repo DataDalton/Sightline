@@ -127,6 +127,8 @@ export async function POST(request: NextRequest) {
 					body.cacheTtlSeconds === undefined
 						? undefined
 						: Number(body.cacheTtlSeconds) || 0,
+				isLive:
+					typeof body.isLive === "boolean" ? body.isLive : undefined,
 			});
 			return NextResponse.json({ ok: true });
 		}

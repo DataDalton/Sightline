@@ -67,6 +67,9 @@ export interface SemanticSource {
 	// whether a cache entry may be shared beyond a single policy class.
 	hasRowFilter: boolean;
 	cacheTtlSeconds: number;
+	// Data that streams in rather than landing on a schedule. Answers are
+	// reused for the live interval only and open pages refresh on it.
+	isLive: boolean;
 	// Dimension used as the default time axis for trend visuals.
 	defaultTimeField: string | null;
 	dimensions: SemanticField[];

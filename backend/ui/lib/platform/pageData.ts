@@ -121,8 +121,11 @@ export async function userPayload(
 		name: identity.name,
 		initials: identity.initials,
 		authenticated: identity.authenticated,
-		// Tells the client whether on-behalf-of queries are possible at all.
-		canQueryAsUser: identity.userToken !== null,
+		// Whether data queries can run at all. A deployed app needs the
+		// forwarded token. Outside one, queries run as the local credentials
+		// or against the demonstration's own tables, so there is nothing to
+		// warn about.
+		canQueryAsUser: identity.userToken !== null || !isDatabricksApp,
 		policy: {
 			id: policy.id,
 			grants: policy.grants,

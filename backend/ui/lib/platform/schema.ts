@@ -1022,6 +1022,12 @@ const migrations: string[] = [
 	// the export jobs use, and it needs a timestamp that moves.
 	`ALTER TABLE sync_runs ADD COLUMN IF NOT EXISTS progress_on TIMESTAMPTZ`,
 
+	// A source whose data arrives continuously rather than on a schedule.
+	// Answers from it are reused for seconds rather than an hour, never served
+	// past that, and open pages ask again on the same interval. See
+	// liveTtlSeconds in lib/settings.
+	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS is_live BOOLEAN NOT NULL DEFAULT FALSE`,
+
 	// Starts member_groups from the stored policies still held, so people who
 	// signed in before it existed count as members straight away. A row
 	// already there is newer, so it is left alone.

@@ -51,6 +51,9 @@ interface VisualFrameProps {
 }
 
 function freshnessLabel(meta: QueryMeta): string {
+	if (meta.refreshAfterMs) {
+		return `Live, updates every ${Math.round(meta.refreshAfterMs / 1000)}s`;
+	}
 	if (meta.source === "warehouse") return "Live";
 	const ageMs = Date.now() - meta.computedAt;
 	const minutes = Math.floor(ageMs / 60000);

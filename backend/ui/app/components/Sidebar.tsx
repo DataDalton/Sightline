@@ -189,9 +189,8 @@ export default memo(function Sidebar() {
 						<NavIcon name="home" />
 						<span className={styles.label}>Home</span>
 					</Link>
-					{/* The inbox and the alerts that feed it are one page. Kept
-					    in the navigation as well as behind the bell, so both
-					    are found by people who never look at the header. */}
+					{/* The inbox and the alerts that feed it are one page, with
+					    the unread count beside it. */}
 					<Link
 						href="/inbox"
 						className={`${styles.navItem} ${

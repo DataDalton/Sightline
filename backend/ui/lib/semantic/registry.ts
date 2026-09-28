@@ -24,6 +24,7 @@ interface SourceRow {
 	access_mode: string;
 	has_row_filter: boolean;
 	cache_ttl_seconds: number;
+	is_live: boolean;
 	default_time_field: string | null;
 }
 
@@ -93,7 +94,7 @@ export async function loadRegistry(force = false): Promise<void> {
 				sql<SourceRow>(
 					`SELECT source_key, title, description, catalog_name, schema_name,
 					        object_name, kind, access_mode, has_row_filter,
-					        cache_ttl_seconds, default_time_field
+					        cache_ttl_seconds, is_live, default_time_field
 					 FROM data_sources
 					 WHERE is_active = TRUE`,
 				),
@@ -120,6 +121,7 @@ export async function loadRegistry(force = false): Promise<void> {
 					accessMode: row.access_mode as AccessMode,
 					hasRowFilter: row.has_row_filter,
 					cacheTtlSeconds: row.cache_ttl_seconds,
+					isLive: row.is_live,
 					defaultTimeField: row.default_time_field,
 					dimensions: [],
 					measures: [],

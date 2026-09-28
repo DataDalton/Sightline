@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useAssistant } from "../assist/AssistantContext";
 import { useShell } from "../context/ShellContext";
 import { useUser } from "../context/UserContext";
-import { CountBadge } from "../notify/InboxBell";
+import { CountBadge } from "../notify/CountBadge";
 import { BellIcon } from "../notify/icons";
 import { useNotify } from "../notify/NotifyContext";
 import styles from "./MobileTabBar.module.css";

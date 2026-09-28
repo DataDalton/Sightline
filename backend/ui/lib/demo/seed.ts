@@ -9,7 +9,14 @@ import {
 import { assignRole, categoryRoleId } from "../platform/roles";
 import { emailHeader, localIdentityEmail } from "../runtime";
 import { loadRegistry } from "../semantic/registry";
-import { categories, groups, people, type ReportSeed } from "./content";
+import { createSheet } from "../sheets/store";
+import {
+	categories,
+	groups,
+	people,
+	sampleSheet,
+	type ReportSeed,
+} from "./content";
 import { sampleTables, sources } from "./datasets";
 
 // Everything the demonstration shows, written into the local Postgres on
@@ -108,6 +115,17 @@ async function seedWarehouse(): Promise<void> {
 			);
 		}
 	}
+
+	// What signing in would have recorded, so a message sent to a group while
+	// seeding reaches its members before any of them has signed in. See
+	// knownMembers in lib/messages/store.
+	for (const person of people) {
+		await sql(
+			`INSERT INTO member_groups (user_email, grants) VALUES ($1, $2::jsonb)
+			 ON CONFLICT (user_email) DO NOTHING`,
+			[person.email, JSON.stringify(person.groups)],
+		);
+	}
 }
 
 async function seedSources(catalog: string): Promise<void> {
@@ -115,8 +133,9 @@ async function seedSources(catalog: string): Promise<void> {
 		await sql(
 			`INSERT INTO data_sources
 			   (source_key, title, description, catalog_name, schema_name,
-			    object_name, kind, default_time_field, created_by, modified_by)
-			 VALUES ($1, $2, $3, $4, $5, $6, 'table', $7, 'demo', 'demo')
+			    object_name, kind, default_time_field, is_live, created_by,
+			    modified_by)
+			 VALUES ($1, $2, $3, $4, $5, $6, 'table', $7, $8, 'demo', 'demo')
 			 ON CONFLICT (source_key) DO NOTHING`,
 			[
 				source.key,
@@ -126,6 +145,7 @@ async function seedSources(catalog: string): Promise<void> {
 				source.schema,
 				source.object,
 				source.timeField,
+				source.live === true,
 			],
 		);
 		for (const [i, field] of source.fields.entries()) {
@@ -151,7 +171,9 @@ async function seedSources(catalog: string): Promise<void> {
 }
 
 function identityOf(email: string): Identity {
-	const identity = getIdentityFromHeaders(new Headers({ [emailHeader]: email }));
+	const identity = getIdentityFromHeaders(
+		new Headers({ [emailHeader]: email }),
+	);
 	if (!identity) throw new Error(`No identity for ${email}`);
 	return identity;
 }
@@ -281,6 +303,20 @@ const conversations = [
 	},
 ];
 
+// Checked on its own rather than with the rest of the content, so a demo seeded
+// before sheets were part of it gains one on its next start.
+async function seedSheet(): Promise<void> {
+	const existing = await sql(`SELECT 1 FROM sheets LIMIT 1`);
+	if (existing.length > 0) return;
+	await createSheet(
+		identityOf(localIdentityEmail),
+		sampleSheet.title,
+		sampleSheet.definition,
+	).catch((error) => {
+		console.warn("Demo sheet was not created:", error);
+	});
+}
+
 // Held while seeding. Startup and the first request each prepare the app, in
 // separate module instances under the development server, and both seed.
 // Whichever arrives second waits, then finds everything there.
@@ -301,6 +337,7 @@ export async function seedDemo(): Promise<void> {
 		await seedSources(catalog);
 		await loadRegistry(true);
 		await seedContent();
+		await seedSheet();
 	});
 	await loadRegistry(true);
 }

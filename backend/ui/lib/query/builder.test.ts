@@ -45,6 +45,7 @@ const source: SemanticSource = {
 	accessMode: "direct",
 	hasRowFilter: true,
 	cacheTtlSeconds: 300,
+	isLive: false,
 	defaultTimeField: "Month",
 	dimensions: [
 		field("Category", "dimension", null),

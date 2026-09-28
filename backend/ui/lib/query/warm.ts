@@ -121,6 +121,10 @@ function queriesFor(
 			// else, and they are about to ask for it themselves anyway.
 			if (!isShareable(source)) continue;
 
+			// Nor a live one. Its answer expires in seconds, so a query made
+			// ahead of the reader is spent before they arrive.
+			if (source.isLive) continue;
+
 			const shape = initialQueryForVisual(
 				visual,
 				sourceKey,

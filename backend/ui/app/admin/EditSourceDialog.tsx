@@ -36,6 +36,7 @@ interface SourceDetail {
 	kind: string;
 	defaultTimeField: string | null;
 	cacheTtlSeconds: number;
+	isLive: boolean;
 	dimensions: Field[];
 	measures: Field[];
 }
@@ -83,6 +84,7 @@ export function EditSourceDialog({
 	const [description, setDescription] = useState("");
 	const [timeField, setTimeField] = useState("");
 	const [cacheTtl, setCacheTtl] = useState("0");
+	const [live, setLive] = useState(false);
 	const [edits, setEdits] = useState<Record<string, Partial<Field>>>({});
 	const [busy, setBusy] = useState(false);
 	const [failure, setFailure] = useState<string | null>(null);
@@ -95,6 +97,7 @@ export function EditSourceDialog({
 		setDescription(source.description ?? "");
 		setTimeField(source.defaultTimeField ?? "");
 		setCacheTtl(String(source.cacheTtlSeconds ?? 0));
+		setLive(Boolean(source.isLive));
 	}, [source]);
 
 	const fields = [...(source?.dimensions ?? []), ...(source?.measures ?? [])];
@@ -131,6 +134,7 @@ export function EditSourceDialog({
 				description,
 				defaultTimeField: timeField,
 				cacheTtlSeconds: Number(cacheTtl) || 0,
+				isLive: live,
 			});
 
 			const changed = Object.entries(edits).map(([name, patch]) => ({
@@ -233,30 +237,57 @@ export function EditSourceDialog({
 
 							<label className={styles.field}>
 								<span className={styles.fieldLabel}>
-									Reuse an answer for
+									How the data arrives
 								</span>
-								<span className={styles.numberBox}>
-									<input
-										type="number"
-										min={0}
-										className={styles.numberInput}
-										value={cacheTtl}
-										onChange={(e) =>
-											setCacheTtl(e.target.value)
-										}
-									/>
-									<span className={styles.numberUnit}>
-										seconds
-									</span>
-								</span>
+								<Select
+									value={live ? "live" : "scheduled"}
+									onChange={(v) => setLive(v === "live")}
+									options={[
+										{
+											value: "scheduled",
+											label: "On a schedule",
+										},
+										{
+											value: "live",
+											label: "Streams in continuously",
+										},
+									]}
+								/>
 								<span className={styles.fieldHint}>
-									{Number(cacheTtl) > 0
-										? `Overrides the platform setting for this source. ${describeTtl(Number(cacheTtl))}.`
-										: "Zero uses the platform setting under Configuration, Performance."}{" "}
-									Set this to match how often the data
-									actually lands.
+									{live
+										? "Answers are reused for seconds, and open pages update themselves on the live interval under Configuration, Performance. Each open page asks the warehouse again on that interval."
+										: "Answers are reused until they expire, and a page shows new data the next time it is opened after that."}
 								</span>
 							</label>
+
+							{!live && (
+								<label className={styles.field}>
+									<span className={styles.fieldLabel}>
+										Reuse an answer for
+									</span>
+									<span className={styles.numberBox}>
+										<input
+											type="number"
+											min={0}
+											className={styles.numberInput}
+											value={cacheTtl}
+											onChange={(e) =>
+												setCacheTtl(e.target.value)
+											}
+										/>
+										<span className={styles.numberUnit}>
+											seconds
+										</span>
+									</span>
+									<span className={styles.fieldHint}>
+										{Number(cacheTtl) > 0
+											? `Overrides the platform setting for this source. ${describeTtl(Number(cacheTtl))}.`
+											: "Zero uses the platform setting under Configuration, Performance."}{" "}
+										Set this to match how often the data
+										actually lands.
+									</span>
+								</label>
+							)}
 						</div>
 					) : (
 						<div className={styles.tableWrap}>

@@ -123,6 +123,7 @@ interface PlatformResponse {
 		object: string;
 		hasRowFilter: boolean;
 		cacheTtlSeconds: number;
+		isLive: boolean;
 		dimensions: number;
 		measures: number;
 	}[];
@@ -844,6 +845,7 @@ interface ConfigValues {
 	resultMaxEntries: number;
 	resultMaxBytes: number;
 	staleWhileRevalidate: boolean;
+	liveTtlSeconds: number;
 	refreshIntervalSeconds: number;
 	groupCacheTtlSeconds: number;
 	policyGraceSeconds: number;
@@ -1298,6 +1300,13 @@ function ConfigurationSection({ group }: { group: PaneId }) {
 									onChange={(v) =>
 										set({ resultTtlSeconds: v })
 									}
+								/>
+								<NumberSetting
+									label="Live sources update every"
+									hint="How often an open page asks again for a source whose data streams in. Shorter is fresher and costs more warehouse time."
+									unit="seconds"
+									value={values.liveTtlSeconds}
+									onChange={(v) => set({ liveTtlSeconds: v })}
 								/>
 								<NumberSetting
 									label="Memory for results"
@@ -2424,9 +2433,11 @@ function PlatformSection({
 										</td>
 										<td>{s.hasRowFilter ? "yes" : "no"}</td>
 										<td>
-											{s.cacheTtlSeconds > 0
-												? `${s.cacheTtlSeconds}s`
-												: "platform default"}
+											{s.isLive
+												? "live"
+												: s.cacheTtlSeconds > 0
+													? `${s.cacheTtlSeconds}s`
+													: "platform default"}
 										</td>
 										<td className={styles.mono}>
 											{s.object}

@@ -307,6 +307,8 @@ export interface SourceEdit {
 	// How long an answer from this source is reused. Zero means the source has
 	// no opinion and the platform setting decides.
 	cacheTtlSeconds?: number;
+	// Whether the data streams in. See isLive in lib/semantic/types.
+	isLive?: boolean;
 }
 
 export async function updateSource(
@@ -339,6 +341,7 @@ export async function updateSource(
 		   description = COALESCE($3, description),
 		   default_time_field = COALESCE($4, default_time_field),
 		   cache_ttl_seconds = COALESCE($5, cache_ttl_seconds),
+		   is_live = COALESCE($6, is_live),
 		   modified_on = now()
 		 WHERE source_key = $1 AND is_active = TRUE
 		 RETURNING source_key`,
@@ -350,6 +353,7 @@ export async function updateSource(
 			input.cacheTtlSeconds === undefined
 				? null
 				: Math.max(0, Math.floor(input.cacheTtlSeconds)),
+			input.isLive ?? null,
 		],
 	);
 	if (updated.length === 0) {

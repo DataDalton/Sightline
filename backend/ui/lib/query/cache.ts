@@ -49,6 +49,13 @@ export interface CacheLookup {
 // complete, so two readers entitled to different rows could carry the same one.
 // The safe reading of an unfinished walk is that nothing filtered is shareable,
 // which costs warehouse time and never costs somebody else rows.
+// Seconds an answer from a live source is reused, and how often an open page
+// asks for it again. At least one, so a setting of zero cannot turn every
+// open page into a query per render.
+export function liveTtlSeconds(): number {
+	return Math.max(1, Math.floor(settings().liveTtlSeconds || 0));
+}
+
 export function isShareable(source: SemanticSource): boolean {
 	return !source.hasRowFilter || filterDiscoveryComplete();
 }
@@ -419,8 +426,9 @@ export async function cacheSet(
 	// here, so the platform-wide setting was unreachable: changing it did
 	// nothing to any source, because every source had already answered the
 	// question with a value nobody chose.
-	const ttlSeconds =
-		source.cacheTtlSeconds > 0
+	const ttlSeconds = source.isLive
+		? liveTtlSeconds()
+		: source.cacheTtlSeconds > 0
 			? source.cacheTtlSeconds
 			: settings().resultTtlSeconds;
 	const entry: CacheEntry = {

@@ -12,6 +12,7 @@ import {
 	cacheGetMany,
 	cacheSet,
 	isShareable,
+	liveTtlSeconds,
 	type CacheEntry,
 } from "./cache";
 import { QuerySpecError, type QuerySpec } from "./spec";
@@ -39,6 +40,9 @@ export interface QueryResult {
 	queryMs: number | null;
 	// End to end time the caller waited.
 	durationMs: number;
+	// Set for a live source. How long until the page should ask again, so an
+	// open page follows data that streams in.
+	refreshAfterMs: number | null;
 }
 
 export class QueryAccessError extends Error {}
@@ -58,6 +62,7 @@ function toResult(
 	stale: boolean,
 	queryMs: number | null,
 	startedAt: number,
+	semantic: SemanticSource,
 ): QueryResult {
 	return {
 		rows: entry.rows,
@@ -68,6 +73,7 @@ function toResult(
 		computedAt: entry.computedAt,
 		queryMs,
 		durationMs: Date.now() - startedAt,
+		refreshAfterMs: semantic.isLive ? liveTtlSeconds() * 1000 : null,
 	};
 }
 
@@ -110,12 +116,16 @@ export async function executeQuery(
 			false,
 			null,
 			startedAt,
+		source,
 		);
 	}
 
 	// Stale entry: return it now and refresh behind the request, so only a
 	// genuinely cold class ever waits on the warehouse.
-	if (lookup.entry && lookup.stale) {
+	// A live source is followed as it changes, so an expired answer is not
+	// served while a fresh one is fetched. The page is already asking again on
+	// the live interval and would draw the old figures twice.
+	if (lookup.entry && lookup.stale && !source.isLive) {
 		if (!revalidating.has(key)) {
 			revalidating.add(key);
 			void runAndCache(identity, source, spec, policy, key)
@@ -133,6 +143,7 @@ export async function executeQuery(
 			true,
 			null,
 			startedAt,
+		source,
 		);
 	}
 
@@ -146,6 +157,7 @@ export async function executeQuery(
 		false,
 		Date.now() - queryStartedAt,
 		startedAt,
+	source,
 	);
 }
 
@@ -302,12 +314,13 @@ export async function executeQueries(
 					false,
 					null,
 					startedAt,
+				entry.source,
 				),
 			};
 			return;
 		}
 
-		if (lookup.entry && lookup.stale) {
+		if (lookup.entry && lookup.stale && !entry.source.isLive) {
 			// Served now, refreshed behind the response, exactly as the single
 			// query path does it.
 			if (!revalidating.has(entry.key)) {
@@ -334,6 +347,7 @@ export async function executeQueries(
 					true,
 					null,
 					startedAt,
+				entry.source,
 				),
 			};
 			return;
@@ -372,6 +386,7 @@ export async function executeQueries(
 						false,
 						Date.now() - queryStartedAt,
 						startedAt,
+					entry.source,
 					),
 				};
 			} catch (error) {

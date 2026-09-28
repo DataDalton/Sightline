@@ -22,7 +22,10 @@ export const people: { email: string; groups: string[] }[] = [
 		email: "dalton.murray@example.com",
 		groups: [groups.admins, groups.sales, groups.everyone],
 	},
-	{ email: "jamie.carter@example.com", groups: [groups.sales, groups.everyone] },
+	{
+		email: "jamie.carter@example.com",
+		groups: [groups.sales, groups.everyone],
+	},
 	{ email: "sam.lee@example.com", groups: [groups.support, groups.everyone] },
 	{
 		email: "jordan.reyes@example.com",
@@ -41,12 +44,54 @@ export const people: { email: string; groups: string[] }[] = [
 		email: "taylor.brooks@example.com",
 		groups: [groups.operations, groups.everyone],
 	},
-	{ email: "avery.patel@example.com", groups: [groups.people, groups.everyone] },
+	{
+		email: "avery.patel@example.com",
+		groups: [groups.people, groups.everyone],
+	},
 	{
 		email: "quinn.harper@example.com",
 		groups: [groups.digital, groups.marketing, groups.everyone],
 	},
 ];
+
+// A sheet the signed-in person owns, so Sheets has something in it. The
+// definition is the one the sheet editor writes.
+export const sampleSheet = {
+	title: "Regional margin",
+	definition: {
+		sourceKey: "sales_orders",
+		mode: "table",
+		columns: [
+			"Region",
+			"Product Category",
+			"Revenue",
+			"Gross Margin",
+			"Orders",
+		],
+		conditions: [],
+		formulas: [
+			{
+				id: "margin",
+				name: "Margin Pct",
+				formula: "ROUND(100 * [Gross Margin] / [Revenue], 1)",
+			},
+			{
+				id: "average",
+				name: "Average Order",
+				formula: "ROUND([Revenue] / [Orders], 2)",
+			},
+			{ id: "rank", name: "Revenue Rank", formula: "RANK([Revenue])" },
+		],
+		notes: [{ id: "comment", name: "Comment" }],
+		order: [],
+		settings: {
+			"Average Order": { format: "currency" },
+		},
+		sort: { column: "Revenue", direction: "desc" },
+		pivot: { rows: [], columns: null, values: [] },
+		frozen: 2,
+	},
+};
 
 export interface PageSeed {
 	title: string;
@@ -84,7 +129,8 @@ export const categories: CategorySeed[] = [
 		reports: [
 			{
 				title: "Revenue Overview",
-				description: "Where revenue and margin stand, and how they got there.",
+				description:
+					"Where revenue and margin stand, and how they got there.",
 				sourceKey: "sales_orders",
 				pages: [
 					{
@@ -100,17 +146,29 @@ export const categories: CategorySeed[] = [
 					{
 						title: "Trend by channel",
 						template: "trend",
-						slots: { date: "Order Date", measure: "Revenue", split: "Channel" },
+						slots: {
+							date: "Order Date",
+							measure: "Revenue",
+							split: "Channel",
+						},
 					},
 					{
 						title: "Region by channel",
 						template: "comparison",
-						slots: { rows: "Region", columns: "Channel", measure: "Revenue" },
+						slots: {
+							rows: "Region",
+							columns: "Channel",
+							measure: "Revenue",
+						},
 					},
 					{
 						title: "Order activity",
 						template: "activity",
-						slots: { date: "Order Date", measure: "Orders", by: "Region" },
+						slots: {
+							date: "Order Date",
+							measure: "Orders",
+							by: "Region",
+						},
 					},
 				],
 			},
@@ -153,7 +211,8 @@ export const categories: CategorySeed[] = [
 			},
 			{
 				title: "Regional Targets",
-				description: "Each region and each account manager against plan.",
+				description:
+					"Each region and each account manager against plan.",
 				sourceKey: "sales_orders",
 				pages: [
 					{
@@ -177,7 +236,11 @@ export const categories: CategorySeed[] = [
 					{
 						title: "Margin watch",
 						template: "exception",
-						slots: { by: "Country", measure: "Margin Pct", detail: "Revenue" },
+						slots: {
+							by: "Country",
+							measure: "Margin Pct",
+							detail: "Revenue",
+						},
 					},
 				],
 			},
@@ -189,7 +252,11 @@ export const categories: CategorySeed[] = [
 					{
 						title: "By country",
 						template: "comparison-period",
-						slots: { date: "Order Date", by: "Country", measure: "Revenue" },
+						slots: {
+							date: "Order Date",
+							by: "Country",
+							measure: "Revenue",
+						},
 					},
 					{
 						title: "By product family",
@@ -224,19 +291,27 @@ export const categories: CategorySeed[] = [
 					{
 						title: "Order value",
 						template: "breakdown",
-						slots: { by: "Channel", measure: "Average Order Value" },
+						slots: {
+							by: "Channel",
+							measure: "Average Order Value",
+						},
 					},
 				],
 			},
 			{
 				title: "Order Detail",
-				description: "Orders by product, filtered by region, and any single order.",
+				description:
+					"Orders by product, filtered by region, and any single order.",
 				sourceKey: "sales_orders",
 				pages: [
 					{
 						title: "Orders",
 						template: "detail",
-						slots: { primary: "Product", filter: "Region", measure: "Revenue" },
+						slots: {
+							primary: "Product",
+							filter: "Region",
+							measure: "Revenue",
+						},
 					},
 					{
 						title: "Look up an order",
@@ -255,7 +330,8 @@ export const categories: CategorySeed[] = [
 		id: "marketing",
 		name: "Marketing",
 		icon: "market",
-		description: "What campaigns cost, what they brought in, and which channels earn it.",
+		description:
+			"What campaigns cost, what they brought in, and which channels earn it.",
 		maintainers: [
 			{ type: "user", id: "morgan.ellis@example.com" },
 			{ type: "group", id: groups.marketing },
@@ -325,18 +401,27 @@ export const categories: CategorySeed[] = [
 			},
 			{
 				title: "Marketing Trends",
-				description: "Clicks and conversions over time, and against last year.",
+				description:
+					"Clicks and conversions over time, and against last year.",
 				sourceKey: "marketing_campaigns",
 				pages: [
 					{
 						title: "Clicks by channel",
 						template: "trend",
-						slots: { date: "Day", measure: "Clicks", split: "Channel" },
+						slots: {
+							date: "Day",
+							measure: "Clicks",
+							split: "Channel",
+						},
 					},
 					{
 						title: "Against last year",
 						template: "comparison-period",
-						slots: { date: "Day", by: "Channel", measure: "Conversions" },
+						slots: {
+							date: "Day",
+							by: "Channel",
+							measure: "Conversions",
+						},
 					},
 					{
 						title: "Audiences",
@@ -351,7 +436,8 @@ export const categories: CategorySeed[] = [
 		id: "finance",
 		name: "Finance",
 		icon: "rebates",
-		description: "Operating spend against budget and forecast, by department and account.",
+		description:
+			"Operating spend against budget and forecast, by department and account.",
 		maintainers: [
 			{ type: "user", id: "riley.chen@example.com" },
 			{ type: "group", id: groups.finance },
@@ -424,7 +510,11 @@ export const categories: CategorySeed[] = [
 					{
 						title: "Forecast against budget",
 						template: "target",
-						slots: { by: "Department", actual: "Forecast", target: "Budget" },
+						slots: {
+							by: "Department",
+							actual: "Forecast",
+							target: "Budget",
+						},
 					},
 					{
 						title: "By account",
@@ -434,7 +524,10 @@ export const categories: CategorySeed[] = [
 					{
 						title: "By cost centre",
 						template: "breakdown",
-						slots: { by: "Cost Center", measure: "Budget Used Pct" },
+						slots: {
+							by: "Cost Center",
+							measure: "Budget Used Pct",
+						},
 					},
 				],
 			},
@@ -444,7 +537,8 @@ export const categories: CategorySeed[] = [
 		id: "operations",
 		name: "Operations",
 		icon: "field",
-		description: "Shipping speed, reliability and cost across warehouses and carriers.",
+		description:
+			"Shipping speed, reliability and cost across warehouses and carriers.",
 		maintainers: [
 			{ type: "user", id: "taylor.brooks@example.com" },
 			{ type: "group", id: groups.operations },
@@ -452,7 +546,8 @@ export const categories: CategorySeed[] = [
 		reports: [
 			{
 				title: "Delivery Performance",
-				description: "How reliably shipments arrive, by carrier and warehouse.",
+				description:
+					"How reliably shipments arrive, by carrier and warehouse.",
 				sourceKey: "operations_shipments",
 				pages: [
 					{
@@ -527,7 +622,8 @@ export const categories: CategorySeed[] = [
 			},
 			{
 				title: "Warehouse Flow",
-				description: "Where each warehouse ships to, and how busy it is.",
+				description:
+					"Where each warehouse ships to, and how busy it is.",
 				sourceKey: "operations_shipments",
 				pages: [
 					{
@@ -542,7 +638,11 @@ export const categories: CategorySeed[] = [
 					{
 						title: "Daily volume",
 						template: "activity",
-						slots: { date: "Ship Date", measure: "Shipments", by: "Warehouse" },
+						slots: {
+							date: "Ship Date",
+							measure: "Shipments",
+							by: "Warehouse",
+						},
 					},
 					{
 						title: "Damage",
@@ -590,7 +690,11 @@ export const categories: CategorySeed[] = [
 					{
 						title: "Ticket calendar",
 						template: "activity",
-						slots: { date: "Opened Date", measure: "Tickets", by: "Team" },
+						slots: {
+							date: "Opened Date",
+							measure: "Tickets",
+							by: "Team",
+						},
 					},
 				],
 			},
@@ -602,7 +706,10 @@ export const categories: CategorySeed[] = [
 					{
 						title: "By priority",
 						template: "breakdown",
-						slots: { by: "Priority", measure: "Avg First Response Minutes" },
+						slots: {
+							by: "Priority",
+							measure: "Avg First Response Minutes",
+						},
 					},
 					{
 						title: "Team by channel",
@@ -616,7 +723,11 @@ export const categories: CategorySeed[] = [
 					{
 						title: "Escalations",
 						template: "exception",
-						slots: { by: "Team", measure: "Escalation Pct", detail: "Tickets" },
+						slots: {
+							by: "Team",
+							measure: "Escalation Pct",
+							detail: "Tickets",
+						},
 					},
 				],
 			},
@@ -648,7 +759,8 @@ export const categories: CategorySeed[] = [
 		id: "people",
 		name: "People",
 		icon: "contracts",
-		description: "Headcount, hiring, attrition and engagement across the company.",
+		description:
+			"Headcount, hiring, attrition and engagement across the company.",
 		maintainers: [
 			{ type: "user", id: "avery.patel@example.com" },
 			{ type: "group", id: groups.people },
@@ -717,7 +829,11 @@ export const categories: CategorySeed[] = [
 					{
 						title: "Leavers over time",
 						template: "trend",
-						slots: { date: "Month", measure: "Exits", split: "Department" },
+						slots: {
+							date: "Month",
+							measure: "Exits",
+							split: "Department",
+						},
 					},
 				],
 			},
@@ -729,7 +845,11 @@ export const categories: CategorySeed[] = [
 					{
 						title: "Hires against open roles",
 						template: "target",
-						slots: { by: "Department", actual: "Hires", target: "Open Roles" },
+						slots: {
+							by: "Department",
+							actual: "Hires",
+							target: "Open Roles",
+						},
 					},
 					{
 						title: "By location",
@@ -744,7 +864,8 @@ export const categories: CategorySeed[] = [
 		id: "digital",
 		name: "Digital",
 		icon: "explore",
-		description: "Visits to the online store, how they convert, and what they spend.",
+		description:
+			"Visits to the online store, how they convert, and what they spend.",
 		maintainers: [
 			{ type: "user", id: "quinn.harper@example.com" },
 			{ type: "group", id: groups.digital },
@@ -768,12 +889,20 @@ export const categories: CategorySeed[] = [
 					{
 						title: "By device",
 						template: "trend",
-						slots: { date: "Day", measure: "Sessions", split: "Device" },
+						slots: {
+							date: "Day",
+							measure: "Sessions",
+							split: "Device",
+						},
 					},
 					{
 						title: "Visit calendar",
 						template: "activity",
-						slots: { date: "Day", measure: "Sessions", by: "Device" },
+						slots: {
+							date: "Day",
+							measure: "Sessions",
+							by: "Device",
+						},
 					},
 				],
 			},
@@ -785,7 +914,10 @@ export const categories: CategorySeed[] = [
 					{
 						title: "By source",
 						template: "breakdown",
-						slots: { by: "Traffic Source", measure: "Conversion Pct" },
+						slots: {
+							by: "Traffic Source",
+							measure: "Conversion Pct",
+						},
 					},
 					{
 						title: "Page by device",
@@ -818,13 +950,18 @@ export const categories: CategorySeed[] = [
 			},
 			{
 				title: "Web Revenue",
-				description: "Online revenue against last year, and where it comes from.",
+				description:
+					"Online revenue against last year, and where it comes from.",
 				sourceKey: "web_sessions",
 				pages: [
 					{
 						title: "Against last year",
 						template: "comparison-period",
-						slots: { date: "Day", by: "Traffic Source", measure: "Web Revenue" },
+						slots: {
+							date: "Day",
+							by: "Traffic Source",
+							measure: "Web Revenue",
+						},
 					},
 					{
 						title: "By landing page",
@@ -834,7 +971,10 @@ export const categories: CategorySeed[] = [
 					{
 						title: "By country",
 						template: "breakdown",
-						slots: { by: "Country", measure: "Revenue per Session" },
+						slots: {
+							by: "Country",
+							measure: "Revenue per Session",
+						},
 					},
 				],
 			},

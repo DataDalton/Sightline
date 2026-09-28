@@ -29,13 +29,11 @@ async function remove(ids: string[]) {
 export function InboxList({
 	items,
 	loading,
-	compact = false,
 	onChanged,
 	emptyText = "Nothing here yet. Alerts you set and pages shared with you arrive here.",
 }: {
 	items: InboxItem[] | undefined;
 	loading: boolean;
-	compact?: boolean;
 	onChanged: () => void;
 	emptyText?: string;
 }) {
@@ -71,7 +69,7 @@ export function InboxList({
 	};
 
 	return (
-		<ul className={`${styles.list} ${compact ? styles.listCompact : ""}`}>
+		<ul className={styles.list}>
 			{items.map((item) => (
 				<li
 					key={item.id}
@@ -92,9 +90,7 @@ export function InboxList({
 								{item.title}
 							</span>
 							{item.body && (
-								<span
-									className={`${styles.itemBody} ${compact ? styles.itemBodyClamp : ""}`}
-								>
+								<span className={styles.itemBody}>
 									{item.body}
 								</span>
 							)}
@@ -114,66 +110,62 @@ export function InboxList({
 						)}
 					</button>
 
-					{!compact && (
-						<span className={styles.itemActions}>
-							<button
-								type="button"
-								className={styles.itemAction}
-								onClick={async () => {
-									await patch([item.id], !item.readOn);
-									onChanged();
-								}}
-								title={
-									item.readOn ? "Mark unread" : "Mark read"
-								}
-								aria-label={
-									item.readOn ? "Mark unread" : "Mark read"
-								}
+					<span className={styles.itemActions}>
+						<button
+							type="button"
+							className={styles.itemAction}
+							onClick={async () => {
+								await patch([item.id], !item.readOn);
+								onChanged();
+							}}
+							title={item.readOn ? "Mark unread" : "Mark read"}
+							aria-label={
+								item.readOn ? "Mark unread" : "Mark read"
+							}
+						>
+							<svg
+								width="16"
+								height="16"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								strokeWidth="2"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								aria-hidden="true"
 							>
-								<svg
-									width="16"
-									height="16"
-									viewBox="0 0 24 24"
-									fill="none"
-									stroke="currentColor"
-									strokeWidth="2"
-									strokeLinecap="round"
-									strokeLinejoin="round"
-									aria-hidden="true"
-								>
-									{item.readOn ? (
-										<circle cx="12" cy="12" r="5" />
-									) : (
-										<path d="M20 6L9 17l-5-5" />
-									)}
-								</svg>
-							</button>
-							<button
-								type="button"
-								className={styles.itemAction}
-								onClick={async () => {
-									await remove([item.id]);
-									onChanged();
-								}}
-								title="Delete"
-								aria-label="Delete"
+								{item.readOn ? (
+									<circle cx="12" cy="12" r="5" />
+								) : (
+									<path d="M20 6L9 17l-5-5" />
+								)}
+							</svg>
+						</button>
+						<button
+							type="button"
+							className={styles.itemAction}
+							onClick={async () => {
+								await remove([item.id]);
+								onChanged();
+							}}
+							title="Delete"
+							aria-label="Delete"
+						>
+							<svg
+								width="16"
+								height="16"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								strokeWidth="2"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								aria-hidden="true"
 							>
-								<svg
-									width="16"
-									height="16"
-									viewBox="0 0 24 24"
-									fill="none"
-									stroke="currentColor"
-									strokeWidth="2"
-									strokeLinecap="round"
-									strokeLinejoin="round"
-									aria-hidden="true"
-								>
-									<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
-								</svg>
-							</button>
-						</span>
-					)}
+								<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
+							</svg>
+						</button>
+					</span>
 				</li>
 			))}
 		</ul>

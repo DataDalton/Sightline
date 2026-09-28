@@ -13,6 +13,9 @@ export interface QueryMeta {
 	stale: boolean;
 	computedAt: number;
 	durationMs: number;
+	// Set when the source is live. The query is asked again after this long,
+	// so an open page follows data that streams in.
+	refreshAfterMs?: number | null;
 }
 
 export interface QueryResponse {
@@ -56,6 +59,9 @@ export function useVisualQuery(query: VisualQuery | null) {
 			// refetch on mount would only add latency.
 			revalidateIfStale: false,
 			keepPreviousData: true,
+			// Zero for a source on a schedule. A live one names its own
+			// interval, and SWR pauses it while the tab is hidden.
+			refreshInterval: (latest) => latest?.meta?.refreshAfterMs ?? 0,
 		},
 	);
 

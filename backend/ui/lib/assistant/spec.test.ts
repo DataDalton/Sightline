@@ -36,6 +36,7 @@ const source: SemanticSource = {
 	accessMode: "direct",
 	hasRowFilter: true,
 	cacheTtlSeconds: 0,
+	isLive: false,
 	defaultTimeField: null,
 	dimensions: [field("Division", "dimension"), field("Region", "dimension")],
 	measures: [field("Revenue", "measure"), field("Order Count", "measure")],

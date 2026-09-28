@@ -98,6 +98,7 @@ export async function POST(request: NextRequest) {
 						stale: boolean;
 						computedAt: number;
 						durationMs: number;
+						refreshAfterMs: number | null;
 					};
 			  }
 			| null;
@@ -118,6 +119,7 @@ export async function POST(request: NextRequest) {
 							stale: outcome.result!.stale,
 							computedAt: outcome.result!.computedAt,
 							durationMs: outcome.result!.durationMs,
+							refreshAfterMs: outcome.result!.refreshAfterMs,
 						},
 					};
 		});

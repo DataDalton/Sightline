@@ -48,6 +48,11 @@ export interface PlatformSettings {
 	// Serve an expired entry immediately and refresh behind the request, so a
 	// cold policy class costs one slow request rather than many.
 	staleWhileRevalidate: boolean;
+	// How long an answer from a live source is reused, and how often an open
+	// page asks for it again. Short rather than zero, so a page open in many
+	// tabs at once costs one warehouse query per interval rather than one per
+	// tab.
+	liveTtlSeconds: number;
 
 	// How often each replica rereads what is stored about every source. Not a
 	// catalogue sync: that is a manual walk under Platform, Sources.
@@ -139,6 +144,7 @@ export const defaultSettings: PlatformSettings = {
 	resultMaxBytes: 256,
 	expectedReaders: 25000,
 	staleWhileRevalidate: true,
+	liveTtlSeconds: 15,
 
 	refreshIntervalSeconds: 3600,
 
@@ -309,6 +315,7 @@ export const writableSettings = [
 	"resultMaxBytes",
 	"expectedReaders",
 	"staleWhileRevalidate",
+	"liveTtlSeconds",
 	"refreshIntervalSeconds",
 	"groupCacheTtlSeconds",
 	"policyGraceSeconds",

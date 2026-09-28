@@ -12,7 +12,10 @@ export async function POST(request: NextRequest) {
 
 	const identity = getIdentity(request);
 	if (!identity) {
-		return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+		return NextResponse.json(
+			{ error: "Not authenticated" },
+			{ status: 401 },
+		);
 	}
 
 	let spec;
@@ -20,7 +23,9 @@ export async function POST(request: NextRequest) {
 		spec = parseQuerySpec(await request.json());
 	} catch (error) {
 		const message =
-			error instanceof QuerySpecError ? error.message : "Malformed request";
+			error instanceof QuerySpecError
+				? error.message
+				: "Malformed request";
 		return NextResponse.json({ error: message }, { status: 400 });
 	}
 
@@ -50,6 +55,7 @@ export async function POST(request: NextRequest) {
 				stale: result.stale,
 				computedAt: result.computedAt,
 				durationMs: result.durationMs,
+				refreshAfterMs: result.refreshAfterMs,
 			},
 		});
 		// Results are identity-scoped, so no shared cache may hold them.
@@ -69,10 +75,16 @@ export async function POST(request: NextRequest) {
 		});
 
 		if (isAccess) {
-			return NextResponse.json({ error: (error as Error).message }, { status: 403 });
+			return NextResponse.json(
+				{ error: (error as Error).message },
+				{ status: 403 },
+			);
 		}
 		if (isSpec) {
-			return NextResponse.json({ error: (error as Error).message }, { status: 400 });
+			return NextResponse.json(
+				{ error: (error as Error).message },
+				{ status: 400 },
+			);
 		}
 
 		// Warehouse errors can carry schema details, so they are logged rather

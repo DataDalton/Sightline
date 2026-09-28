@@ -537,6 +537,8 @@ export interface SourceSeed {
 	schema: string;
 	object: string;
 	timeField: string;
+	// Marked live, so the demonstration shows a page following its data.
+	live?: boolean;
 	fields: FieldSeed[];
 }
 
@@ -892,6 +894,7 @@ export const sources: SourceSeed[] = [
 		schema: "web",
 		object: "sessions_daily",
 		timeField: "Day",
+		live: true,
 		fields: [
 			dimension("Day", "day", "The day of the visit.", "date"),
 			dimension(
