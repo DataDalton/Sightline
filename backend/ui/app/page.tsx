@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import useSWR from "swr";
+import { NavIcon } from "./components/NavIcon";
 import { SkeletonCards } from "./components/shared/Skeleton";
 import { useDeferredLoading } from "./hooks/useDeferredLoading";
 import { usePageTitle } from "./hooks/usePageTitle";
@@ -161,18 +162,7 @@ export default function Home() {
 							className={styles.card}
 						>
 							<span className={styles.cardIcon}>
-								<svg
-									width="16"
-									height="16"
-									viewBox="0 0 24 24"
-									fill="none"
-									stroke="currentColor"
-									strokeWidth="2"
-									strokeLinecap="round"
-									strokeLinejoin="round"
-								>
-									<path d="M3 3v18h18M7 15l4-4 3 3 5-6" />
-								</svg>
+								<NavIcon name={category.icon} size={16} />
 							</span>
 							<span className={styles.cardTitle}>
 								{category.name}

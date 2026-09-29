@@ -9,6 +9,7 @@ import {
 import { assignRole, categoryRoleId } from "../platform/roles";
 import { emailHeader, localIdentityEmail } from "../runtime";
 import { loadRegistry } from "../semantic/registry";
+import { nextRun } from "../alerts/schedule";
 import { createSheet } from "../sheets/store";
 import {
 	categories,
@@ -317,6 +318,95 @@ async function seedSheet(): Promise<void> {
 	});
 }
 
+// Two months of people reading the reports, so the usage a maintainer sees
+// has something in it. Every report is opened, the first page far more than
+// the rest, and only some visuals are ever expanded or clicked into, so the
+// ones nobody uses stand out as they would in practice.
+async function seedUsage(): Promise<void> {
+	const existing = await sql(
+		`SELECT 1 FROM usage_events WHERE session_id = 'demo-seed' LIMIT 1`,
+	);
+	if (existing.length > 0) return;
+
+	const readers = people.map((p) => p.email);
+	await sql(`SELECT setseed(0.61)`);
+	await sql(
+		`INSERT INTO usage_events
+		   (occurred_on, user_email, policy_class, event_type, category_id,
+		    report_id, session_id)
+		 SELECT now() - random() * interval '60 days', reader, 'demo',
+		        'page_view', r.category_id, r.report_id, 'demo-seed'
+		 FROM reports r
+		 CROSS JOIN unnest($1::text[]) AS reader
+		 CROSS JOIN generate_series(1, 8) AS visit
+		 WHERE r.is_active AND NOT r.is_personal AND random() < 0.45`,
+		[readers],
+	);
+	await sql(
+		`INSERT INTO usage_events
+		   (occurred_on, user_email, policy_class, event_type, category_id,
+		    report_id, page_id, session_id)
+		 SELECT e.occurred_on, e.user_email, 'demo', 'page_open',
+		        e.category_id, e.report_id, p.page_id, 'demo-seed'
+		 FROM usage_events e
+		 JOIN report_pages p ON p.report_id = e.report_id AND p.is_active
+		 WHERE e.session_id = 'demo-seed' AND e.event_type = 'page_view'
+		   AND random() < CASE WHEN p.sort_order = 0 THEN 1.0
+		                       ELSE 0.5 / p.sort_order END`,
+	);
+	await sql(
+		`INSERT INTO usage_events
+		   (occurred_on, user_email, policy_class, event_type, category_id,
+		    report_id, page_id, visual_id, action, session_id)
+		 SELECT e.occurred_on + interval '20 seconds', e.user_email, 'demo',
+		        'visual_action', e.category_id, e.report_id, e.page_id,
+		        v.visual_id,
+		        (ARRAY['expand', 'figures', 'select', 'select'])
+		          [1 + floor(random() * 4)::int],
+		        'demo-seed'
+		 FROM usage_events e
+		 JOIN report_visuals v ON v.page_id = e.page_id AND v.is_active
+		 WHERE e.session_id = 'demo-seed' AND e.event_type = 'page_open'
+		   AND v.visual_type NOT LIKE '%Filter' AND v.visual_type <> 'kpiRow'
+		   AND abs(hashtext(v.visual_id::text)) % 3 <> 0
+		   AND random() < 0.3`,
+	);
+}
+
+// A page the signed-in person has asked to be sent every Monday morning, so
+// the scheduled pages list has something in it.
+async function seedDelivery(): Promise<void> {
+	const existing = await sql(`SELECT 1 FROM deliveries LIMIT 1`);
+	if (existing.length > 0) return;
+	const [page] = await sql<{ report_id: string; page_id: string }>(
+		`SELECT r.report_id::text, p.page_id::text
+		 FROM reports r JOIN report_pages p ON p.report_id = r.report_id
+		 WHERE r.slug = 'revenue-overview' AND p.is_active
+		 ORDER BY p.sort_order LIMIT 1`,
+	);
+	if (!page) return;
+	const schedule = {
+		frequency: "weekly" as const,
+		hour: 8,
+		weekday: 1,
+		timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+	};
+	await sql(
+		`INSERT INTO deliveries
+		   (owner_email, report_id, page_id, source_key, schedule, next_run_on,
+		    access_confirmed_on)
+		 VALUES ($1, $2::uuid, $3::uuid, 'sales_orders', $4, $5, now())
+		 ON CONFLICT DO NOTHING`,
+		[
+			localIdentityEmail.toLowerCase(),
+			page.report_id,
+			page.page_id,
+			JSON.stringify(schedule),
+			nextRun(schedule, new Date()).toISOString(),
+		],
+	);
+}
+
 // Held while seeding. Startup and the first request each prepare the app, in
 // separate module instances under the development server, and both seed.
 // Whichever arrives second waits, then finds everything there.
@@ -338,6 +428,8 @@ export async function seedDemo(): Promise<void> {
 		await loadRegistry(true);
 		await seedContent();
 		await seedSheet();
+		await seedUsage();
+		await seedDelivery();
 	});
 	await loadRegistry(true);
 }

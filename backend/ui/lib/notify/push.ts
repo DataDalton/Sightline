@@ -180,6 +180,7 @@ export const defaultPushPreferences: PushPreferences = {
 	alert: true,
 	share: true,
 	message: true,
+	delivery: true,
 	system: true,
 };
 
@@ -220,8 +221,9 @@ export async function savePushPreferences(
 // without the service having said so.
 const maxFailures = 10;
 
-// What the service worker receives. Kept small: some push services cap the
-// payload near four kilobytes, and the inbox has the full text.
+// What the service worker receives. Kept small, because some push services cap
+// the payload, and the inbox has the full text. The kind tells the worker
+// which actions to offer, such as a reply on a message.
 function payloadFor(
 	item: Pick<InboxItem, "id" | "kind" | "title" | "body" | "link">,
 ) {

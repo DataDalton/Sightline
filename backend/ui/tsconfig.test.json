@@ -77,6 +77,8 @@
 		"lib/messages/rules.test.ts",
 		"lib/demo/dialect.ts",
 		"lib/demo/dialect.test.ts",
+		"lib/freshness/history.ts",
+		"lib/freshness/history.test.ts",
 		"lib/platform/searchMatch.ts",
 		"lib/platform/searchMatch.test.ts",
 		"lib/platform/versionDiff.ts",

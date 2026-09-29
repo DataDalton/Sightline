@@ -41,6 +41,7 @@ import {
 } from "../../lib/query/compare";
 import type { QueryTransform } from "../../lib/query/transform";
 import type { VisualStyle } from "../../lib/visuals/style";
+import { noteUse } from "../hooks/noteUse";
 import styles from "./Visual.module.css";
 
 // Maps a stored visual definition to a component.
@@ -172,6 +173,14 @@ function VisualBody({
 	// controls for both sit in the frame around it.
 	const [showingTable, setShowingTable] = useState(false);
 	const [showingNotes, setShowingNotes] = useState(false);
+
+	// Something a reader did with this visual, told to the report's
+	// maintainers. Only on a report page, which is where both ids exist.
+	const noteAction = (action: "figures" | "notes" | "select") => {
+		if (reportId && pageId) {
+			noteUse({ reportId, pageId, visualId: visual.visualId, action });
+		}
+	};
 	// Where the chart leaves a way of reading itself back as a picture.
 	//
 	// A ref rather than state. The getter reads the chart instance when it is
@@ -601,7 +610,10 @@ function VisualBody({
 				actions={
 					<NotesAction
 						count={notes.length}
-						onOpen={() => setShowingNotes(true)}
+						onOpen={() => {
+							setShowingNotes(true);
+							noteAction("notes");
+						}}
 						available={Boolean(reportId && pageId)}
 					/>
 				}
@@ -651,7 +663,10 @@ function VisualBody({
 				actions={
 					<NotesAction
 						count={notes.length}
-						onOpen={() => setShowingNotes(true)}
+						onOpen={() => {
+							setShowingNotes(true);
+							noteAction("notes");
+						}}
 						available={Boolean(reportId && pageId)}
 					/>
 				}
@@ -696,6 +711,7 @@ function VisualBody({
 		// otherwise. One gesture, and which it means depends on how the visual
 		// was configured rather than on a mode the reader has to remember.
 		const handleSelect = (selection: { field: string; value: string }) => {
+			noteAction("select");
 			if (canDrill && drillDepth < drillFields.length - 1) {
 				drillDown(visual.visualId, selection);
 				return;
@@ -725,12 +741,18 @@ function VisualBody({
 					<>
 						<NotesAction
 							count={notes.length}
-							onOpen={() => setShowingNotes(true)}
+							onOpen={() => {
+								setShowingNotes(true);
+								noteAction("notes");
+							}}
 							available={Boolean(reportId && pageId)}
 						/>
 						<ChartActions
 							getImage={getChartImage}
-							onShowTable={() => setShowingTable(true)}
+							onShowTable={() => {
+								setShowingTable(true);
+								noteAction("figures");
+							}}
 						/>
 					</>
 				}
@@ -915,7 +937,10 @@ function VisualBody({
 				actions={
 					<NotesAction
 						count={notes.length}
-						onOpen={() => setShowingNotes(true)}
+						onOpen={() => {
+							setShowingNotes(true);
+							noteAction("notes");
+						}}
 						available={Boolean(reportId && pageId)}
 					/>
 				}

@@ -98,6 +98,25 @@ export const matrixLevelRows = 2000;
 // The chart default, when the author has not set one.
 export const chartRows = 500;
 
+// The default for a chart drawn along a time axis. A series is one point per
+// day, so the ordinary default kept the oldest days of a long range and
+// dropped the most recent. This holds several years of days even when the
+// series is split a few ways.
+export const seriesRows = 5000;
+
+// Charts whose first dimension runs along time.
+const seriesTypes = new Set([
+	"lineChart",
+	"areaChart",
+	"comboChart",
+	"calendarChart",
+	"smallMultiples",
+]);
+
+export function defaultChartRows(visualType: string): number {
+	return seriesTypes.has(visualType) ? seriesRows : chartRows;
+}
+
 // Boxes a summarised distribution draws. This bounds groups rather than
 // values: the values are summarised in the warehouse and never travel.
 export const distributionGroups = 60;
@@ -239,7 +258,7 @@ export function queryForVisual(
 				{ field: split, direction: "asc" as const },
 				{ field: axis, direction: "asc" as const },
 			],
-			limit: inputs.limit ?? chartRows,
+			limit: inputs.limit ?? seriesRows,
 		};
 	}
 
@@ -314,7 +333,7 @@ export function queryForVisual(
 					dimensions.length > 0
 						? [{ field: dimensions[0], direction: "asc" as const }]
 						: [],
-				limit: inputs.limit ?? chartRows,
+				limit: inputs.limit ?? defaultChartRows(visualType),
 			}),
 			...(inputs.transforms?.length
 				? { transforms: inputs.transforms }

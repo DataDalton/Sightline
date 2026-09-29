@@ -1,0 +1,158 @@
+.wrap {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-4);
+}
+
+.windows {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+}
+
+.window {
+	padding: var(--space-1) var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: 999px;
+	background: transparent;
+	color: var(--text-secondary);
+	font-size: var(--text-sm);
+	cursor: pointer;
+}
+
+.window:hover {
+	color: var(--text-primary);
+	border-color: var(--border-strong);
+}
+
+.windowOn,
+.windowOn:hover {
+	border-color: var(--brand);
+	background: color-mix(in srgb, var(--brand) 12%, transparent);
+	color: var(--text-primary);
+}
+
+.window:focus-visible {
+	outline: 2px solid var(--brand);
+	outline-offset: 2px;
+}
+
+.state {
+	color: var(--text-secondary);
+}
+
+.figures {
+	display: flex;
+	gap: var(--space-5);
+}
+
+.figure {
+	display: flex;
+	flex-direction: column;
+}
+
+.figureValue {
+	font-size: var(--text-2xl);
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+	color: var(--text-primary);
+}
+
+.figureLabel {
+	font-size: var(--text-sm);
+	color: var(--text-secondary);
+}
+
+/* One bar per day, drawn in the brand colour and scaled to the busiest day. */
+.bars {
+	display: flex;
+	align-items: flex-end;
+	gap: 2px;
+	height: 72px;
+	padding-bottom: var(--space-1);
+	border-bottom: 1px solid var(--border-subtle);
+}
+
+.bar {
+	flex: 1 1 0;
+	min-width: 2px;
+	border-radius: 2px 2px 0 0;
+	background: var(--brand);
+	opacity: 0.8;
+}
+
+.bar:hover {
+	opacity: 1;
+}
+
+.section {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+
+.heading {
+	margin: 0;
+	font-size: var(--text-md);
+	font-weight: 600;
+	color: var(--text-primary);
+}
+
+.hint,
+.empty {
+	margin: 0;
+	font-size: var(--text-sm);
+	color: var(--text-muted);
+}
+
+.list {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-md);
+	overflow: hidden;
+}
+
+.row {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: var(--space-3);
+	padding: var(--space-2) var(--space-3);
+	font-size: var(--text-sm);
+}
+
+.row + .row {
+	border-top: 1px solid var(--border-subtle);
+}
+
+.name {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	color: var(--text-primary);
+}
+
+.where {
+	font-size: 12px;
+	color: var(--text-muted);
+}
+
+.meta {
+	flex-shrink: 0;
+	color: var(--text-secondary);
+	font-variant-numeric: tabular-nums;
+}
+
+/* Not used is what a maintainer looks for, so it is marked rather than
+   left as a zero. */
+.unused {
+	flex-shrink: 0;
+	padding: 1px 8px;
+	border-radius: 999px;
+	background: var(--warning-subtle);
+	color: var(--warning);
+	font-size: 12px;
+	font-weight: 600;
+}

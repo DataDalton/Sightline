@@ -93,28 +93,44 @@ Results are cached in three tiers:
 | L2 | `result_cache` in Postgres | Shared across replicas and restarts, so a cold replica does not go straight to the warehouse |
 | L3 | The SQL warehouse | The only authoritative answer |
 
-How long an answer is reused depends on the source:
+An answer is kept until the data behind it changes, not until a timer runs
+out. Each source is checked for new data on its own interval: live, every 30
+minutes, hourly, every 6, 12 or 24 hours, weekly, or a custom interval. The
+platform default applies when a source names none.
 
-- **On a schedule** (the default). Answers are reused for the source's own reuse
-  time, or the platform's when that is zero, an hour by default. Once that
-  passes, the next reader gets the old answer at once and a fresh query runs
-  behind the request, so the reader after them gets new data. The "Serve while
-  refreshing" switch under Administration > Platform turns that off.
-- **Streams in continuously** (live). Answers are reused only for the live
-  interval, 15 seconds by default, and never served past it. Open pages ask
-  again on that interval while the tab is visible, so charts follow the data
-  without a reload, and each visual is labelled as live. Live sources are not
-  warmed ahead of readers, since an answer fetched early expires before anyone
-  arrives. Set this per source in the source's edit dialog, and the interval
-  under Administration > Platform > Caching.
+A check reads the history of each table the source reads, never its rows. A
+metric view is checked through the tables it reads, recorded by the catalogue
+sync, and a table is its own. A commit that changed data, such as a write, a
+merge or a delete, clears every source built on that table, and the next
+person to open one of its pages gets new figures. Commits that leave the rows
+as they were, such as compaction, cleaning up old files, or setting a property
+or comment, are ignored. A table dropped and made again restarts its version
+count, which is recognised as a change, and so is a history too long to read
+back to the last version seen. When nothing changed, nothing is queried
+again, however long an answer has been kept.
+
+- **Live** sources are checked every few seconds, 15 by default, and their
+  open pages ask again on the same interval while the tab is visible. The
+  answer they get is the cached one until a check finds new data, so a page
+  follows the data without re-running its queries for nothing.
+- Checks run only while the warehouse is already running, so watching never
+  starts it. A reader who meets an answer from a source that has gone too long
+  without a check gets it at once and a check is asked for, which runs
+  whatever the warehouse is doing.
+- Every replica learns of a change within a few seconds and stops serving the
+  older answer, wherever it is held.
+- A watched source's answers are still dropped after a day, or after its own
+  interval if that is longer, in case a change is ever missed.
+- A source whose tables cannot be checked, such as an ordinary view or one
+  whose history cannot be read, is refreshed on its interval as a timer
+  instead. Once the interval passes, the next reader gets the old answer at
+  once while a fresh query runs, unless "Serve while refreshing" is off. The
+  source's edit dialog says which kind it is, and why.
 
 Identical requests that arrive together share one warehouse query. When a
 reader opens the app, the landing pages they are likely to open next are
-queried ahead of them, and a new report's queries run when it is created.
-
-Nothing yet clears a scheduled source's cache when its table is reloaded. A
-page can show pre-load figures until the entry expires, so set the reuse time
-to match how often the data lands, or mark the source live.
+queried ahead of them, except on live sources, and a new report's queries run
+when it is created.
 
 ## What a page costs to open
 

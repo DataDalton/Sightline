@@ -24,6 +24,7 @@ import {
 import { GroupFrame } from "../visuals/GroupFrame";
 import { VisualRenderer, type VisualSpec } from "../visuals/VisualRenderer";
 import { ExpandContext } from "../visuals/ExpandContext";
+import { noteUse } from "../hooks/noteUse";
 import { usePageFilters } from "../visuals/PageFilters";
 import type { SourceMeta } from "../visuals/types";
 import { useDragResize } from "../editor/useDragResize";
@@ -365,9 +366,24 @@ export function ReportGrid({
 		return () => document.removeEventListener("keydown", onKey);
 	}, [expandedId]);
 
+	// Opening a visual on its own is a close look at it, which the report's
+	// maintainers are told about.
 	const expandState = useMemo(
-		() => ({ expandedId, setExpandedId }),
-		[expandedId],
+		() => ({
+			expandedId,
+			setExpandedId: (id: string | null) => {
+				setExpandedId(id);
+				if (id && pageId) {
+					noteUse({
+						reportId,
+						pageId,
+						visualId: id,
+						action: "expand",
+					});
+				}
+			},
+		}),
+		[expandedId, reportId, pageId],
 	);
 
 	// How tall the expanded visual gets to be.

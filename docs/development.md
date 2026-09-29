@@ -44,7 +44,11 @@ dev` at one time, not both, because they build into the same `.next` folder.
   years of data up to today across sales, support, marketing, finance,
   operations, people and web traffic, seven categories of multi-page reports
   built from the page templates, ten people in nine groups, category
-  maintainers, and a few conversations. The web traffic source is live. See
+  maintainers, a few conversations, a sample sheet, two months of reading
+  history and a scheduled page. The web traffic source is live, and a few
+  visits for today arrive every 20 seconds, so its pages can be watched
+  updating. The demo's tables have no Delta history, so a table's count of
+  rows written stands in for its version. See
   `lib/demo/datasets.ts` and `lib/demo/content.ts`.
 - **Signed in** as Dalton Murray, an administrator.
 

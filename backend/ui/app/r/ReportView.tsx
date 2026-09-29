@@ -42,6 +42,9 @@ import {
 	CategoryContacts,
 	type CategoryContact,
 } from "../components/CategoryContacts";
+import { noteUse } from "../hooks/noteUse";
+import { ReportUsage } from "./ReportUsage";
+import { ScheduleButton } from "../deliveries/ScheduleButton";
 import styles from "./ReportView.module.css";
 
 interface StoredVisual extends VisualSpec {
@@ -227,6 +230,7 @@ export default function ReportView({
 	// away a report the server had already resolved.
 	const showSkeleton = useDeferredLoading(isLoading && !data);
 	const [editing, setEditing] = useState(false);
+	const [showingUsage, setShowingUsage] = useState(false);
 
 	// Opened straight into the editor when the URL asks for it. A report just
 	// created is one somebody came here to build, and landing on the read-only
@@ -366,6 +370,18 @@ export default function ReportView({
 			window.history.replaceState(window.history.state, "", url);
 		}
 	}, [arrivedWith, data, pageState, activePageId, activeViewId, savedViews]);
+
+	// Which page a reader is looking at, for the report's maintainers. Above
+	// the early returns for the reason given for the effect before it. Not
+	// while editing, which is working on the page rather than reading it.
+	const loadedReport = data?.report;
+	useEffect(() => {
+		if (!loadedReport || editing) return;
+		const shown = pageOf(loadedReport, activePageId, null);
+		if (shown) {
+			noteUse({ reportId: loadedReport.reportId, pageId: shown.pageId });
+		}
+	}, [loadedReport, activePageId, editing]);
 
 	if (error) {
 		return (
@@ -721,6 +737,49 @@ export default function ReportView({
 								ownerEmail={report.ownerEmail}
 								onChanged={() => void mutate()}
 							/>
+
+							{/* Anyone who can read the page can have it sent to
+							    them, not only its maintainers. */}
+							{page && (
+								<ScheduleButton
+									reportSlug={report.slug}
+									pageId={page.pageId}
+									pageTitle={page.title}
+									className={styles.button}
+								/>
+							)}
+
+							{/* How the report is read. Shown to whoever may edit
+							    it, because it names the people who open it. */}
+							{report.permission !== "view" && (
+								<button
+									type="button"
+									className={styles.button}
+									onClick={() => setShowingUsage(true)}
+								>
+									<svg
+										width="13"
+										height="13"
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										strokeWidth="2"
+										strokeLinecap="round"
+										strokeLinejoin="round"
+										aria-hidden="true"
+									>
+										<path d="M18 20V10M12 20V4M6 20v-6" />
+									</svg>
+									Usage
+								</button>
+							)}
+							{showingUsage && (
+								<ReportUsage
+									slug={report.slug}
+									title={report.title}
+									onClose={() => setShowingUsage(false)}
+								/>
+							)}
 
 							{/* Editing publishes to everyone, so the button only
 					    appears for someone who actually holds that right. */}

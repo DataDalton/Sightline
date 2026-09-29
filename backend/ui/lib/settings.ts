@@ -32,7 +32,7 @@ export interface PlatformSettings {
 	// single global value would silently disagree with them.
 	warehouseId: string;
 
-	// Query result cache
+	// Query result cache. See lib/freshness for how the first is used.
 	resultTtlSeconds: number;
 	resultMaxEntries: number;
 	// The memory the result cache may hold, in megabytes.
@@ -136,9 +136,10 @@ export const defaultSettings: PlatformSettings = {
 
 	warehouseId: "",
 
-	// Reporting data lands on a schedule rather than continuously, so an
-	// answer stays right for far longer than a web session. An hour is a floor
-	// worth raising for a warehouse loaded once a day.
+	// How often a source's tables are looked at for new data, when the source
+	// does not set its own. A look reads the table's history rather than its
+	// data, and answers are kept until it finds a change. For a source whose
+	// tables cannot be looked at, it is how long an answer is reused instead.
 	resultTtlSeconds: 3600,
 	resultMaxEntries: 2000,
 	resultMaxBytes: 256,

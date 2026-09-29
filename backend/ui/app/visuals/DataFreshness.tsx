@@ -31,9 +31,16 @@ export function DataFreshness({
 }: DataFreshnessProps) {
 	// Every page on a report carries this, and they mostly ask about the same
 	// source, so one request answers all of them.
+	// A live source says how soon to ask again, so the stamp keeps up with
+	// the charts beside it.
 	const { data, error, isLoading } = usePostResource<{
 		value: string | null;
-	}>("/api/query/freshness", { sourceKey, field });
+		refreshAfterMs?: number | null;
+	}>(
+		"/api/query/freshness",
+		{ sourceKey, field },
+		(latest) => latest?.refreshAfterMs ?? 0,
+	);
 
 	const value = data?.value ?? null;
 

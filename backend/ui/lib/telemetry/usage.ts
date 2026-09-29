@@ -20,7 +20,11 @@ export type UsageEventType =
 	| "query"
 	| "export"
 	| "edit"
-	| "error";
+	| "error"
+	// A page of a report shown to a reader, and something a reader did with
+	// one visual on it. See lib/platform/reportUsage.
+	| "page_open"
+	| "visual_action";
 
 export interface UsageEvent {
 	occurredOn: string;
@@ -39,6 +43,8 @@ export interface UsageEvent {
 	errorMessage?: string | null;
 	sessionId?: string | null;
 	clientInfo?: string | null;
+	// For a visual action, which one, such as expanding it.
+	action?: string | null;
 }
 
 let buffer: UsageEvent[] = [];
@@ -71,7 +77,7 @@ export async function flush(): Promise<void> {
 	try {
 		// One multi-row INSERT per flush. Values bind positionally because
 		// Postgres caps a statement at 65535 parameters and this keeps the
-		// count predictable at 16 per event.
+		// count predictable at one per column per event.
 		const columns = [
 			"occurred_on",
 			"user_email",
@@ -89,6 +95,7 @@ export async function flush(): Promise<void> {
 			"error_message",
 			"session_id",
 			"client_info",
+			"action",
 		];
 		const params: unknown[] = [];
 		const tuples = batch.map((event, i) => {
@@ -110,6 +117,7 @@ export async function flush(): Promise<void> {
 				event.errorMessage ?? null,
 				event.sessionId ?? null,
 				event.clientInfo ?? null,
+				event.action ?? null,
 			);
 			const markers = columns.map((_, c) => `$${base + c + 1}`);
 			return `(${markers.join(",")})`;

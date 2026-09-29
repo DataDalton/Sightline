@@ -97,6 +97,11 @@ Sources. Administration > Audit > Cache partitioning should then read
 filter". Only access rule groups, and none from a filter, means the walk still
 cannot read the filters.
 
+The same grant lets the app check sources for new data, which reads each
+table's history with `DESCRIBE HISTORY` and never its rows. Whether the
+warehouse is running is asked of the workspace, which needs `CAN USE` on the
+warehouse and never starts it. The versions seen are in `source_checks`.
+
 This grant lets the service principal read data, which is why the separation
 in [every query runs as the person who
 asked](architecture.md#every-query-runs-as-the-person-who-asked) is structural.
@@ -157,7 +162,10 @@ recorded seeing of a row-filtered dataset is in `alert_access`. The filter walk
 writes, per dataset, which fields its filters decide on and whether a column
 is masked, using the `SELECT` it already has. Conversations use `threads`,
 `thread_members`, `thread_messages` and `thread_reads`, and the groups each
-person was last found in are in `member_groups`.
+person was last found in are in `member_groups`. Scheduled pages are in
+`deliveries`, and share the alert runner, its rules and its recordings. Which
+page a reader opened and what they did with a visual are in `usage_events`,
+beside the rest of the usage log.
 
 Pushes are off until turned on under Administration > Platform >
 Notifications. Turning them on generates the signing key pair and stores it

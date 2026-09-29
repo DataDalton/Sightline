@@ -120,6 +120,22 @@ self.addEventListener("push", (event) => {
 	}
 	const title = data.title || "New notification";
 
+	// A message can be answered from the notification. A browser with a text
+	// field on its actions sends what is typed. One without shows the button
+	// alone, and pressing it opens the conversation.
+	const actions =
+		data.kind === "message"
+			? [
+					{
+						action: "reply",
+						type: "text",
+						title: "Reply",
+						placeholder: "Write a reply",
+					},
+					{ action: "open", title: "Open" },
+				]
+			: [];
+
 	event.waitUntil(
 		(async () => {
 			await self.registration.showNotification(title, {
@@ -129,7 +145,12 @@ self.addEventListener("push", (event) => {
 				tag: data.id || undefined,
 				icon: "/app-icon/icon-192.png",
 				badge: "/app-icon/badge-96.png",
-				data: { id: data.id, link: data.link || "/inbox/" },
+				data: {
+					id: data.id,
+					kind: data.kind,
+					link: data.link || "/inbox/",
+				},
+				actions,
 				timestamp: Date.now(),
 			});
 			// An open window refreshes its inbox count rather than waiting
@@ -145,12 +166,56 @@ self.addEventListener("push", (event) => {
 	);
 });
 
+// Sends a reply typed into a message notification. The conversation is named
+// in the notification's link, and the server checks the sender is in it, as
+// it does for a reply written on the page. True when it was sent.
+async function sendReply(target, text) {
+	const threadId = target.searchParams.get("thread");
+	if (!threadId || !text.trim()) return false;
+	try {
+		const response = await fetch(
+			`/api/messages/${encodeURIComponent(threadId)}/`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ body: text }),
+			},
+		);
+		return response.ok;
+	} catch {
+		return false;
+	}
+}
+
 self.addEventListener("notificationclick", (event) => {
 	event.notification.close();
 	const { id, link } = event.notification.data || {};
 	const target = new URL(link || "/inbox/", self.location.origin);
 	// Only ever a page of this app, whatever the payload said.
 	if (target.origin !== self.location.origin) return;
+
+	// Answered in place. Anything that stops the reply going, a signed out
+	// session or a browser with no text field, opens the conversation
+	// instead so what was meant to be said is not lost.
+	if (event.action === "reply" && event.reply) {
+		const text = event.reply;
+		event.waitUntil(
+			(async () => {
+				if (await sendReply(target, text)) {
+					if (id) {
+						await fetch("/api/notifications/", {
+							method: "PATCH",
+							headers: { "Content-Type": "application/json" },
+							body: JSON.stringify({ ids: [id], read: true }),
+						}).catch(() => {});
+					}
+					return;
+				}
+				await self.clients.openWindow(target.href);
+			})(),
+		);
+		return;
+	}
 
 	event.waitUntil(
 		(async () => {

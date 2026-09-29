@@ -782,7 +782,7 @@ function CanvasItem({
 			onPointerCancel={ctx.cancel}
 			role="button"
 			tabIndex={0}
-			aria-label={`${visual.title ?? visual.visualType}${
+			aria-label={`${visual.title ?? visualByType[visual.visualType]?.label ?? visual.visualType}${
 				editingText ? "" : ", drag to move"
 			}`}
 		>
@@ -803,7 +803,7 @@ function CanvasItem({
 					onPointerCancel={ctx.cancel}
 					role="button"
 					tabIndex={0}
-					aria-label={`Move ${visual.title ?? visual.visualType}`}
+					aria-label={`Move ${visual.title ?? visualByType[visual.visualType]?.label ?? visual.visualType}`}
 				>
 					<span className={styles.dragGrip} aria-hidden="true" />
 				</div>

@@ -33,15 +33,18 @@ an editor's new measure reaches everyone, personalised or not.
 - **Row-level security by construction.** Every query runs under the reader's
   own token, so Unity Catalog applies their filters and masks.
 - **A cache that never leaks.** Answers are shared only between readers who
-  provably see the same rows. Sources can be scheduled or live, and live pages
-  update themselves.
+  provably see the same rows, and kept until the tables behind them change,
+  checked on each source's own interval. Live pages update themselves.
 - **Explore**, a table built from one search bar with AND, OR, NOT and
   brackets, saved by name or shared by link.
 - **The dictionary**, every field's definition and every report that uses it.
 - **Sheets**, live tables with formula and notes columns, pivots and presence.
-- **Alerts and an inbox**, with push to phones and computers.
+- **Alerts and an inbox**, with push to phones and computers, and report pages
+  sent on a schedule with their headline figures.
 - **Asking the maintainers**, two-way messages to a category's editors,
-  people or groups.
+  people or groups, answerable from the notification.
+- **Usage for maintainers**, who reads a report and which pages and visuals
+  nobody uses.
 - **A data assistant** that queries through the same layer, when a model
   endpoint is configured.
 - **Works on a phone** and installs as an app.
@@ -53,7 +56,7 @@ an editor's new measure reaches everyone, personalised or not.
 | ![The report editor](docs/images/editor.png) | ![Explore, a table from one search bar](docs/images/explore.png) |
 | ![A sheet with formula columns](docs/images/sheet.png) | ![A field in the dictionary, with every report that uses it](docs/images/dictionary.png) |
 | ![A category with its maintainers](docs/images/category.png) | ![A conversation with a category's maintainers](docs/images/conversations.png) |
-| ![Home, with every category](docs/images/home.png) | ![A flow chart and cross-tab](docs/images/flow.png) |
+| ![How a report is read, for its maintainers](docs/images/usage.png) | ![A flow chart and cross-tab](docs/images/flow.png) |
 
 <p align="center">
   <img src="docs/images/phone.png" alt="A report on a phone" width="260">

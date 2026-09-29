@@ -101,3 +101,18 @@ export function checkWriteRateLimit(request: NextRequest): NextResponse | null {
 	}
 	return null;
 }
+
+// Usage the page reports as it is read: a page shown, a visual expanded. Its
+// own bucket, so a reader clicking around cannot spend the budget their edits
+// draw on, and a refusal only costs a figure nobody waits for.
+export function checkUsageRateLimit(request: NextRequest): NextResponse | null {
+	const key = `usage:${limitSubject(request)}`;
+	const { allowed, retryAfter } = checkLimit(key, 60, 1);
+	if (!allowed) {
+		return new NextResponse(null, {
+			status: 429,
+			headers: { "Retry-After": String(retryAfter) },
+		});
+	}
+	return null;
+}

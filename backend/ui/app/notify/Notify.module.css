@@ -81,6 +81,11 @@
 	color: var(--info);
 }
 
+.kind_delivery {
+	background: var(--info-subtle);
+	color: var(--info);
+}
+
 .kind_system {
 	background: var(--success-subtle);
 	color: var(--success);

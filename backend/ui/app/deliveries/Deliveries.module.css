@@ -1,0 +1,146 @@
+.form {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-4);
+}
+
+.lead,
+.hint,
+.state {
+	margin: 0;
+	font-size: var(--text-sm);
+	color: var(--text-secondary);
+}
+
+.hint {
+	color: var(--text-muted);
+}
+
+.field {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+
+.label {
+	font-size: var(--text-sm);
+	font-weight: 600;
+	color: var(--text-primary);
+}
+
+.error {
+	margin: 0;
+	font-size: var(--text-sm);
+	color: var(--danger);
+}
+
+.actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: var(--space-2);
+}
+
+.primary,
+.secondary {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: var(--space-2) var(--space-4);
+	border-radius: var(--radius-md);
+	font-size: var(--text-sm);
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.primary {
+	background: var(--brand);
+	color: var(--brand-contrast);
+}
+
+.primary:hover:not(:disabled) {
+	background: var(--brand-strong);
+}
+
+.secondary {
+	border: 1px solid var(--border-default);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+}
+
+.secondary:hover:not(:disabled) {
+	background: var(--state-hover);
+}
+
+.primary:disabled,
+.secondary:disabled {
+	opacity: 0.5;
+}
+
+.primary:focus-visible,
+.secondary:focus-visible {
+	outline: 2px solid var(--brand);
+	outline-offset: 2px;
+}
+
+.list {
+	display: flex;
+	flex-direction: column;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-lg);
+	background: var(--surface-raised);
+}
+
+.row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	flex-wrap: wrap;
+	gap: var(--space-3);
+	padding: var(--space-3) var(--space-4);
+}
+
+.row + .row {
+	border-top: 1px solid var(--border-subtle);
+}
+
+.rowMain {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.rowTitle {
+	font-weight: 600;
+	color: var(--text-primary);
+}
+
+.rowTitle:hover {
+	text-decoration: underline;
+}
+
+.rowMeta {
+	font-size: var(--text-sm);
+	color: var(--text-secondary);
+}
+
+.rowError,
+.rowWaiting {
+	font-size: var(--text-sm);
+}
+
+.rowError {
+	color: var(--danger);
+}
+
+.rowWaiting {
+	color: var(--text-muted);
+}
+
+.rowActions {
+	display: flex;
+	gap: var(--space-2);
+}

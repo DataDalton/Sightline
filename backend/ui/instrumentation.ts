@@ -30,6 +30,10 @@ export async function register() {
 	const { closeAllUserSessions } = await import("@/lib/data/userSession");
 	const { onShutdown } = await import("@/lib/platform/shutdown");
 	const { runScheduledAlerts } = await import("@/lib/alerts/runner");
+	const { runScheduledDeliveries } = await import("@/lib/deliveries/runner");
+	const { runChecks } = await import("@/lib/freshness/checker");
+	const { startMarksPolling, stopMarksPolling } =
+		await import("@/lib/freshness/marks");
 
 	// Named before anything is attempted, because "LAKEBASE_INSTANCE is not
 	// set" is a fixable sentence and a connection timeout is not.
@@ -70,6 +74,8 @@ export async function register() {
 		if (demoMode) {
 			const { seedDemo } = await import("@/lib/demo/seed");
 			await seedDemo();
+			const { startDemoFeed } = await import("@/lib/demo/feed");
+			startDemoFeed();
 		}
 
 		await loadRegistry();
@@ -147,8 +153,24 @@ export async function register() {
 		void runScheduledAlerts().catch((error) => {
 			console.warn("Scheduled alerts failed:", error);
 		});
+		// Scheduled pages share the tick and the rules alerts run under.
+		void runScheduledDeliveries().catch((error) => {
+			console.warn("Scheduled pages failed:", error);
+		});
 	}, 60 * 1000);
 	alertTimer.unref?.();
+
+	// Looks at the tables behind each source for new data. Every few seconds,
+	// though each table is only looked at on its own interval, so live
+	// sources can be followed closely. The claim in the checker hands each
+	// table to one replica. See lib/freshness/checker.
+	startMarksPolling();
+	const checkTimer = setInterval(() => {
+		void runChecks().catch((error) => {
+			console.warn("Checking sources for new data failed:", error);
+		});
+	}, 5_000);
+	checkTimer.unref?.();
 
 	// Shutting down.
 	//
@@ -157,6 +179,8 @@ export async function register() {
 	// costs something: events buffer for fifteen seconds, so without a final
 	// flush every replica drops up to that much usage on every deploy.
 	onShutdown(async () => {
+		clearInterval(checkTimer);
+		stopMarksPolling();
 		clearInterval(sweepTimer);
 		clearInterval(rollupTimer);
 		clearInterval(alertTimer);

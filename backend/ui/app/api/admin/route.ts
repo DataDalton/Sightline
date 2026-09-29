@@ -47,6 +47,7 @@ import {
 	lakebase,
 } from "@/lib/runtime";
 import { latestSyncRun } from "@/lib/semantic/syncRun";
+import { freshnessDetails } from "@/lib/freshness/marks";
 
 // Admin data, gated on group membership rather than on a per-resource grant.
 // Everything here describes other people's activity, so it is not something a
@@ -147,8 +148,10 @@ export async function GET(request: NextRequest) {
 				description: f.description ?? null,
 				formatHint: f.formatHint ?? null,
 			});
+			const freshness = (await freshnessDetails()).get(source.sourceKey);
 			return NextResponse.json({
 				source: {
+					freshness: freshness ?? null,
 					sourceKey: source.sourceKey,
 					title: source.title,
 					description: source.description ?? null,
@@ -264,17 +267,20 @@ export async function GET(request: NextRequest) {
 				// The last catalogue walk, so a source list nobody has synced
 				// since March does not read as current.
 				lastSync: await latestSyncRun().catch(() => null),
-				sources: listSources().map((s) => ({
-					sourceKey: s.sourceKey,
-					title: s.title,
-					kind: s.kind,
-					object: `${s.catalog}.${s.schema}.${s.object}`,
-					hasRowFilter: s.hasRowFilter,
-					cacheTtlSeconds: s.cacheTtlSeconds ?? 0,
-					isLive: s.isLive,
-					dimensions: s.dimensions.length,
-					measures: s.measures.length,
-				})),
+				sources: await freshnessDetails().then((fresh) =>
+					listSources().map((s) => ({
+						freshnessMode: fresh.get(s.sourceKey)?.mode ?? "timer",
+						sourceKey: s.sourceKey,
+						title: s.title,
+						kind: s.kind,
+						object: `${s.catalog}.${s.schema}.${s.object}`,
+						hasRowFilter: s.hasRowFilter,
+						cacheTtlSeconds: s.cacheTtlSeconds ?? 0,
+						isLive: s.isLive,
+						dimensions: s.dimensions.length,
+						measures: s.measures.length,
+					})),
+				),
 			});
 		}
 

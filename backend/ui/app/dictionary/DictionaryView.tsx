@@ -8,6 +8,7 @@ import { SkeletonTable } from "../components/shared/Skeleton";
 import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { describeFetchError } from "../../lib/swr";
+import { visualByType } from "../../lib/visuals/catalog";
 import styles from "./Dictionary.module.css";
 
 // What every field means, and what depends on it.
@@ -536,7 +537,13 @@ function UsagePanel({
 							{report.on.map((use) => (
 								<li key={use.visualId}>
 									<span className={styles.usageVisual}>
-										{use.visualTitle ?? use.visualType}
+										{/* An untitled visual is named by what it is, in the
+										    words the editor's picker uses, rather than by its
+										    stored type. */}
+										{use.visualTitle ??
+											visualByType[use.visualType]
+												?.label ??
+											use.visualType}
 									</span>
 									<span className={styles.usageWhere}>
 										{use.pageTitle

@@ -5,6 +5,9 @@ import useSWR from "swr";
 import { Modal } from "../components/shared/Modal";
 import { Select } from "../components/shared/Select";
 import { TabStrip } from "../components/shared/TabStrip";
+import type { FreshnessDetail } from "../../lib/freshness/marks";
+import { checkIntervals, clampCheckSeconds } from "../../lib/freshness/history";
+import { CheckSetting, unitSeconds, type Unit } from "./CheckSetting";
 import styles from "./Admin.module.css";
 
 // Correcting how a source and its fields are presented.
@@ -37,6 +40,7 @@ interface SourceDetail {
 	defaultTimeField: string | null;
 	cacheTtlSeconds: number;
 	isLive: boolean;
+	freshness: FreshnessDetail | null;
 	dimensions: Field[];
 	measures: Field[];
 }
@@ -52,18 +56,6 @@ const formatHints = [
 	{ value: "date", label: "Date" },
 	{ value: "datetime", label: "Date and time" },
 ];
-
-// Seconds, said the way somebody thinks about a refresh schedule.
-function describeTtl(seconds: number): string {
-	if (seconds < 60) return `About ${seconds} seconds`;
-	if (seconds < 3600) return `About ${Math.round(seconds / 60)} minutes`;
-	if (seconds < 86400) {
-		const hours = seconds / 3600;
-		return `About ${hours % 1 === 0 ? hours : hours.toFixed(1)} hours`;
-	}
-	const days = seconds / 86400;
-	return `About ${days % 1 === 0 ? days : days.toFixed(1)} days`;
-}
 
 export function EditSourceDialog({
 	sourceKey,
@@ -83,8 +75,10 @@ export function EditSourceDialog({
 	const [title, setTitle] = useState("");
 	const [description, setDescription] = useState("");
 	const [timeField, setTimeField] = useState("");
-	const [cacheTtl, setCacheTtl] = useState("0");
-	const [live, setLive] = useState(false);
+	// "live", "default", one of the preset intervals in seconds, or "custom".
+	const [choice, setChoice] = useState("default");
+	const [customAmount, setCustomAmount] = useState("45");
+	const [customUnit, setCustomUnit] = useState<Unit>("minutes");
 	const [edits, setEdits] = useState<Record<string, Partial<Field>>>({});
 	const [busy, setBusy] = useState(false);
 	const [failure, setFailure] = useState<string | null>(null);
@@ -96,8 +90,22 @@ export function EditSourceDialog({
 		setTitle(source.title);
 		setDescription(source.description ?? "");
 		setTimeField(source.defaultTimeField ?? "");
-		setCacheTtl(String(source.cacheTtlSeconds ?? 0));
-		setLive(Boolean(source.isLive));
+		const seconds = source.cacheTtlSeconds ?? 0;
+		if (source.isLive) setChoice("live");
+		else if (seconds === 0) setChoice("default");
+		else if (checkIntervals.some((c) => c.seconds === seconds)) {
+			setChoice(String(seconds));
+		} else {
+			const unit: Unit =
+				seconds % 86400 === 0
+					? "days"
+					: seconds % 3600 === 0
+						? "hours"
+						: "minutes";
+			setChoice("custom");
+			setCustomUnit(unit);
+			setCustomAmount(String(seconds / unitSeconds[unit]));
+		}
 	}, [source]);
 
 	const fields = [...(source?.dimensions ?? []), ...(source?.measures ?? [])];
@@ -133,8 +141,16 @@ export function EditSourceDialog({
 				title,
 				description,
 				defaultTimeField: timeField,
-				cacheTtlSeconds: Number(cacheTtl) || 0,
-				isLive: live,
+				cacheTtlSeconds:
+					choice === "live" || choice === "default"
+						? 0
+						: choice === "custom"
+							? clampCheckSeconds(
+									(Number(customAmount) || 0) *
+										unitSeconds[customUnit],
+								)
+							: Number(choice),
+				isLive: choice === "live",
 			});
 
 			const changed = Object.entries(edits).map(([name, patch]) => ({
@@ -235,59 +251,15 @@ export function EditSourceDialog({
 								</span>
 							</label>
 
-							<label className={styles.field}>
-								<span className={styles.fieldLabel}>
-									How the data arrives
-								</span>
-								<Select
-									value={live ? "live" : "scheduled"}
-									onChange={(v) => setLive(v === "live")}
-									options={[
-										{
-											value: "scheduled",
-											label: "On a schedule",
-										},
-										{
-											value: "live",
-											label: "Streams in continuously",
-										},
-									]}
-								/>
-								<span className={styles.fieldHint}>
-									{live
-										? "Answers are reused for seconds, and open pages update themselves on the live interval under Configuration, Performance. Each open page asks the warehouse again on that interval."
-										: "Answers are reused until they expire, and a page shows new data the next time it is opened after that."}
-								</span>
-							</label>
-
-							{!live && (
-								<label className={styles.field}>
-									<span className={styles.fieldLabel}>
-										Reuse an answer for
-									</span>
-									<span className={styles.numberBox}>
-										<input
-											type="number"
-											min={0}
-											className={styles.numberInput}
-											value={cacheTtl}
-											onChange={(e) =>
-												setCacheTtl(e.target.value)
-											}
-										/>
-										<span className={styles.numberUnit}>
-											seconds
-										</span>
-									</span>
-									<span className={styles.fieldHint}>
-										{Number(cacheTtl) > 0
-											? `Overrides the platform setting for this source. ${describeTtl(Number(cacheTtl))}.`
-											: "Zero uses the platform setting under Configuration, Performance."}{" "}
-										Set this to match how often the data
-										actually lands.
-									</span>
-								</label>
-							)}
+							<CheckSetting
+								choice={choice}
+								onChoice={setChoice}
+								customAmount={customAmount}
+								onCustomAmount={setCustomAmount}
+								customUnit={customUnit}
+								onCustomUnit={setCustomUnit}
+								freshness={source.freshness}
+							/>
 						</div>
 					) : (
 						<div className={styles.tableWrap}>

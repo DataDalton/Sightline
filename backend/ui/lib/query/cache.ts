@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { filterDiscoveryComplete } from "../semantic/filterDiscovery";
 import { sql } from "../data/lakebase";
+import { changedSince, isChecked } from "../freshness/marks";
 import { settings } from "../settings";
 import type { PolicyClass } from "../auth/policy";
 import type { SemanticSource } from "../semantic/types";
@@ -55,6 +56,18 @@ export interface CacheLookup {
 export function liveTtlSeconds(): number {
 	return Math.max(1, Math.floor(settings().liveTtlSeconds || 0));
 }
+
+// Whether data behind an answer changed after it was computed. Such an answer
+// is treated as missing wherever it is held, on every replica, as soon as that
+// replica learns of the change. See lib/freshness.
+function superseded(key: string, entry: CacheEntry): boolean {
+	return changedSince(key.slice(0, key.indexOf(":")), entry.computedAt);
+}
+
+// The longest a watched source's answer is kept without a change being found,
+// in case one was missed. A source set to be looked at less often than this
+// keeps its answers for its own interval.
+const watchedBackstopSeconds = 24 * 3600;
 
 export function isShareable(source: SemanticSource): boolean {
 	return !source.hasRowFilter || filterDiscoveryComplete();
@@ -246,7 +259,8 @@ export async function cacheGetMany(
 	const missing: string[] = [];
 
 	for (const key of wanted) {
-		const local = memoryGet(key);
+		const held = memoryGet(key);
+		const local = held && !superseded(key, held) ? held : null;
 		if (local && local.expiresAt > now) {
 			found.set(key, { entry: local, tier: "l1", stale: false });
 			continue;
@@ -268,6 +282,7 @@ export async function cacheGetMany(
 			);
 			for (const row of rows) {
 				const entry = toEntry(row);
+				if (superseded(row.cache_key, entry)) continue;
 				// Promoted, so a second page asking the same question on this
 				// replica does no database work.
 				memorySet(row.cache_key, entry, estimateJsonBytes(entry));
@@ -352,14 +367,16 @@ export async function cacheGet(key: string): Promise<CacheLookup> {
 	const now = Date.now();
 	const allowStale = settings().staleWhileRevalidate;
 
-	const local = memoryGet(key);
+	const held = memoryGet(key);
+	const local = held && !superseded(key, held) ? held : null;
 	if (local) {
 		if (local.expiresAt > now)
 			return { entry: local, tier: "l1", stale: false };
 		if (allowStale) return { entry: local, tier: "l1", stale: true };
 	}
 
-	const shared = await sharedGet(key);
+	const found = await sharedGet(key);
+	const shared = found && !superseded(key, found.entry) ? found : null;
 	if (shared) {
 		// Promote into L1 so the next hit on this replica skips the round trip.
 		memorySet(key, shared.entry, shared.bytes);
@@ -426,11 +443,18 @@ export async function cacheSet(
 	// here, so the platform-wide setting was unreachable: changing it did
 	// nothing to any source, because every source had already answered the
 	// question with a value nobody chose.
-	const ttlSeconds = source.isLive
+	//
+	// A watched source keeps its answers until its tables change, with a
+	// backstop in case a change is missed. One on a timer keeps them for its
+	// interval, as before.
+	const interval = source.isLive
 		? liveTtlSeconds()
 		: source.cacheTtlSeconds > 0
 			? source.cacheTtlSeconds
 			: settings().resultTtlSeconds;
+	const ttlSeconds = isChecked(source.sourceKey)
+		? Math.max(interval, watchedBackstopSeconds)
+		: interval;
 	const entry: CacheEntry = {
 		rows,
 		columns,

@@ -2,6 +2,7 @@ import { assertDeploymentConfigured, demoMode } from "../runtime";
 import { loadSettings, startSettingsPolling } from "../settings";
 import { loadRegistry, startRegistryPolling } from "../semantic/registry";
 import { startTelemetryFlushing } from "../telemetry/usage";
+import { startMarksPolling } from "../freshness/marks";
 
 // One-time initialization, run from the request path rather than only from
 // instrumentation.
@@ -70,6 +71,7 @@ async function initialize(): Promise<void> {
 
 	startSettingsPolling();
 	startRegistryPolling();
+	startMarksPolling();
 	startTelemetryFlushing();
 
 	readyAt = Date.now();

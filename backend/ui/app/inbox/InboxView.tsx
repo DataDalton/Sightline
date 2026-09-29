@@ -6,6 +6,7 @@ import useSWR from "swr";
 import type { InboxItem } from "../../lib/notify/store";
 import { describeFetchError } from "../../lib/swr";
 import { AlertsPanel, alertsKey, type AlertList } from "../alerts/AlertsView";
+import { ScheduledPages } from "../deliveries/ScheduledPages";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { InboxList } from "../notify/InboxList";
 import { useNotify } from "../notify/NotifyContext";
@@ -32,6 +33,7 @@ export type InboxViewId =
 	| "share"
 	| "conversations"
 	| "alerts"
+	| "scheduled"
 	| "settings";
 
 const views: InboxViewId[] = [
@@ -41,6 +43,7 @@ const views: InboxViewId[] = [
 	"share",
 	"conversations",
 	"alerts",
+	"scheduled",
 	"settings",
 ];
 
@@ -68,6 +71,10 @@ const heading: Record<InboxViewId, { title: string; blurb: string }> = {
 		title: "Alerts",
 		blurb: "Measures you are watching. Each one checks on its schedule and writes here when something crosses a line or moves.",
 	},
+	scheduled: {
+		title: "Scheduled pages",
+		blurb: "Report pages sent to you on a schedule, with their headline figures worked out under your own access.",
+	},
 	settings: {
 		title: "Notification settings",
 		blurb: "Which of this also reaches your phone and computer, and the devices that receive it.",
@@ -82,7 +89,12 @@ const emptyText: Record<"all" | "unread" | "alert" | "share", string> = {
 };
 
 function keyFor(view: InboxViewId): string | null {
-	if (view === "alerts" || view === "settings" || view === "conversations") {
+	if (
+		view === "alerts" ||
+		view === "scheduled" ||
+		view === "settings" ||
+		view === "conversations"
+	) {
 		return null;
 	}
 	const params = new URLSearchParams({ limit: String(pageSize) });
@@ -124,6 +136,7 @@ const icons = {
 	conversations:
 		"M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
 	alerts: "M3 3v18h18M7 14l4-4 3 3 5-6",
+	scheduled: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2",
 	settings:
 		"M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6",
 };
@@ -317,6 +330,7 @@ export default function InboxView({
 							failing > 0 ? failing : alertCount,
 							failing > 0 ? "warn" : undefined,
 						)}
+						{item("scheduled", "Scheduled pages")}
 					</div>
 				)}
 				<div className={styles.railGroup}>
@@ -359,6 +373,8 @@ export default function InboxView({
 					<Conversations threadId={threadId} onOpen={openThread} />
 				) : view === "alerts" ? (
 					<AlertsPanel />
+				) : view === "scheduled" ? (
+					<ScheduledPages />
 				) : view === "settings" ? (
 					<NotificationSettings />
 				) : error ? (

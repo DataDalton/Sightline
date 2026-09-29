@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { describeFetchError } from "../../lib/swr";
 import { formatCompact } from "../../lib/format";
+import { describeInterval } from "../../lib/freshness/history";
 import {
 	Skeleton,
 	SkeletonTable,
@@ -124,6 +125,7 @@ interface PlatformResponse {
 		hasRowFilter: boolean;
 		cacheTtlSeconds: number;
 		isLive: boolean;
+		freshnessMode: "checked" | "timer";
 		dimensions: number;
 		measures: number;
 	}[];
@@ -1293,8 +1295,8 @@ function ConfigurationSection({ group }: { group: PaneId }) {
 						>
 							<div className={styles.settingGrid}>
 								<NumberSetting
-									label="Reuse an answer for"
-									hint="Longer is cheaper and staler."
+									label="Check for new data every"
+									hint="For sources that do not set their own. A check reads the tables' history, not their data, and answers are kept until one finds a change. For a source whose tables cannot be checked, it is how long an answer is reused."
 									unit="seconds"
 									value={values.resultTtlSeconds}
 									onChange={(v) =>
@@ -1302,8 +1304,8 @@ function ConfigurationSection({ group }: { group: PaneId }) {
 									}
 								/>
 								<NumberSetting
-									label="Live sources update every"
-									hint="How often an open page asks again for a source whose data streams in. Shorter is fresher and costs more warehouse time."
+									label="Live sources check every"
+									hint="How often a live source's tables are checked, and how often its open pages ask again. A page's figures are only queried again when a check finds a change."
 									unit="seconds"
 									value={values.liveTtlSeconds}
 									onChange={(v) => set({ liveTtlSeconds: v })}
@@ -2412,7 +2414,7 @@ function PlatformSection({
 									<th>Kind</th>
 									<th className={styles.numeric}>Fields</th>
 									<th>Filtered</th>
-									<th>Reuse for</th>
+									<th>New data</th>
 									<th>Object</th>
 									<th />
 								</tr>
@@ -2434,10 +2436,17 @@ function PlatformSection({
 										<td>{s.hasRowFilter ? "yes" : "no"}</td>
 										<td>
 											{s.isLive
-												? "live"
+												? "Live"
 												: s.cacheTtlSeconds > 0
-													? `${s.cacheTtlSeconds}s`
-													: "platform default"}
+													? describeInterval(
+															s.cacheTtlSeconds,
+														)
+													: "Platform default"}
+											<span className={styles.muted}>
+												{s.freshnessMode === "checked"
+													? " watched"
+													: " on a timer"}
+											</span>
 										</td>
 										<td className={styles.mono}>
 											{s.object}

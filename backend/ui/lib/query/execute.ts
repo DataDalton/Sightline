@@ -6,6 +6,8 @@ import { isDatabricksApp } from "../runtime";
 import { getSource } from "../semantic/registry";
 import type { SemanticSource } from "../semantic/types";
 import { compileQuery } from "./builder";
+import { intervalFor, requestCheck } from "../freshness/checker";
+import { overdue } from "../freshness/marks";
 import {
 	buildCacheKey,
 	cacheGet,
@@ -110,6 +112,7 @@ export async function executeQuery(
 		: { entry: null, stale: false, tier: null };
 
 	if (lookup.entry && !lookup.stale) {
+		nudge(source);
 		return toResult(
 			lookup.entry,
 			lookup.tier ?? "l1",
@@ -159,6 +162,16 @@ export async function executeQuery(
 		startedAt,
 	source,
 	);
+}
+
+// A watched source that has gone too long without a look, because the
+// warehouse was stopped and the looks were skipped, is looked at now that a
+// reader is here. The answer already held is served meanwhile, as an expired
+// one is. See lib/freshness/checker.
+function nudge(source: SemanticSource): void {
+	if (overdue(source.sourceKey, intervalFor(source))) {
+		requestCheck(source.sourceKey);
+	}
 }
 
 function shareInflight(
@@ -307,6 +320,7 @@ export async function executeQueries(
 			: { entry: null, tier: null, stale: false };
 
 		if (lookup.entry && !lookup.stale) {
+			nudge(entry.source);
 			outcomes[index] = {
 				result: toResult(
 					lookup.entry,

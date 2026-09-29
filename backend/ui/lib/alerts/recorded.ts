@@ -47,8 +47,9 @@ export async function restrictableSources(): Promise<Map<string, string[]>> {
 	return fields;
 }
 
-// Takes a recording for each of the owner's alert datasets that needs one,
-// under their own token. Called while they are using the app.
+// Takes a recording for each dataset the owner has an alert or a scheduled
+// page on that needs one, under their own token. Called while they are using
+// the app.
 export async function recordAccess(
 	identity: Identity,
 	run: RunQuery,
@@ -59,13 +60,18 @@ export async function recordAccess(
 	if (restrictable.size === 0) return;
 
 	const due = await sql<{ source_key: string }>(
-		`SELECT DISTINCT r.source_key FROM alert_rules r
-		 WHERE r.owner_email = $1 AND r.enabled
-		   AND r.source_key = ANY($2::text[])
-		   AND ($3::text[] IS NULL OR r.source_key = ANY($3::text[]))
+		`SELECT DISTINCT w.source_key FROM (
+		   SELECT owner_email, source_key FROM alert_rules WHERE enabled
+		   UNION
+		   SELECT owner_email, source_key FROM deliveries
+		   WHERE enabled AND source_key IS NOT NULL
+		 ) w
+		 WHERE w.owner_email = $1
+		   AND w.source_key = ANY($2::text[])
+		   AND ($3::text[] IS NULL OR w.source_key = ANY($3::text[]))
 		   AND NOT EXISTS (
 		     SELECT 1 FROM alert_access a
-		     WHERE a.owner_email = r.owner_email AND a.source_key = r.source_key
+		     WHERE a.owner_email = w.owner_email AND a.source_key = w.source_key
 		       AND a.captured_on > now() - interval '${refreshAfter}'
 		   )`,
 		[email, [...restrictable.keys()], readable],

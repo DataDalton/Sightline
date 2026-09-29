@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getIdentity } from "@/lib/auth/identity";
 import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
+import { liveTtlSeconds } from "@/lib/query/cache";
 import { getFieldRange } from "@/lib/query/range";
+import { getSource } from "@/lib/semantic/registry";
 import { QuerySpecError } from "@/lib/query/spec";
 import { QueryAccessError } from "@/lib/query/execute";
 
@@ -17,7 +19,10 @@ export async function POST(request: NextRequest) {
 
 	const identity = getIdentity(request);
 	if (!identity) {
-		return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+		return NextResponse.json(
+			{ error: "Not authenticated" },
+			{ status: 401 },
+		);
 	}
 
 	try {
@@ -31,14 +36,22 @@ export async function POST(request: NextRequest) {
 			"max",
 		);
 
+		// A live source's newest value moves with its data, so the page asks
+		// again on the live interval and the browser keeps nothing.
+		const live = getSource(String(body?.sourceKey ?? ""))?.isLive === true;
+
 		const response = NextResponse.json({
 			field,
 			value: range.max,
 			dataType: range.dataType,
+			refreshAfterMs: live ? liveTtlSeconds() * 1000 : null,
 		});
-		// Held briefly by the browser as well as by the server cache: every
-		// page load asks, and the answer moves once a day at most.
-		response.headers.set("Cache-Control", "private, max-age=120");
+		// Otherwise held briefly by the browser as well as by the server cache:
+		// every page load asks, and the answer moves once a day at most.
+		response.headers.set(
+			"Cache-Control",
+			live ? "private, no-store" : "private, max-age=120",
+		);
 		return response;
 	} catch (error) {
 		if (error instanceof QueryAccessError) {

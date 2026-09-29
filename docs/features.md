@@ -11,7 +11,9 @@ What readers and authors can do. Setup for each is in
 - [The data assistant](#the-data-assistant)
 - [Sheets](#sheets)
 - [Alerts and the inbox](#alerts-and-the-inbox)
+- [Scheduled pages](#scheduled-pages)
 - [Asking the maintainers](#asking-the-maintainers)
+- [How a report is read](#how-a-report-is-read)
 - [On a phone, and installed](#on-a-phone-and-installed)
 
 ## Reports and saved views
@@ -178,10 +180,25 @@ while they are using the app.
   they use the app, and the alert says so. Exposing a filter's columns as
   fields moves a dataset from one case to the other.
 
-Everything anyone is told lands in their Inbox: alerts, pages shared with them,
-conversations and announcements. The Inbox entry in the navigation carries the
-unread count. Entries can be marked read or unread and cleared, and each opens
+Everything anyone is told lands in their Inbox: alerts, scheduled pages, pages
+shared with them, conversations and announcements. The Inbox entry in the
+navigation carries the unread count. Entries can be marked read or unread and cleared, and each opens
 the page it is about. An alert opens Explore on the numbers it read.
+
+## Scheduled pages
+
+Schedule on a report page sends that page to the reader every day, every
+weekday or once a week, at an hour in their own time zone. What arrives is the
+page's headline figures, its KPI tiles as the page shows them on opening, with
+how each moved since the last one and a link to the page. It lands in the Inbox
+and, with pushes on, on their phone or computer.
+
+The figures are worked out under the reader's own access, by the same rules as
+an alert. A dataset that shows everyone the same rows is worked out on
+schedule, a row-filtered one narrowed to what the reader was recorded seeing,
+and anything else the next time they are in the app. A page is sent at most
+daily. Inbox > Scheduled pages lists what is scheduled, when each next comes
+and whether the last one went, and sends one at once or stops it.
 
 ## Asking the maintainers
 
@@ -190,7 +207,9 @@ category page shows them in a panel, and every report in it shows them as an
 Ask button beside its title. Asking sends a message to all of them, or to
 the one person or group pressed, through the application rather than email. It
 lands in their inbox under Conversations, both sides reply there, and every
-message is also a notification.
+message is also a notification. Where the browser offers it, a message's push
+notification carries a Reply box, and what is typed goes straight into the
+conversation. When it cannot be sent there, the conversation opens instead.
 
 A group is one conversation everyone in it shares. Membership is read when
 each person looks, so someone who joins sees what was already asked, and
@@ -201,6 +220,17 @@ has never used it is not.
 Only the maintainers of a category the asker can open can be written to, one
 person can start a limited number of conversations an hour, and nothing is
 shown for a category with no editor.
+
+## How a report is read
+
+Whoever can edit a report has a Usage button on it, showing how it was read
+over the last 7, 30 or 90 days. Opens and people, a bar for each day, who read
+it and when they last did, how often each page was opened, and how often each
+visual was expanded, had its figures shown, had its notes opened or was
+clicked into. A page nobody opened, and a visual nobody did anything with, is
+marked, since those are what to look at before rearranging or retiring
+anything. Being on screen does not count as use. It names the people who read
+the report, so it is shown only to those who maintain it.
 
 ## On a phone, and installed
 

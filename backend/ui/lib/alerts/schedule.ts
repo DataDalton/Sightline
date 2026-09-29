@@ -95,7 +95,7 @@ export function nextRun(schedule: Schedule, from: Date): Date {
 	return at;
 }
 
-const weekdayNames = [
+export const weekdayNames = [
 	"Sunday",
 	"Monday",
 	"Tuesday",

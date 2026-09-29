@@ -6,7 +6,8 @@ import { getSource } from "../semantic/registry";
 import { settings } from "../settings";
 import { compileQuery } from "./builder";
 import { QueryAccessError } from "./execute";
-import { isShareable } from "./cache";
+import { changedSince } from "../freshness/marks";
+import { isShareable, liveTtlSeconds } from "./cache";
 import { QuerySpecError, type QueryFilter } from "./spec";
 
 // The smallest and largest value a field actually takes.
@@ -38,6 +39,7 @@ export interface FieldRange {
 
 interface CacheEntry {
 	value: FieldRange;
+	computedAt: number;
 	expiresAt: number;
 }
 
@@ -99,8 +101,16 @@ export async function getFieldRange(
 	const key = `${scope}:${sourceKey}:${field}:${bounds}:${JSON.stringify(filters)}`;
 	const now = Date.now();
 
+	// Not once the data behind it has changed, which is when its newest value
+	// is most likely to have moved. See lib/freshness.
 	const cached = shareable ? cache.get(key) : undefined;
-	if (cached && cached.expiresAt > now) return cached.value;
+	if (
+		cached &&
+		cached.expiresAt > now &&
+		!changedSince(sourceKey, cached.computedAt)
+	) {
+		return cached.value;
+	}
 
 	const existing = shareable ? inflight.get(key) : undefined;
 	if (existing) return existing;
@@ -164,10 +174,17 @@ export async function getFieldRange(
 			if (shareable) {
 				cache.set(key, {
 					value,
+					computedAt: Date.now(),
 					// Longer than a result cache entry: the extremes of a
 					// column move far more slowly than the figures inside it.
+					// Except on a live source, where the newest value is the
+					// one that moves.
 					expiresAt:
-						Date.now() + settings().resultTtlSeconds * 4 * 1000,
+						Date.now() +
+						(source.isLive
+							? liveTtlSeconds()
+							: settings().resultTtlSeconds * 4) *
+							1000,
 				});
 				evictIfNeeded();
 			}

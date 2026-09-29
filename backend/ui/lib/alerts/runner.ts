@@ -44,7 +44,10 @@ import {
 // rest of theirs under their own token while they are here, and takes those
 // recordings. See runsUnattended and lib/alerts/access for why.
 
-type RunQuery = (statement: string, params: QueryParams) => Promise<Row[]>;
+export type RunQuery = (
+	statement: string,
+	params: QueryParams,
+) => Promise<Row[]>;
 
 // How long a claimed alert is held before another replica may take it, in
 // case the one that claimed it went away mid-check.
@@ -211,7 +214,7 @@ async function runAll(
 	await Promise.all(workers);
 }
 
-async function asApp(statement: string, params: QueryParams) {
+export async function asApp(statement: string, params: QueryParams) {
 	if (!isDatabricksApp) {
 		const { queryLocally } = await import("../data/localSession");
 		return queryLocally(statement, params);
@@ -219,7 +222,7 @@ async function asApp(statement: string, params: QueryParams) {
 	return queryAsApp(statement, params);
 }
 
-function asOwner(identity: Identity): RunQuery | null {
+export function asOwner(identity: Identity): RunQuery | null {
 	if (identity.userToken) {
 		const token = identity.userToken;
 		return (statement, params) =>

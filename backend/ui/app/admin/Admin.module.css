@@ -1188,3 +1188,8 @@
 	gap: var(--space-3);
 	flex-wrap: wrap;
 }
+
+/* A quiet second word beside a value in a table cell. */
+.muted {
+	color: var(--text-muted);
+}

@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { canonicalizeSpec, parseQuerySpec } from "./spec";
 import {
 	chartRows,
+	seriesRows,
 	fieldsForVisual,
 	gridPageSize,
 	initialQueryForVisual,
@@ -200,6 +201,26 @@ test("a top N can rank by a measure that is not the first", () => {
 		options: { topN: 5, topBy: "units" },
 	});
 	assert.deepEqual(q?.sort, [{ field: "units", direction: "desc" }]);
+});
+
+test("a chart along a time axis keeps every day of a long range", () => {
+	// Two years of days is more than the ordinary chart default, which kept
+	// the oldest days and dropped the most recent.
+	const line = queryForVisual("lineChart", {
+		sourceKey: "orders",
+		dimensions: ["order_date", "channel"],
+		measures: ["revenue"],
+	});
+	assert.equal(line?.limit, seriesRows);
+	assert.ok(seriesRows >= 730 * 3);
+	assert.equal(
+		queryForVisual("barChart", {
+			sourceKey: "orders",
+			dimensions: ["region"],
+			measures: ["revenue"],
+		})?.limit,
+		chartRows,
+	);
 });
 
 test("a top N ranked by a measure the visual does not read is ignored", () => {

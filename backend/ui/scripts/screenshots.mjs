@@ -84,6 +84,13 @@ const shots = [
 		clickText: "Regional margin",
 	},
 	{
+		name: "usage",
+		path: "/r/revenue-overview/",
+		width: 1440,
+		height: 900,
+		clickText: "Usage",
+	},
+	{
 		name: "phone",
 		path: "/r/support-overview/",
 		width: 390,

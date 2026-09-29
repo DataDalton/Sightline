@@ -902,6 +902,50 @@ const statements: string[] = [
 	`CREATE INDEX IF NOT EXISTS member_groups_grants_idx
 		ON member_groups USING gin (grants)`,
 
+	// A page somebody asked to be sent on a schedule, with its headline
+	// figures worked out under their access. See lib/deliveries.
+	`CREATE TABLE IF NOT EXISTS deliveries (
+		delivery_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		owner_email         TEXT NOT NULL,
+		report_id           UUID NOT NULL REFERENCES reports (report_id) ON DELETE CASCADE,
+		page_id             UUID NOT NULL REFERENCES report_pages (page_id) ON DELETE CASCADE,
+		-- The dataset its figures come from, which decides whether it can be
+		-- worked out while the owner is away. See runsUnattended.
+		source_key          TEXT,
+		schedule            JSONB NOT NULL,
+		enabled             BOOLEAN NOT NULL DEFAULT TRUE,
+		-- The figures last sent, so the next can say what changed.
+		state               JSONB NOT NULL DEFAULT '{}'::jsonb,
+		next_run_on         TIMESTAMPTZ NOT NULL,
+		last_run_on         TIMESTAMPTZ,
+		last_status         TEXT NOT NULL DEFAULT 'waiting',
+		last_error          TEXT,
+		access_confirmed_on TIMESTAMPTZ,
+		created_on          TIMESTAMPTZ NOT NULL DEFAULT now(),
+		UNIQUE (owner_email, page_id)
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS deliveries_due_idx
+		ON deliveries (next_run_on) WHERE enabled`,
+
+	// The last version seen of each table a source reads, from its Delta
+	// history, so a new version that changed data can be noticed. See
+	// lib/freshness/checker.
+	`CREATE TABLE IF NOT EXISTS source_checks (
+		table_name    TEXT PRIMARY KEY,
+		version       BIGINT,
+		-- When that version was made, which tells a recreated table that
+		-- reached the same version apart from the one seen before.
+		version_at    TIMESTAMPTZ,
+		checked_on    TIMESTAMPTZ,
+		changed_on    TIMESTAMPTZ,
+		next_check_on TIMESTAMPTZ NOT NULL DEFAULT now(),
+		-- Set when a reader met an answer whose table is overdue a look, so the
+		-- next pass looks even with the warehouse stopped.
+		wanted_on     TIMESTAMPTZ,
+		last_error    TEXT
+	)`,
+
 	// What one person could see of a row-filtered dataset when they were last
 	// here: every combination of the columns its filter decides on, read under
 	// their own token. Lets their alerts on it be checked while they are away.
@@ -1027,6 +1071,25 @@ const migrations: string[] = [
 	// past that, and open pages ask again on the same interval. See
 	// liveTtlSeconds in lib/settings.
 	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS is_live BOOLEAN NOT NULL DEFAULT FALSE`,
+
+	// Which page of a report somebody opened, and what they did with a visual
+	// on it, so the people who maintain a report can see what is read. See
+	// lib/platform/reportUsage.
+	`ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS action TEXT`,
+
+	// Whether a source's tables are watched for changes or it is refreshed on
+	// a timer, why, and when its data last changed. Every replica reads these
+	// to decide whether a cached answer still stands. See lib/freshness.
+	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS freshness_mode TEXT NOT NULL DEFAULT 'timer'`,
+	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS freshness_note TEXT`,
+	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS checked_on TIMESTAMPTZ`,
+	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS data_changed_on TIMESTAMPTZ`,
+	`ALTER TABLE usage_events DROP CONSTRAINT IF EXISTS usage_events_event_type_check`,
+	`ALTER TABLE usage_events ADD CONSTRAINT usage_events_event_type_check
+	 CHECK (event_type IN ('page_view', 'query', 'export', 'edit', 'error',
+	                       'page_open', 'visual_action'))`,
+	`CREATE INDEX IF NOT EXISTS usage_events_page_idx
+		ON usage_events (report_id, event_type, occurred_on DESC)`,
 
 	// Starts member_groups from the stored policies still held, so people who
 	// signed in before it existed count as members straight away. A row

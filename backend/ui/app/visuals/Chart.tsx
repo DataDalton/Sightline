@@ -130,6 +130,8 @@ interface ChartProps {
 	dimensions: string[];
 	measures: string[];
 	filters?: unknown[];
+	// Left unset for a placed visual, so the default comes from
+	// lib/query/visualSpec by chart type, the same one the server warms with.
 	limit?: number;
 	// Figures worked out from the answer, declared on the visual. Part of the
 	// query rather than applied to the marks, so the derived columns arrive
@@ -187,7 +189,7 @@ export function Chart({
 	dimensions,
 	measures,
 	filters,
-	limit = 500,
+	limit,
 	transforms,
 	compareTo,
 	compareField,
@@ -360,6 +362,9 @@ export function Chart({
 			options,
 			hintFor: (field) =>
 				(fields.get(field)?.formatHint as FormatHint) ?? "decimal",
+			// The same visual over the earlier window, for a chart whose shape
+			// is a change. Null when the page has no window to move.
+			comparisonRows: comparisonFilters ? comparison.rows : null,
 		};
 
 		// The chart that produced a selection marks it, so the reader can see
