@@ -42,6 +42,20 @@ export interface Attachment {
 
 export const conversationsKey = "/api/assist/conversations";
 
+// A screen the assistant can fill in, registered while it is open: Explore's
+// table, a sheet, the report editor. Its state goes with each question, and a
+// draft that comes back is handed to it to apply as an unsaved change.
+export interface SurfaceBinding {
+	kind: "sheet" | "explore" | "editor";
+	// Read when a question is sent, so it is what the screen holds then.
+	state: () => unknown;
+	apply: (draft: unknown) => void;
+	// What the composer suggests asking on this screen, and the questions
+	// offered before anything has been asked.
+	placeholder?: string;
+	examples?: string[];
+}
+
 interface AssistantState {
 	conversationId: string;
 	messages: Message[];
@@ -63,6 +77,9 @@ interface AssistantState {
 	// and close the same one.
 	panelOpen: boolean;
 	setPanelOpen: (open: boolean) => void;
+	// The screen open now, if it is one the assistant can fill in.
+	surface: SurfaceBinding | null;
+	registerSurface: (binding: SurfaceBinding) => () => void;
 }
 
 const Context = createContext<AssistantState | null>(null);
@@ -158,6 +175,21 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 	const [attachments, setAttachments] = useState<Attachment[]>([]);
 	const [picking, setPicking] = useState(false);
 	const abortRef = useRef<AbortController | null>(null);
+	// Held in a ref as well as state, so an answer that finishes after the
+	// screen changed hands its draft to whichever screen is open then.
+	const [surface, setSurface] = useState<SurfaceBinding | null>(null);
+	const surfaceRef = useRef<SurfaceBinding | null>(null);
+
+	const registerSurface = useCallback((binding: SurfaceBinding) => {
+		surfaceRef.current = binding;
+		setSurface(binding);
+		return () => {
+			if (surfaceRef.current === binding) {
+				surfaceRef.current = null;
+				setSurface(null);
+			}
+		};
+	}, []);
 
 	// Read after mount rather than during render, so the server render and
 	// the first client render agree.
@@ -242,6 +274,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 
 			const abort = new AbortController();
 			abortRef.current = abort;
+			const asking = surfaceRef.current;
 
 			try {
 				const response = await fetch("/api/assist", {
@@ -258,6 +291,14 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 							visualId: a.visualId,
 							text: a.text,
 						})),
+						...(asking
+							? {
+									surface: {
+										kind: asking.kind,
+										state: asking.state(),
+									},
+								}
+							: {}),
 					}),
 					signal: abort.signal,
 				});
@@ -300,6 +341,13 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 									event.type === "error"
 								) {
 									finished = true;
+								}
+								// Only to the screen it was written for.
+								if (
+									event.type === "draft" &&
+									surfaceRef.current?.kind === event.kind
+								) {
+									surfaceRef.current.apply(event.draft);
 								}
 								update(answerId, (m) => apply(m, event));
 							} catch {
@@ -438,6 +486,8 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 			setPicking,
 			panelOpen,
 			setPanelOpen,
+			surface,
+			registerSurface,
 		}),
 		[
 			conversationId,
@@ -454,6 +504,8 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 			detach,
 			picking,
 			panelOpen,
+			surface,
+			registerSurface,
 		],
 	);
 

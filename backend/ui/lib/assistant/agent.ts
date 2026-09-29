@@ -24,6 +24,7 @@ import {
 	type StepKind,
 } from "./events";
 import { addMemory, type Profile } from "./store";
+import type { Surface } from "./surfaces";
 import {
 	ProposalRejected,
 	validateProposal,
@@ -220,6 +221,7 @@ const tools: ToolDefinition[] = [
 function instructions(
 	context: PageContext | null,
 	profile: Profile | null,
+	surface: Surface | null,
 ): string {
 	const today = new Date().toISOString().slice(0, 10);
 	// Their own words, and what they asked to be remembered. Placed after the
@@ -267,6 +269,9 @@ function instructions(
 		"",
 		"Visuals available for show:",
 		visualMenu(),
+		// The screen's own rules come after the general ones, since they say
+		// what this particular answer should end with.
+		...(surface ? ["", surface.instructions] : []),
 		...personal,
 	].join("\n");
 }
@@ -359,6 +364,9 @@ export interface AgentRequest {
 	profile: Profile | null;
 	// What the person pointed at on the page, already described in words.
 	pointedAt: string | null;
+	// The screen the question was asked from, when it is one the assistant
+	// can fill in.
+	surface?: Surface | null;
 }
 
 export async function runAgent(
@@ -375,7 +383,11 @@ export async function runAgent(
 		context,
 		profile,
 		pointedAt,
+		surface = null,
 	} = request;
+	const surfaceTools = new Set(
+		surface?.tools.map((t) => t.function.name) ?? [],
+	);
 	const bySource = new Map(available.map((s) => [s.sourceKey, s]));
 	const policy = await resolvePolicyClass(identity);
 	let charts = 0;
@@ -385,7 +397,7 @@ export async function runAgent(
 	const failed = new Map<string, string>();
 
 	const messages: ChatMessage[] = [
-		{ role: "system", content: instructions(context, profile) },
+		{ role: "system", content: instructions(context, profile, surface) },
 		...history.map(
 			(turn): ChatMessage =>
 				turn.role === "user"
@@ -436,6 +448,27 @@ export async function runAgent(
 			});
 			done(false, "The request was not valid JSON");
 			return "Error: the arguments were not valid JSON.";
+		}
+
+		// A tool belonging to the screen is checked there, and its draft is
+		// handed to the page when it is accepted.
+		if (surface && surfaceTools.has(call.function.name)) {
+			emit({
+				type: "step",
+				id,
+				kind: "draft",
+				label: surface.label(call.function.name, args),
+			});
+			const outcome = surface.run(call.function.name, args);
+			if (outcome.ok && outcome.draft !== undefined) {
+				emit({
+					type: "draft",
+					kind: surface.kind,
+					draft: outcome.draft,
+				});
+			}
+			done(outcome.ok, outcome.summary);
+			return outcome.result;
 		}
 
 		const kind = stepKind(call.function.name);
@@ -679,7 +712,7 @@ export async function runAgent(
 		const turn = await converse(
 			identity.userToken,
 			messages,
-			last ? [] : [...tools, rememberTool],
+			last ? [] : [...tools, ...(surface?.tools ?? []), rememberTool],
 			{ onText: (delta) => emit({ type: "text", delta }), signal },
 		);
 		ranAs = turn.as;

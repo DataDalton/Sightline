@@ -109,7 +109,7 @@ function HeadButton({
 export function AssistantDock() {
 	const { user } = useUser();
 	const pathname = usePathname() ?? "";
-	const { panelOpen, setPanelOpen, busy, newConversation, picking } =
+	const { panelOpen, setPanelOpen, busy, newConversation, picking, surface } =
 		useAssistant();
 	const [view, setView] = useState<View>("chat");
 	const [sidebar, setSidebar] = useState(false);
@@ -319,7 +319,7 @@ export function AssistantDock() {
 								{view === "chat" && (
 									<AssistantThread
 										compact
-										examples={examples}
+										examples={surface?.examples ?? examples}
 									/>
 								)}
 								{view === "preferences" && (

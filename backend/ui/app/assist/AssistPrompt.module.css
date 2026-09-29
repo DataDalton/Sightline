@@ -1,0 +1,112 @@
+.prompt {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+
+/* One line, drawn apart from the form's own fields so it reads as a way to
+   fill them in rather than as another of them. */
+.row {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+	border: 1px solid
+		color-mix(in srgb, var(--brand) 45%, var(--border-default));
+	border-radius: var(--radius-md);
+	background: color-mix(in srgb, var(--brand) 6%, var(--surface-raised));
+}
+
+.row:focus-within {
+	border-color: var(--focus-ring);
+}
+
+.icon {
+	display: inline-flex;
+	flex-shrink: 0;
+	color: var(--brand-strong);
+}
+
+.input {
+	flex: 1;
+	min-width: 0;
+	padding: var(--space-2) 0;
+	border: none;
+	background: transparent;
+	color: var(--text-primary);
+	font: inherit;
+	font-size: var(--text-sm);
+}
+
+.input:focus {
+	outline: none;
+}
+
+.input::placeholder {
+	color: var(--text-muted);
+}
+
+.button {
+	flex-shrink: 0;
+	padding: var(--space-1) var(--space-3);
+	border-radius: var(--radius-sm);
+	background: var(--brand);
+	color: var(--brand-contrast);
+	font-size: var(--text-sm);
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.button:hover:not(:disabled) {
+	background: var(--brand-strong);
+}
+
+.button:disabled {
+	opacity: 0.5;
+}
+
+.status {
+	margin: 0;
+	padding-left: var(--space-3);
+	color: var(--text-secondary);
+	font-size: var(--text-sm);
+}
+
+.statusWorking {
+	color: var(--text-muted);
+}
+
+/* Three dots after the step, so a long query reads as still going. */
+.statusWorking::after {
+	content: "";
+	display: inline-block;
+	width: 1.2em;
+	text-align: left;
+	animation: dots 1.2s steps(4, end) infinite;
+}
+
+@keyframes dots {
+	0% {
+		content: "";
+	}
+	25% {
+		content: ".";
+	}
+	50% {
+		content: "..";
+	}
+	75% {
+		content: "...";
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.statusWorking::after {
+		animation: none;
+		content: "...";
+	}
+}
+
+.statusFailed {
+	color: var(--danger);
+}

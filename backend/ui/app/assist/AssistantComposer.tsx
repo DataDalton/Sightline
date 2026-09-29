@@ -25,8 +25,16 @@ export function AssistantComposer({
 	// has nothing on it worth pointing at but the conversation.
 	pickable?: boolean;
 }) {
-	const { send, stop, busy, attachments, detach, picking, setPicking } =
-		useAssistant();
+	const {
+		send,
+		stop,
+		busy,
+		attachments,
+		detach,
+		picking,
+		setPicking,
+		surface,
+	} = useAssistant();
 	const { data } = useSWR<{ sources: SourceMeta[] }>("/api/authoring");
 	const sources = [...(data?.sources ?? [])].sort((a, b) =>
 		a.title.localeCompare(b.title),
@@ -93,7 +101,7 @@ export function AssistantComposer({
 				className={styles.question}
 				value={question}
 				rows={compact ? 2 : 3}
-				placeholder="Ask about your data"
+				placeholder={surface?.placeholder ?? "Ask about your data"}
 				aria-label="Your question"
 				onChange={(e) => setQuestion(e.target.value)}
 				onKeyDown={(e) => {

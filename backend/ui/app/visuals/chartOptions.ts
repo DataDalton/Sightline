@@ -768,11 +768,26 @@ export function buildPie(ctx: ChartContext, donut: boolean) {
 				]
 			: ordered;
 
-	const data = grouped.map((r, i) => ({
-		name: String(r[field] ?? ""),
-		value: toNumber(r[measure]) ?? 0,
-		itemStyle: { color: colors.series[i % colors.series.length] },
-	}));
+	// The slices a reader clicked stay solid and the rest are dimmed, as on a
+	// bar chart. Matched by name rather than by row, because the slices are
+	// sorted and grouped here and no longer line up with the rows. Nothing is
+	// dimmed when every slice is selected, since there is nothing to contrast.
+	const selected =
+		ctx.highlight && ctx.highlight.values.length < grouped.length
+			? new Set(ctx.highlight.values)
+			: null;
+
+	const data = grouped.map((r, i) => {
+		const name = String(r[field] ?? "");
+		return {
+			name,
+			value: toNumber(r[measure]) ?? 0,
+			itemStyle: {
+				color: colors.series[i % colors.series.length],
+				...(selected ? { opacity: selected.has(name) ? 1 : 0.25 } : {}),
+			},
+		};
+	});
 
 	// What each slice says about itself. Percentage is the default because a
 	// pie is a composition, and the figure a reader wants from one is the share.

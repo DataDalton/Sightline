@@ -8,11 +8,14 @@ import {
 	parse,
 	type FormulaColumn,
 } from "../../lib/sheets/formula";
+import type { FormulaDraft } from "../../lib/assistant/surfaces/formula";
+import { AssistPrompt } from "../assist/AssistPrompt";
 import { Modal } from "../components/shared/Modal";
 import styles from "./Sheets.module.css";
 
 // Writing a formula column: a name, the formula, the columns it can read one
-// click away, and the result on the first rows as it is typed.
+// click away, and the result on the first rows as it is typed. The assistant
+// can write it from a description, tried on the same rows before it is put in.
 
 const help: { name: string; example: string; says: string }[] = [
 	{
@@ -174,6 +177,26 @@ export function FormulaDialog({
 			}
 		>
 			<div className={styles.form}>
+				<AssistPrompt
+					kind="formula"
+					state={() => ({
+						columns,
+						formulas: formulas.filter((f) => f.id !== editing?.id),
+						// Enough rows to try it on, few enough to send.
+						sampleRows: sampleRows.slice(0, 20),
+						editing: editing
+							? { name: editing.name, formula: editing.formula }
+							: null,
+					})}
+					onDraft={(raw) => {
+						const draft = raw as FormulaDraft;
+						setName(draft.name);
+						setFormula(draft.formula);
+					}}
+					placeholder="Each region's share of revenue, as a percentage"
+					label="Describe the column"
+				/>
+
 				<label className={styles.field}>
 					<span className={styles.fieldLabel}>Name</span>
 					<input

@@ -36,6 +36,8 @@ import {
 	type MenuAction,
 } from "./SheetGrid";
 import { useSheet } from "./useSheet";
+import type { SheetDraft } from "../../lib/assistant/surfaces/sheet";
+import { useAssistantSurface } from "../assist/useAssistantSurface";
 import styles from "./Sheets.module.css";
 
 // A sheet, open. The search bar above says what to read from the dataset,
@@ -99,6 +101,28 @@ export default function SheetEditor({ id }: { id: string }) {
 	// --- Table data --------------------------------------------------------
 
 	const table = s.data?.mode === "table" ? (s.data as TableData) : null;
+
+	// The assistant can change the sheet: its fields, conditions, formula
+	// columns, sort and pivot. What it sends is applied like any other change,
+	// saved the same way, and shown to everyone else in the sheet.
+	useAssistantSurface(
+		def && s.editable
+			? {
+					kind: "sheet",
+					state: () => ({
+						definition: def,
+						sampleRows: table?.rows.slice(0, 20) ?? [],
+					}),
+					apply: (draft) => update(draft as SheetDraft),
+					placeholder: "Add a column, a formula or a pivot",
+					examples: [
+						"Add a column for margin as a percentage of revenue",
+						"Only show the online channel",
+						"Pivot this by region and month",
+					],
+				}
+			: null,
+	);
 	const pivot = s.data?.mode === "pivot" ? (s.data as PivotData) : null;
 
 	const fieldHints = useMemo(() => {

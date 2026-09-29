@@ -222,3 +222,9 @@
 		display: none;
 	}
 }
+
+/* The kind a visual is now, when the picker is changing it. */
+.cardCurrent {
+	border-color: var(--brand);
+	background: var(--brand-subtle);
+}

@@ -279,36 +279,54 @@
 	background: var(--danger-subtle);
 }
 
-/* --- The dialog -------------------------------------------------------- */
+/* --- The dialog -------------------------------------------------------
+
+   One sentence holds the rule, each part of it a choice, so what the alert
+   does is read in the order it would be said. Below it, the values as they
+   are now, and a line for when it is checked that opens when clicked. */
 
 .form {
 	display: flex;
 	flex-direction: column;
-	gap: var(--space-4);
+	gap: var(--space-5);
 }
 
-.field {
+.nameInput {
+	width: 100%;
+	padding: var(--space-1) 0;
+	border: none;
+	border-bottom: 1px solid transparent;
+	background: transparent;
+	color: var(--text-primary);
+	font: inherit;
+	font-size: var(--text-lg);
+	font-weight: 600;
+}
+
+.nameInput::placeholder {
+	color: var(--text-muted);
+	font-weight: 500;
+}
+
+.nameInput:hover,
+.nameInput:focus {
+	border-bottom-color: var(--border-default);
+	outline: none;
+}
+
+.block {
 	display: flex;
 	flex-direction: column;
-	gap: var(--space-1);
+	gap: var(--space-2);
 	min-width: 0;
 }
 
-.fieldRow {
-	display: grid;
-	grid-template-columns: 1fr 1fr;
-	gap: var(--space-3);
-}
-
-@media (max-width: 560px) {
-	.fieldRow {
-		grid-template-columns: 1fr;
-	}
-}
-
-.fieldLabel {
-	font-size: var(--text-sm);
+.blockLabel {
+	color: var(--text-muted);
+	font-size: var(--text-xs);
 	font-weight: 600;
+	letter-spacing: 0.05em;
+	text-transform: uppercase;
 }
 
 .fieldHint {
@@ -316,120 +334,294 @@
 	font-size: var(--text-sm);
 }
 
-.input {
-	width: 100%;
-	padding: var(--space-2) var(--space-3);
+/* The rule, as a sentence. Each choice is underlined in the accent so it
+   reads as something to change without being boxed in. */
+.sentence {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-2) var(--space-1);
+	padding: var(--space-4);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-lg);
+	background: var(--surface-sunken);
+	font-size: var(--text-md, 1rem);
+	line-height: 1.8;
+}
+
+.words {
+	color: var(--text-secondary);
+	white-space: nowrap;
+}
+
+.sentence .token {
+	display: inline-block;
+	width: auto;
+	max-width: 100%;
+	border-bottom: 2px solid color-mix(in srgb, var(--brand) 70%, transparent);
+	border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+	font-weight: 600;
+}
+
+.sentence .tokenEmpty {
+	border-bottom-style: dashed;
+}
+
+.together {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1);
+	flex-wrap: nowrap;
+	max-width: 100%;
+}
+
+.thresholdWrap {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+	border-bottom: 2px solid color-mix(in srgb, var(--brand) 70%, transparent);
+}
+
+.threshold {
+	width: 9ch;
+	padding: var(--space-1) var(--space-2);
+	border: none;
+	border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+	background: transparent;
+	color: var(--text-primary);
+	font: inherit;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.threshold:hover {
+	background: var(--state-hover);
+}
+
+.threshold:focus {
+	outline: none;
+	background: var(--state-hover);
+}
+
+.unit {
+	padding-right: var(--space-2);
+	color: var(--text-muted);
+	font-weight: 600;
+}
+
+/* Conditions as chips, with a box at the end that takes the next one in the
+   words Explore reads. */
+.chips {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-2);
+	padding: var(--space-2);
 	border: 1px solid var(--border-default);
 	border-radius: var(--radius-md);
 	background: var(--surface-raised);
+}
+
+.chips:focus-within {
+	border-color: var(--focus-ring);
+}
+
+.chip {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1);
+	max-width: 100%;
+	padding: 2px 4px 2px var(--space-2);
+	border-radius: var(--radius-full);
+	background: var(--brand-subtle);
+	font-size: var(--text-sm);
+}
+
+.chipJoin {
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+	font-weight: 600;
+	text-transform: uppercase;
+}
+
+.chipText {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.chipRemove {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	border-radius: var(--radius-full);
+	color: var(--text-muted);
+}
+
+.chipRemove:hover {
+	background: var(--state-hover);
 	color: var(--text-primary);
 }
 
-.input:focus {
-	border-color: var(--focus-ring);
+.chipInput {
+	flex: 1;
+	min-width: 180px;
+	padding: var(--space-1);
+	border: none;
+	background: transparent;
+	color: var(--text-primary);
+	font: inherit;
+	font-size: var(--text-sm);
+}
+
+.chipInput:focus {
 	outline: none;
 }
 
-.filters {
+.chipsFoot {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
 	gap: var(--space-3);
-	padding: var(--space-2) var(--space-3);
+	flex-wrap: wrap;
+}
+
+/* The values now, as bars, with the threshold drawn across them where there
+   is one, so which groups would be reported reads at a glance. */
+.now {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+	padding: var(--space-4);
 	border: 1px solid var(--border-subtle);
-	border-radius: var(--radius-md);
-	background: var(--surface-sunken);
+	border-radius: var(--radius-lg);
 }
 
-.filterText {
-	font-family: var(--font-mono);
-	font-size: var(--text-sm);
-	overflow-wrap: anywhere;
+.nowHead {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: var(--space-3);
+	flex-wrap: wrap;
 }
 
-.filterActions {
+.nowBig {
+	font-size: var(--text-2xl, 1.75rem);
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	line-height: 1.1;
+}
+
+.pill {
 	display: inline-flex;
-	flex-shrink: 0;
-	gap: var(--space-1);
+	align-items: center;
+	padding: 2px var(--space-2);
+	border-radius: var(--radius-full);
+	background: var(--state-hover);
+	color: var(--text-secondary);
+	font-size: var(--text-xs);
+	font-weight: 600;
+	white-space: nowrap;
 }
 
-.conditionRow {
+.pillHot {
+	background: var(--warning-subtle, var(--brand-subtle));
+	color: var(--warning, var(--brand-strong));
+}
+
+.bars {
+	display: grid;
+	grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) auto;
+	align-items: center;
+	gap: var(--space-2) var(--space-3);
+	list-style: none;
+	font-size: var(--text-sm);
+}
+
+.barName {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--text-secondary);
+}
+
+.barTrack {
+	position: relative;
+	height: 10px;
+	border-radius: var(--radius-full);
+	background: var(--state-hover);
+}
+
+.barFill {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	border-radius: var(--radius-full);
+	background: color-mix(in srgb, var(--brand) 55%, var(--surface-raised));
+}
+
+.barFillHot {
+	background: var(--warning, var(--brand-strong));
+}
+
+.barLine {
+	position: absolute;
+	top: -4px;
+	bottom: -4px;
+	width: 2px;
+	margin-left: -1px;
+	background: var(--text-primary);
+}
+
+.barValue {
+	font-variant-numeric: tabular-nums;
+	font-weight: 600;
+	text-align: right;
+	white-space: nowrap;
+}
+
+.more {
+	color: var(--text-muted);
+	font-size: var(--text-sm);
+}
+
+/* When it is checked, as one line until it is opened. */
+.schedule {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-3);
+	flex-wrap: wrap;
+	font-size: var(--text-sm);
+}
+
+.scheduleText {
+	color: var(--text-secondary);
+}
+
+.scheduleRow {
 	display: flex;
 	align-items: center;
 	gap: var(--space-2);
 	flex-wrap: wrap;
 }
 
-.conditionRow > * {
-	min-width: 150px;
+.scheduleRow > * {
 	flex: 1;
+	min-width: 140px;
 }
 
-.thresholdWrap {
-	position: relative;
-	display: flex;
-	align-items: center;
-}
+@media (max-width: 560px) {
+	.sentence {
+		padding: var(--space-3);
+	}
 
-.threshold {
-	font-variant-numeric: tabular-nums;
-}
-
-.unit {
-	position: absolute;
-	right: var(--space-3);
-	color: var(--text-muted);
-	pointer-events: none;
-}
-
-.check {
-	display: inline-flex;
-	align-items: center;
-	gap: var(--space-2);
-	margin-top: var(--space-1);
-	font-size: var(--text-sm);
-}
-
-.preview {
-	display: flex;
-	flex-direction: column;
-	gap: var(--space-2);
-	padding: var(--space-3) var(--space-4);
-	border-radius: var(--radius-md);
-	background: var(--surface-sunken);
-}
-
-.previewLabel {
-	color: var(--text-muted);
-	font-size: var(--text-xs);
-	font-weight: 600;
-	letter-spacing: 0.04em;
-	text-transform: uppercase;
-}
-
-.previewBig {
-	font-size: var(--text-xl);
-	font-weight: 600;
-	font-variant-numeric: tabular-nums;
-}
-
-.previewList {
-	display: flex;
-	flex-direction: column;
-	gap: 2px;
-	list-style: none;
-	font-size: var(--text-sm);
-}
-
-.previewList li {
-	display: flex;
-	justify-content: space-between;
-	gap: var(--space-3);
-}
-
-.previewValue {
-	font-weight: 600;
-	font-variant-numeric: tabular-nums;
+	.bars {
+		grid-template-columns: minmax(0, 6rem) minmax(0, 1fr) auto;
+	}
 }
 
 .formError {

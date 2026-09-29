@@ -107,6 +107,10 @@ export function applyEvent(
 			};
 		case "chart":
 			return { ...message, charts: [...message.charts, event.chart] };
+		// Handed to the screen that asked. The step that made it already
+		// says what it was.
+		case "draft":
+			return message;
 		case "done":
 			return {
 				...message,

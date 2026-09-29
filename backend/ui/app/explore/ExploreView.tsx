@@ -20,6 +20,9 @@ import { AlertDialog } from "../alerts/AlertDialog";
 import { createSheet } from "../sheets/SheetsList";
 import type { AlertRecord } from "../../lib/alerts/store";
 import { useNotify } from "../notify/NotifyContext";
+import { useAssistant } from "../assist/AssistantContext";
+import { useAssistantSurface } from "../assist/useAssistantSurface";
+import { useUser } from "../context/UserContext";
 import styles from "./Explore.module.css";
 
 // A table of whatever somebody wants to see, built from one search bar.
@@ -84,6 +87,22 @@ export default function ExploreView() {
 	const current: ExploreState | null = sourceKey
 		? { sourceKey, columns, conditions }
 		: null;
+
+	// The assistant can set the table up from a description, and change it
+	// with a follow-up, since it is told what the bar holds each time.
+	const { user } = useUser();
+	const { setPanelOpen } = useAssistant();
+	useAssistantSurface({
+		kind: "explore",
+		state: () => current ?? { sourceKey: "", columns: [], conditions: [] },
+		apply: (draft) => apply(draft as ExploreState),
+		placeholder: "Describe the table you want",
+		examples: [
+			"Top customers by revenue this year, excluding internal accounts",
+			"Orders by region and month for the online channel",
+			"Now split it by product category",
+		],
+	});
 	const encoded = current ? encodeState(current) : "";
 
 	// Written back as it changes. Replaced rather than pushed, so the back
@@ -181,6 +200,29 @@ export default function ExploreView() {
 					</p>
 				</div>
 				<div className={styles.headerActions}>
+					{user?.assistant && (
+						<button
+							type="button"
+							className={styles.headerButton}
+							onClick={() => setPanelOpen(true)}
+							title="Describe a table and have it set up here"
+						>
+							<svg
+								width="15"
+								height="15"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								strokeWidth="2"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								aria-hidden="true"
+							>
+								<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" />
+							</svg>
+							Ask
+						</button>
+					)}
 					{source && columns.length > 0 && (
 						<button
 							type="button"

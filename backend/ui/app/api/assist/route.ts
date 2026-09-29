@@ -13,6 +13,7 @@ import { runAgent, type HistoryTurn } from "@/lib/assistant/agent";
 import { describePage } from "@/lib/assistant/pageContext";
 import type { AssistantEvent } from "@/lib/assistant/events";
 import { getProfile } from "@/lib/assistant/store";
+import { buildSurface } from "@/lib/assistant/surfaces";
 
 // Something the person pointed at on the page with the picker.
 interface Attachment {
@@ -38,6 +39,10 @@ const maxQuestion = 4000;
 const maxHistory = 16;
 const maxHistoryChars = 8000;
 
+// What a screen may send about itself: a page of visuals, a sheet's first
+// rows. Anything larger is not the state of a screen.
+const maxSurfaceChars = 200_000;
+
 export async function POST(request: NextRequest) {
 	await ensureReadyOrDegrade();
 
@@ -61,12 +66,20 @@ export async function POST(request: NextRequest) {
 	let path = "";
 	let title = "";
 	let attachments: Attachment[] = [];
+	let rawSurface: unknown = null;
 	try {
 		const body = await request.json();
 		question = String(body?.question ?? "").trim();
 		asked = body?.sourceKey ? String(body.sourceKey) : null;
 		path = typeof body?.path === "string" ? body.path.slice(0, 500) : "";
 		title = typeof body?.title === "string" ? body.title.slice(0, 300) : "";
+		rawSurface = body?.surface ?? null;
+		if (JSON.stringify(rawSurface).length > maxSurfaceChars) {
+			return NextResponse.json(
+				{ error: "The screen sent too much to work with" },
+				{ status: 413 },
+			);
+		}
 		attachments = (Array.isArray(body?.attachments) ? body.attachments : [])
 			.slice(0, maxAttachments)
 			.map((a: Record<string, unknown>) => ({
@@ -126,8 +139,13 @@ export async function POST(request: NextRequest) {
 		);
 	}
 
-	const preferred = asked
-		? (available.find((s) => s.sourceKey === asked) ?? null)
+	// The screen the question came from, which offers the tools that fill it
+	// in. Built from the datasets this person can read, like everything else.
+	const surface = buildSurface(rawSurface, available);
+
+	const preferredKey = asked ?? surface?.preferredSourceKey ?? null;
+	const preferred = preferredKey
+		? (available.find((s) => s.sourceKey === preferredKey) ?? null)
 		: null;
 
 	const policy = await resolvePolicyClass(identity);
@@ -192,6 +210,7 @@ export async function POST(request: NextRequest) {
 						context,
 						profile,
 						pointedAt,
+						surface,
 					},
 					emit,
 					abort.signal,

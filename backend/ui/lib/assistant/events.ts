@@ -52,6 +52,8 @@ export type StepKind =
 	| "list_sources"
 	| "describe_source"
 	| "run_query"
+	// Filling in the screen the question was asked from.
+	| "draft"
 	| "unknown";
 
 export type AssistantEvent =
@@ -68,6 +70,10 @@ export type AssistantEvent =
 			query?: QueryOut;
 	  }
 	| { type: "chart"; chart: ChartOut }
+	// Something to put on the screen the question was asked from: an alert,
+	// a formula, a table, edits to a page. Checked before it is sent, and
+	// applied by the screen as an unsaved change.
+	| { type: "draft"; kind: string; draft: unknown }
 	| { type: "done"; ranAs: "caller" | "app" }
 	| { type: "error"; message: string };
 

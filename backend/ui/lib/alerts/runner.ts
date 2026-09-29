@@ -86,7 +86,7 @@ function readingsFrom(definition: AlertDefinition, rows: Row[]): Reading[] {
 
 // Where a notification takes somebody: Explore, holding the same numbers the
 // alert read, so the tap lands on the figures rather than on a description.
-function exploreLink(definition: AlertDefinition): string {
+export function exploreLink(definition: AlertDefinition): string {
 	const state = encodeState({
 		sourceKey: definition.sourceKey,
 		columns: definition.groupBy

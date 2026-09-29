@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
 	visualByType,
 	checkEncoding,
@@ -26,7 +26,15 @@ import { Toggle } from "../components/shared/Toggle";
 import { HistoryPanel } from "./HistoryPanel";
 import { PageSettings } from "./PageSettings";
 import { Check, FieldList } from "./FieldList";
-import { Hint, Section, SectionGroup } from "./PanelSection";
+import {
+	Chevron,
+	CloseIcon,
+	Hint,
+	Section,
+	SectionGroup,
+} from "./PanelSection";
+import { createPortal } from "react-dom";
+import { VisualPicker } from "./VisualPicker";
 import type { PageConfig } from "./ReportEditor";
 import { isTemporalField, type SourceMeta } from "../visuals/types";
 import type { EditableVisual } from "./types";
@@ -74,6 +82,10 @@ interface PropertiesPanelProps {
 	// button in the toolbar competing with the arranging controls.
 	panelTab: "page" | "report" | "history";
 	onPanelTab: (tab: "page" | "report" | "history") => void;
+	// Closes the panel, which the rail beside it opens again. The rail also
+	// picks which of page, report and history is shown, so the panel does not
+	// repeat that choice as tabs of its own.
+	onClose?: () => void;
 	historySlug: string;
 	historyKey: number;
 	// The history's comparison draws both versions of the page, so it needs
@@ -83,7 +95,7 @@ interface PropertiesPanelProps {
 	onRestored: () => void;
 }
 
-type Tab = "data" | "format";
+type Tab = "data" | "behaviour" | "style";
 
 // A group a visual could be put into: what it is called, and whether putting
 // this visual in it would make a loop.
@@ -143,36 +155,109 @@ export function PropertiesPanel({
 	reportId,
 	sources,
 	onRestored,
+	onClose,
 }: PropertiesPanelProps) {
 	const [tab, setTab] = useState<Tab>("data");
 	const [fieldSearch, setFieldSearch] = useState("");
+	// Text typed into the panel's search, which shows every tab at once with
+	// only the groups that mention it.
+	const [query, setQuery] = useState("");
+	const [picking, setPicking] = useState(false);
+	// What the last type change had to take off, so the author is told rather
+	// than left to notice.
+	const [trimmed, setTrimmed] = useState<{
+		dimensions: number;
+		measures: number;
+	} | null>(null);
+	const [noMatch, setNoMatch] = useState(false);
+	const bodyRef = useRef<HTMLDivElement | null>(null);
+
+	// A different visual starts clean. The tab is kept, since an author
+	// styling one chart after another is still styling.
+	const visualId = visual?.visualId;
+	useEffect(() => {
+		setTrimmed(null);
+		setQuery("");
+		setPicking(false);
+	}, [visualId]);
+
+	// Whether the search hid every group, read after the groups have decided.
+	// A tab with nothing left showing is hidden along with its heading.
+	useLayoutEffect(() => {
+		const body = bodyRef.current;
+		for (const tabGroup of Array.from(
+			body?.querySelectorAll<HTMLElement>("[data-search-tab]") ?? [],
+		)) {
+			tabGroup.hidden = Boolean(
+				query.trim() &&
+				!tabGroup.querySelector("[data-section]:not([hidden])"),
+			);
+		}
+		const none =
+			Boolean(query.trim()) &&
+			(body?.querySelectorAll("[data-section]:not([hidden])").length ??
+				0) === 0;
+		setNoMatch((held) => (held === none ? held : none));
+	});
 
 	const definition = visual ? visualByType[visual.visualType] : undefined;
+
+	const close = onClose ? (
+		<button
+			type="button"
+			className={styles.panelBack}
+			onClick={onClose}
+			title="Close the panel"
+			aria-label="Close the panel"
+		>
+			<svg
+				width="14"
+				height="14"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="2.5"
+				strokeLinecap="round"
+				aria-hidden="true"
+			>
+				<path d="M6 6l12 12M18 6L6 18" />
+			</svg>
+		</button>
+	) : null;
 
 	if (!visual || !definition) {
 		return (
 			<div className={styles.panel}>
 				<div className={styles.panelHead}>
-					<span className={styles.panelKind}>Page</span>
+					<span className={styles.panelKind}>
+						{panelTab === "report"
+							? "Report"
+							: panelTab === "history"
+								? "History"
+								: "Page"}
+					</span>
 					<span className={styles.panelSubject}>
 						{pageTitle.trim() || "Untitled page"}
 					</span>
+					{close}
 				</div>
 
-				<PanelTabs
-					tabs={[
-						{ id: "page" as const, label: "Page" },
-						// Its own tab rather than a heading part way down the
-						// page settings. What a report is called, where it sits
-						// and whether it still exists are not properties of the
-						// page somebody happens to have open, and looking for
-						// them under "Page" means not finding them.
-						{ id: "report" as const, label: "Report" },
-						{ id: "history" as const, label: "History" },
-					]}
-					value={panelTab}
-					onChange={onPanelTab}
-				/>
+				{/* Its own place rather than a heading part way down the page
+				    settings. What a report is called, where it sits and
+				    whether it still exists are not properties of the page
+				    somebody happens to have open. With the rail beside the
+				    panel choosing between them, the tabs are left out. */}
+				{!onClose && (
+					<PanelTabs
+						tabs={[
+							{ id: "page" as const, label: "Page" },
+							{ id: "report" as const, label: "Report" },
+							{ id: "history" as const, label: "History" },
+						]}
+						value={panelTab}
+						onChange={onPanelTab}
+					/>
+				)}
 
 				{panelTab === "history" ? (
 					<HistoryPanel
@@ -284,87 +369,300 @@ export function PropertiesPanel({
 		};
 	};
 
+	const problem = checkEncoding(visual.visualType, dimensions, measures);
+
 	return (
 		<div className={styles.panel}>
-			<div className={styles.panelHead}>
-				{/* The only way back to the page settings was to find an empty
-				    patch of canvas and click it, which on a full page there is
-				    not one of. */}
-				<button
-					type="button"
-					className={styles.panelBack}
-					onClick={onDeselect}
-					title="Back to page settings"
-					aria-label="Back to page settings"
-				>
-					<svg
-						width="14"
-						height="14"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						strokeWidth="2.5"
-						strokeLinecap="round"
-						strokeLinejoin="round"
-						aria-hidden="true"
+			{/* What is selected and what can be done to it, in one place: its
+			    kind, which opens the picker to change it, its title edited
+			    where it is shown, and copying or removing it. Removing is one
+			    Ctrl+Z from coming back, like every other edit here. */}
+			<div className={styles.visualHead}>
+				<div className={styles.visualHeadRow}>
+					<button
+						type="button"
+						className={styles.typeChip}
+						onClick={() => setPicking(true)}
+						title={`${definition.guidance} Click to change the kind of visual.`}
+						disabled={readOnly}
 					>
-						<path d="M15 18l-6-6 6-6" />
-					</svg>
-				</button>
-				<span className={styles.panelKind}>{definition.label}</span>
-				<span className={styles.panelSubject}>
-					{visual.title?.trim() || "Untitled"}
-				</span>
+						<span>{definition.label}</span>
+						<Chevron open={false} />
+					</button>
+					<span className={styles.visualHeadActions}>
+						<button
+							type="button"
+							className={styles.headIcon}
+							onClick={onDuplicate}
+							title="Duplicate. A copy lands beside it with the same fields and formatting. Ctrl+C and Ctrl+V move one between pages."
+							aria-label="Duplicate visual"
+							disabled={readOnly}
+						>
+							<svg
+								width="15"
+								height="15"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								strokeWidth="2"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								aria-hidden="true"
+							>
+								<rect
+									x="9"
+									y="9"
+									width="12"
+									height="12"
+									rx="2"
+								/>
+								<path d="M5 15V5a2 2 0 0 1 2-2h10" />
+							</svg>
+						</button>
+						<button
+							type="button"
+							className={`${styles.headIcon} ${styles.headIconDanger}`}
+							onClick={() => onRemove(visual.visualId)}
+							title="Remove from this page. Ctrl+Z puts it back."
+							aria-label="Remove visual"
+							disabled={readOnly}
+						>
+							<svg
+								width="15"
+								height="15"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								strokeWidth="2"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								aria-hidden="true"
+							>
+								<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
+							</svg>
+						</button>
+						{close}
+					</span>
+				</div>
+				<input
+					className={styles.titleInput}
+					value={visual.title ?? ""}
+					placeholder="Untitled"
+					aria-label="Title"
+					readOnly={readOnly}
+					onChange={(e) => update({ title: e.target.value })}
+				/>
+				{trimmed && (
+					<p className={styles.hint}>
+						{describeTrim(trimmed)} The rest carried over.
+					</p>
+				)}
 			</div>
 
-			<PanelTabs
-				tabs={[
-					{ id: "data" as const, label: "Data" },
-					{ id: "format" as const, label: "Format" },
-				]}
-				value={tab}
-				onChange={setTab}
-			/>
+			<div className={styles.panelSearch}>
+				<svg
+					width="13"
+					height="13"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="2"
+					strokeLinecap="round"
+					aria-hidden="true"
+				>
+					<circle cx="11" cy="11" r="7" />
+					<path d="M21 21l-4.35-4.35" />
+				</svg>
+				<input
+					value={query}
+					onChange={(e) => setQuery(e.target.value)}
+					onKeyDown={(e) => {
+						if (e.key === "Escape") setQuery("");
+					}}
+					placeholder="Find a setting, such as legend or top"
+					aria-label="Find a setting"
+				/>
+				{query && (
+					<button
+						type="button"
+						className={styles.panelSearchClear}
+						onClick={() => setQuery("")}
+						aria-label="Clear the search"
+					>
+						<CloseIcon />
+					</button>
+				)}
+			</div>
+
+			{!query && (
+				<PanelTabs
+					tabs={[
+						{ id: "data" as const, label: "Data" },
+						{ id: "behaviour" as const, label: "Behaviour" },
+						{ id: "style" as const, label: "Style" },
+					]}
+					value={tab}
+					onChange={setTab}
+				/>
+			)}
+
+			{/* What stops it drawing, with the way to fix it beside it. */}
+			{problem && !query && (
+				<div className={styles.problem} role="status">
+					<span>{problem.message}</span>
+					{tab !== "data" && (
+						<button
+							type="button"
+							className={styles.problemAction}
+							onClick={() => setTab("data")}
+						>
+							Choose fields
+						</button>
+					)}
+				</div>
+			)}
 
 			<div
+				ref={bodyRef}
 				className={`${styles.panelBody} ${readOnly ? styles.panelReadOnly : ""}`}
 			>
-				<SectionGroup>
-					{tab === "data" ? (
-						<DataTab
-							visual={visual}
-							definition={definition}
-							source={source}
-							dimensions={dimensions}
-							measures={measures}
-							groups={groups}
-							fieldSearch={fieldSearch}
-							setFieldSearch={setFieldSearch}
-							update={update}
-							updateConfig={updateConfig}
-							changeType={changeType}
-							onDuplicate={onDuplicate}
-							onRemove={onRemove}
-						/>
-					) : (
-						<FormatTab
-							visual={visual}
-							definition={definition}
-							source={source}
-							dimensions={dimensions}
-							measures={measures}
-							groups={groups}
-							style={style}
-							updateStyle={updateStyle}
-							updateConfig={updateConfig}
-						/>
+				<SectionGroup
+					query={query}
+					persistKey="sightline.editor.visualSections"
+					compactHints
+				>
+					{(query || tab === "data") && (
+						<div data-search-tab>
+							{query && (
+								<h3 className={styles.tabHeading}>Data</h3>
+							)}
+							<DataTab
+								visual={visual}
+								definition={definition}
+								source={source}
+								dimensions={dimensions}
+								measures={measures}
+								groups={groups}
+								fieldSearch={fieldSearch}
+								setFieldSearch={setFieldSearch}
+								updateConfig={updateConfig}
+								onFieldsChanged={() => setTrimmed(null)}
+							/>
+						</div>
+					)}
+					{(query || tab === "behaviour") && (
+						<div data-search-tab>
+							{query && (
+								<h3 className={styles.tabHeading}>Behaviour</h3>
+							)}
+							<BehaviourTab
+								visual={visual}
+								definition={definition}
+								source={source}
+								dimensions={dimensions}
+								measures={measures}
+								groups={groups}
+								updateConfig={updateConfig}
+							/>
+						</div>
+					)}
+					{(query || tab === "style") && (
+						<div data-search-tab>
+							{query && (
+								<h3 className={styles.tabHeading}>Style</h3>
+							)}
+							<FormatTab
+								visual={visual}
+								definition={definition}
+								source={source}
+								dimensions={dimensions}
+								measures={measures}
+								groups={groups}
+								style={style}
+								updateStyle={updateStyle}
+								updateConfig={updateConfig}
+							/>
+						</div>
 					)}
 				</SectionGroup>
+				{query && noMatch && (
+					<p className={styles.noMatch}>
+						No setting on this visual mentions &quot;{query}&quot;.
+					</p>
+				)}
 			</div>
+
+			{/* At the top of the page rather than inside the panel, which
+			    floats in a layer of its own that the header would sit over. */}
+			{picking &&
+				createPortal(
+					<VisualPicker
+						open={picking}
+						mode="change"
+						current={visual.visualType}
+						fields={{
+							dimensions: dimensions.length,
+							measures: measures.length,
+						}}
+						onPick={(next) => {
+							setPicking(false);
+							if (next === visual.visualType) return;
+							const result = changeType(next);
+							setTrimmed(
+								result.droppedDimensions ||
+									result.droppedMeasures
+									? {
+											dimensions:
+												result.droppedDimensions,
+											measures: result.droppedMeasures,
+										}
+									: null,
+							);
+						}}
+						onClose={() => setPicking(false)}
+					/>,
+					document.body,
+				)}
 		</div>
 	);
 }
 
+// Which tab each declared option belongs on, by what it changes: what the
+// visual shows, what a reader can do with it, or how it looks. Anything not
+// listed is about how it looks.
+const optionTab: Record<string, "data" | "behaviour"> = {
+	compareTo: "data",
+	compareField: "data",
+	sparkline: "data",
+	groups: "data",
+	sortBy: "data",
+	topN: "data",
+	topBy: "data",
+	nulls: "data",
+	groupTail: "data",
+	bins: "data",
+	showTotals: "data",
+	columnDimension: "data",
+	onValue: "data",
+	zoomSlider: "behaviour",
+	direction: "behaviour",
+	defaultValue: "behaviour",
+	match: "behaviour",
+	multiple: "behaviour",
+	defaultValues: "behaviour",
+	defaultPreset: "behaviour",
+	defaultOn: "behaviour",
+	presentation: "behaviour",
+	openLabel: "behaviour",
+};
+
+function tabOf(key: string): "data" | "behaviour" | "style" {
+	return optionTab[key] ?? "style";
+}
+
+// What the visual shows. Its fields first, since choosing them is the job,
+// then what narrows, ranks and compares them, then figures worked out from the
+// answer.
 function DataTab({
 	visual,
 	definition,
@@ -374,11 +672,8 @@ function DataTab({
 	groups,
 	fieldSearch,
 	setFieldSearch,
-	update,
 	updateConfig,
-	changeType,
-	onDuplicate,
-	onRemove,
+	onFieldsChanged,
 }: {
 	visual: EditableVisual;
 	definition: VisualTypeDefinition;
@@ -388,28 +683,13 @@ function DataTab({
 	groups: GroupChoice[];
 	fieldSearch: string;
 	setFieldSearch: (v: string) => void;
-	update: (patch: Partial<EditableVisual>) => void;
 	updateConfig: (patch: Record<string, unknown>) => void;
-	changeType: (nextType: string) => {
-		droppedDimensions: number;
-		droppedMeasures: number;
-	};
-	onDuplicate: () => void;
-	onRemove: (visualId: string) => void;
+	// The note about fields a type change took off is stale once the author
+	// changes the fields themselves.
+	onFieldsChanged: () => void;
 }) {
-	const problem = checkEncoding(visual.visualType, dimensions, measures);
-
-	// What the last type change had to take off, so the author is told rather
-	// than left to notice. Cleared as soon as they change anything about the
-	// encoding themselves, since by then it is describing a state that has
-	// moved on.
-	const [trimmed, setTrimmed] = useState<{
-		dimensions: number;
-		measures: number;
-	} | null>(null);
-
 	const toggle = (name: string, kind: "dimensions" | "measures") => {
-		setTrimmed(null);
+		onFieldsChanged();
 		const current = kind === "dimensions" ? dimensions : measures;
 		const next = current.includes(name)
 			? current.filter((f) => f !== name)
@@ -424,12 +704,99 @@ function DataTab({
 	) => {
 		const current = [...(kind === "dimensions" ? dimensions : measures)];
 		if (to < 0 || to >= current.length) return;
-		setTrimmed(null);
+		onFieldsChanged();
 		const [moved] = current.splice(from, 1);
 		current.splice(to, 0, moved);
 		updateConfig({ [kind]: current });
 	};
 
+	const showMeasures = definition.encoding.measures.max > 0;
+	const showDimensions = definition.encoding.dimensions.max > 0;
+
+	return (
+		<>
+			{/* One list rather than four.
+
+			    It used to be a chosen list per kind above an available list per
+			    kind, which asked an author to hold four places at once and put
+			    measures above dimensions in the panel while the table renders
+			    dimensions first. One list, chosen at the top in the order the
+			    visual uses them, is the same information in the order it
+			    actually comes out in. */}
+			{(showDimensions || showMeasures) && (
+				<Section
+					id="visual-fields"
+					title="Fields"
+					keywords="dimension measure column series"
+					count={dimensions.length + measures.length}
+					defaultOpen
+				>
+					<FieldList
+						source={source}
+						dimensions={dimensions}
+						measures={measures}
+						encoding={definition.encoding}
+						showDimensions={showDimensions}
+						showMeasures={showMeasures}
+						search={fieldSearch}
+						onSearch={setFieldSearch}
+						onToggle={toggle}
+						onMove={reorder}
+					/>
+				</Section>
+			)}
+
+			<VisualOptions
+				id="visual-shaping"
+				title="Ranking and comparison"
+				keywords="filter limit sort order top rank compare total period"
+				tab="data"
+				visual={visual}
+				definition={definition}
+				source={source}
+				dimensions={dimensions}
+				measures={measures}
+				groups={groups}
+				updateConfig={updateConfig}
+			/>
+
+			{/* Only where the answer is a set of rows to work across. A
+			    scorecard is one row, so a running total or a rank over it
+			    would be a column of one. */}
+			{(chartTypes.has(visual.visualType) ||
+				gridTypes.has(visual.visualType)) && (
+				<DerivedFigures
+					transforms={
+						(visual.config.transforms as QueryTransform[]) ?? []
+					}
+					available={[...dimensions, ...measures]}
+					onChange={(next) => updateConfig({ transforms: next })}
+				/>
+			)}
+		</>
+	);
+}
+
+// What a reader can do with the visual, and where it sits. What a click does,
+// the controls a type offers readers, the note shown under its title, and the
+// group holding it.
+function BehaviourTab({
+	visual,
+	definition,
+	source,
+	dimensions,
+	measures,
+	groups,
+	updateConfig,
+}: {
+	visual: EditableVisual;
+	definition: VisualTypeDefinition;
+	source: SourceMeta | undefined;
+	dimensions: string[];
+	measures: string[];
+	groups: GroupChoice[];
+	updateConfig: (patch: Record<string, unknown>) => void;
+}) {
 	const parentId =
 		typeof visual.config.parentId === "string"
 			? visual.config.parentId
@@ -448,177 +815,23 @@ function DataTab({
 			? visual.config.options.note
 			: "";
 
-	const showMeasures = definition.encoding.measures.max > 0;
-	const showDimensions = definition.encoding.dimensions.max > 0;
+	// A drill hierarchy turns a click into a descent rather than a
+	// cross-filter, so it is only offered where that makes sense.
+	const canDrill = definition.category !== "filter" && dimensions.length > 1;
+	const drilling = Boolean(visual.config.options?.drillFields);
+	const hasReaderControls = (definition.options ?? []).some(
+		(option) => tabOf(option.key) === "behaviour",
+	);
 
 	return (
 		<>
-			{/* The one bordered note in the panel, and it earns the border:
-			    it says what this kind of visual is for, which is the question
-			    an author has before any of the settings below it. */}
-			<p className={styles.guidance}>{definition.guidance}</p>
-
-			{problem && (
-				<div className={styles.conflict} role="status">
-					{problem.message}
-				</div>
-			)}
-
-			<Section id="visual-basics" title="Basics">
-				<div className={styles.field}>
-					<label className={styles.fieldLabel} htmlFor="visual-title">
-						Title
-					</label>
-					<input
-						id="visual-title"
-						className={styles.input}
-						value={visual.title ?? ""}
-						placeholder="Untitled"
-						onChange={(e) => update({ title: e.target.value })}
-					/>
-				</div>
-
-				<div className={styles.field}>
-					<label className={styles.fieldLabel} htmlFor="visual-type">
-						Visual type
-					</label>
-					<Select
-						id="visual-type"
-						value={visual.visualType}
-						onChange={(v) => {
-							const result = changeType(v);
-							setTrimmed(
-								result.droppedDimensions ||
-									result.droppedMeasures
-									? {
-											dimensions:
-												result.droppedDimensions,
-											measures: result.droppedMeasures,
-										}
-									: null,
-							);
-						}}
-						searchable
-						options={Object.values(visualByType).map((d) => ({
-							value: d.type,
-							label: d.label,
-						}))}
-					/>
-					{trimmed && (
-						<Hint>
-							{describeTrim(trimmed)} The rest carried over.
-						</Hint>
-					)}
-				</div>
-
-				{/* Which group holds this, for the times dragging it there is
-				    not the easy gesture: a visual already inside a group has
-				    nowhere on the canvas to be dragged out to. */}
-				{groupChoices.length > 0 && (
-					<div className={styles.field}>
-						<label
-							className={styles.fieldLabel}
-							htmlFor="visual-group"
-						>
-							Inside group
-						</label>
-						<Select
-							id="visual-group"
-							value={parentId ?? ""}
-							onChange={(next) =>
-								updateConfig({ parentId: next || undefined })
-							}
-							options={[
-								{ value: "", label: "Not in a group" },
-								...groupChoices.map((choice) => ({
-									value: choice.visualId,
-									label: choice.label,
-								})),
-							]}
-						/>
-						<Hint>
-							Dragging a visual onto a group puts it inside. This
-							is how it comes back out.
-						</Hint>
-					</div>
-				)}
-
-				{/* The line under the title. Every framed visual has rendered
-				    one for as long as the renderer has read config.options.note,
-				    and no type in the catalogue declared it, so the panel never
-				    drew a control: a note put there by a template was on the
-				    page with no way to change it. */}
-				{showNote && (
-					<div className={styles.field}>
-						<label
-							className={styles.fieldLabel}
-							htmlFor="visual-note"
-						>
-							{isNotice ? "Message" : "Note"}
-						</label>
-						<textarea
-							id="visual-note"
-							className={styles.input}
-							rows={2}
-							placeholder={
-								isNotice
-									? "What this page is waiting on"
-									: "A caveat, a definition, what to read it as"
-							}
-							value={noteValue}
-							onChange={(e) =>
-								updateConfig({
-									options: {
-										...visual.config.options,
-										note: e.target.value || undefined,
-									},
-								})
-							}
-						/>
-						<Hint>
-							{isNotice
-								? "Shown in place of the visual."
-								: "Shown under the title, above the visual."}
-						</Hint>
-					</div>
-				)}
-			</Section>
-
-			{/* One list rather than four.
-
-			    It used to be a chosen list per kind above an available list per
-			    kind, which asked an author to hold four places at once and put
-			    measures above dimensions in the panel while the table renders
-			    dimensions first. One list, chosen at the top in the order the
-			    visual uses them, is the same information in the order it
-			    actually comes out in. */}
-			<Section
-				id="visual-fields"
-				title="Fields"
-				count={dimensions.length + measures.length}
-			>
-				<FieldList
-					source={source}
-					dimensions={dimensions}
-					measures={measures}
-					encoding={definition.encoding}
-					showDimensions={showDimensions}
-					showMeasures={showMeasures}
-					search={fieldSearch}
-					onSearch={setFieldSearch}
-					onToggle={toggle}
-					onMove={reorder}
-				/>
-			</Section>
-
-			{/* A drill hierarchy turns a click into a descent rather than a
-			    cross-filter, so it is only offered where that makes sense. */}
-			{definition.category !== "filter" && dimensions.length > 1 && (
+			{canDrill && (
 				<Section
 					id="visual-drill"
-					title="Drill hierarchy"
-					defaultOpen={false}
-					count={visual.config.options?.drillFields ? 1 : 0}
+					title="Clicking"
+					keywords="drill hierarchy cross filter click descend"
+					count={drilling ? 1 : 0}
+					defaultOpen
 				>
 					<button
 						type="button"
@@ -627,71 +840,116 @@ function DataTab({
 							updateConfig({
 								options: {
 									...visual.config.options,
-									drillFields: visual.config.options
-										?.drillFields
+									drillFields: drilling
 										? undefined
 										: dimensions,
 								},
 							})
 						}
 					>
-						<Check
-							on={Boolean(visual.config.options?.drillFields)}
-						/>
-						Use the selected dimensions as a drill path
+						<Check on={drilling} />
+						Drill down through the dimensions
 					</button>
 					<Hint>
-						Clicking descends the dimensions in the order above
-						instead of cross-filtering the page.
+						{drilling
+							? "Clicking descends the dimensions in the order they are listed under Fields."
+							: "Clicking filters the rest of the page to what was clicked. Turn this on to descend the dimensions instead, in the order they are listed under Fields."}
 					</Hint>
 				</Section>
 			)}
 
-			{/* Only where the answer is a set of rows to work across. A
-			    scorecard is one row, so a running total or a rank over it
-			    would be a column of one. */}
-			{(chartTypes.has(visual.visualType) ||
-				gridTypes.has(visual.visualType)) && (
-				<DerivedFigures
-					transforms={
-						(visual.config.transforms as QueryTransform[]) ?? []
-					}
-					available={[...dimensions, ...measures]}
-					onChange={(next) => updateConfig({ transforms: next })}
-				/>
+			<VisualOptions
+				id="visual-interaction"
+				title="Reader controls"
+				keywords="zoom default open filter"
+				tab="behaviour"
+				visual={visual}
+				definition={definition}
+				source={source}
+				dimensions={dimensions}
+				measures={measures}
+				groups={groups}
+				updateConfig={updateConfig}
+			/>
+
+			{showNote && (
+				<Section
+					id="visual-note"
+					title={isNotice ? "Message" : "Note"}
+					keywords="caveat caption subtitle"
+					count={noteValue ? 1 : 0}
+					defaultOpen
+				>
+					<textarea
+						id="visual-note"
+						className={styles.input}
+						rows={2}
+						aria-label={isNotice ? "Message" : "Note"}
+						placeholder={
+							isNotice
+								? "What this page is waiting on"
+								: "A caveat, a definition, what to read it as"
+						}
+						value={noteValue}
+						onChange={(e) =>
+							updateConfig({
+								options: {
+									...visual.config.options,
+									note: e.target.value || undefined,
+								},
+							})
+						}
+					/>
+					<Hint>
+						{isNotice
+							? "Shown in place of the visual."
+							: "Shown under the title, above the visual."}
+					</Hint>
+				</Section>
 			)}
 
-			<Section id="visual-copy" title="Copy">
-				<Hint>
-					A copy lands beside this one with the same fields, options
-					and formatting, ready to be pointed somewhere else. Ctrl+C
-					and Ctrl+V move one between pages and reports.
-				</Hint>
-				<button
-					type="button"
-					className={styles.panelButton}
-					onClick={onDuplicate}
+			{/* Which group holds this, for the times dragging it there is not
+			    the easy gesture. A visual already inside a group has nowhere on
+			    the canvas to be dragged out to. */}
+			{groupChoices.length > 0 && (
+				<Section
+					id="visual-group"
+					title="Group"
+					keywords="container inside parent"
+					count={parentId ? 1 : 0}
+					defaultOpen={false}
 				>
-					Duplicate visual
-				</button>
-			</Section>
+					<Select
+						id="visual-group"
+						value={parentId ?? ""}
+						onChange={(next) =>
+							updateConfig({ parentId: next || undefined })
+						}
+						ariaLabel="Inside group"
+						options={[
+							{ value: "", label: "Not in a group" },
+							...groupChoices.map((choice) => ({
+								value: choice.visualId,
+								label: choice.label,
+							})),
+						]}
+					/>
+					<Hint>
+						Dragging a visual onto a group puts it inside. This is
+						how it comes back out.
+					</Hint>
+				</Section>
+			)}
 
-			{/* Set apart rather than stacked with the settings, and matching
-			    the delete control on the Report tab, so the one thing in the
-			    panel that cannot be undone looks the same wherever it is. */}
-			<div className={styles.dangerBlock}>
-				<span className={styles.fieldLabel}>Remove this visual</span>
-				<Hint>
-					It comes off this page. Nothing else on the page changes.
-				</Hint>
-				<button
-					type="button"
-					className={styles.dangerButton}
-					onClick={() => onRemove(visual.visualId)}
-				>
-					Remove visual
-				</button>
-			</div>
+			{!canDrill &&
+				!hasReaderControls &&
+				!showNote &&
+				groupChoices.length === 0 && (
+					<p className={styles.hint}>
+						Nothing about how readers use this kind of visual can be
+						changed.
+					</p>
+				)}
 		</>
 	);
 }
@@ -705,6 +963,10 @@ function DataTab({
 // control by declaring it, and the default the control shows is the same one
 // the renderer falls back to.
 function VisualOptions({
+	id,
+	title,
+	keywords,
+	tab,
 	visual,
 	definition,
 	source,
@@ -713,6 +975,11 @@ function VisualOptions({
 	groups,
 	updateConfig,
 }: {
+	id: string;
+	title: string;
+	keywords?: string;
+	// Only the options that belong on this tab. See optionTab.
+	tab: "data" | "behaviour" | "style";
 	visual: EditableVisual;
 	definition: VisualTypeDefinition;
 	// Needed by any option whose choices come from the source rather than from
@@ -723,7 +990,9 @@ function VisualOptions({
 	groups: GroupChoice[];
 	updateConfig: (patch: Record<string, unknown>) => void;
 }) {
-	const declared = definition.options ?? [];
+	const declared = (definition.options ?? []).filter(
+		(option) => tabOf(option.key) === tab,
+	);
 	if (declared.length === 0) return null;
 
 	const set = (key: string, value: unknown) =>
@@ -741,7 +1010,7 @@ function VisualOptions({
 	).length;
 
 	return (
-		<Section id="visual-options" title="Options" count={chosen}>
+		<Section id={id} title={title} keywords={keywords} count={chosen}>
 			{declared.map((option) => {
 				const value = stored(option.key);
 
@@ -1103,11 +1372,16 @@ function FormatTab({
 
 	// What each group carries, so a closed group still says whether anything
 	// inside it was touched.
+	// A type that declares fill height as an option already shows it under
+	// Display, so Appearance does not offer it a second time.
+	const fillHeightHere =
+		supports.fillHeight &&
+		!(definition.options ?? []).some((o) => o.key === "fillHeight");
 	const appearanceCount = [
 		style.cornerRadius !== undefined,
 		style.stripedRows !== undefined,
 		style.loadingAnimation !== undefined,
-		visual.config.options?.fillHeight !== undefined,
+		fillHeightHere && visual.config.options?.fillHeight !== undefined,
 	].filter(Boolean).length;
 	const axesCount = [
 		Boolean(style.yAxis?.label),
@@ -1130,6 +1404,10 @@ function FormatTab({
 			)}
 
 			<VisualOptions
+				id="visual-display"
+				title="Display"
+				keywords="labels density height border weight presentation"
+				tab="style"
 				visual={visual}
 				definition={definition}
 				source={source}
@@ -1398,7 +1676,7 @@ function FormatTab({
 				defaultOpen={false}
 				count={appearanceCount}
 			>
-				{supports.fillHeight && (
+				{fillHeightHere && (
 					<div className={styles.field}>
 						<Toggle
 							checked={

@@ -34,6 +34,10 @@ import { VisualPicker } from "./VisualPicker";
 import { AlignTools } from "./AlignTools";
 import type { VisualPreset } from "../../lib/visuals/presets";
 import { PropertiesPanel } from "./PropertiesPanel";
+import { EditorRail, type EditorPanel } from "./EditorRail";
+import { useAssistant } from "../assist/AssistantContext";
+import { useAssistantSurface } from "../assist/useAssistantSurface";
+import type { EditorOp } from "../../lib/assistant/surfaces/editor";
 import { ProtectDialog, type PageLock } from "./ProtectPageDialog";
 import { useUser } from "../context/UserContext";
 import { describe } from "../../lib/platform/pageProtection";
@@ -129,6 +133,55 @@ function minRowsFor(visual: {
 	const definition = visualByType[visual.visualType];
 	const base = definition?.defaultLayout.h ?? 4;
 	return base + (note.length > 100 ? 2 : 1);
+}
+
+// Straightens the page by closing gaps, resolving overlaps and levelling rows,
+// one container at a time. A group's children are measured from the group's
+// own origin, so tidying them in the same pass as the top level would read two
+// coordinate spaces as one and move every child. Controls are left alone,
+// since they sit in the filter strip rather than on the grid.
+//
+// Unchanged visuals come back as the same objects, which is what tells the
+// save which ones actually moved.
+function tidied(visuals: EditableVisual[]): {
+	visuals: EditableVisual[];
+	moved: number;
+} {
+	const containers = new Map<string, EditableVisual[]>();
+	for (const visual of visuals) {
+		if (isPageControl(visual.visualType)) continue;
+		const parentId =
+			typeof visual.config.parentId === "string"
+				? visual.config.parentId
+				: "";
+		const bucket = containers.get(parentId);
+		if (bucket) bucket.push(visual);
+		else containers.set(parentId, [visual]);
+	}
+
+	const rects = new Map<string, Rect>();
+	let moved = 0;
+	for (const members of containers.values()) {
+		const result = tidyLayout(
+			members.map((v) => ({
+				id: v.visualId,
+				rect: v.layout,
+				// A note renders under the visual, inside the same box, so a
+				// visual carrying one needs rows the geometry cannot see.
+				minH: minRowsFor(v),
+			})),
+		);
+		moved += result.moved;
+		for (const item of result.items) rects.set(item.id, item.rect);
+	}
+
+	return {
+		moved,
+		visuals: visuals.map((v) => {
+			const rect = rects.get(v.visualId);
+			return rect && rect !== v.layout ? { ...v, layout: rect } : v;
+		}),
+	};
 }
 
 interface ReportEditorProps {
@@ -305,11 +358,10 @@ export function ReportEditor({
 	const [savedAt, setSavedAt] = useState<number | null>(null);
 	const [pageConfig, setPageConfig] = useState<PageConfig>(initialPageConfig);
 	const [pageTitle, setPageTitle] = useState(initialPageTitle);
-	// Which tab the panel shows when nothing is selected. Selecting a visual
-	// switches it to that visual's properties and back again on deselect.
-	const [panelTab, setPanelTab] = useState<"page" | "report" | "history">(
-		"page",
-	);
+	// Which panel is open over the canvas, or none. Selecting a visual opens its panel, and deselecting it
+	// goes back to whatever was open before, or to nothing.
+	const [panel, setPanel] = useState<EditorPanel | null>(null);
+	const beforeVisualPanel = useRef<EditorPanel | null>(null);
 	// Which screen the canvas is being laid out for. "fit" is the editor's own
 	// width, which is the normal way to work.
 	const [preview, setPreview] = useState("fit");
@@ -382,6 +434,16 @@ export function ReportEditor({
 	);
 
 	const selected = visuals.find((v) => v.visualId === selectedId) ?? null;
+
+	useEffect(() => {
+		setPanel((open) => {
+			if (selectedId) {
+				if (open !== "visual") beforeVisualPanel.current = open;
+				return "visual";
+			}
+			return open === "visual" ? beforeVisualPanel.current : open;
+		});
+	}, [selectedId]);
 
 	// Removing the whole report, not a page or a visual. Refused by the server
 	// unless the caller could edit it, which for a personal page means owning
@@ -945,64 +1007,22 @@ export function ReportEditor({
 	// Controls are left out because they are not on the grid at all. They sit in
 	// the filter strip in page order, so they have no rectangle to straighten.
 	const tidy = useCallback(() => {
-		// A note renders under the visual, inside the same box, so a visual
-		// carrying one needs a row the geometry cannot see. Without this the
-		// tidy levelled a noted chart down to its neighbours and left it
-		// scrolling, which is the opposite of what the button is for. Only
-		// noted visuals get a floor: everything else keeps the height its
-		// author chose.
 		if (locks.protectEdit) return;
-
-		// One container at a time. A group's children are measured from the
-		// group's own origin, so tidying them in the same pass as the top level
-		// would read two coordinate spaces as one and move every child.
-		const containers = new Map<string, EditableVisual[]>();
-		for (const visual of visualsRef.current) {
-			if (isPageControl(visual.visualType)) continue;
-			const parentId =
-				typeof visual.config.parentId === "string"
-					? visual.config.parentId
-					: "";
-			const bucket = containers.get(parentId);
-			if (bucket) bucket.push(visual);
-			else containers.set(parentId, [visual]);
-		}
-
-		// Unchanged rectangles come back by reference, which is what tells the
-		// save which visuals actually moved.
-		const rects = new Map<string, Rect>();
-		let moved = 0;
-		for (const members of containers.values()) {
-			const result = tidyLayout(
-				members.map((v) => ({
-					id: v.visualId,
-					rect: v.layout,
-					minH: minRowsFor(v),
-				})),
-			);
-			moved += result.moved;
-			for (const item of result.items) rects.set(item.id, item.rect);
-		}
-
+		const before = visualsRef.current;
+		const result = tidied(before);
 		// Nothing was out of place, so there is nothing to undo either.
-		if (moved === 0) return;
+		if (result.moved === 0) return;
 
 		record();
-		setVisuals((prev) =>
-			prev.map((v) => {
-				const rect = rects.get(v.visualId);
-				return rect && rect !== v.layout ? { ...v, layout: rect } : v;
-			}),
-		);
-		for (const visual of visualsRef.current) {
-			const rect = rects.get(visual.visualId);
-			if (rect && rect !== visual.layout) {
+		setVisuals(result.visuals);
+		result.visuals.forEach((visual, i) => {
+			if (visual !== before[i]) {
 				markPending({
 					type: "updateVisual",
 					visualId: visual.visualId,
 				});
 			}
-		}
+		});
 		setDirty(true);
 	}, [locks.protectEdit, markPending, record]);
 
@@ -1368,7 +1388,12 @@ export function ReportEditor({
 		// moves once and concurrent editors contend once.
 		const operations = Array.from(pendingRef.current.values()).map((op) => {
 			if (op.type === "addVisual") {
-				const v = op.visual;
+				// The visual as it is now. An edit to a visual not yet saved
+				// keeps the insert rather than queueing an update, so the
+				// insert has to carry every change made since it was added.
+				const v =
+					visuals.find((x) => x.visualId === op.visual.visualId) ??
+					op.visual;
 				return {
 					type: "addVisual",
 					// Sent explicitly so every session applies the insert to
@@ -1503,6 +1528,153 @@ export function ReportEditor({
 	]);
 
 	const others = live.others;
+
+	// A page added here and not yet written, opening blank.
+	//
+	// Nothing is written. The page appears in the strip straight away, opens
+	// blank, and takes edits like any other page. The save creates it and
+	// everything built on it in the same batch. An author asked for a page so
+	// they could work on it, not so that an empty one would appear to
+	// everybody else while they think about what goes on it.
+	const startBlankPage = (title: string): string => {
+		const newId =
+			typeof crypto !== "undefined"
+				? crypto.randomUUID()
+				: String(Date.now());
+		pendingRef.current.set(`page:${newId}`, {
+			type: "addPage",
+			pageId: newId,
+			title,
+		});
+		setDraftPage({ pageId: newId, title });
+		setVisuals([]);
+		setPageConfig({});
+		setPageTitle(title);
+		selectVisual(null);
+		// A page that has not been written cannot be undone back past its own
+		// creation.
+		history.clear();
+		setDirty(true);
+		return newId;
+	};
+
+	// Edits the assistant made, applied to the draft as one step back.
+	//
+	// They were checked on the server against the page as it was sent, so
+	// here they only have to be placed. A visual with no position goes in the
+	// next free place, exactly as one added from the picker does. A new page
+	// starts the same way the add page dialog starts a blank one.
+	const applyAssistantEdits = (ops: EditorOp[]) => {
+		if (locks.protectEdit || ops.length === 0) return;
+
+		let next = visualsRef.current;
+		if (ops[0].op === "newPage") {
+			// Refused on the server while there are unsaved changes, and
+			// refused here too, since the page open would be lost.
+			if (dirty || reportProtectAddPage || draftPage) return;
+			startBlankPage(ops[0].title);
+			next = [];
+		} else {
+			record();
+		}
+
+		let renamed: string | null = null;
+		for (const op of ops) {
+			if (op.op === "add") {
+				const definition = visualByType[op.visual.visualType];
+				const layout =
+					op.visual.layout ??
+					findFreeSlot(
+						next.map((v) => v.layout),
+						definition?.defaultLayout.w ?? 6,
+						definition?.defaultLayout.h ?? 4,
+					);
+				const visual: EditableVisual = {
+					visualId: op.visual.visualId,
+					visualType: op.visual.visualType,
+					title: op.visual.title,
+					sourceKey: op.visual.sourceKey,
+					config: op.visual.config as EditableVisual["config"],
+					layout: clampRect(layout),
+					isNew: true,
+				};
+				next = [...next, visual];
+				markPending({ type: "addVisual", visual });
+			} else if (op.op === "update") {
+				next = next.map((v) =>
+					v.visualId === op.visual.visualId
+						? {
+								...v,
+								visualType: op.visual.visualType,
+								title: op.visual.title,
+								sourceKey: op.visual.sourceKey,
+								config: op.visual
+									.config as EditableVisual["config"],
+								layout: op.visual.layout
+									? clampRect(op.visual.layout)
+									: v.layout,
+							}
+						: v,
+				);
+				markPending({
+					type: "updateVisual",
+					visualId: op.visual.visualId,
+				});
+			} else if (op.op === "remove") {
+				next = next.filter((v) => v.visualId !== op.visualId);
+				markPending({ type: "removeVisual", visualId: op.visualId });
+			} else if (op.op === "page") {
+				renamed = op.title;
+			} else if (op.op === "tidy") {
+				const result = tidied(next);
+				result.visuals.forEach((visual, i) => {
+					if (visual !== next[i]) {
+						markPending({
+							type: "updateVisual",
+							visualId: visual.visualId,
+						});
+					}
+				});
+				next = result.visuals;
+			}
+		}
+
+		setVisuals(next);
+		if (renamed) {
+			setPageTitle(renamed);
+			pendingRef.current.set("page", { type: "updatePage" });
+		}
+		setDirty(true);
+	};
+
+	const { panelOpen: assistantOpen, setPanelOpen: setAssistantOpen } =
+		useAssistant();
+	useAssistantSurface({
+		kind: "editor",
+		state: () => ({
+			reportTitle,
+			pageTitle: pageTitleRef.current,
+			pageSourceKey,
+			readOnly: locks.protectEdit,
+			canAddPage: !reportProtectAddPage && !draftPage,
+			dirty,
+			visuals: visualsRef.current.map((v) => ({
+				visualId: v.visualId,
+				visualType: v.visualType,
+				title: v.title,
+				sourceKey: v.sourceKey,
+				config: v.config,
+				layout: v.layout,
+			})),
+		}),
+		apply: (draft) => applyAssistantEdits(draft as EditorOp[]),
+		placeholder: "Describe a change to this page",
+		examples: [
+			"Add a row of headline figures at the top",
+			"Make the second chart a line chart by month",
+			"Design a new page comparing regions by quarter",
+		],
+	});
 
 	// Which visual each other editor has selected, so the canvas can show it.
 	// Removing a page, once the author has said so.
@@ -1894,7 +2066,7 @@ export function ReportEditor({
 					}`}
 					onClick={() => {
 						selectVisual(null);
-						setPanelTab("history");
+						setPanel("history");
 					}}
 					title="Open the edit history"
 				>
@@ -2026,34 +2198,7 @@ export function ReportEditor({
 					// A blank page keeps the operation path, because that is
 					// what other open sessions replay. A template page is one
 					// server call and the editor reloads onto it.
-					onBlank={(title) => {
-						// Nothing is written. The page appears in the strip
-						// straight away, opens blank, and takes edits like any
-						// other page; the save creates it and everything built
-						// on it in the same batch.
-						//
-						// An author asked for a page so they could work on it,
-						// not so that an empty one would appear to everybody
-						// else while they think about what goes on it.
-						const newId =
-							typeof crypto !== "undefined"
-								? crypto.randomUUID()
-								: String(Date.now());
-						pendingRef.current.set(`page:${newId}`, {
-							type: "addPage",
-							pageId: newId,
-							title,
-						});
-						setDraftPage({ pageId: newId, title });
-						setVisuals([]);
-						setPageConfig({});
-						setPageTitle(title);
-						selectVisual(null);
-						// A page that has not been written cannot be undone
-						// back past its own creation.
-						history.clear();
-						setDirty(true);
-					}}
+					onBlank={startBlankPage}
 					// Everything on the page currently open, on a new page.
 					//
 					// Built out of the same operations a blank page and a
@@ -2190,146 +2335,183 @@ export function ReportEditor({
 						null
 					}
 				/>
-				<PropertiesPanel
-					reportId={reportId}
-					sources={sources}
-					visual={selected}
-					source={
-						selected?.sourceKey
-							? sources[selected.sourceKey]
-							: undefined
-					}
-					onChange={updateVisual}
-					onRemove={removeVisual}
-					onDuplicate={duplicateVisual}
-					onDeselect={() => selectVisual(null)}
-					readOnly={locks.protectEdit}
-					groups={groups}
-					pageSource={
-						pageSourceKey ? sources[pageSourceKey] : undefined
-					}
-					pageConfig={pageConfig}
-					pageTitle={pageTitle}
-					reportDescription={description}
-					placement={
-						<>
-							{!isPersonal && (
-								<ReportPlacement
-									reportId={reportId}
-									slug={slug}
-									categoryId={categoryId}
-									dirty={dirty}
-								/>
-							)}
+				{(panel === "page" ||
+					panel === "report" ||
+					panel === "history" ||
+					(panel === "visual" && selected)) && (
+					<PropertiesPanel
+						reportId={reportId}
+						sources={sources}
+						visual={panel === "visual" ? selected : null}
+						source={
+							selected?.sourceKey
+								? sources[selected.sourceKey]
+								: undefined
+						}
+						onChange={updateVisual}
+						onRemove={removeVisual}
+						onDuplicate={duplicateVisual}
+						onDeselect={() => selectVisual(null)}
+						readOnly={locks.protectEdit}
+						groups={groups}
+						pageSource={
+							pageSourceKey ? sources[pageSourceKey] : undefined
+						}
+						pageConfig={pageConfig}
+						pageTitle={pageTitle}
+						reportDescription={description}
+						placement={
+							<>
+								{!isPersonal && (
+									<ReportPlacement
+										reportId={reportId}
+										slug={slug}
+										categoryId={categoryId}
+										dirty={dirty}
+									/>
+								)}
 
-							{/* Who may change what, above the control that
+								{/* Who may change what, above the control that
 							    would be refused by it. Only an administrator
 							    sees the way in; the capability is checked
 							    again on the server, which decides. */}
-							{(canProtect ||
-								reportProtectDelete ||
-								reportProtectEdit ||
-								pageLocks.some(
-									(p) => p.protectDelete || p.protectEdit,
-								)) && (
-								<Section
-									id="report-protection"
-									title="Protection"
-									count={
-										pageLocks.filter(
-											(p) =>
-												p.protectDelete ||
-												p.protectEdit,
-										).length +
-										(reportProtectDelete ? 1 : 0) +
-										(reportProtectEdit ? 1 : 0)
-									}
-								>
-									{describe({
-										protectDelete: reportProtectDelete,
-										protectEdit: reportProtectEdit,
-									}).map((line) => (
-										<Hint key={line}>{line}</Hint>
-									))}
-									{!reportProtectDelete &&
-										!reportProtectEdit && (
-											<Hint>
-												Nothing is locked at the report
-												level. Individual pages may
-												still be.
-											</Hint>
-										)}
-									<button
-										type="button"
-										className={`${styles.saveButton} ${styles.sectionButton}`}
-										onClick={() => setProtecting(true)}
-										disabled={!canProtect}
-										title={
-											canProtect
-												? undefined
-												: "Only an administrator can change this."
+								{(canProtect ||
+									reportProtectDelete ||
+									reportProtectEdit ||
+									pageLocks.some(
+										(p) => p.protectDelete || p.protectEdit,
+									)) && (
+									<Section
+										id="report-protection"
+										title="Protection"
+										count={
+											pageLocks.filter(
+												(p) =>
+													p.protectDelete ||
+													p.protectEdit,
+											).length +
+											(reportProtectDelete ? 1 : 0) +
+											(reportProtectEdit ? 1 : 0)
 										}
 									>
-										{canProtect
-											? "Change protection"
-											: "Protection is set by an administrator"}
-									</button>
-								</Section>
-							)}
+										{describe({
+											protectDelete: reportProtectDelete,
+											protectEdit: reportProtectEdit,
+										}).map((line) => (
+											<Hint key={line}>{line}</Hint>
+										))}
+										{!reportProtectDelete &&
+											!reportProtectEdit && (
+												<Hint>
+													Nothing is locked at the
+													report level. Individual
+													pages may still be.
+												</Hint>
+											)}
+										<button
+											type="button"
+											className={`${styles.saveButton} ${styles.sectionButton}`}
+											onClick={() => setProtecting(true)}
+											disabled={!canProtect}
+											title={
+												canProtect
+													? undefined
+													: "Only an administrator can change this."
+											}
+										>
+											{canProtect
+												? "Change protection"
+												: "Protection is set by an administrator"}
+										</button>
+									</Section>
+								)}
 
-							{/* Kept away from the toolbar, where it sat between
+								{/* Kept away from the toolbar, where it sat between
 							    Done and Publish and was one slip from either.
 							    Down here it takes a deliberate trip into the
 							    settings panel, and still asks. */}
-							<div className={styles.dangerBlock}>
-								<span className={styles.fieldLabel}>
-									Delete this report
-								</span>
-								<Hint>
-									Removes every page on it. Anyone who could
-									open it loses it.
-								</Hint>
-								<button
-									type="button"
-									className={styles.dangerButton}
-									onClick={() => setConfirmingRemove(true)}
-									disabled={saving || removing}
-								>
-									{removing ? "Deleting" : "Delete report"}
-								</button>
-							</div>
-						</>
+								<div className={styles.dangerBlock}>
+									<span className={styles.fieldLabel}>
+										Delete this report
+									</span>
+									<Hint>
+										Removes every page on it. Anyone who
+										could open it loses it.
+									</Hint>
+									<button
+										type="button"
+										className={styles.dangerButton}
+										onClick={() =>
+											setConfirmingRemove(true)
+										}
+										disabled={saving || removing}
+									>
+										{removing
+											? "Deleting"
+											: "Delete report"}
+									</button>
+								</div>
+							</>
+						}
+						panelTab={
+							panel === "report" || panel === "history"
+								? panel
+								: "page"
+						}
+						onPanelTab={setPanel}
+						onClose={() => setPanel(null)}
+						historySlug={slug}
+						historyKey={historyKey}
+						onRestored={() => {
+							// The restore has already landed. Everything the
+							// editor is holding is now a version behind, and
+							// reconstructing it here would be guessing, so the
+							// page reloads from what was actually written.
+							setHistoryKey((k) => k + 1);
+							onSaved();
+							onExit();
+						}}
+						onPageChange={(next) => {
+							setPageConfig(next);
+							pendingRef.current.set("page", {
+								type: "updatePage",
+							});
+							setDirty(true);
+						}}
+						onPageTitleChange={(next) => {
+							setPageTitle(next);
+							pendingRef.current.set("page", {
+								type: "updatePage",
+							});
+							setDirty(true);
+						}}
+						onDescriptionChange={(next) => {
+							setDescription(next);
+							pendingRef.current.set("report", {
+								type: "updateReport",
+							});
+							setDirty(true);
+						}}
+					/>
+				)}
+				<EditorRail
+					panel={panel}
+					onPanel={setPanel}
+					hasSelection={selected !== null}
+					assistant={
+						user?.assistant
+							? {
+									open: assistantOpen,
+									onToggle: () => {
+										// The canvas is what the answer changes,
+										// so the panel is closed rather than
+										// left over it.
+										if (!assistantOpen) setPanel(null);
+										setAssistantOpen(!assistantOpen);
+									},
+								}
+							: undefined
 					}
-					panelTab={panelTab}
-					onPanelTab={setPanelTab}
-					historySlug={slug}
-					historyKey={historyKey}
-					onRestored={() => {
-						// The restore has already landed. Everything the
-						// editor is holding is now a version behind, and
-						// reconstructing it here would be guessing, so the
-						// page reloads from what was actually written.
-						setHistoryKey((k) => k + 1);
-						onSaved();
-						onExit();
-					}}
-					onPageChange={(next) => {
-						setPageConfig(next);
-						pendingRef.current.set("page", { type: "updatePage" });
-						setDirty(true);
-					}}
-					onPageTitleChange={(next) => {
-						setPageTitle(next);
-						pendingRef.current.set("page", { type: "updatePage" });
-						setDirty(true);
-					}}
-					onDescriptionChange={(next) => {
-						setDescription(next);
-						pendingRef.current.set("report", {
-							type: "updateReport",
-						});
-						setDirty(true);
-					}}
 				/>
 			</div>
 		</div>

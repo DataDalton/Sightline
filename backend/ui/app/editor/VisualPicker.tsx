@@ -36,6 +36,27 @@ interface VisualPickerProps {
 	// that already knows what kind of thing is wanted, such as the filter
 	// strip, so the author is not asked the question twice.
 	initialCategory?: VisualCategory;
+	// Adding a new visual, or changing the kind of one already placed. A
+	// change offers the bare types without the ready-made arrangements, marks
+	// the kind it is now, and marks the kinds that can draw the fields it
+	// already has.
+	mode?: "add" | "change";
+	current?: string;
+	fields?: { dimensions: number; measures: number };
+}
+
+// Whether a kind of visual can draw a given number of fields as they are.
+function fitsFields(
+	definition: VisualTypeDefinition,
+	fields: { dimensions: number; measures: number },
+): boolean {
+	const { dimensions: d, measures: m } = definition.encoding;
+	return (
+		fields.dimensions >= d.min &&
+		fields.dimensions <= d.max &&
+		fields.measures >= m.min &&
+		fields.measures <= m.max
+	);
 }
 
 export function VisualPicker({
@@ -43,7 +64,16 @@ export function VisualPicker({
 	onPick,
 	onClose,
 	initialCategory,
+	mode = "add",
+	current,
+	fields,
 }: VisualPickerProps) {
+	const changing = mode === "change";
+	// Only worth marking once there are fields to fit.
+	const marksFit =
+		changing &&
+		fields !== undefined &&
+		fields.dimensions + fields.measures > 0;
 	const [search, setSearch] = useState("");
 	const [category, setCategory] = useState<VisualCategory | "all">(
 		initialCategory ?? "all",
@@ -159,7 +189,9 @@ export function VisualPicker({
 				className={styles.dialog}
 				ref={panelRef}
 				role="dialog"
-				aria-label="Add a visual"
+				aria-label={
+					changing ? "Change the kind of visual" : "Add a visual"
+				}
 				aria-modal="true"
 			>
 				<div className={styles.header}>
@@ -224,48 +256,57 @@ export function VisualPicker({
 					    them meant setting the same four settings by hand every
 					    time. Offered here because this is the moment they are
 					    already deciding what to place. */}
-					{search.trim() === "" && category === "all" && (
-						<section className={styles.group}>
-							<h3 className={styles.groupTitle}>
-								Ready to place
-							</h3>
-							<div className={styles.grid}>
-								{visualPresets.map((preset) => (
-									<button
-										key={preset.key}
-										type="button"
-										className={styles.card}
-										onClick={() =>
-											onPick(preset.visualType, preset)
-										}
-										onMouseEnter={(e) => {
-											const definition =
-												visualByType[preset.visualType];
-											if (definition) {
-												show(
-													definition,
-													e.currentTarget,
+					{!changing &&
+						search.trim() === "" &&
+						category === "all" && (
+							<section className={styles.group}>
+								<h3 className={styles.groupTitle}>
+									Ready to place
+								</h3>
+								<div className={styles.grid}>
+									{visualPresets.map((preset) => (
+										<button
+											key={preset.key}
+											type="button"
+											className={styles.card}
+											onClick={() =>
+												onPick(
+													preset.visualType,
 													preset,
-												);
+												)
 											}
-										}}
-										onFocus={(e) => {
-											const definition =
-												visualByType[preset.visualType];
-											if (definition) {
-												show(
-													definition,
-													e.currentTarget,
-													preset,
-												);
-											}
-										}}
-										onMouseLeave={() => {
-											setHovered(null);
-											setPreviewAt(null);
-										}}
-									>
-										{/* No title attribute, matching the
+											onMouseEnter={(e) => {
+												const definition =
+													visualByType[
+														preset.visualType
+													];
+												if (definition) {
+													show(
+														definition,
+														e.currentTarget,
+														preset,
+													);
+												}
+											}}
+											onFocus={(e) => {
+												const definition =
+													visualByType[
+														preset.visualType
+													];
+												if (definition) {
+													show(
+														definition,
+														e.currentTarget,
+														preset,
+													);
+												}
+											}}
+											onMouseLeave={() => {
+												setHovered(null);
+												setPreviewAt(null);
+											}}
+										>
+											{/* No title attribute, matching the
 										    type cards beside these. The
 										    preview panel is what explains a
 										    card, and a native tooltip appears
@@ -273,20 +314,20 @@ export function VisualPicker({
 										    thing it was meant to explain. The
 										    label below names the card for a
 										    screen reader. */}
-										<span className={styles.preview}>
-											<VisualThumbnail
-												type={preset.visualType}
-												size={52}
-											/>
-										</span>
-										<span className={styles.cardLabel}>
-											{preset.label}
-										</span>
-									</button>
-								))}
-							</div>
-						</section>
-					)}
+											<span className={styles.preview}>
+												<VisualThumbnail
+													type={preset.visualType}
+													size={52}
+												/>
+											</span>
+											<span className={styles.cardLabel}>
+												{preset.label}
+											</span>
+										</button>
+									))}
+								</div>
+							</section>
+						)}
 
 					{total === 0 ? (
 						<div className={styles.empty}>
@@ -303,7 +344,16 @@ export function VisualPicker({
 										<button
 											key={definition.type}
 											type="button"
-											className={styles.card}
+											className={`${styles.card} ${
+												definition.type === current
+													? styles.cardCurrent
+													: ""
+											}`}
+											aria-current={
+												definition.type === current
+													? "true"
+													: undefined
+											}
 											onClick={() =>
 												onPick(definition.type)
 											}
@@ -334,7 +384,18 @@ export function VisualPicker({
 												{definition.label}
 											</span>
 											<span className={styles.cardMeta}>
-												{describeEncoding(definition)}
+												{definition.type === current
+													? "What it is now"
+													: marksFit &&
+														  fields &&
+														  fitsFields(
+																definition,
+																fields,
+														  )
+														? "Fits your fields"
+														: describeEncoding(
+																definition,
+															)}
 											</span>
 										</button>
 									))}
@@ -350,7 +411,9 @@ export function VisualPicker({
 				    and that the keyboard reaches it too. */}
 				<div className={styles.footer}>
 					<span className={styles.footerHint}>
-						Point at a visual, or tab to it, to see what it does.
+						{changing
+							? "The fields carry over. Any the new kind cannot take are taken off, and the panel says which."
+							: "Point at a visual, or tab to it, to see what it does."}
 					</span>
 				</div>
 			</div>

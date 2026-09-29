@@ -316,6 +316,7 @@
 /* --- canvas --- */
 
 .workspace {
+	position: relative;
 	flex: 1;
 	min-height: 0;
 	display: flex;
@@ -549,15 +550,264 @@
 
 /* --- side panel --- */
 
+/* Opened from the rail, and floating over the canvas beside it rather than
+   taking width from it, so opening a panel never moves what is being
+   arranged. */
 .panel {
-	width: 320px;
-	flex-shrink: 0;
+	position: absolute;
+	top: 0;
+	right: calc(64px + var(--space-3));
+	bottom: 0;
+	z-index: 45;
+	width: 340px;
+	max-width: calc(100% - 64px - var(--space-6));
 	display: flex;
 	flex-direction: column;
-	border: 1px solid var(--border-subtle);
+	border: 1px solid var(--border-default);
 	border-radius: var(--radius-lg);
 	background: var(--surface-raised);
+	box-shadow: var(--shadow-lg);
 	overflow: hidden;
+	animation: panelIn 140ms ease-out;
+}
+
+@keyframes panelIn {
+	from {
+		opacity: 0;
+		transform: translateX(8px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.panel {
+		animation: none;
+	}
+}
+
+/* --- The selected visual's panel ---------------------------------------
+
+   Its kind, which opens the picker to change it, and what can be done to it
+   along the top, with the title under them where it is edited. */
+.visualHead {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	padding: var(--space-3);
+	border-bottom: 1px solid var(--border-subtle);
+	background: var(--surface-sunken);
+}
+
+.visualHeadRow {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+}
+
+.typeChip {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+	min-width: 0;
+	padding: var(--space-1) var(--space-2) var(--space-1) var(--space-1);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font-family: inherit;
+	font-size: var(--text-sm);
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.typeChip span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.typeChip svg {
+	flex-shrink: 0;
+	transform: rotate(90deg);
+	color: var(--text-muted);
+}
+
+.typeChip:hover:not(:disabled) {
+	border-color: var(--border-strong);
+}
+
+.visualHeadActions {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+	margin-left: auto;
+}
+
+.headIcon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	border: none;
+	border-radius: var(--radius-sm);
+	background: none;
+	color: var(--text-muted);
+	cursor: pointer;
+}
+
+.headIcon:hover:not(:disabled) {
+	background: var(--state-hover);
+	color: var(--text-primary);
+}
+
+.headIconDanger:hover:not(:disabled) {
+	background: var(--danger-subtle);
+	color: var(--danger);
+}
+
+.titleInput {
+	width: 100%;
+	padding: var(--space-1) var(--space-2);
+	border: 1px solid transparent;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--text-primary);
+	font-family: inherit;
+	font-size: var(--text-md, 1rem);
+	font-weight: 600;
+}
+
+.titleInput:hover {
+	border-color: var(--border-subtle);
+}
+
+.titleInput:focus {
+	border-color: var(--focus-ring);
+	background: var(--surface-raised);
+	outline: none;
+}
+
+/* Finding a setting by name, whatever tab it is on. */
+.panelSearch {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	margin: var(--space-2) var(--space-3) 0;
+	padding: 0 var(--space-2);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-base);
+	color: var(--text-muted);
+}
+
+.panelSearch:focus-within {
+	border-color: var(--focus-ring);
+}
+
+.panelSearch input {
+	flex: 1;
+	min-width: 0;
+	padding: var(--space-2) 0;
+	border: none;
+	background: transparent;
+	color: var(--text-primary);
+	font-family: inherit;
+	font-size: var(--text-sm);
+}
+
+.panelSearch input:focus {
+	outline: none;
+}
+
+.panelSearchClear {
+	display: inline-flex;
+	padding: var(--space-1);
+	border: none;
+	border-radius: var(--radius-sm);
+	background: none;
+	color: var(--text-muted);
+	cursor: pointer;
+}
+
+.panelSearchClear:hover {
+	background: var(--state-hover);
+	color: var(--text-primary);
+}
+
+/* What stops the visual drawing, above everything else in the panel. */
+.problem {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-2);
+	margin: var(--space-2) var(--space-3) 0;
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+	border-radius: var(--radius-md);
+	background: var(--warning-subtle);
+	color: var(--text-primary);
+	font-size: var(--text-xs);
+	line-height: 1.5;
+}
+
+.problemAction {
+	flex-shrink: 0;
+	padding: var(--space-1) var(--space-2);
+	border: none;
+	border-radius: var(--radius-sm);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font-family: inherit;
+	font-size: var(--text-xs);
+	font-weight: 600;
+	cursor: pointer;
+}
+
+/* Which tab a group lives on, while a search shows all three at once. */
+.tabHeading {
+	margin: var(--space-2) var(--space-1) var(--space-1);
+	color: var(--brand-strong);
+	font-size: var(--text-xs);
+	font-weight: 700;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+
+.noMatch {
+	padding: var(--space-4) var(--space-1);
+	color: var(--text-muted);
+	font-size: var(--text-sm);
+}
+
+/* An explanation waiting behind a small link until somebody wants it. */
+.hintMore {
+	margin-top: var(--space-1);
+}
+
+.hintSummary {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+	cursor: pointer;
+	list-style: none;
+}
+
+.hintSummary::-webkit-details-marker {
+	display: none;
+}
+
+.hintSummary:hover {
+	color: var(--text-primary);
+}
+
+.hintMore[open] .hintSummary {
+	color: var(--text-secondary);
 }
 
 /* What the panel is editing, above the tabs.
@@ -1102,14 +1352,101 @@ textarea.input {
 	line-height: 1.5;
 }
 
+/* The column beside the canvas that opens each panel. Icons with a word
+   under each, since five unlabelled icons is a guessing game. The panels it
+   opens float over the canvas to its left rather than taking width from it. */
+.rail {
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	gap: var(--space-1);
+	width: 64px;
+	flex-shrink: 0;
+	padding: var(--space-2) var(--space-1);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-lg);
+	background: var(--surface-raised);
+}
+
+.railButton {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 3px;
+	padding: var(--space-2) 0;
+	border: none;
+	border-radius: var(--radius-md);
+	background: none;
+	color: var(--text-secondary);
+	font-family: inherit;
+	cursor: pointer;
+}
+
+.railButton:hover:not(:disabled) {
+	background: var(--state-hover);
+	color: var(--text-primary);
+}
+
+.railButton:disabled {
+	opacity: 0.4;
+	cursor: not-allowed;
+}
+
+.railButton:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: -2px;
+}
+
+.railButtonOn,
+.railButtonOn:hover:not(:disabled) {
+	background: var(--brand-subtle);
+	color: var(--brand-strong);
+}
+
+.railLabel {
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.01em;
+}
+
+.railDivider {
+	height: 1px;
+	margin: var(--space-1) var(--space-2);
+	background: var(--border-subtle);
+}
+
 @media (max-width: 900px) {
 	.workspace {
 		flex-direction: column;
 	}
 
 	.panel {
+		position: static;
 		width: 100%;
 		max-height: 320px;
+		box-shadow: none;
+		animation: none;
+	}
+
+	/* Across the bottom of the editor, in the flow of the page, where a
+	   narrow screen has room for it. */
+	.rail {
+		order: 3;
+		flex-direction: row;
+		width: 100%;
+		padding: var(--space-1);
+		border: 1px solid var(--border-subtle);
+		border-radius: var(--radius-lg);
+	}
+
+	.railButton {
+		flex: 1;
+	}
+
+	.railDivider {
+		width: 1px;
+		height: auto;
+		margin: var(--space-1) 0;
 	}
 }
 

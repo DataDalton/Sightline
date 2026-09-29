@@ -10,6 +10,10 @@ import { assignRole, categoryRoleId } from "../platform/roles";
 import { emailHeader, localIdentityEmail } from "../runtime";
 import { loadRegistry } from "../semantic/registry";
 import { nextRun } from "../alerts/schedule";
+import { exploreLink, previewAlert } from "../alerts/runner";
+import { describeFirings, evaluate } from "../alerts/rule";
+import { createAlert, nextCheck, wordingFor } from "../alerts/store";
+import { notify } from "../notify/store";
 import { createSheet } from "../sheets/store";
 import {
 	categories,
@@ -295,6 +299,16 @@ const conversations = [
 		],
 	},
 	{
+		author: "taylor.brooks@example.com",
+		categoryId: "sales",
+		reportSlug: null,
+		subject: "Margin by region for the quarterly review",
+		body: "Could the Regional margin sheet show last quarter beside this one? Finance wants the change per region for Thursday.",
+		recipients: [
+			{ type: "user" as const, id: "dalton.murray@example.com" },
+		],
+	},
+	{
 		author: "casey.nguyen@example.com",
 		categoryId: "marketing",
 		reportSlug: null,
@@ -407,6 +421,64 @@ async function seedDelivery(): Promise<void> {
 	);
 }
 
+// An alert the signed-in person keeps, with its first firing already in the
+// inbox, so the alerts screen and the unread count have something in them.
+//
+// Created the way the dialog creates one, then checked against the sample
+// data once here rather than left for the scheduler, so the firing is there
+// from the first page load and says what the data actually says.
+async function seedAlert(): Promise<void> {
+	const existing = await sql(`SELECT 1 FROM alert_rules LIMIT 1`);
+	if (existing.length > 0) return;
+	const owner = identityOf(localIdentityEmail);
+	const alert = await createAlert(owner, {
+		name: "Regional revenue above target",
+		sourceKey: "sales_orders",
+		measure: "Revenue",
+		groupBy: "Region",
+		conditions: [],
+		condition: "above",
+		threshold: 2_000_000,
+		schedule: {
+			frequency: "weekly",
+			hour: 8,
+			weekday: 1,
+			timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+		},
+		notifyRecover: true,
+	});
+	const definition = alert.definition;
+	const { readings } = await previewAlert(owner, definition);
+	const { state, firings } = evaluate(definition, readings, {});
+	const message = describeFirings(
+		definition.name,
+		wordingFor(definition),
+		firings,
+	);
+	if (message) {
+		await sql(
+			`INSERT INTO alert_events (rule_id, title, body, firings)
+			 VALUES ($1::uuid, $2, $3, $4)`,
+			[alert.id, message.title, message.body, firings.length],
+		);
+		await notify(localIdentityEmail, {
+			kind: "alert",
+			title: message.title,
+			body: message.body,
+			link: exploreLink(definition),
+			data: { ruleId: alert.id },
+		});
+	}
+	// Recorded as checked, so the scheduler does not report the same crossing
+	// a second time on its first tick.
+	await sql(
+		`UPDATE alert_rules SET state = $2, last_checked_on = now(),
+		   next_check_on = $3
+		 WHERE rule_id = $1::uuid`,
+		[alert.id, JSON.stringify(state), nextCheck(definition).toISOString()],
+	);
+}
+
 // Held while seeding. Startup and the first request each prepare the app, in
 // separate module instances under the development server, and both seed.
 // Whichever arrives second waits, then finds everything there.
@@ -430,6 +502,9 @@ export async function seedDemo(): Promise<void> {
 		await seedSheet();
 		await seedUsage();
 		await seedDelivery();
+		await seedAlert().catch((error) => {
+			console.warn("Demo alert was not created:", error);
+		});
 	});
 	await loadRegistry(true);
 }
