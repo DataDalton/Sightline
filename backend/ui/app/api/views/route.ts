@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { getIdentity } from "@/lib/auth/identity";
 import { resolvePolicyClass } from "@/lib/auth/policy";
 import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
-import { listViews, saveView } from "@/lib/platform/views";
+import {
+	listViews,
+	openablePageReport,
+	saveView,
+	ViewInputError,
+} from "@/lib/platform/views";
 import { checkWriteRateLimit } from "@/lib/rateLimit";
 
 export async function GET(request: NextRequest) {
@@ -10,16 +15,28 @@ export async function GET(request: NextRequest) {
 
 	const identity = getIdentity(request);
 	if (!identity) {
-		return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+		return NextResponse.json(
+			{ error: "Not authenticated" },
+			{ status: 401 },
+		);
 	}
 
 	const pageId = request.nextUrl.searchParams.get("pageId");
 	if (!pageId) {
-		return NextResponse.json({ error: "pageId is required" }, { status: 400 });
+		return NextResponse.json(
+			{ error: "pageId is required" },
+			{ status: 400 },
+		);
 	}
 
 	try {
 		const policy = await resolvePolicyClass(identity);
+		// Only for a page the caller can open. A page they cannot open answers
+		// as one that does not exist.
+		const reportId = await openablePageReport(policy, identity, pageId);
+		if (!reportId) {
+			return NextResponse.json({ error: "Not found" }, { status: 404 });
+		}
 		const views = await listViews(identity.email, policy.grants, pageId);
 		const response = NextResponse.json({ views });
 		response.headers.set("Cache-Control", "private, no-store");
@@ -38,7 +55,10 @@ export async function POST(request: NextRequest) {
 
 	const identity = getIdentity(request);
 	if (!identity) {
-		return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+		return NextResponse.json(
+			{ error: "Not authenticated" },
+			{ status: 401 },
+		);
 	}
 
 	try {
@@ -53,9 +73,17 @@ export async function POST(request: NextRequest) {
 			);
 		}
 
+		// The report is the page's own rather than whatever the body names,
+		// and only a page the caller can open takes a view.
+		const policy = await resolvePolicyClass(identity);
+		const reportId = await openablePageReport(policy, identity, pageId);
+		if (!reportId) {
+			return NextResponse.json({ error: "Not found" }, { status: 404 });
+		}
+
 		const view = await saveView(identity.email, {
 			viewId: body.viewId ? String(body.viewId) : undefined,
-			reportId: body.reportId ? String(body.reportId) : null,
+			reportId,
 			pageId,
 			name: name.slice(0, 120),
 			config: body.config ?? {},
@@ -68,6 +96,9 @@ export async function POST(request: NextRequest) {
 
 		return NextResponse.json({ view });
 	} catch (error) {
+		if (error instanceof ViewInputError) {
+			return NextResponse.json({ error: error.message }, { status: 400 });
+		}
 		const message =
 			error instanceof Error ? error.message : "Could not save the view";
 		// A failed ownership check is the caller's, not a server fault.

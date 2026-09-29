@@ -1,7 +1,7 @@
 import { valuelessOperators } from "../search/types";
 import {
 	findField,
-	sourceRef,
+	quotedSourceRef,
 	type SemanticField,
 	type SemanticSource,
 } from "../semantic/types";
@@ -82,6 +82,31 @@ function isDateType(dataType: string | null): boolean {
 	return dataType !== null && /date|timestamp/i.test(dataType);
 }
 
+function isTimestampType(dataType: string | null): boolean {
+	return dataType !== null && /timestamp/i.test(dataType);
+}
+
+// The day after a calendar date written as YYYY-MM-DD, or null when the value
+// is not one. A date on its own names a whole day, and against a timestamp
+// column the end of that day is the start of the next.
+export function nextDay(value: string): string | null {
+	const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+	if (!match) return null;
+	const [year, month, day] = match.slice(1).map(Number);
+	const date = new Date(Date.UTC(year, month - 1, day));
+	// Refuses a date that does not exist, such as the thirtieth of February,
+	// which Date would otherwise roll into the next month.
+	if (
+		date.getUTCFullYear() !== year ||
+		date.getUTCMonth() !== month - 1 ||
+		date.getUTCDate() !== day
+	) {
+		return null;
+	}
+	date.setUTCDate(date.getUTCDate() + 1);
+	return date.toISOString().slice(0, 10);
+}
+
 function buildFilterSql(
 	source: SemanticSource,
 	field: SemanticField,
@@ -109,6 +134,26 @@ function buildFilterSql(
 	if (filter.values && filter.values.length > 0) {
 		const numeric = isNumericType(field.dataType);
 		const date = isDateType(field.dataType);
+
+		// A calendar date against a timestamp matches the whole day rather
+		// than its first instant, so each one becomes a range of its own.
+		const days = isTimestampType(field.dataType)
+			? filter.values.map((value) => nextDay(String(value)))
+			: [];
+		if (days.length > 0 && days.some((d) => d !== null)) {
+			const parts = filter.values.map((value, i) => {
+				const name = `${marker}_${i}`;
+				params[name] = value;
+				const end = days[i];
+				if (end === null) {
+					return `${expr} = CAST(:${name} AS TIMESTAMP)`;
+				}
+				params[`${name}_end`] = end;
+				return `(${expr} >= CAST(:${name} AS TIMESTAMP) AND ${expr} < CAST(:${name}_end AS TIMESTAMP))`;
+			});
+			const any = `(${parts.join(" OR ")})`;
+			return filter.op === "neq" ? `NOT ${any}` : any;
+		}
 
 		const markers = filter.values.map((value, i) => {
 			const name = `${marker}_${i}`;
@@ -144,6 +189,17 @@ function buildFilterSql(
 			}
 			if (date) {
 				params[marker] = value;
+				const end = isTimestampType(field.dataType)
+					? nextDay(String(value))
+					: null;
+				if (end !== null) {
+					// The whole day, from its first instant up to the next
+					// day's, rather than only midnight.
+					params[`${marker}_end`] = end;
+					return filter.op === "eq"
+						? `(${expr} >= CAST(:${marker} AS TIMESTAMP) AND ${expr} < CAST(:${marker}_end AS TIMESTAMP))`
+						: `(${expr} < CAST(:${marker} AS TIMESTAMP) OR ${expr} >= CAST(:${marker}_end AS TIMESTAMP))`;
+				}
 				return `${expr} ${operator} CAST(:${marker} AS TIMESTAMP)`;
 			}
 			params[marker] = value;
@@ -169,6 +225,18 @@ function buildFilterSql(
 				filter.op
 			];
 			if (date) {
+				// Up to and including a calendar date, or after one, on a
+				// timestamp column is measured from the start of the next
+				// day. Otherwise the named day would end at its midnight.
+				const end =
+					(filter.op === "lte" || filter.op === "gt") &&
+					isTimestampType(field.dataType)
+						? nextDay(String(value))
+						: null;
+				if (end !== null) {
+					params[marker] = end;
+					return `${expr} ${filter.op === "lte" ? "<" : ">="} CAST(:${marker} AS TIMESTAMP)`;
+				}
 				params[marker] = value;
 				return `${expr} ${operator} CAST(:${marker} AS TIMESTAMP)`;
 			}
@@ -385,7 +453,7 @@ function compileDistribution(
 
 	const inner = [
 		`SELECT ${detailSelect.join(", ")}`,
-		`FROM ${sourceRef(source)}`,
+		`FROM ${quotedSourceRef(source)}`,
 	];
 	if (whereParts.length > 0) inner.push(`WHERE ${whereParts.join(" AND ")}`);
 	inner.push(`GROUP BY ${detailGroupBy.join(", ")}`);
@@ -599,7 +667,7 @@ export function compileDistinctValues(
 	return {
 		sql: [
 			`SELECT ${select.join(", ")}`,
-			`FROM ${sourceRef(source)}`,
+			`FROM ${quotedSourceRef(source)}`,
 			`GROUP BY ${refs.join(", ")}`,
 			`LIMIT ${Math.max(1, Math.floor(limit))}`,
 		].join("\n"),
@@ -685,7 +753,7 @@ export function compileQuery(
 
 	const lines = [
 		`SELECT ${selectParts.join(", ")}`,
-		`FROM ${sourceRef(source)}`,
+		`FROM ${quotedSourceRef(source)}`,
 	];
 	if (whereParts.length > 0) lines.push(`WHERE ${whereParts.join(" AND ")}`);
 	if (aggregates && groupByParts.length > 0) {

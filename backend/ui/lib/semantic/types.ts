@@ -76,9 +76,43 @@ export interface SemanticSource {
 	measures: SemanticField[];
 }
 
-// Fully qualified object reference for the warehouse.
+// Fully qualified object name, unquoted. For display and for comparing with
+// names the catalogue reports, never for composing SQL. See quotedSourceRef.
 export function sourceRef(source: SemanticSource): string {
 	return `${source.catalog}.${source.schema}.${source.object}`;
+}
+
+// What registration accepts as a catalogue, schema or object name. Letters,
+// digits, underscores and hyphens, so no name can carry a quote, a dot or
+// whitespace into the SQL it is written into.
+const namePattern = /^[A-Za-z0-9_][A-Za-z0-9_-]{0,254}$/;
+
+export function isValidObjectName(name: unknown): name is string {
+	return typeof name === "string" && namePattern.test(name);
+}
+
+// A plain identifier the warehouse reads without quoting.
+const bareName = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+// One part of an object name, ready to write into SQL. A plain identifier is
+// written as it is. Anything else is backticked with backticks inside doubled,
+// which is how Databricks escapes them, so a crafted name closes nothing.
+export function quoteName(part: string): string {
+	return bareName.test(part) ? part : "`" + part.replace(/`/g, "``") + "`";
+}
+
+// A catalogue, schema and object as one reference for SQL, each part quoted.
+export function quotedRef(
+	catalog: string,
+	schema: string,
+	object: string,
+): string {
+	return `${quoteName(catalog)}.${quoteName(schema)}.${quoteName(object)}`;
+}
+
+// Fully qualified object reference for the warehouse, each part quoted.
+export function quotedSourceRef(source: SemanticSource): string {
+	return quotedRef(source.catalog, source.schema, source.object);
 }
 
 export function findField(

@@ -1,6 +1,7 @@
 import { sql } from "../data/lakebase";
 import { demoMode, isDatabricksApp } from "../runtime";
 import type { Identity } from "../auth/identity";
+import { quoteName, quotedRef } from "./types";
 
 // Pulls column descriptions, data types and tags from Unity Catalog into the
 // semantic layer.
@@ -77,7 +78,7 @@ export async function readColumns(
 
 	const columns = await runQuery(
 		`SELECT column_name, full_data_type, comment
-		 FROM ${catalog}.information_schema.columns
+		 FROM ${quoteName(catalog)}.information_schema.columns
 		 WHERE table_schema = :schema AND table_name = :object
 		 ORDER BY ordinal_position`,
 		{ schema, object },
@@ -89,7 +90,7 @@ export async function readColumns(
 	try {
 		tagRows = await runQuery(
 			`SELECT column_name, tag_name, tag_value
-			 FROM ${catalog}.information_schema.column_tags
+			 FROM ${quoteName(catalog)}.information_schema.column_tags
 			 WHERE schema_name = :schema AND table_name = :object`,
 			{ schema, object },
 		);
@@ -137,7 +138,7 @@ async function recordBaseTables(
 	try {
 		const rows = await runCatalogQuery(
 			identity,
-			`SHOW CREATE TABLE ${self}`,
+			`SHOW CREATE TABLE ${quotedRef(source.catalog_name, source.schema_name, source.object_name)}`,
 		);
 		const statement = String(Object.values(rows[0] ?? {})[0] ?? "");
 		const { parseMetricViewTables } = await import("./rowFilterGroups");

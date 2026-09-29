@@ -1,4 +1,4 @@
-import { sql, withAdvisoryLock } from "../data/lakebase";
+import { sql, tryAdvisoryLock } from "../data/lakebase";
 
 // Collapsing usage events into a shape the administration screens can read.
 //
@@ -38,7 +38,7 @@ const rollupLockKey = 8577403;
 // Held behind a lock because every replica runs this on the same schedule and
 // the work is identical: without one they would all rewrite the same days at
 // the same time, which is correct and pointless. A replica that cannot take the
-// lock has nothing to do, because whoever holds it is doing it.
+// lock skips the run, because whoever holds it is doing it.
 export async function rollupUsage(days = rebuildDays): Promise<RollupResult> {
 	const startedAt = Date.now();
 
@@ -46,11 +46,12 @@ export async function rollupUsage(days = rebuildDays): Promise<RollupResult> {
 	// not hold a single transaction open across all of it and a failure part
 	// way leaves the days it did finish correct.
 	let rowsWritten = 0;
-	await withAdvisoryLock(rollupLockKey, async () => {
+	const ran = await tryAdvisoryLock(rollupLockKey, async () => {
 		for (let back = 0; back < days; back++) {
 			rowsWritten += await rollupDay(back);
 		}
 	});
+	if (!ran) return { days, rowsWritten: 0, ranMs: Date.now() - startedAt };
 
 	await sql(
 		`INSERT INTO usage_rollup_state (id, built_to, ran_on)
@@ -97,7 +98,8 @@ async function rollupDay(back: number): Promise<number> {
 		     min(occurred_on),
 		     max(occurred_on)
 		   FROM usage_events
-		   WHERE occurred_on::date = current_date - $1::int
+		   WHERE occurred_on >= (current_date - $1::int)::timestamptz
+		   AND occurred_on < (current_date - $1::int + 1)::timestamptz
 		   GROUP BY 1, 2, 3, 4, 5
 		   RETURNING 1
 		 )
@@ -121,7 +123,8 @@ async function rollupDay(back: number): Promise<number> {
 		   percentile_cont(0.95) WITHIN GROUP (ORDER BY query_ms),
 		   max(query_ms)
 		 FROM usage_events
-		 WHERE occurred_on::date = current_date - $1::int
+		 WHERE occurred_on >= (current_date - $1::int)::timestamptz
+		   AND occurred_on < (current_date - $1::int + 1)::timestamptz
 		   AND query_ms IS NOT NULL
 		 GROUP BY 1, 2`,
 		[back],

@@ -26,7 +26,9 @@ export async function register() {
 		await import("@/lib/telemetry/usage");
 	const { pruneOps } = await import("@/lib/platform/editing");
 	const { rollupUsage } = await import("@/lib/telemetry/rollup");
-	const { closePool } = await import("@/lib/data/lakebase");
+	const { closePool, tryAdvisoryLock } = await import("@/lib/data/lakebase");
+	// Identifies the sweep lock, so one replica sweeps at a time.
+	const sweepLockKey = 8577411;
 	const { closeAllUserSessions } = await import("@/lib/data/userSession");
 	const { onShutdown } = await import("@/lib/platform/shutdown");
 	const { runScheduledAlerts } = await import("@/lib/alerts/runner");
@@ -99,8 +101,8 @@ export async function register() {
 	startRegistryPolling();
 	startTelemetryFlushing();
 
-	// Expired presence and cache rows accumulate otherwise. Every replica runs
-	// this; the deletes are idempotent so overlap is harmless.
+	// Expired presence and cache rows accumulate otherwise. One replica at a
+	// time runs it, and the rest skip that round.
 	//
 	// The op log goes with them. It is the live sync buffer rather than a
 	// record: a version snapshot holds the history, so ops only have to cover
@@ -110,8 +112,10 @@ export async function register() {
 	// and versions are records and a deleted record cannot be reconstructed.
 	const sweepTimer = setInterval(
 		() => {
-			void sweepExpired().catch(() => {});
-			void pruneOps().catch(() => {});
+			void tryAdvisoryLock(sweepLockKey, async () => {
+				await sweepExpired().catch(() => {});
+				await pruneOps().catch(() => {});
+			}).catch(() => {});
 		},
 		5 * 60 * 1000,
 	);

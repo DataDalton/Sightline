@@ -233,11 +233,19 @@ export function KpiRow({
 		// delta under a figure that is itself a delta gives a tile two
 		// different changes and no way to tell which is which.
 		const previous = earlier ? toNumber(earlier[name]) : null;
-		const change = signed ? null : relativeChange(numeric, previous);
 		const absolute =
 			signed || numeric === null || previous === null
 				? null
 				: numeric - previous;
+		// A percentage already is a share, so its change is the difference in
+		// percentage points. A relative change of a rate reads as a second
+		// percentage and is easily taken for the points.
+		const inPoints = hint === "percent";
+		const change = signed
+			? null
+			: inPoints
+				? absolute
+				: relativeChange(numeric, previous);
 
 		const spark = sparkline ? trendFor(name) : [];
 
@@ -282,7 +290,7 @@ export function KpiRow({
 						}`}
 						onClick={() => setExplaining(name)}
 						title={`${
-							absolute === null
+							absolute === null || inPoints
 								? ""
 								: `${formatDelta(absolute, hint)} against the earlier window. `
 						}Click to see what drove it.`}
@@ -290,9 +298,13 @@ export function KpiRow({
 						<span aria-hidden="true">
 							{change > 0 ? "▲" : change < 0 ? "▼" : "="}
 						</span>
-						{Math.abs(change * 100) < 0.05
-							? "no change"
-							: `${change > 0 ? "+" : "-"}${Math.abs(change * 100).toFixed(1)}%`}
+						{inPoints
+							? Math.abs(change) < 0.05
+								? "no change"
+								: `${change > 0 ? "+" : "-"}${Math.abs(change).toFixed(1)} pts`
+							: Math.abs(change * 100) < 0.05
+								? "no change"
+								: `${change > 0 ? "+" : "-"}${Math.abs(change * 100).toFixed(1)}%`}
 						<span className={styles.kpiWhy}>Why?</span>
 					</button>
 				)}

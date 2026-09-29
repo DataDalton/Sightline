@@ -105,6 +105,16 @@ export async function GET(request: NextRequest) {
 	if (!allowed.ok) return allowed.response;
 
 	try {
+		// The page has to belong to the report the access was checked
+		// against, or a caller could open one report and read another's notes.
+		const pages = await sql<{ page_id: string }>(
+			`SELECT page_id::text FROM report_pages
+			 WHERE page_id::text = lower($1) AND report_id::text = lower($2)`,
+			[pageId, reportId],
+		);
+		if (pages.length === 0) {
+			return NextResponse.json({ error: "Not found" }, { status: 404 });
+		}
 		return NextResponse.json({ notes: await listPageNotes(pageId) });
 	} catch (error) {
 		console.error("Failed to read notes:", error);

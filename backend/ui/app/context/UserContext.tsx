@@ -71,6 +71,12 @@ export function UserProvider({
 	const [loading, setLoading] = useState(initial === null);
 	const [error, setError] = useState(false);
 	const inFlight = useRef(false);
+	// Counts finished loads, so the retry below re-arms after each one even
+	// when the answer is as degraded as the last.
+	const [loads, setLoads] = useState(0);
+	// Consecutive retries while degraded, which sets how long the next one
+	// waits.
+	const retries = useRef(0);
 
 	const load = useCallback(() => {
 		if (inFlight.current) return;
@@ -93,6 +99,7 @@ export function UserProvider({
 			})
 			.finally(() => {
 				inFlight.current = false;
+				setLoads((n) => n + 1);
 			});
 	}, []);
 
@@ -105,12 +112,21 @@ export function UserProvider({
 	}, [load, initial]);
 
 	// A degraded policy class resolves itself once the lookup recovers, so the
-	// shell retries rather than leaving the user stuck until a reload.
+	// shell retries rather than leaving the user stuck until a reload. Each
+	// retry that is still degraded doubles the wait, up to a ceiling, and a
+	// healthy answer starts the count again.
 	useEffect(() => {
-		if (!user?.policy.degraded && !error) return;
-		const timer = setTimeout(load, 30000);
+		if (!user?.policy.degraded && !error) {
+			retries.current = 0;
+			return;
+		}
+		const delay = Math.min(30000 * 2 ** retries.current, 300000);
+		const timer = setTimeout(() => {
+			retries.current += 1;
+			load();
+		}, delay);
 		return () => clearTimeout(timer);
-	}, [user?.policy.degraded, error, load]);
+	}, [user?.policy.degraded, error, load, loads]);
 
 	return (
 		<UserContext.Provider value={{ user, loading, error, refresh: load }}>

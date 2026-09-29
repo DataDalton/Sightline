@@ -237,16 +237,35 @@ export async function saveProfile(
 
 // Adds one thing to remember, which is what the assistant does when somebody
 // tells it to remember something. The oldest go first once the list is full.
+//
+// Appended and trimmed in one statement, so two memories added at the same
+// moment both land rather than the second overwriting the list the first was
+// added to.
 export async function addMemory(email: string, text: string): Promise<Memory> {
-	const profile = await getProfile(email);
 	const memory: Memory = {
 		id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
 		text: text.trim().slice(0, maxMemoryText),
 		createdOn: new Date().toISOString(),
 	};
-	await saveProfile(email, {
-		...profile,
-		memories: [...profile.memories, memory],
-	});
+	await sql(
+		`INSERT INTO assistant_profiles (owner_email, memories)
+		 VALUES ($1, jsonb_build_array($2::jsonb))
+		 ON CONFLICT (owner_email) DO UPDATE SET
+		   memories = (
+		     SELECT COALESCE(jsonb_agg(kept.elem ORDER BY kept.ord), '[]'::jsonb)
+		     FROM (
+		       SELECT a.elem, a.ord, count(*) OVER () AS total
+		       FROM jsonb_array_elements(
+		         (CASE WHEN jsonb_typeof(assistant_profiles.memories) = 'array'
+		               THEN assistant_profiles.memories
+		               ELSE '[]'::jsonb END)
+		         || jsonb_build_array($2::jsonb)
+		       ) WITH ORDINALITY AS a(elem, ord)
+		     ) kept
+		     WHERE kept.ord > kept.total - $3
+		   ),
+		   modified_on = now()`,
+		[owner(email), JSON.stringify(memory), maxMemories],
+	);
 	return memory;
 }

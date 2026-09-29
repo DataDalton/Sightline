@@ -2,6 +2,7 @@ import { sql } from "../data/lakebase";
 import type { Identity } from "../auth/identity";
 import { parseMetricViewFields } from "./metricViewDefinition";
 import { readColumns, runCatalogQuery } from "./ucMetadata";
+import { quotedRef } from "./types";
 
 // Discovers fields a source publishes and registers the ones the app does not
 // know about yet.
@@ -91,7 +92,9 @@ function toLabel(column: string): string {
 		.replace(/([a-z])([A-Z])/g, "$1 $2")
 		.split(" ")
 		.filter(Boolean)
-		.map((w) => (w.length <= 3 ? w.toUpperCase() : w[0].toUpperCase() + w.slice(1)))
+		.map((w) =>
+			w.length <= 3 ? w.toUpperCase() : w[0].toUpperCase() + w.slice(1),
+		)
 		.join(" ");
 }
 
@@ -108,7 +111,8 @@ async function discoverFields(
 	if (kind !== "metric_view") {
 		return columns.map((column, index) => {
 			const measure =
-				isNumericType(column.dataType) && !isIdentifierLike(column.columnName);
+				isNumericType(column.dataType) &&
+				!isIdentifierLike(column.columnName);
 			return {
 				name: column.columnName,
 				kind: measure ? ("measure" as const) : ("dimension" as const),
@@ -121,7 +125,7 @@ async function discoverFields(
 
 	const rows = await runCatalogQuery(
 		identity,
-		`SHOW CREATE TABLE ${catalog}.${schema}.${object}`,
+		`SHOW CREATE TABLE ${quotedRef(catalog, schema, object)}`,
 	);
 	const statement = String(Object.values(rows[0] ?? {})[0] ?? "");
 	const { dimensions, measures } = parseMetricViewFields(statement);
@@ -197,7 +201,10 @@ export async function syncSourceFields(
 			added: [],
 			reclassified: [],
 			missing: [],
-			error: error instanceof Error ? error.message : "Field discovery failed",
+			error:
+				error instanceof Error
+					? error.message
+					: "Field discovery failed",
 		};
 	}
 
@@ -205,7 +212,9 @@ export async function syncSourceFields(
 		`SELECT field_name, field_kind FROM source_fields WHERE source_key = $1`,
 		[sourceKey],
 	);
-	const existingByName = new Map(existing.map((f) => [f.field_name, f.field_kind]));
+	const existingByName = new Map(
+		existing.map((f) => [f.field_name, f.field_kind]),
+	);
 
 	const added: string[] = [];
 	const reclassified: string[] = [];
@@ -258,15 +267,8 @@ export async function syncSourceFields(
 		.map((f) => f.field_name)
 		.filter((name) => !published.has(name));
 
-	// A source with fields is queryable. One that had none was inactive, and
-	// discovering its fields is what makes it usable.
-	if (fields.length > 0) {
-		await sql(
-			`UPDATE data_sources SET is_active = TRUE, modified_on = now()
-			 WHERE source_key = $1 AND is_active = FALSE`,
-			[sourceKey],
-		);
-	}
+	// A sync never changes whether a source is active. An inactive source is
+	// one somebody unregistered, and registering it again is what restores it.
 
 	return {
 		sourceKey,
@@ -282,7 +284,8 @@ export async function syncAllSourceFields(
 	identity: Identity | null,
 ): Promise<FieldSyncResult[]> {
 	const sources = await sql<{ source_key: string }>(
-		`SELECT source_key FROM data_sources ORDER BY source_key`,
+		`SELECT source_key FROM data_sources WHERE is_active
+		 ORDER BY source_key`,
 	);
 
 	const results: FieldSyncResult[] = [];

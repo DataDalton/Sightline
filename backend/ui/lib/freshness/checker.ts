@@ -185,36 +185,83 @@ async function recordArrivals(
 	);
 }
 
-let warehouseState: { at: number; running: boolean } | null = null;
+let warehouseState: {
+	at: number;
+	running: boolean;
+	autoStopMinutes: number | null;
+} | null = null;
+let workspaceClient: unknown = null;
 
-// Whether the SQL warehouse is up, asked of the workspace rather than of the
-// warehouse, so asking never starts it. Assumed up outside a deployment, and
-// when the answer cannot be had, since a look that was not needed costs less
-// than an answer that stayed old.
-async function warehouseRunning(): Promise<boolean> {
+// Whether routine looks may run, meaning the SQL warehouse is up and people
+// are reading. The warehouse is asked about through the workspace rather than
+// the warehouse, so asking never starts it. Assumed yes outside a deployment,
+// and when the answer cannot be had, since a look that was not needed costs
+// less than an answer that stayed old.
+async function routineLooksAllowed(): Promise<boolean> {
 	if (demoMode || !isDatabricksApp) return true;
 	if (warehouseState && Date.now() - warehouseState.at < 15_000) {
-		return warehouseState.running;
+		return warehouseState.running && (await readersActive());
 	}
 	let running = true;
+	let autoStopMinutes: number | null = null;
 	try {
 		const id = resolveWarehousePath().split("/").pop();
 		if (id) {
 			const { WorkspaceClient } =
 				await import("@databricks/sdk-experimental");
-			const warehouse = await new WorkspaceClient({}).warehouses.get({
-				id,
-			});
+			workspaceClient ??= new WorkspaceClient({});
+			const warehouse = await (
+				workspaceClient as InstanceType<typeof WorkspaceClient>
+			).warehouses.get({ id });
 			running = warehouse.state === "RUNNING";
+			autoStopMinutes =
+				typeof warehouse.auto_stop_mins === "number" &&
+				warehouse.auto_stop_mins > 0
+					? warehouse.auto_stop_mins
+					: null;
 		}
 	} catch {
 		running = true;
 	}
-	warehouseState = { at: Date.now(), running };
-	return running;
+	warehouseState = { at: Date.now(), running, autoStopMinutes };
+	return running && (await readersActive());
+}
+
+let readerState: { at: number; active: boolean } | null = null;
+
+// Whether anybody has read data recently enough that the warehouse is up on
+// their account. A look is itself a query, so looking whenever the warehouse
+// is up would keep it up for ever. Looks stop half the warehouse's idle
+// window after the last reader, which lets it stop soon after they leave.
+async function readersActive(): Promise<boolean> {
+	if (readerState && Date.now() - readerState.at < 15_000) {
+		return readerState.active;
+	}
+	const windowMinutes = Math.max(
+		1,
+		Math.floor((warehouseState?.autoStopMinutes ?? 10) / 2),
+	);
+	let active = true;
+	try {
+		const rows = await sql<{ active: boolean }>(
+			`SELECT EXISTS (
+			   SELECT 1 FROM usage_events
+			   WHERE occurred_on > now() - make_interval(mins => $1)
+			     AND event_type IN ('query', 'page_view', 'page_open')
+			 ) AS active`,
+			[windowMinutes],
+		);
+		active = rows[0]?.active ?? true;
+	} catch {
+		active = true;
+	}
+	readerState = { at: Date.now(), active };
+	return active;
 }
 
 let passing = false;
+// The tables the last pass made sure had a row, as one sorted key.
+let knownTables = "";
 
 export async function runChecks(): Promise<void> {
 	if (passing) return;
@@ -248,12 +295,16 @@ async function pass(): Promise<void> {
 		}
 	}
 
-	for (const source of unreadable) {
+	// Written only where it differs, since this runs every few seconds on
+	// every replica.
+	if (unreadable.length > 0) {
 		await sql(
 			`UPDATE data_sources SET freshness_mode = 'timer', freshness_note = $2
-			 WHERE source_key = $1`,
+			 WHERE source_key = ANY($1::text[])
+			   AND (freshness_mode <> 'timer'
+			        OR freshness_note IS DISTINCT FROM $2)`,
 			[
-				source.sourceKey,
+				unreadable.map((s) => s.sourceKey),
 				"The tables this reads are not known, so it is refreshed on a timer.",
 			],
 		);
@@ -261,16 +312,22 @@ async function pass(): Promise<void> {
 
 	const tables = [...intervalByTable.keys()];
 	if (tables.length === 0) return;
-	await sql(
-		`INSERT INTO source_checks (table_name)
-		 SELECT unnest($1::text[]) ON CONFLICT DO NOTHING`,
-		[tables],
-	);
+	// Rows for new tables, written when the set of tables changes rather
+	// than on every pass.
+	const tableKey = [...tables].sort().join(",");
+	if (tableKey !== knownTables) {
+		await sql(
+			`INSERT INTO source_checks (table_name)
+			 SELECT unnest($1::text[]) ON CONFLICT DO NOTHING`,
+			[tables],
+		);
+		knownTables = tableKey;
+	}
 
 	// Claimed in one statement, so replicas ticking together take different
 	// tables. A table somebody asked about is taken whatever the warehouse is
-	// doing. The rest wait for it to be running.
-	const running = await warehouseRunning();
+	// doing. The rest wait for it to be running with readers on it.
+	const running = await routineLooksAllowed();
 	const due = await sql<{
 		table_name: string;
 		version: string | null;
@@ -334,18 +391,12 @@ async function pass(): Promise<void> {
 					learnFrom,
 					demoMode && changed,
 				);
-				if (learnDue) {
-					await sql(
-						`UPDATE source_checks SET learned_on = now()
-						 WHERE table_name = $1`,
-						[row.table_name],
-					);
-				}
 				await sql(
 					`UPDATE source_checks SET
 					   version = $2, version_at = $3, checked_on = now(),
 					   changed_on = CASE WHEN $4 THEN now() ELSE changed_on END,
 					   next_check_on = now() + make_interval(secs => $5),
+					   learned_on = CASE WHEN $6 THEN now() ELSE learned_on END,
 					   last_error = NULL
 					 WHERE table_name = $1`,
 					[
@@ -354,6 +405,7 @@ async function pass(): Promise<void> {
 						latest?.timestamp ? new Date(latest.timestamp) : null,
 						changed,
 						interval,
+						learnDue,
 					],
 				);
 			} catch (error) {
@@ -378,7 +430,12 @@ async function pass(): Promise<void> {
 	});
 	await Promise.all(workers);
 
-	await settleSources(nextTables, changedTables);
+	// Only sources reading a table looked at in this pass can have moved.
+	const looked = new Set(due.map((d) => d.table_name));
+	const touched = new Map(
+		[...nextTables].filter(([, list]) => list.some((t) => looked.has(t))),
+	);
+	await settleSources(touched, changedTables);
 	await refreshMarks();
 	await evaluateLateness().catch((error) => {
 		console.warn("Judging late data failed:", error);
@@ -405,6 +462,11 @@ async function settleSources(
 	);
 	const byTable = new Map(state.map((s) => [s.table_name, s]));
 
+	const keys: string[] = [];
+	const modes: string[] = [];
+	const notes: (string | null)[] = [];
+	const looks: (string | null)[] = [];
+	const changes: boolean[] = [];
 	for (const [sourceKey, tables] of tablesOf) {
 		const rows = tables.map((t) => byTable.get(t));
 		const failed = rows.find((r) => r?.last_error);
@@ -421,27 +483,40 @@ async function settleSources(
 				? "Not looked at yet."
 				: null;
 
-		await sql(
-			`UPDATE data_sources SET
-			   freshness_mode = $2, freshness_note = $3,
-			   checked_on = $4,
-			   data_changed_on = CASE WHEN $5 THEN now() ELSE data_changed_on END
-			 WHERE source_key = $1`,
-			[
-				sourceKey,
-				mode,
-				note,
-				Number.isFinite(oldestLook) && oldestLook > 0
-					? new Date(oldestLook)
-					: null,
-				changed,
-			],
+		keys.push(sourceKey);
+		modes.push(mode);
+		notes.push(note);
+		looks.push(
+			Number.isFinite(oldestLook) && oldestLook > 0
+				? new Date(oldestLook).toISOString()
+				: null,
 		);
-		if (changed) {
-			await sql(`DELETE FROM result_cache WHERE source_key = $1`, [
-				sourceKey,
-			]);
-		}
+		changes.push(changed);
+	}
+	if (keys.length === 0) return;
+
+	// One statement for every source, writing only the rows that moved.
+	await sql(
+		`UPDATE data_sources d SET
+		   freshness_mode = u.mode, freshness_note = u.note,
+		   checked_on = u.checked,
+		   data_changed_on = CASE WHEN u.changed THEN now()
+		                          ELSE d.data_changed_on END
+		 FROM unnest($1::text[], $2::text[], $3::text[], $4::timestamptz[],
+		             $5::boolean[])
+		      AS u(key, mode, note, checked, changed)
+		 WHERE d.source_key = u.key
+		   AND (u.changed
+		        OR (d.freshness_mode, d.freshness_note, d.checked_on)
+		           IS DISTINCT FROM (u.mode, u.note, u.checked))`,
+		[keys, modes, notes, looks, changes],
+	);
+	const changedKeys = keys.filter((_, i) => changes[i]);
+	if (changedKeys.length > 0) {
+		await sql(
+			`DELETE FROM result_cache WHERE source_key = ANY($1::text[])`,
+			[changedKeys],
+		);
 	}
 }
 

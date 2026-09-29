@@ -13,6 +13,16 @@ export type FormatHint =
 	| "date"
 	| "text";
 
+// How an empty group reads wherever rows are split by a dimension. A filter
+// on this label means the value is empty.
+export const blankLabel = "(blank)";
+
+export function groupLabel(value: unknown): string {
+	return value === null || value === undefined || value === ""
+		? blankLabel
+		: String(value);
+}
+
 export function toNumber(value: unknown): number | null {
 	if (value === null || value === undefined || value === "") return null;
 	if (typeof value === "number") return Number.isFinite(value) ? value : null;
@@ -130,4 +140,32 @@ export function formatDelta(value: unknown, hint: FormatHint): string {
 	if (n === null) return "-";
 	const sign = n > 0 ? "+" : "";
 	return `${sign}${formatCompact(n, hint)}`;
+}
+
+// Dates as the warehouse spells them. The driver hands back DATE columns as
+// Date objects, which serialise as a midnight timestamp, while the statement
+// API hands back the date itself. One spelling keeps axis labels, filters
+// built from a click, and cache entries from either path the same.
+export function plainDates<T extends Record<string, unknown>>(rows: T[]): T[] {
+	let seen = false;
+	for (const row of rows.slice(0, 20)) {
+		for (const value of Object.values(row)) {
+			if (value instanceof Date) seen = true;
+		}
+	}
+	if (!seen) return rows;
+	return rows.map((row) => {
+		const out: Record<string, unknown> = {};
+		for (const [key, value] of Object.entries(row)) {
+			if (value instanceof Date && !Number.isNaN(value.getTime())) {
+				const iso = value.toISOString();
+				out[key] = iso.endsWith("T00:00:00.000Z")
+					? iso.slice(0, 10)
+					: iso;
+			} else {
+				out[key] = value;
+			}
+		}
+		return out as T;
+	});
 }

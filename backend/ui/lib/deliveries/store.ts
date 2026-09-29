@@ -2,6 +2,8 @@ import type { Identity } from "../auth/identity";
 import type { PolicyClass } from "../auth/policy";
 import { sql } from "../data/lakebase";
 import { getReport } from "../platform/reports";
+import { reachableSet } from "../platform/sources";
+import { confirmableSources } from "../platform/sources";
 import {
 	cleanSchedule,
 	describeSchedule,
@@ -115,7 +117,9 @@ export async function subscribe(
 	if (!page) throw new DeliveryError("Page not found", 404);
 
 	const schedule = cleanSchedule(input.schedule);
-	if (!(deliveryFrequencies as readonly string[]).includes(schedule.frequency)) {
+	if (
+		!(deliveryFrequencies as readonly string[]).includes(schedule.frequency)
+	) {
 		schedule.frequency = "daily";
 	}
 
@@ -136,16 +140,31 @@ export async function subscribe(
 		page.sourceKey ??
 		report.sourceKey;
 
+	// The figures are read from this source, so the owner has to be able to
+	// read it, not only open the report built on it.
+	const reachable = await reachableSet(identity);
+	if (reachable && (!figureSource || !reachable.has(figureSource))) {
+		throw new DeliveryError("That dataset is not one you can read.", 403);
+	}
+	// Whether the send may run while the owner is away. Held to the owner's
+	// own grant on the source, as alerts are.
+	const confirmable = await confirmableSources(identity);
+	const confirmed =
+		figureSource !== null &&
+		figureSource !== undefined &&
+		(!confirmable || confirmable.has(figureSource));
+
 	await sql(
 		`INSERT INTO deliveries
 		   (owner_email, report_id, page_id, source_key, schedule, next_run_on,
 		    access_confirmed_on)
-		 VALUES ($1, $2::uuid, $3::uuid, $4, $5, $6, now())
+		 VALUES ($1, $2::uuid, $3::uuid, $4, $5, $6,
+		         CASE WHEN $7::boolean THEN now() END)
 		 ON CONFLICT (owner_email, page_id) DO UPDATE SET
 		   schedule = EXCLUDED.schedule,
 		   next_run_on = EXCLUDED.next_run_on,
 		   source_key = EXCLUDED.source_key,
-		   access_confirmed_on = now(),
+		   access_confirmed_on = EXCLUDED.access_confirmed_on,
 		   enabled = TRUE`,
 		[
 			email,
@@ -154,12 +173,14 @@ export async function subscribe(
 			figureSource,
 			JSON.stringify(schedule),
 			nextRun(schedule, new Date()).toISOString(),
+			confirmed,
 		],
 	);
 
 	const all = await listDeliveries(email);
 	const saved = all.find((d) => d.pageId === page.pageId);
-	if (!saved) throw new DeliveryError("The page could not be scheduled.", 500);
+	if (!saved)
+		throw new DeliveryError("The page could not be scheduled.", 500);
 	return saved;
 }
 

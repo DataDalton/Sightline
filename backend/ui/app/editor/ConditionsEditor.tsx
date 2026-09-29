@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
 	paletteTokens,
 	rampFor,
@@ -75,6 +75,54 @@ function rampGradient(
 
 	const low = mix(base, colors.resolve(ramp.low, colors.negative), strength);
 	return `linear-gradient(90deg, ${low}, ${base} 50%, ${high})`;
+}
+
+// A number field that keeps what is typed until it reads as a number.
+//
+// A half typed entry such as "-" or an emptied field is not a number, and
+// committing it as zero would replace the text under the cursor. The draft is
+// held here and only a value that parses is handed on. A value changed from
+// outside, such as by an undo, replaces the draft when it differs from it.
+function NumberInput({
+	value,
+	onCommit,
+	ariaLabel,
+}: {
+	value: number;
+	onCommit: (value: number) => void;
+	ariaLabel: string;
+}) {
+	const [draft, setDraft] = useState(String(value));
+	const [seen, setSeen] = useState(value);
+	if (value !== seen) {
+		setSeen(value);
+		if (Number(draft) !== value || draft.trim() === "") {
+			setDraft(String(value));
+		}
+	}
+
+	return (
+		<input
+			type="number"
+			className={styles.input}
+			value={draft}
+			onChange={(e) => {
+				const text = e.target.value;
+				setDraft(text);
+				const parsed = Number(text);
+				if (text.trim() !== "" && Number.isFinite(parsed)) {
+					onCommit(parsed);
+				}
+			}}
+			onBlur={() => {
+				// Leaving a field that never parsed shows the value in force.
+				if (draft.trim() === "" || !Number.isFinite(Number(draft))) {
+					setDraft(String(value));
+				}
+			}}
+			aria-label={ariaLabel}
+		/>
+	);
 }
 
 interface ConditionsEditorProps {
@@ -258,28 +306,20 @@ export function ConditionsEditor({
 									([value, label]) => ({ value, label }),
 								)}
 							/>
-							<input
-								type="number"
-								className={styles.input}
+							<NumberInput
 								value={rule.value ?? 0}
-								onChange={(e) =>
-									updateRule(index, {
-										value: Number(e.target.value),
-									})
+								onCommit={(value) =>
+									updateRule(index, { value })
 								}
-								aria-label="Threshold"
+								ariaLabel="Threshold"
 							/>
 							{rule.operator === "between" && (
-								<input
-									type="number"
-									className={styles.input}
+								<NumberInput
 									value={rule.value2 ?? 0}
-									onChange={(e) =>
-										updateRule(index, {
-											value2: Number(e.target.value),
-										})
+									onCommit={(value2) =>
+										updateRule(index, { value2 })
 									}
-									aria-label="Upper bound"
+									ariaLabel="Upper bound"
 								/>
 							)}
 						</div>

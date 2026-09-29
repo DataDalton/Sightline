@@ -27,6 +27,25 @@ import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
 // hold an unbounded array of results in memory at once.
 const maxBatchSize = 50;
 
+// The cached answers recorded lately, by reader and question, and when.
+const recordWindowMs = 10 * 60 * 1000;
+const recordedAt = new Map<string, number>();
+const maxRecorded = 5000;
+
+function recentlyRecorded(key: string): boolean {
+	const now = Date.now();
+	const last = recordedAt.get(key);
+	if (last !== undefined && now - last < recordWindowMs) return true;
+	if (recordedAt.size >= maxRecorded) {
+		for (const [k, at] of recordedAt) {
+			if (now - at >= recordWindowMs) recordedAt.delete(k);
+		}
+		if (recordedAt.size >= maxRecorded) recordedAt.clear();
+	}
+	recordedAt.set(key, now);
+	return false;
+}
+
 export async function POST(request: NextRequest) {
 	await ensureReadyOrDegrade();
 
@@ -132,6 +151,18 @@ export async function POST(request: NextRequest) {
 		runnable.forEach((held, position) => {
 			const outcome = answers[position];
 			if (!outcome.result) return;
+			const cacheHit = outcome.result.source !== "warehouse";
+			// A page on a live source asks the same question every few
+			// seconds. Warehouse queries are always recorded, and the same
+			// cached answer once per reader per window.
+			if (
+				cacheHit &&
+				recentlyRecorded(
+					`${identity.email}|${JSON.stringify(held.entry.spec)}`,
+				)
+			) {
+				return;
+			}
 			record({
 				occurredOn,
 				userEmail: identity.email,
@@ -141,7 +172,7 @@ export async function POST(request: NextRequest) {
 				durationMs: outcome.result.durationMs,
 				queryMs: outcome.result.queryMs,
 				rowCount: outcome.result.rowCount,
-				cacheHit: outcome.result.source !== "warehouse",
+				cacheHit,
 				sessionId,
 			});
 		});

@@ -32,8 +32,10 @@ export async function POST(request: NextRequest, { params }: IdContext) {
 		// Told once, when they are first given it. Each of them sees their
 		// own rows when they open it, so naming the sheet tells them nothing
 		// their access does not already allow.
+		// Addressed the way the share row stores it, trimmed and lower
+		// case, so the notice reaches the inbox the share opens.
 		if (added) {
-			void notify(email, {
+			void notify(email.trim().toLowerCase(), {
 				kind: "share",
 				title: `${found.identity.name} shared the sheet ${found.sheet.title} with you`,
 				body:

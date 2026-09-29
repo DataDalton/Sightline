@@ -12,8 +12,8 @@
 
 :root {
 	/* Surfaces, from furthest back to closest to the reader. */
-	--surface-sunken: #f1f2f4;
-	--surface-base: #f7f8fa;
+	--surface-sunken: #eaedf1;
+	--surface-base: #f1f3f6;
 	--surface-raised: #ffffff;
 	--surface-overlay: #ffffff;
 	/* One step above an overlay, for a popup that opens inside one. White
@@ -36,8 +36,8 @@
 	   on the next colour along the ramp rather than beside it. */
 	--state-hover: rgba(19, 44, 82, 0.07);
 	--state-selected: color-mix(in srgb, var(--brand) 15%, transparent);
-	--surface-hover: #eceef1;
-	--surface-active: #e3e6ea;
+	--surface-hover: #e8ebef;
+	--surface-active: #dee2e7;
 
 	/* Chrome is deliberately dark in both themes: it frames the content
 	   rather than competing with it, and keeps the product recognisable. */
@@ -49,13 +49,15 @@
 	--chrome-active: #2b3038;
 
 	--text-primary: #16181d;
-	--text-secondary: #4a5059;
-	--text-muted: #767d87;
+	--text-secondary: #434952;
+	--text-muted: #666d77;
 	--text-inverse: #ffffff;
 	--text-link: #0b5cd5;
+	/* The knob of a switch, light on either track in both themes. */
+	--control-thumb: #ffffff;
 
-	--border-subtle: #e5e8ec;
-	--border-default: #d3d8de;
+	--border-subtle: #e1e5ea;
+	--border-default: #ccd2d9;
 	--border-strong: #b3bac3;
 
 	/* Brand. Gold is an accent, not a field: it marks the active item and the
@@ -63,7 +65,7 @@
 	   no gold surfaces. */
 	--brand: #ffb500;
 	--brand-strong: #d99a00;
-	--brand-subtle: #fff4d6;
+	--brand-subtle: #fff0c7;
 	--brand-contrast: #16181d;
 
 	/* Focus ring uses a blue rather than the brand gold: gold on a light
@@ -103,7 +105,7 @@
 	--chart-8: #dc2626;
 
 	--chart-grid: #e5e8ec;
-	--chart-axis: #767d87;
+	--chart-axis: #666d77;
 	--chart-tooltip-bg: #16181d;
 	--chart-tooltip-text: #ffffff;
 
@@ -112,9 +114,12 @@
 	--delta-positive: #1a7f45;
 	--delta-negative: #c22b2b;
 
-	--shadow-sm: 0 1px 2px rgba(16, 18, 22, 0.06);
-	--shadow-md: 0 2px 8px rgba(16, 18, 22, 0.08);
-	--shadow-lg: 0 8px 24px rgba(16, 18, 22, 0.12);
+	--shadow-sm:
+		0 1px 2px rgba(19, 30, 48, 0.06), 0 1px 3px rgba(19, 30, 48, 0.05);
+	--shadow-md:
+		0 2px 4px rgba(19, 30, 48, 0.05), 0 4px 12px rgba(19, 30, 48, 0.08);
+	--shadow-lg:
+		0 4px 8px rgba(19, 30, 48, 0.06), 0 12px 32px rgba(19, 30, 48, 0.14);
 
 	--radius-sm: 4px;
 	--radius-md: 6px;
@@ -190,6 +195,7 @@
 		--text-muted: #767d87;
 		--text-inverse: #16181d;
 		--text-link: #6ba3f5;
+		--control-thumb: #e8eaed;
 
 		--border-subtle: #23272e;
 		--border-default: #2f343c;
@@ -263,6 +269,7 @@
 	--text-muted: #767d87;
 	--text-inverse: #16181d;
 	--text-link: #6ba3f5;
+	--control-thumb: #e8eaed;
 
 	--border-subtle: #23272e;
 	--border-default: #2f343c;

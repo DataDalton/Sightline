@@ -1,5 +1,9 @@
-import { sql } from "../data/lakebase";
+import { sql, transaction } from "../data/lakebase";
 import { insertLog } from "../activityLog";
+import type { Identity } from "../auth/identity";
+import type { PolicyClass } from "../auth/policy";
+import { getAccessContext } from "./access";
+import { resolveReportAccess } from "./accessRules";
 
 // Per-user saved views: a person's own filters, column selection, sort and
 // options for a page. Saving a view never mutates the underlying report, so
@@ -61,6 +65,55 @@ function toView(row: ViewRow, email: string): SavedView {
 	};
 }
 
+// A view that cannot be stored as asked, which is the caller's to fix.
+export class ViewInputError extends Error {}
+
+// Largest stored configuration. A view holds column choices, filters and
+// options, which is far below this, and a body past it is refused rather than
+// kept on every read of the page.
+export const maxViewConfigBytes = 64 * 1024;
+
+// The report a page belongs to, when the caller may open that report, or null.
+// A view is read and written by page, so every route checks this first. A page
+// that does not exist and one the caller cannot open answer the same.
+export async function openablePageReport(
+	policy: PolicyClass,
+	identity: Identity,
+	pageId: string,
+): Promise<string | null> {
+	const rows = await sql<{
+		report_id: string;
+		category_id: string | null;
+		is_personal: boolean;
+		owner_email: string | null;
+	}>(
+		`SELECT r.report_id::text AS report_id, r.category_id, r.is_personal,
+		        r.owner_email
+		 FROM report_pages p
+		 JOIN reports r ON r.report_id = p.report_id
+		 WHERE p.page_id::text = lower($1)
+		   AND p.is_active = TRUE AND r.is_active = TRUE`,
+		[pageId],
+	);
+	const report = rows[0];
+	if (!report) return null;
+
+	const context = await getAccessContext(policy, identity);
+	const view = resolveReportAccess(
+		context.grants,
+		{
+			reportId: report.report_id,
+			categoryId: report.category_id,
+			isPersonal: report.is_personal,
+			ownerEmail: report.owner_email,
+		},
+		context.email,
+		"view",
+		context.baseline,
+	);
+	return view.allowed ? report.report_id : null;
+}
+
 // Views the caller can open for a page: their own, plus any shared with a
 // group they belong to.
 export async function listViews(
@@ -98,81 +151,86 @@ export async function saveView(
 	email: string,
 	input: SaveViewInput,
 ): Promise<SavedView> {
-	// Only one default per user per page, so an existing default is cleared
-	// before the new one is written.
-	if (input.isDefault) {
-		await sql(
-			`UPDATE saved_views SET is_default = FALSE
-			 WHERE page_id = $1 AND lower(owner_email) = $2`,
-			[input.pageId, email.toLowerCase()],
-		);
+	const config = JSON.stringify(input.config ?? {});
+	if (Buffer.byteLength(config, "utf8") > maxViewConfigBytes) {
+		throw new ViewInputError("This view holds too much to save.");
 	}
 
 	const shared = input.sharedWith ?? [];
+	const owner = email.toLowerCase();
 
-	if (input.viewId) {
-		// The owner check is in the WHERE clause rather than a separate read,
-		// so there is no window between checking and writing.
-		const rows = await sql<ViewRow>(
-			`UPDATE saved_views
-			 SET name = $3, config = $4, is_default = $5, is_shared = $6,
-			     shared_with = $7::text[], modified_on = now()
-			 WHERE view_id = $1 AND lower(owner_email) = $2
-			 RETURNING view_id, owner_email, report_id, page_id, name, config,
-			           is_default, is_shared, shared_with, modified_on`,
-			[
-				input.viewId,
-				email.toLowerCase(),
-				input.name,
-				JSON.stringify(input.config),
-				input.isDefault ?? false,
-				input.isShared ?? false,
-				shared,
-			],
-		);
-		const updated = rows[0];
-		if (!updated) {
-			throw new Error("View not found, or you do not own it");
+	// The write and the clearing of any other default land together, and the
+	// clearing happens only once the write has shown the caller owns the view.
+	// Only one default per user per page.
+	const saved = await transaction(async (client) => {
+		let row: ViewRow | undefined;
+		if (input.viewId) {
+			// The owner check is in the WHERE clause rather than a separate
+			// read, so there is no window between checking and writing.
+			const updated = await client.query<ViewRow>(
+				`UPDATE saved_views
+				 SET name = $3, config = $4, is_default = $5, is_shared = $6,
+				     shared_with = $7::text[], modified_on = now()
+				 WHERE view_id = $1 AND lower(owner_email) = $2
+				 RETURNING view_id, owner_email, report_id, page_id, name,
+				           config, is_default, is_shared, shared_with,
+				           modified_on`,
+				[
+					input.viewId,
+					owner,
+					input.name,
+					config,
+					input.isDefault ?? false,
+					input.isShared ?? false,
+					shared,
+				],
+			);
+			row = updated.rows[0];
+			if (!row) {
+				throw new Error("View not found, or you do not own it");
+			}
+		} else {
+			const created = await client.query<ViewRow>(
+				`INSERT INTO saved_views
+				   (owner_email, report_id, page_id, name, config, is_default,
+				    is_shared, shared_with)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text[])
+				 RETURNING view_id, owner_email, report_id, page_id, name,
+				           config, is_default, is_shared, shared_with,
+				           modified_on`,
+				[
+					email,
+					input.reportId,
+					input.pageId,
+					input.name,
+					config,
+					input.isDefault ?? false,
+					input.isShared ?? false,
+					shared,
+				],
+			);
+			row = created.rows[0];
 		}
 
-		await insertLog({
-			recordType: "saved_view",
-			recordId: updated.view_id,
-			action: "update",
-			changedBy: email,
-			notes: input.name,
-		});
-		return toView(updated, email);
-	}
+		if (row && input.isDefault) {
+			await client.query(
+				`UPDATE saved_views SET is_default = FALSE
+				 WHERE page_id = $1 AND lower(owner_email) = $2
+				   AND view_id <> $3`,
+				[row.page_id, owner, row.view_id],
+			);
+		}
+		return row;
+	});
 
-	const rows = await sql<ViewRow>(
-		`INSERT INTO saved_views
-		   (owner_email, report_id, page_id, name, config, is_default,
-		    is_shared, shared_with)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text[])
-		 RETURNING view_id, owner_email, report_id, page_id, name, config,
-		           is_default, is_shared, shared_with, modified_on`,
-		[
-			email,
-			input.reportId,
-			input.pageId,
-			input.name,
-			JSON.stringify(input.config),
-			input.isDefault ?? false,
-			input.isShared ?? false,
-			shared,
-		],
-	);
-
-	const created = rows[0];
 	await insertLog({
 		recordType: "saved_view",
-		recordId: created.view_id,
-		action: "create",
+		recordId: saved.view_id,
+		action: input.viewId ? "update" : "create",
 		changedBy: email,
 		notes: input.name,
 	});
-	return toView(created, email);
+	return toView(saved, email);
 }
 
 export async function deleteView(

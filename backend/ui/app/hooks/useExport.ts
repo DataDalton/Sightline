@@ -96,8 +96,12 @@ export function useExport(storageKey: string): UseExport {
 	// twice on a complete job does not download it twice.
 	const collected = useRef<string | null>(null);
 	const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	// Raised by every stop. A poll started under an older value is stale and
+	// neither schedules another nor touches state when its reply lands.
+	const generation = useRef(0);
 
 	const stop = useCallback(() => {
+		generation.current += 1;
 		if (timer.current) {
 			clearTimeout(timer.current);
 			timer.current = null;
@@ -106,10 +110,13 @@ export function useExport(storageKey: string): UseExport {
 
 	const poll = useCallback(
 		async (jobId: string) => {
+			const started = generation.current;
+			const stale = () => generation.current !== started;
 			try {
 				const response = await fetch(
 					`/api/query/export?jobId=${encodeURIComponent(jobId)}`,
 				);
+				if (stale()) return;
 
 				// The job is gone: collected, expired, or never this reader's.
 				// Not an error, just nothing left to watch.
@@ -123,6 +130,7 @@ export function useExport(storageKey: string): UseExport {
 				if (!response.ok) throw new Error("Could not read the export");
 
 				const next = (await response.json()) as ExportJob;
+				if (stale()) return;
 				setJob(next);
 
 				if (next.status === "complete") {
@@ -146,6 +154,7 @@ export function useExport(storageKey: string): UseExport {
 
 				timer.current = setTimeout(() => void poll(jobId), pollMs);
 			} catch (e) {
+				if (stale()) return;
 				setBusy(false);
 				setError(e instanceof Error ? e : new Error("Export failed"));
 			}
@@ -167,6 +176,7 @@ export function useExport(storageKey: string): UseExport {
 	const start = useCallback(
 		async (body: ExportRequestBody) => {
 			stop();
+			const startedAt = generation.current;
 			setError(null);
 			setBusy(true);
 			setJob(null);
@@ -184,10 +194,13 @@ export function useExport(storageKey: string): UseExport {
 				}
 
 				const started = (await response.json()) as ExportJob;
+				// Dismissed, restarted or unmounted while the request was out.
+				if (generation.current !== startedAt) return;
 				setJob(started);
 				remember(storageKey, started.jobId);
 				void poll(started.jobId);
 			} catch (e) {
+				if (generation.current !== startedAt) return;
 				setBusy(false);
 				setError(e instanceof Error ? e : new Error("Export failed"));
 			}

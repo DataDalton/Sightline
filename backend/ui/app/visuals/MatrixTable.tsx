@@ -10,6 +10,12 @@ import {
 } from "react";
 import { formatValue, type FormatHint } from "../../lib/format";
 import type { VisualStyle } from "../../lib/visuals/style";
+import {
+	matchesSelection,
+	selectionCovers,
+	selectionValue,
+	type SelectionPart,
+} from "../../lib/visuals/selection";
 import { VisualError } from "./VisualFrame";
 import { VisualLoadingState } from "./LoadingState";
 import { createResultMemo, resultMaxAge } from "./resultMemo";
@@ -41,6 +47,13 @@ interface MatrixProps {
 	fields: Map<string, FieldMeta>;
 	height?: number;
 	style?: VisualStyle;
+	// Fires when a reader clicks a row's label, with the row's value and the
+	// values of every level above it, so a business unit is selected inside
+	// the division it sits under rather than across all of them.
+	onSelect?: (selection: SelectionPart[]) => void;
+	// The page selection this matrix made, so its rows stay solid and the
+	// rest fade.
+	selection?: SelectionPart[];
 }
 
 interface FilterClause {
@@ -56,6 +69,9 @@ interface MatrixRow {
 	path: string[];
 	label: string;
 	depth: number;
+	// The row values behind the path as the query returned them, which is
+	// what a click on the row filters by.
+	raws: unknown[];
 	// Values keyed by "columnValue||measure", or by measure alone when there is
 	// no pivoted column.
 	values: Record<string, unknown>;
@@ -68,6 +84,13 @@ function cellKey(columnValue: string | null, measure: string): string {
 
 function pathKey(path: string[]): string {
 	return path.join("||");
+}
+
+// The column groups already on screen plus any a new level brought, sorted.
+// Returns the same array when nothing is new, so state does not change.
+function mergeColumnValues(current: string[], added: string[]): string[] {
+	if (added.every((value) => current.includes(value))) return current;
+	return Array.from(new Set([...current, ...added])).sort();
 }
 
 // The top level of each matrix, kept across mounts, so returning to a report
@@ -88,6 +111,8 @@ export function MatrixTable({
 	fields,
 	height = 520,
 	style,
+	onSelect,
+	selection,
 }: MatrixProps) {
 	const [rows, setRows] = useState<MatrixRow[]>([]);
 	const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -100,12 +125,22 @@ export function MatrixTable({
 
 	const baseKey = JSON.stringify(baseFilters);
 
+	// Advanced whenever the top level reloads, so an expansion that started
+	// against the previous query shape can tell its answer no longer applies.
+	const generation = useRef(0);
+
 	// Fetches one level: the children of `path`, or the top level when empty.
+	// The pivoted column values it saw come back with the rows rather than
+	// going into state here, so a caller whose request was superseded can
+	// discard both.
 	const fetchLevel = useCallback(
-		async (path: string[]): Promise<MatrixRow[]> => {
+		async (
+			path: string[],
+			parentRaws: unknown[] = [],
+		): Promise<{ rows: MatrixRow[]; columnValues: string[] }> => {
 			const depth = path.length;
 			const dimension = rowDimensions[depth];
-			if (!dimension) return [];
+			if (!dimension) return { rows: [], columnValues: [] };
 
 			// Scope to the ancestors, so expanding "2025 / Medical" asks only
 			// for business units inside it.
@@ -149,6 +184,7 @@ export function MatrixTable({
 				if (!row) {
 					row = {
 						path: [...path, label],
+						raws: [...parentRaws, record[dimension]],
 						label,
 						depth,
 						values: {},
@@ -163,15 +199,10 @@ export function MatrixTable({
 				}
 			}
 
-			if (columnDimension && seenColumns.size > 0) {
-				// Column groups accumulate across expansions, so a child that
-				// introduces a period the parent lacked still lines up.
-				setColumnValues((prev) =>
-					Array.from(new Set([...prev, ...seenColumns])).sort(),
-				);
-			}
-
-			return Array.from(byLabel.values());
+			return {
+				rows: Array.from(byLabel.values()),
+				columnValues: columnDimension ? Array.from(seenColumns) : [],
+			};
 		},
 		[sourceKey, rowDimensions, columnDimension, measures, baseFilters],
 	);
@@ -185,6 +216,7 @@ export function MatrixTable({
 	// Reload from the top whenever the query shape changes.
 	useEffect(() => {
 		let cancelled = false;
+		generation.current += 1;
 		setError(null);
 		setExpanded(new Set());
 
@@ -206,16 +238,18 @@ export function MatrixTable({
 		fetchLevel([])
 			.then((top) => {
 				if (cancelled) return;
-				setRows(top);
+				setRows(top.rows);
 				setLoading(false);
-				// Read back from state rather than from the closure, because
-				// fetchLevel accumulates the column groups as it goes.
-				setColumnValues((current) => {
+				// Merged into state rather than replacing it, and read back
+				// from the merge so the remembered level carries the same
+				// column groups the screen does.
+				setColumnValues((prev) => {
+					const merged = mergeColumnValues(prev, top.columnValues);
 					topLevels.set(topKey, {
-						rows: top,
-						columnValues: current,
+						rows: top.rows,
+						columnValues: merged,
 					});
-					return current;
+					return merged;
 				});
 			})
 			.catch((e) => {
@@ -252,9 +286,19 @@ export function MatrixTable({
 			return;
 		}
 
+		// A second press while the children are still loading would insert
+		// them twice.
+		if (loadingPaths.has(key)) return;
+
 		setLoadingPaths((prev) => new Set(prev).add(key));
+		const startedIn = generation.current;
 		try {
-			const children = await fetchLevel(row.path);
+			const { rows: children, columnValues: childColumns } =
+				await fetchLevel(row.path, row.raws);
+			if (startedIn !== generation.current) return;
+			// Column groups accumulate across expansions, so a child that
+			// introduces a period the parent lacked still lines up.
+			setColumnValues((prev) => mergeColumnValues(prev, childColumns));
 			setRows((prev) => {
 				const index = prev.findIndex((r) => pathKey(r.path) === key);
 				if (index < 0) return prev;
@@ -264,6 +308,7 @@ export function MatrixTable({
 			});
 			setExpanded((prev) => new Set(prev).add(key));
 		} catch (e) {
+			if (startedIn !== generation.current) return;
 			setError(e as Error & { status?: number });
 		} finally {
 			setLoadingPaths((prev) => {
@@ -289,6 +334,18 @@ export function MatrixTable({
 		}
 		return map;
 	}, [measures, fields]);
+
+	// The selection when it is about this matrix's row fields.
+	const marking = selectionCovers(selection, rowDimensions)
+		? selection
+		: null;
+	const rowParts = (row: MatrixRow): SelectionPart[] =>
+		row.raws.map((raw, i) => ({
+			field: rowDimensions[i],
+			values: [selectionValue(raw)],
+		}));
+	const rowMark = (row: MatrixRow) =>
+		Object.fromEntries(row.raws.map((raw, i) => [rowDimensions[i], raw]));
 
 	// Column groups: one per pivoted value, or a single unnamed group.
 	const groups =
@@ -398,6 +455,9 @@ export function MatrixTable({
 							const key = pathKey(row.path);
 							const isOpen = expanded.has(key);
 							const isLoading = loadingPaths.has(key);
+							const chosen =
+								marking !== null &&
+								matchesSelection(marking, rowMark(row));
 
 							return (
 								<tr
@@ -406,6 +466,10 @@ export function MatrixTable({
 										styles[
 											`level${Math.min(row.depth, 3)}`
 										] ?? ""
+									} ${chosen ? styles.rowChosen : ""} ${
+										marking && !chosen
+											? styles.rowDimmed
+											: ""
 									}`}
 								>
 									<td
@@ -451,7 +515,21 @@ export function MatrixTable({
 												className={styles.leafSpacer}
 											/>
 										)}
-										{row.label}
+										{onSelect ? (
+											<button
+												type="button"
+												className={styles.labelButton}
+												onClick={() =>
+													onSelect(rowParts(row))
+												}
+												aria-pressed={chosen}
+												title={`Filter the page to ${row.label}`}
+											>
+												{row.label}
+											</button>
+										) : (
+											row.label
+										)}
 									</td>
 
 									{groups.map((group) =>

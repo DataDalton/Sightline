@@ -225,6 +225,37 @@ export async function withAdvisoryLock<T>(
 	}
 }
 
+// Runs work only if the named lock is free, and skips it otherwise. For
+// background work every replica runs on the same schedule, where whoever holds
+// the lock is already doing it and waiting would only repeat it. Returns
+// whether the work ran.
+export async function tryAdvisoryLock(
+	key: number,
+	fn: () => Promise<void>,
+): Promise<boolean> {
+	const pool = await getPool();
+	const client = await pool.connect();
+	try {
+		const taken = await client.query<{ taken: boolean }>(
+			"SELECT pg_try_advisory_lock($1) AS taken",
+			[key],
+		);
+		if (!taken.rows[0]?.taken) return false;
+		try {
+			await fn();
+			return true;
+		} finally {
+			try {
+				await client.query("SELECT pg_advisory_unlock($1)", [key]);
+			} catch {
+				// The session is already gone, which drops the lock anyway.
+			}
+		}
+	} finally {
+		client.release();
+	}
+}
+
 export async function closePool(): Promise<void> {
 	if (!poolPromise) return;
 	const pool = await poolPromise;

@@ -182,6 +182,15 @@ export function useLiveSync({
 		}
 	}, [slug, pageId, sessionId]);
 
+	// Read through refs by the loop below, so a change of page or of who is
+	// present adjusts the next poll without tearing the loop down. Tearing it
+	// down sends a leave, and other editors would see this one drop out and
+	// come back.
+	const pollRef = useRef(poll);
+	pollRef.current = poll;
+	const presentRef = useRef(present);
+	presentRef.current = present;
+
 	useEffect(() => {
 		if (!enabled) return;
 
@@ -192,15 +201,19 @@ export function useLiveSync({
 			// Someone else in the report means changes can arrive, so the poll
 			// tightens. Alone, nothing can change underneath and a slower
 			// interval costs nothing.
-			const others = present.filter((p) => !p.isSelf).length;
+			const others = presentRef.current.filter((p) => !p.isSelf).length;
 			const interval = others > 0 ? activeIntervalMs : soloIntervalMs;
 			timerRef.current = setTimeout(async () => {
-				await poll();
+				// A hidden tab skips the poll and keeps the schedule, so it
+				// catches up on the first tick after it is shown again.
+				if (document.visibilityState === "visible") {
+					await pollRef.current();
+				}
 				schedule();
 			}, interval);
 		};
 
-		void poll().then(schedule);
+		void pollRef.current().then(schedule);
 
 		// Leaving deliberately removes the presence row rather than waiting
 		// out the lease, so other editors see the departure promptly.
@@ -226,9 +239,16 @@ export function useLiveSync({
 			window.removeEventListener("pagehide", leave);
 			leave();
 		};
-		// present.length rather than present, so the loop restarts when
-		// somebody joins or leaves but not on every heartbeat.
-	}, [enabled, poll, slug, sessionId, present.length]);
+	}, [enabled, slug, sessionId]);
+
+	// Moving to another page announces it straight away rather than on the
+	// next tick. The loop above has already polled for the first page.
+	const announcedPageRef = useRef(pageId);
+	useEffect(() => {
+		if (!enabled || announcedPageRef.current === pageId) return;
+		announcedPageRef.current = pageId;
+		void poll();
+	}, [enabled, pageId, poll]);
 
 	// A save has just landed, so the next poll should not replay this
 	// session's own ops as if they were remote.

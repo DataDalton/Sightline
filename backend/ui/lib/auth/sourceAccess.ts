@@ -1,7 +1,7 @@
 import { sql } from "../data/lakebase";
 import { queryAsUser } from "../data/userSession";
 import { listSources } from "../semantic/registry";
-import { sourceRef } from "../semantic/types";
+import { quoteName, sourceRef } from "../semantic/types";
 import { settings } from "../settings";
 import type { Identity } from "./identity";
 
@@ -118,7 +118,7 @@ async function probe(identity: Identity): Promise<Set<string>> {
 		const rows = await queryAsUser(
 			token,
 			`SELECT table_schema, table_name
-			 FROM ${catalog}.information_schema.tables
+			 FROM ${quoteName(catalog)}.information_schema.tables
 			 WHERE table_schema IN (${list})`,
 			undefined,
 			identity.email.toLowerCase(),

@@ -2,7 +2,11 @@ import { sql } from "../data/lakebase";
 import type { Identity } from "../auth/identity";
 import type { PolicyClass } from "../auth/policy";
 import { getSource, listSources } from "../semantic/registry";
-import { sourceRef, type SemanticField } from "../semantic/types";
+import {
+	quotedSourceRef,
+	sourceRef,
+	type SemanticField,
+} from "../semantic/types";
 import { runCatalogQuery } from "../semantic/ucMetadata";
 import {
 	measuresReferenced,
@@ -322,7 +326,7 @@ export async function fieldDefinition(
 		// exactly the access reading the data does.
 		const rows = await runCatalogQuery(
 			identity,
-			`SHOW CREATE TABLE ${sourceRef(source)}`,
+			`SHOW CREATE TABLE ${quotedSourceRef(source)}`,
 		);
 		const statement = String(Object.values(rows[0] ?? {})[0] ?? "");
 		held = {

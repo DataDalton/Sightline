@@ -24,11 +24,17 @@ export interface FilterClause {
 	values?: string[];
 }
 
-const dayMs = 24 * 60 * 60 * 1000;
-
 const startOfDay = (d: Date) =>
 	new Date(d.getFullYear(), d.getMonth(), d.getDate());
-const iso = (d: Date) => d.toISOString().slice(0, 10);
+
+// The calendar day a local date falls on. Read from the local parts because
+// toISOString converts to UTC first, which east of Greenwich turns local
+// midnight into the previous day.
+export const localIsoDate = (d: Date) =>
+	`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+		d.getDate(),
+	).padStart(2, "0")}`;
+const iso = localIsoDate;
 
 // Resolved against a date the caller supplies rather than against now(), so the
 // server and the browser computing the same preset an hour apart still agree on
@@ -38,8 +44,11 @@ export function resolvePreset(
 	today: Date,
 ): [string, string] | null {
 	const n = startOfDay(today);
+	// Stepped by calendar day rather than by a fixed count of milliseconds,
+	// so a daylight saving change inside the range does not land an hour
+	// short on the day before.
 	const back = (days: number): [string, string] => [
-		iso(new Date(n.getTime() - days * dayMs)),
+		iso(new Date(n.getFullYear(), n.getMonth(), n.getDate() - days)),
 		iso(n),
 	];
 

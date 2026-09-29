@@ -1,4 +1,4 @@
-import { sql } from "../data/lakebase";
+import { sql, tryAdvisoryLock } from "../data/lakebase";
 import { knownMembers } from "../messages/store";
 import { notify } from "../notify/store";
 import { categoryRoleId } from "../platform/roles";
@@ -13,6 +13,7 @@ import {
 	type LateState,
 	type LatenessSetting,
 } from "./arrivals";
+import { lateSubscribers } from "./status";
 
 // Whether each source's data has arrived when it usually does.
 //
@@ -64,13 +65,16 @@ const everyMs = 60_000;
 let lastRun = 0;
 let running = false;
 
+// Identifies the lateness lock. Every replica ticks, one judges at a time.
+const latenessLockKey = 8577412;
+
 export async function evaluateLateness(force = false): Promise<void> {
 	const now = Date.now();
 	if (running || (!force && now - lastRun < everyMs)) return;
 	running = true;
 	lastRun = now;
 	try {
-		await evaluate(now);
+		await tryAdvisoryLock(latenessLockKey, () => evaluate(now));
 	} finally {
 		running = false;
 	}
@@ -111,6 +115,9 @@ async function evaluate(now: number): Promise<void> {
 			c.checked_on ? Date.parse(c.checked_on) : null,
 		]),
 	);
+
+	// Every source that is not newly late, written together at the end.
+	const settled: (string | null)[][] = [];
 
 	for (const source of sources) {
 		const setting = readLatenessSetting(source.lateness);
@@ -177,13 +184,25 @@ async function evaluate(now: number): Promise<void> {
 			if (moved.length > 0) continue;
 		}
 
-		await sql(
-			`UPDATE data_sources SET late_state = $2, expected_by = $3,
-			   last_arrival = $4, arrival_pattern = $5
-			 WHERE source_key = $1`,
-			values,
-		);
+		settled.push(values);
 	}
+	if (settled.length === 0) return;
+
+	// One statement, writing only the rows whose standing moved.
+	const column = (i: number) => settled.map((v) => v[i]);
+	await sql(
+		`UPDATE data_sources d SET late_state = u.state,
+		   expected_by = u.expected, last_arrival = u.arrival,
+		   arrival_pattern = u.pattern::jsonb
+		 FROM unnest($1::text[], $2::text[], $3::timestamptz[],
+		             $4::timestamptz[], $5::text[])
+		      AS u(key, state, expected, arrival, pattern)
+		 WHERE d.source_key = u.key
+		   AND (d.late_state, d.expected_by, d.last_arrival, d.arrival_pattern)
+		       IS DISTINCT FROM
+		       (u.state, u.expected, u.arrival, u.pattern::jsonb)`,
+		[column(0), column(1), column(2), column(3), column(4)],
+	);
 }
 
 // The people who look after a source, meaning whoever may manage the catalogue of
@@ -244,7 +263,11 @@ async function tellLookAfters(
 	lastArrival: number | null,
 	now: number,
 ): Promise<void> {
-	const { people, link } = await lookAfters(source.source_key);
+	const [{ people: lookAfterPeople, link }, subscribers] = await Promise.all([
+		lookAfters(source.source_key),
+		lateSubscribers(source.source_key),
+	]);
+	const people = [...new Set([...lookAfterPeople, ...subscribers])];
 	if (people.length === 0) return;
 	const since = lastArrival
 		? `The last load was ${describeSpan(now - lastArrival)} ago.`

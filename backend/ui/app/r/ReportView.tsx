@@ -644,9 +644,18 @@ export default function ReportView({
 		);
 	}
 
+	// The provider seeds its state once, on mount, and the link's parameters are
+	// read only after the first render. A link carrying any state therefore
+	// remounts the provider once they are read, so it opens on the link rather
+	// than on the page defaults. A plain address keeps the same key and does not
+	// remount.
+	const arrivedWithState = arrivedWith
+		? [...arrivedWith.keys()].some((key) => key !== "edit")
+		: false;
+
 	return (
 		<PageFilterProvider
-			key={page.pageId}
+			key={arrivedWithState ? `${page.pageId}:link` : page.pageId}
 			opening={opening}
 			shared={sharedHere}
 			onShareableChange={setPageState}

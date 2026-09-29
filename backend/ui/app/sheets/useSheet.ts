@@ -88,42 +88,75 @@ export function useSheet(id: string): SheetState {
 		keepPreviousData: true,
 	});
 
-	const flush = useCallback(async () => {
-		const change = pending.current;
-		pending.current = null;
-		if (!change) return;
-		setSaving(true);
-		try {
-			const response = await fetch(sheetKey, {
-				method: "PUT",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					...change,
-					baseVersion: versionRef.current,
-				}),
-			});
-			const body = await response.json().catch(() => null);
-			if (response.status === 409) {
-				setDraft(null);
+	// Whether a save is on its way. A second save sent alongside it would name
+	// the same base version and be refused as a conflict with this person's own
+	// change, so saves go one at a time.
+	const inFlight = useRef(false);
+
+	// keepalive lets the request outlive the page when it is sent on unload.
+	const flush = useCallback(
+		async (keepalive = false) => {
+			// The save in flight sends whatever arrived meanwhile once it lands.
+			if (inFlight.current) return;
+			const change = pending.current;
+			pending.current = null;
+			if (!change) return;
+			inFlight.current = true;
+			setSaving(true);
+			let saved = false;
+			try {
+				const response = await fetch(sheetKey, {
+					method: "PUT",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						...change,
+						baseVersion: versionRef.current,
+					}),
+					keepalive,
+				});
+				const body = await response.json().catch(() => null);
+				if (response.status === 409) {
+					// Anything made on top of the discarded draft goes with it,
+					// so it cannot overwrite the other person's change later.
+					pending.current = null;
+					if (timer.current) {
+						clearTimeout(timer.current);
+						timer.current = null;
+					}
+					setDraft(null);
+					setNotice(
+						body?.error ??
+							"Somebody else changed this sheet. It has been reloaded.",
+					);
+					await mutateSheet();
+					return;
+				}
+				if (!response.ok) {
+					setNotice(body?.error ?? "The change could not be saved.");
+					return;
+				}
+				versionRef.current = body.sheet.version;
+				await mutateSheet({ sheet: body.sheet }, false);
+				saved = true;
+				// Kept only if something else was changed while this saved.
+				if (!pending.current) setDraft(null);
+			} catch {
+				// The request never landed. The change goes back under anything
+				// newer, so the next save sends both.
+				pending.current = { ...change, ...(pending.current ?? {}) };
 				setNotice(
-					body?.error ??
-						"Somebody else changed this sheet. It has been reloaded.",
+					"The change could not be saved. Check the connection and edit again to retry.",
 				);
-				await mutateSheet();
-				return;
+			} finally {
+				inFlight.current = false;
+				setSaving(false);
 			}
-			if (!response.ok) {
-				setNotice(body?.error ?? "The change could not be saved.");
-				return;
-			}
-			versionRef.current = body.sheet.version;
-			await mutateSheet({ sheet: body.sheet }, false);
-			// Kept only if something else was changed while this saved.
-			if (!pending.current) setDraft(null);
-		} finally {
-			setSaving(false);
-		}
-	}, [sheetKey, mutateSheet]);
+			// Changes made while this saved go now, on the version it returned,
+			// unless a scheduled save is about to send them anyway.
+			if (saved && pending.current && !timer.current) void flush();
+		},
+		[sheetKey, mutateSheet],
+	);
 
 	const schedule = useCallback(() => {
 		if (timer.current) clearTimeout(timer.current);
@@ -160,7 +193,7 @@ export function useSheet(id: string): SheetState {
 	// A change still waiting when the page closes is sent on the way out.
 	useEffect(() => {
 		const onHide = () => {
-			if (pending.current) void flush();
+			if (pending.current) void flush(true);
 		};
 		window.addEventListener("pagehide", onHide);
 		return () => {

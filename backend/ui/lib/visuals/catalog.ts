@@ -131,6 +131,9 @@ export interface VisualTypeDefinition {
 	// Settings particular to this type, offered in the properties panel in the
 	// order they are declared.
 	options?: VisualOption[];
+	// Options a new visual of this type starts with when its page has a date
+	// range filter, for settings that only mean something against one.
+	datedDefaults?: Record<string, unknown>;
 	// Default layout footprint on the page grid, in a 12 column space.
 	defaultLayout: { w: number; h: number };
 }
@@ -172,6 +175,9 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			measures: { min: 1, max: 24 },
 		},
 		supports: { color: true, conditionalFormat: true },
+		// The change since the period before, which follows whatever range the
+		// reader picks, and is what makes the change and "Why?" appear.
+		datedDefaults: { compareTo: "previous" },
 		options: [
 			{
 				key: "compareTo",

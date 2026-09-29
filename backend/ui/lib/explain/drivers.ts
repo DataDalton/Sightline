@@ -1,4 +1,4 @@
-import { toNumber } from "../format";
+import { groupLabel, toNumber } from "../format";
 
 // Where a change in a figure came from.
 //
@@ -44,12 +44,6 @@ export interface Breakdown {
 // Parts shown for each dimension before the rest are summed up.
 export const shownMembers = 5;
 
-function label(value: unknown): string {
-	return value === null || value === undefined || value === ""
-		? "(blank)"
-		: String(value);
-}
-
 function byValue(
 	rows: Record<string, unknown>[],
 	dimension: string,
@@ -57,7 +51,7 @@ function byValue(
 ): Map<string, number | null> {
 	const out = new Map<string, number | null>();
 	for (const row of rows) {
-		out.set(label(row[dimension]), toNumber(row[measure]));
+		out.set(groupLabel(row[dimension]), toNumber(row[measure]));
 	}
 	return out;
 }

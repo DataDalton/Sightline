@@ -91,11 +91,18 @@ export function VisualPicker({
 	} | null>(null);
 	const inputRef = useRef<HTMLInputElement | null>(null);
 	const panelRef = useRef<HTMLDivElement | null>(null);
+	// Read through refs so the reset below runs when the picker opens and not
+	// whenever the parent hands in a new callback, which would clear the
+	// search and category mid-use.
+	const onCloseRef = useRef(onClose);
+	onCloseRef.current = onClose;
+	const initialCategoryRef = useRef(initialCategory);
+	initialCategoryRef.current = initialCategory;
 
 	useEffect(() => {
 		if (!open) return;
 		setSearch("");
-		setCategory(initialCategory ?? "all");
+		setCategory(initialCategoryRef.current ?? "all");
 		setHovered(null);
 		setPreviewAt(null);
 		// Focus goes to the search box, so typing narrows immediately rather
@@ -103,14 +110,14 @@ export function VisualPicker({
 		const timer = setTimeout(() => inputRef.current?.focus(), 20);
 
 		const onKey = (e: KeyboardEvent) => {
-			if (e.key === "Escape") onClose();
+			if (e.key === "Escape") onCloseRef.current();
 		};
 		document.addEventListener("keydown", onKey);
 		return () => {
 			clearTimeout(timer);
 			document.removeEventListener("keydown", onKey);
 		};
-	}, [open, onClose, initialCategory]);
+	}, [open]);
 
 	// Beside the card, or on its other side when there is no room. A preview
 	// half off the screen is worse than one on the left.

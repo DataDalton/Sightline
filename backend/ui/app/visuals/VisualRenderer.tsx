@@ -42,6 +42,13 @@ import {
 } from "../../lib/query/compare";
 import type { QueryTransform } from "../../lib/query/transform";
 import type { VisualStyle } from "../../lib/visuals/style";
+import {
+	partsFromClauses,
+	selectionClauses,
+	selectionLabel,
+	selectionValue,
+	type SelectionPart,
+} from "../../lib/visuals/selection";
 import { noteUse } from "../hooks/noteUse";
 import styles from "./Visual.module.css";
 
@@ -163,6 +170,7 @@ function VisualBody({
 		clausesFor,
 		crossFilter,
 		setCrossFilter,
+		clearCrossFilterFrom,
 		selectedDimension,
 		selectedGrain,
 		drillByVisual,
@@ -347,6 +355,38 @@ function VisualBody({
 		Math.max(drillFields.length - 1, 0),
 	);
 	const canDrill = drillFields.length > 1;
+	// When a drill hierarchy is configured, the chart shows the level the
+	// reader is currently at rather than the field the author picked. Held
+	// by value, so a render that changes nothing about the level hands the
+	// chart the same array and it does not redraw.
+	const drillLevel = canDrill
+		? (drillFields[drillDepth] ?? drillFields[0])
+		: null;
+	const activeDimensions = useMemo(
+		() => (drillLevel ? [drillLevel] : dimensions),
+		[drillLevel, dimensions],
+	);
+
+	// A click on a chart mark, a table cell, a matrix row or a small multiple
+	// becomes the same page filter, labelled the way the fields are labelled
+	// elsewhere on the page.
+	const nameOf = (field: string) => fields.get(field)?.displayName || field;
+	const crossFilterBy = (parts: SelectionPart[]) => {
+		if (parts.length === 0) return;
+		noteAction("select");
+		setCrossFilter({
+			sourceVisualId: visual.visualId,
+			clauses: selectionClauses(parts),
+			label: selectionLabel(parts, nameOf),
+		});
+	};
+	// What this visual has selected, read back so it can mark it. Empty when
+	// the page selection came from somewhere else.
+	const ownSelection =
+		crossFilter?.sourceVisualId === visual.visualId
+			? partsFromClauses(crossFilter.clauses)
+			: undefined;
+	const clearOwnSelection = () => clearCrossFilterFrom(visual.visualId);
 
 	if (visual.visualType === "textPanel") {
 		// Rich text, sanitised on render. The stored value is whatever the
@@ -640,6 +680,8 @@ function VisualBody({
 					fields={fields}
 					style={style}
 					options={visual.config.options}
+					onSelect={crossFilterBy}
+					selection={ownSelection}
 				/>
 			</VisualFrame>
 		);
@@ -694,6 +736,8 @@ function VisualBody({
 					baseFilters={filters}
 					fields={fields}
 					style={style}
+					onSelect={crossFilterBy}
+					selection={ownSelection}
 				/>
 			</VisualFrame>
 		);
@@ -702,32 +746,25 @@ function VisualBody({
 	if (chartTypes.has(visual.visualType)) {
 		const definition = visualByType[visual.visualType];
 
-		// When a drill hierarchy is configured, the chart shows the level the
-		// reader is currently at rather than the field the author picked.
-		const activeDimensions = canDrill
-			? [drillFields[drillDepth] ?? drillFields[0]]
-			: dimensions;
-
 		// Clicking means drill when there is somewhere to go, and cross-filter
 		// otherwise. One gesture, and which it means depends on how the visual
 		// was configured rather than on a mode the reader has to remember.
-		const handleSelect = (selection: { field: string; value: string }) => {
-			noteAction("select");
+		const handleSelect = (parts: SelectionPart[]) => {
 			if (canDrill && drillDepth < drillFields.length - 1) {
-				drillDown(visual.visualId, selection);
+				// A drilled chart draws one level, so the step is the value
+				// clicked at that level.
+				const step =
+					parts.find((entry) => entry.field === drillLevel) ??
+					parts[0];
+				if (!step) return;
+				noteAction("select");
+				drillDown(visual.visualId, {
+					field: step.field,
+					value: step.values[0] ?? "",
+				});
 				return;
 			}
-			setCrossFilter({
-				sourceVisualId: visual.visualId,
-				clauses: [
-					{
-						field: selection.field,
-						op: "eq",
-						values: [selection.value],
-					},
-				],
-				label: `${selection.field}: ${selection.value}`,
-			});
+			crossFilterBy(parts);
 		};
 
 		// The cell decides, since the author sized it. The catalogue default is
@@ -796,32 +833,27 @@ function VisualBody({
 					// takes a figure, since a canvas has no box to fill.
 					height={frameHeight ? "100%" : chartHeight}
 					onSelect={handleSelect}
+					onClearSelection={clearOwnSelection}
 					onSelectRange={(field, values) => {
 						// An empty range is the reader clearing the brush, so
-						// the page filter goes with it.
+						// the selection this chart made goes with it.
 						if (values.length === 0) {
-							setCrossFilter(null);
+							clearOwnSelection();
 							return;
 						}
+						const parts = [{ field, values }];
+						noteAction("select");
 						setCrossFilter({
 							sourceVisualId: visual.visualId,
-							clauses: [{ field, op: "eq", values }],
-							label:
-								values.length === 1
-									? `${field}: ${values[0]}`
-									: `${field}: ${values.length} selected`,
+							clauses: selectionClauses(parts),
+							label: selectionLabel(parts, nameOf),
 							// A range was drawn across this chart, so it
 							// narrows to it rather than staying zoomed out
 							// while everything else moves.
 							zoomSource: true,
 						});
 					}}
-					selectedValues={
-						crossFilter?.sourceVisualId === visual.visualId
-							? ((crossFilter.clauses[0] as { values?: string[] })
-									?.values ?? [])
-							: []
-					}
+					selection={ownSelection}
 					imageRef={chartImageRef}
 					title={displayTitle(visual)}
 				/>
@@ -997,6 +1029,14 @@ function VisualBody({
 					pinnedColumns={pinnedColumns}
 					columnWidths={columnWidths}
 					onColumnLayout={onColumnLayout}
+					// A dimension cell filters the page to its value, the same
+					// as clicking that value's bar in a chart.
+					onCellSelect={(field, value) =>
+						crossFilterBy([
+							{ field, values: [selectionValue(value)] },
+						])
+					}
+					selection={ownSelection}
 				/>
 			</VisualFrame>
 		);

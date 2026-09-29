@@ -62,6 +62,10 @@ export default function ExploreView() {
 	// from one.
 	const [alertId, setAlertId] = useState<string | null>(null);
 	const [alertSaved, setAlertSaved] = useState(false);
+	const [alertSaving, setAlertSaving] = useState(false);
+	const [alertFailure, setAlertFailure] = useState<string | null>(null);
+	// Set while a sheet is being made, so a second click does not make another.
+	const [openingSheet, setOpeningSheet] = useState(false);
 	const { alertsEnabled } = useNotify();
 	const { data: editingAlert } = useSWR<{ alert: AlertRecord }>(
 		alertId ? `/api/alerts/${alertId}` : null,
@@ -104,6 +108,12 @@ export default function ExploreView() {
 		],
 	});
 	const encoded = current ? encodeState(current) : "";
+
+	// Saved describes the filters as they were sent. Any later edit is unsaved.
+	useEffect(() => {
+		setAlertSaved(false);
+		setAlertFailure(null);
+	}, [conditions]);
 
 	// Written back as it changes. Replaced rather than pushed, so the back
 	// button leaves the page instead of undoing one chip at a time.
@@ -227,13 +237,18 @@ export default function ExploreView() {
 						<button
 							type="button"
 							className={styles.headerButton}
+							disabled={openingSheet}
 							onClick={async () => {
+								if (openingSheet) return;
+								setOpeningSheet(true);
 								const id = await createSheet(
 									openView?.name ?? `${source.title} sheet`,
 									{ sourceKey, columns, conditions },
-								);
+								).catch(() => null);
+								// Left set on success, since the page is leaving.
 								if (id)
 									window.location.assign(`/sheets/${id}/`);
+								else setOpeningSheet(false);
 							}}
 							title="Open these rows as a sheet, to add formulas, notes and pivots"
 						>
@@ -287,6 +302,9 @@ export default function ExploreView() {
 							key
 						}
 						onOpen={openSaved}
+						onDeleted={(id) =>
+							setOpenView((v) => (v?.id === id ? null : v))
+						}
 						onSaved={(view) =>
 							setOpenView({
 								id: view.id,
@@ -317,6 +335,7 @@ export default function ExploreView() {
 								type="button"
 								className={styles.alertBannerButton}
 								disabled={
+									alertSaving ||
 									!source ||
 									source.sourceKey !==
 										editingAlert.alert.definition
@@ -324,26 +343,51 @@ export default function ExploreView() {
 									Boolean(logic.problem)
 								}
 								onClick={async () => {
-									const response = await fetch(
-										`/api/alerts/${editingAlert.alert.id}`,
-										{
-											method: "PUT",
-											headers: {
-												"Content-Type":
-													"application/json",
+									setAlertSaving(true);
+									setAlertFailure(null);
+									try {
+										const response = await fetch(
+											`/api/alerts/${editingAlert.alert.id}`,
+											{
+												method: "PUT",
+												headers: {
+													"Content-Type":
+														"application/json",
+												},
+												body: JSON.stringify({
+													...editingAlert.alert
+														.definition,
+													conditions,
+												}),
 											},
-											body: JSON.stringify({
-												...editingAlert.alert
-													.definition,
-												conditions,
-											}),
-										},
-									);
-									if (response.ok) setAlertSaved(true);
+										);
+										if (response.ok) {
+											setAlertSaved(true);
+										} else {
+											const body = await response
+												.json()
+												.catch(() => null);
+											setAlertFailure(
+												body?.error ??
+													"Could not save the filters.",
+											);
+										}
+									} catch {
+										setAlertFailure(
+											"Could not save the filters.",
+										);
+									} finally {
+										setAlertSaving(false);
+									}
 								}}
 							>
-								Save filters to alert
+								{alertSaving
+									? "Saving"
+									: "Save filters to alert"}
 							</button>
+						)}
+						{alertFailure && (
+							<span role="alert">{alertFailure}</span>
 						)}
 					</span>
 				</div>

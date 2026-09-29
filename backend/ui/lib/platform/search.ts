@@ -281,6 +281,7 @@ export async function recentReports(
 		`SELECT report_id::text AS report_id, max(occurred_on) AS seen
 		 FROM usage_events
 		 WHERE lower(user_email) = $1
+		   AND occurred_on > now() - interval '90 days'
 		   AND event_type = 'page_view'
 		   AND report_id IS NOT NULL
 		 GROUP BY report_id
@@ -341,6 +342,7 @@ export async function recentReportTargets(
 		 FROM usage_events e
 		 JOIN reports r ON r.report_id = e.report_id
 		 WHERE lower(e.user_email) = $1
+		   AND e.occurred_on > now() - interval '90 days'
 		   AND e.event_type = 'page_view'
 		   AND r.is_active = TRUE
 		 GROUP BY r.report_id, r.slug

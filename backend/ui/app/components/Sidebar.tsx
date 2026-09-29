@@ -196,6 +196,15 @@ export default memo(function Sidebar() {
 						<NavIcon name="sheets" />
 						<span className={styles.label}>Sheets</span>
 					</Link>
+					<Link
+						href="/status"
+						className={`${styles.navItem} ${
+							isActive("/status") ? styles.active : ""
+						}`}
+					>
+						<NavIcon name="status" />
+						<span className={styles.label}>Data status</span>
+					</Link>
 					{/* Absent unless this deployment names a model endpoint.
 					    An assistant nobody configured is not a disabled
 					    feature, it is one that was never built. */}

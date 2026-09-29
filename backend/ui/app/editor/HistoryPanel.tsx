@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { createContext, useContext, useState } from "react";
 import useSWR from "swr";
 import type { Change } from "../../lib/platform/versionDiff";
 import type { SourceMeta } from "../visuals/types";
@@ -30,6 +30,11 @@ import styles from "./Editor.module.css";
 // confirmation that appears inside a scrolling list can be agreed to without
 // being read. The dialog also has room to say what a restore actually does,
 // which is the part that stops it feeling irreversible.
+
+// Whether the editor holds unsaved edits. A restore reloads the report, which
+// would drop them, so it is refused until they are published or discarded.
+// Provided by the editor around its side panel.
+export const UnsavedEditsContext = createContext(false);
 
 interface HistoryEntry {
 	version: number;
@@ -92,6 +97,7 @@ function RestoreDialog({
 	entry,
 	version,
 	busy,
+	dirty,
 	failure,
 	onConfirm,
 	onClose,
@@ -99,6 +105,7 @@ function RestoreDialog({
 	entry: HistoryEntry | undefined;
 	version: number;
 	busy: boolean;
+	dirty: boolean;
 	failure: string | null;
 	onConfirm: () => void;
 	onClose: () => void;
@@ -132,11 +139,19 @@ function RestoreDialog({
 					</ul>
 				)}
 
-				<Hint>
-					Nothing is lost. The version you are on now stays in the
-					history, the restore is recorded as its own version, and it
-					can be undone the same way.
-				</Hint>
+				{dirty ? (
+					<div className={styles.historyError}>
+						This page has unpublished changes. Restoring reloads the
+						report and would drop them, so publish or discard them
+						first.
+					</div>
+				) : (
+					<Hint>
+						Nothing is lost. The version you are on now stays in the
+						history, the restore is recorded as its own version, and
+						it can be undone the same way.
+					</Hint>
+				)}
 
 				{failure && (
 					<div className={styles.historyError}>{failure}</div>
@@ -155,7 +170,7 @@ function RestoreDialog({
 						type="button"
 						className={styles.saveButton}
 						onClick={onConfirm}
-						disabled={busy}
+						disabled={busy || dirty}
 					>
 						{busy ? "Restoring" : `Restore version ${version}`}
 					</button>
@@ -178,6 +193,7 @@ export function HistoryPanel({
 	}>(`/api/report/${encodeURIComponent(slug)}/history?k=${refreshKey}`);
 
 	const showSkeleton = useDeferredLoading(isLoading);
+	const dirty = useContext(UnsavedEditsContext);
 
 	const [restoring, setRestoring] = useState<number | null>(null);
 	const [confirming, setConfirming] = useState<number | null>(null);
@@ -185,6 +201,7 @@ export function HistoryPanel({
 	const [failure, setFailure] = useState<string | null>(null);
 
 	const restore = async (version: number) => {
+		if (dirty) return;
 		setRestoring(version);
 		setFailure(null);
 		try {
@@ -323,6 +340,7 @@ export function HistoryPanel({
 					entry={entries.find((e) => e.version === confirming)}
 					version={confirming}
 					busy={restoring === confirming}
+					dirty={dirty}
 					failure={failure}
 					onConfirm={() => restore(confirming)}
 					onClose={() => {

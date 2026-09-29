@@ -165,3 +165,35 @@
 	color: var(--text-muted);
 	font-size: var(--text-sm);
 }
+
+.viewRow {
+	display: flex;
+	align-items: center;
+	gap: var(--space-1);
+}
+
+.viewRow .item {
+	flex: 1;
+	min-width: 0;
+}
+
+.viewDelete {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	width: 24px;
+	height: 24px;
+	border-radius: var(--radius-sm);
+	color: var(--text-muted);
+}
+
+.viewDelete:hover {
+	background: var(--state-hover);
+	color: var(--text-primary);
+}
+
+.viewDelete:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: 1px;
+}

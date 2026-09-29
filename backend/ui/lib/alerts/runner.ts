@@ -1,12 +1,12 @@
 import type { Identity } from "../auth/identity";
 import { queryAsApp } from "../data/appSession";
-import { sql } from "../data/lakebase";
+import { sql, transaction } from "../data/lakebase";
 import type { QueryParams, Row } from "../data/types";
 import { queryAsUser } from "../data/userSession";
 import { encodeState } from "../explore/state";
-import { toNumber } from "../format";
+import { groupLabel, toNumber } from "../format";
 import { notify } from "../notify/store";
-import { reachableSet } from "../platform/sources";
+import { confirmableSources, reachableSet } from "../platform/sources";
 import { compileQuery, type RowRestriction } from "../query/builder";
 import { maxLimit, parseQuerySpec } from "../query/spec";
 import type { SemanticSource } from "../semantic/types";
@@ -82,11 +82,7 @@ function readingsFrom(definition: AlertDefinition, rows: Row[]): Reading[] {
 	const seen = new Set<string>();
 	const out: Reading[] = [];
 	for (const row of rows) {
-		const raw = row[definition.groupBy];
-		const group =
-			raw === null || raw === undefined || raw === ""
-				? "(blank)"
-				: String(raw);
+		const group = groupLabel(row[definition.groupBy]);
 		// A group listed twice would be tested twice against one state.
 		if (seen.has(group)) continue;
 		seen.add(group);
@@ -194,10 +190,14 @@ async function check(
 	// Set when the check runs as the app on a row-filtered dataset, so it has
 	// to be narrowed to what the owner was recorded seeing.
 	restricted = false,
+	// The time to put back when the check does not move the schedule, because
+	// claiming the row moved it to the end of the lease.
+	keep: string | null = null,
 ): Promise<CheckOutcome> {
 	const definition = row.definition;
 	const now = new Date();
 	const next = reschedule ? nextRun(definition.schedule, now) : null;
+	let message: ReturnType<typeof describeFirings> = null;
 
 	let readings: Reading[] = [];
 	let firings: Firing[] = [];
@@ -236,49 +236,79 @@ async function check(
 		state = outcome.state;
 		firings = outcome.firings;
 
-		const message = describeFirings(
-			row.name,
-			wordingFor(definition),
-			firings,
+		message = describeFirings(row.name, wordingFor(definition), firings);
+	} catch (e) {
+		error = e instanceof Error ? e.message : String(e);
+		message = null;
+	}
+
+	// The new state and the event it produced land together. The save only
+	// applies while the row still holds the check this one started from, so
+	// two checks of the same alert running at once cannot both fire. The
+	// second finds the row moved on and writes nothing.
+	const saved = await transaction(async (client) => {
+		const updated = await client.query<AlertRow>(
+			`UPDATE alert_rules SET
+			   state = $2,
+			   last_checked_on = now(),
+			   last_status = $3,
+			   last_error = $4,
+			   next_check_on = coalesce($5::timestamptz, $7::timestamptz,
+			                            next_check_on)
+			 WHERE rule_id = $1
+			   AND last_checked_on IS NOT DISTINCT FROM $6::timestamptz
+			 RETURNING ${alertColumns}`,
+			[
+				row.rule_id,
+				JSON.stringify(state),
+				waiting ? "waiting" : error ? "error" : "ok",
+				error ? error.slice(0, 500) : null,
+				next ? next.toISOString() : null,
+				row.last_checked_on,
+				keep,
+			],
 		);
+		const record = updated.rows[0];
+		if (!record) return null;
 		if (message) {
-			await sql(
+			await client.query(
 				`INSERT INTO alert_events (rule_id, title, body, firings)
 				 VALUES ($1, $2, $3, $4)`,
 				[row.rule_id, message.title, message.body, firings.length],
 			);
-			await notify(row.owner_email, {
-				kind: "alert",
-				title: message.title,
-				body: message.body,
-				link: exploreLink(definition),
-				data: { ruleId: row.rule_id },
-			});
 		}
-	} catch (e) {
-		error = e instanceof Error ? e.message : String(e);
+		return record;
+	});
+
+	if (!saved) {
+		const current = await sql<AlertRow>(
+			`SELECT ${alertColumns} FROM alert_rules WHERE rule_id = $1`,
+			[row.rule_id],
+		);
+		return {
+			record: toRecord(current[0] ?? row),
+			readings,
+			firings: [],
+			error,
+		};
 	}
 
-	const updated = await sql<AlertRow>(
-		`UPDATE alert_rules SET
-		   state = $2,
-		   last_checked_on = now(),
-		   last_status = $3,
-		   last_error = $4,
-		   next_check_on = coalesce($5::timestamptz, next_check_on)
-		 WHERE rule_id = $1
-		 RETURNING ${alertColumns}`,
-		[
-			row.rule_id,
-			JSON.stringify(state),
-			waiting ? "waiting" : error ? "error" : "ok",
-			error ? error.slice(0, 500) : null,
-			next ? next.toISOString() : null,
-		],
-	);
+	// Sent once the event is committed. A notification that fails here is
+	// lost rather than the alert firing a second time.
+	if (message) {
+		await notify(row.owner_email, {
+			kind: "alert",
+			title: message.title,
+			body: message.body,
+			link: exploreLink(definition),
+			data: { ruleId: row.rule_id },
+		}).catch((e) => {
+			console.warn(`Alert ${row.rule_id} notification failed:`, e);
+		});
+	}
 
 	return {
-		record: toRecord(updated[0] ?? row),
+		record: toRecord(saved),
 		readings,
 		firings,
 		error,
@@ -407,11 +437,12 @@ export function runAlertsForOwner(identity: Identity): void {
 
 		// Seeing the owner able to read a dataset is what lets its alerts
 		// keep running on the timer while they are away.
+		const confirmable = await confirmableSources(identity);
 		await sql(
 			`UPDATE alert_rules SET access_confirmed_on = now()
 			 WHERE owner_email = $1
 			   AND ($2::text[] IS NULL OR source_key = ANY($2::text[]))`,
-			[email, readable],
+			[email, confirmable ? [...confirmable] : null],
 		);
 
 		// What they can see of each row-filtered dataset they have alerts on,
@@ -457,7 +488,28 @@ export async function checkAlertNow(
 	if (!rows[0]) return null;
 	// The owner may have lost the dataset since saving.
 	await checkDefinition(identity, rows[0].definition);
-	return check(rows[0], run, false);
+
+	// Claimed as the timer claims, so the timer does not take the same alert
+	// while this check runs. The time it was due is put back afterwards.
+	const claimed = await transaction(async (client) => {
+		const held = await client.query<AlertRow>(
+			`SELECT ${alertColumns} FROM alert_rules
+			 WHERE owner_email = $1 AND rule_id = $2
+			 FOR UPDATE`,
+			[identity.email.toLowerCase(), id],
+		);
+		const found = held.rows[0];
+		if (!found) return null;
+		await client.query(
+			`UPDATE alert_rules
+			 SET next_check_on = now() + interval '${claimLease}'
+			 WHERE rule_id = $1`,
+			[found.rule_id],
+		);
+		return found;
+	});
+	if (!claimed) return null;
+	return check(claimed, run, false, false, claimed.next_check_on);
 }
 
 // What an alert would read right now, before it is saved.

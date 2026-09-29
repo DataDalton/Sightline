@@ -6,7 +6,7 @@ import {
 	rankBreakdowns,
 	type Breakdown,
 } from "@/lib/explain/drivers";
-import { toNumber } from "@/lib/format";
+import { blankLabel, toNumber } from "@/lib/format";
 import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
 import { reachableSet } from "@/lib/platform/sources";
 import { executeQuery, QueryAccessError } from "@/lib/query/execute";
@@ -37,8 +37,14 @@ interface Drill {
 	value: string;
 }
 
+// Parts of a calendar kept as numbers or text, such as a paid year or a fiscal
+// quarter. The two windows differ in these by construction, so splitting by
+// one only restates which window is which.
+const calendarName = /\b(year|quarter|month|week|day|date|period|fiscal|fy)\b/i;
+
 function isDate(source: SemanticSource, name: string): boolean {
 	if (source.defaultTimeField === name) return true;
+	if (calendarName.test(name)) return true;
 	const field = source.dimensions.find((f) => f.name === name);
 	return Boolean(field?.dataType && /date|timestamp/i.test(field.dataType));
 }
@@ -117,7 +123,7 @@ export async function POST(request: NextRequest) {
 		.slice(0, 6)
 		.map((d) => ({ field: String(d.field), value: String(d.value) }));
 	const drillFilters = drill.map((d) =>
-		d.value === "(blank)"
+		d.value === blankLabel
 			? { field: d.field, op: "is_empty" }
 			: { field: d.field, op: "eq", value: d.value },
 	);

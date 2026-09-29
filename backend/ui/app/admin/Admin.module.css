@@ -429,7 +429,7 @@
 }
 
 .eventError {
-	background: var(--danger-soft, var(--surface-sunken));
+	background: var(--danger-subtle);
 	color: var(--danger, var(--text-primary));
 }
 
@@ -1200,4 +1200,9 @@
 /* A quiet second word beside a value in a table cell. */
 .muted {
 	color: var(--text-muted);
+}
+
+.rowClickable:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: -2px;
 }

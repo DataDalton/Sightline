@@ -250,6 +250,13 @@ function AnswerBlock({
 }) {
 	const { send, retry, busy } = useAssistant();
 	const [copied, setCopied] = useState(false);
+	const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	useEffect(
+		() => () => {
+			if (copiedTimer.current) clearTimeout(copiedTimer.current);
+		},
+		[],
+	);
 	const running = message.status === "streaming";
 	useTicking(running);
 
@@ -306,8 +313,16 @@ function AnswerBlock({
 										?.writeText(message.answer)
 										.then(() => {
 											setCopied(true);
-											setTimeout(
-												() => setCopied(false),
+											if (copiedTimer.current) {
+												clearTimeout(
+													copiedTimer.current,
+												);
+											}
+											copiedTimer.current = setTimeout(
+												() => {
+													copiedTimer.current = null;
+													setCopied(false);
+												},
 												1500,
 											);
 										});

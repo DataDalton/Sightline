@@ -1,11 +1,13 @@
 import type { Identity } from "../auth/identity";
 import { resolvePolicyClass, type PolicyClass } from "../auth/policy";
 import { queryAsUser } from "../data/userSession";
+import { plainDates } from "../format";
 import { applyTransforms } from "./transform";
 import { isDatabricksApp } from "../runtime";
 import { getSource } from "../semantic/registry";
 import type { SemanticSource } from "../semantic/types";
 import { compileQuery } from "./builder";
+import { reachableSet } from "../platform/sources";
 import { intervalFor, requestCheck } from "../freshness/checker";
 import { overdue } from "../freshness/marks";
 import {
@@ -49,6 +51,23 @@ export interface QueryResult {
 
 export class QueryAccessError extends Error {}
 
+// Refuses a source the caller cannot read.
+//
+// Checked before any cache is asked, because a cached answer is keyed by policy
+// class or held unscoped, and neither says whether this caller holds a grant on
+// the source. reachableSet answers null where no filtering applies, such as
+// local development, where the query itself runs under the developer's own
+// credentials.
+export async function assertCanReadSource(
+	identity: Identity,
+	sourceKey: string,
+): Promise<void> {
+	const reachable = await reachableSet(identity);
+	if (reachable && !reachable.has(sourceKey)) {
+		throw new QueryAccessError("That dataset is not one you can read.");
+	}
+}
+
 // Tracks refreshes running behind a stale response, so a burst of requests for
 // the same key triggers one warehouse query rather than one each.
 const revalidating = new Set<string>();
@@ -90,6 +109,8 @@ export async function executeQuery(
 		throw new QuerySpecError(`Unknown source "${spec.sourceKey}"`);
 	}
 
+	await assertCanReadSource(identity, source.sourceKey);
+
 	const policy = await resolvePolicyClass(identity);
 
 	// A policy class that could not be resolved means the platform does not
@@ -119,7 +140,7 @@ export async function executeQuery(
 			false,
 			null,
 			startedAt,
-		source,
+			source,
 		);
 	}
 
@@ -146,21 +167,22 @@ export async function executeQuery(
 			true,
 			null,
 			startedAt,
-		source,
+			source,
 		);
 	}
 
+	// An answer that may not be shared is not shared in flight either. It was
+	// computed under one reader's token.
 	const queryStartedAt = Date.now();
-	const entry = await shareInflight(key, () =>
-		runAndCache(identity, source, spec, policy, key),
-	);
+	const run = () => runAndCache(identity, source, spec, policy, key);
+	const entry = await (shareable ? shareInflight(key, run) : run());
 	return toResult(
 		entry,
 		"warehouse",
 		false,
 		Date.now() - queryStartedAt,
 		startedAt,
-	source,
+		source,
 	);
 }
 
@@ -216,6 +238,8 @@ async function runAndCache(
 				"with the sql scope on the app.",
 		);
 	}
+
+	rows = plainDates(rows);
 
 	// Derived figures are worked out here, before the answer is stored, so a
 	// cache hit serves them alongside everything else and costs nothing. They
@@ -279,10 +303,28 @@ export async function executeQueries(
 		}));
 	}
 
+	// Asked once for the batch. A spec on a source outside it is refused
+	// before any cache is asked.
+	let reachable: Set<string> | null;
+	try {
+		reachable = await reachableSet(identity);
+	} catch (error) {
+		console.warn("Source access could not be resolved:", error);
+		return specs.map(() => ({
+			error: "Access could not be verified.",
+			status: 403,
+		}));
+	}
+	const refused = new Set<number>();
+
 	// Resolved once per spec and kept, so nothing is recomputed below.
-	const prepared = specs.map((spec) => {
+	const prepared = specs.map((spec, index) => {
 		const source = getSource(spec.sourceKey);
 		if (!source) return null;
+		if (reachable && !reachable.has(source.sourceKey)) {
+			refused.add(index);
+			return null;
+		}
 		return {
 			spec,
 			source,
@@ -303,6 +345,13 @@ export async function executeQueries(
 	const pending: number[] = [];
 
 	prepared.forEach((entry, index) => {
+		if (refused.has(index)) {
+			outcomes[index] = {
+				error: "That dataset is not one you can read.",
+				status: 403,
+			};
+			return;
+		}
 		if (!entry) {
 			outcomes[index] = {
 				error: `Unknown source "${specs[index].sourceKey}"`,
@@ -328,7 +377,7 @@ export async function executeQueries(
 					false,
 					null,
 					startedAt,
-				entry.source,
+					entry.source,
 				),
 			};
 			return;
@@ -361,7 +410,7 @@ export async function executeQueries(
 					true,
 					null,
 					startedAt,
-				entry.source,
+					entry.source,
 				),
 			};
 			return;
@@ -384,15 +433,17 @@ export async function executeQueries(
 
 			const queryStartedAt = Date.now();
 			try {
-				const answered = await shareInflight(entry.key, () =>
+				const run = () =>
 					runAndCache(
 						identity,
 						entry.source,
 						entry.spec,
 						policy,
 						entry.key,
-					),
-				);
+					);
+				const answered = await (entry.shareable
+					? shareInflight(entry.key, run)
+					: run());
 				outcomes[index] = {
 					result: toResult(
 						answered,
@@ -400,7 +451,7 @@ export async function executeQueries(
 						false,
 						Date.now() - queryStartedAt,
 						startedAt,
-					entry.source,
+						entry.source,
 					),
 				};
 			} catch (error) {

@@ -30,3 +30,9 @@
 .text p {
 	margin: 0;
 }
+
+.link {
+	align-self: flex-start;
+	color: var(--text-link);
+	font-weight: 500;
+}

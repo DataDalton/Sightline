@@ -1,6 +1,14 @@
+import type { PoolClient } from "pg";
 import { sql, transaction } from "../data/lakebase";
 import type { PolicyClass } from "../auth/policy";
-import { assertCanEdit } from "./editing";
+import { assertCanEdit, EditForbiddenError } from "./editing";
+import {
+	effective,
+	refuse,
+	refuseAddPage,
+	unprotected,
+	type PageProtection,
+} from "./pageProtection";
 import { insertLog } from "../activityLog";
 import { diffSnapshots, type Change, type Snapshot } from "./versionDiff";
 import { diffVersions, type VersionDiff } from "./versionDetail";
@@ -140,6 +148,77 @@ export interface RestoreResult {
 	restoredFrom: number;
 }
 
+// Refuses a restore that would change what a locked page or report protects.
+//
+// The same rules an edit is held to. A restore rewrites every page of the
+// report, so a page locked against change refuses it, a page it would remove
+// refuses it when locked against deletion, and a page it would bring back
+// counts as a new page against the report's own lock.
+async function assertRestoreIsUnlocked(
+	client: PoolClient,
+	reportId: string,
+	snapshot: Snapshot,
+): Promise<void> {
+	const report = await client.query<{
+		protect_delete: boolean;
+		protect_edit: boolean;
+		protect_add_page: boolean;
+	}>(
+		`SELECT protect_delete, protect_edit, protect_add_page
+		 FROM reports WHERE report_id = $1`,
+		[reportId],
+	);
+	const reportLocks = {
+		protectDelete: report.rows[0]?.protect_delete === true,
+		protectEdit: report.rows[0]?.protect_edit === true,
+		protectAddPage: report.rows[0]?.protect_add_page === true,
+	};
+
+	const pages = await client.query<{
+		page_id: string;
+		is_active: boolean;
+		protect_delete: boolean;
+		protect_edit: boolean;
+	}>(
+		`SELECT page_id::text AS page_id, is_active, protect_delete, protect_edit
+		 FROM report_pages WHERE report_id = $1`,
+		[reportId],
+	);
+
+	const recorded = new Map(
+		(snapshot.pages ?? []).map((p) => [p.page_id.toLowerCase(), p]),
+	);
+	const tracksPages = recorded.size > 0;
+
+	for (const page of pages.rows) {
+		const locks: PageProtection = effective(reportLocks, {
+			protectDelete: page.protect_delete === true,
+			protectEdit: page.protect_edit === true,
+		});
+		const before = recorded.get(page.page_id.toLowerCase());
+		const activeAfter = tracksPages
+			? before
+				? before.is_active !== false
+				: false
+			: page.is_active;
+
+		const said =
+			page.is_active && !activeAfter
+				? refuse("removePage", locks)
+				: !page.is_active && activeAfter
+					? refuseAddPage("addPage", reportLocks)
+					: activeAfter
+						? refuse("updatePage", locks)
+						: null;
+		if (said) throw new EditForbiddenError(said.reason);
+	}
+
+	if (reportLocks.protectEdit) {
+		const said = refuse("updatePage", effective(reportLocks, unprotected));
+		if (said) throw new EditForbiddenError(said.reason);
+	}
+}
+
 export async function restoreVersion(
 	policy: PolicyClass,
 	email: string,
@@ -165,6 +244,8 @@ export async function restoreVersion(
 		const snapshot = found.rows[0]?.snapshot;
 		if (!snapshot) throw new Error(`Version ${version} does not exist`);
 
+		await assertRestoreIsUnlocked(client, reportId, snapshot);
+
 		const visuals = snapshot.visuals ?? [];
 
 		for (const visual of visuals) {
@@ -172,16 +253,19 @@ export async function restoreVersion(
 				`INSERT INTO report_visuals
 				   (visual_id, page_id, visual_type, title, source_key, config,
 				    layout_x, layout_y, layout_w, layout_h, sort_order, is_active)
-				 VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12)
+				 VALUES ($1,$2,$3,$4,$5,$6::jsonb,
+				         COALESCE($7::integer, 0), COALESCE($8::integer, 0),
+				         COALESCE($9::integer, 6), COALESCE($10::integer, 4),
+				         $11,$12)
 				 ON CONFLICT (visual_id) DO UPDATE SET
 				   visual_type = EXCLUDED.visual_type,
 				   title = EXCLUDED.title,
 				   source_key = EXCLUDED.source_key,
 				   config = EXCLUDED.config,
-				   layout_x = EXCLUDED.layout_x,
-				   layout_y = EXCLUDED.layout_y,
-				   layout_w = EXCLUDED.layout_w,
-				   layout_h = EXCLUDED.layout_h,
+				   layout_x = COALESCE($7::integer, report_visuals.layout_x),
+				   layout_y = COALESCE($8::integer, report_visuals.layout_y),
+				   layout_w = COALESCE($9::integer, report_visuals.layout_w),
+				   layout_h = COALESCE($10::integer, report_visuals.layout_h),
 				   sort_order = EXCLUDED.sort_order,
 				   is_active = EXCLUDED.is_active`,
 				[
@@ -194,11 +278,12 @@ export async function restoreVersion(
 					// An older snapshot predates layout being recorded. Nothing
 					// sensible can be restored for it, so the current position
 					// is kept rather than everything being stacked at the
-					// origin.
-					visual.layout_x ?? 0,
-					visual.layout_y ?? 0,
-					visual.layout_w ?? 6,
-					visual.layout_h ?? 4,
+					// origin. A visual that no longer exists at all takes the
+					// default size.
+					visual.layout_x ?? null,
+					visual.layout_y ?? null,
+					visual.layout_w ?? null,
+					visual.layout_h ?? null,
 					visual.sort_order ?? 0,
 					visual.is_active ?? true,
 				],
@@ -217,6 +302,19 @@ export async function restoreVersion(
 			   AND NOT (v.visual_id = ANY($2::uuid[]))`,
 			[reportId, keep],
 		);
+
+		// A page added after the restored version goes away too, or it would
+		// stay in the report with every visual on it switched off. Only when
+		// the snapshot recorded its pages, since an older one did not and
+		// cannot say which pages belong.
+		if (snapshot.pages && snapshot.pages.length > 0) {
+			await client.query(
+				`UPDATE report_pages SET is_active = FALSE
+				 WHERE report_id = $1
+				   AND NOT (page_id = ANY($2::uuid[]))`,
+				[reportId, snapshot.pages.map((p) => p.page_id)],
+			);
+		}
 
 		for (const page of snapshot.pages ?? []) {
 			await client.query(

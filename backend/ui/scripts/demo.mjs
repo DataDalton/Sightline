@@ -126,6 +126,7 @@ function serverEnv() {
 	}
 	return Object.assign(env, {
 		DEMO_MODE: "1",
+		NEXT_DIST_DIR: ".next-demo",
 		DATABASE_URL: `postgres://${credentials.user}:${credentials.password}@localhost:${postgresPort}/${database}`,
 		LOCAL_IDENTITY_EMAIL: signedInAs,
 		BOOTSTRAP_ADMIN_GROUPS: adminGroup,
@@ -154,12 +155,8 @@ const server = spawn(
 	},
 );
 
+// Postgres stops once Next has exited, so Next finishes writing its cache
+// rather than being cut off halfway, which left it unreadable on the next run.
 server.on("exit", (code) => void stop(code ?? 0));
-process.on("SIGINT", () => {
-	server.kill("SIGINT");
-	void stop(0);
-});
-process.on("SIGTERM", () => {
-	server.kill("SIGTERM");
-	void stop(0);
-});
+process.on("SIGINT", () => server.kill("SIGINT"));
+process.on("SIGTERM", () => server.kill("SIGTERM"));

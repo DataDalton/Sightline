@@ -424,8 +424,13 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 		[busy, messages, run],
 	);
 
+	// Raised by every open and every new conversation, so only the one asked
+	// for last is shown when replies land out of order.
+	const openRequest = useRef(0);
+
 	const newConversation = useCallback(() => {
 		abortRef.current?.abort();
+		openRequest.current += 1;
 		setConversationId(newConversationId());
 		setMessages([]);
 		setAttachments([]);
@@ -433,12 +438,20 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 
 	const openConversation = useCallback(async (id: string) => {
 		abortRef.current?.abort();
-		const response = await fetch(`/api/assist/conversations/${id}`);
-		if (!response.ok) return;
-		const body = (await response.json()) as { messages?: Message[] };
-		setConversationId(id);
-		setMessages(settle(Array.isArray(body.messages) ? body.messages : []));
-		setAttachments([]);
+		const request = ++openRequest.current;
+		try {
+			const response = await fetch(`/api/assist/conversations/${id}`);
+			if (!response.ok || request !== openRequest.current) return;
+			const body = (await response.json()) as { messages?: Message[] };
+			if (request !== openRequest.current) return;
+			setConversationId(id);
+			setMessages(
+				settle(Array.isArray(body.messages) ? body.messages : []),
+			);
+			setAttachments([]);
+		} catch {
+			// Offline or an unreadable reply. The conversation on screen stays.
+		}
 	}, []);
 
 	const deleteConversation = useCallback(

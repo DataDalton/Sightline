@@ -29,6 +29,7 @@ import { NewPageDialog } from "../authoring/NewPage";
 import { PageStrip } from "./PageStrip";
 import { Select } from "../components/shared/Select";
 import { ReportPlacement } from "./ReportPlacement";
+import { UnsavedEditsContext } from "./HistoryPanel";
 import { Hint, Section } from "./PanelSection";
 import { VisualPicker } from "./VisualPicker";
 import { AlignTools } from "./AlignTools";
@@ -337,6 +338,7 @@ export function ReportEditor({
 	const [conflict, setConflict] = useState<string | null>(null);
 	const [baseVersion, setBaseVersion] = useState(version);
 	const [pickerOpen, setPickerOpen] = useState(false);
+	const closePicker = useCallback(() => setPickerOpen(false), []);
 	// Set when the picker was opened from the filter strip, so it lands on the
 	// filters rather than on everything.
 	const [pickerCategory, setPickerCategory] = useState<"filter" | undefined>(
@@ -765,6 +767,18 @@ export function ReportEditor({
 				Object.keys(sources)[0] ??
 				null;
 
+			// Settings that need a date range to move start on only where the
+			// page has one, since elsewhere they would only show a caveat.
+			const dated =
+				definition.datedDefaults &&
+				visuals.some((v) => v.visualType === "dateRangeFilter")
+					? definition.datedDefaults
+					: null;
+			const options =
+				dated || preset?.options
+					? { ...dated, ...preset?.options }
+					: null;
+
 			const visual: EditableVisual = {
 				visualId:
 					typeof crypto !== "undefined"
@@ -781,7 +795,7 @@ export function ReportEditor({
 					measures: [],
 					filters: [],
 					sort: [],
-					...(preset?.options ? { options: preset.options } : {}),
+					...(options ? { options } : {}),
 					...(preset?.style ? { style: preset.style } : {}),
 				},
 				layout: slot,
@@ -1374,19 +1388,19 @@ export function ReportEditor({
 		selection.length,
 	]);
 
-	const save = useCallback(async () => {
-		if (pendingRef.current.size === 0) return;
-		// Everything in the history describes unsaved work, and the operations
-		// an undo produces are only valid against the version the editor
-		// loaded. Once a save has moved that version, putting back a visual the
-		// server has since deleted would insert a row rather than restore one.
-		history.clear();
+	const save = useCallback(async (): Promise<boolean> => {
+		if (pendingRef.current.size === 0) return true;
 		setSaving(true);
 		setConflict(null);
 
+		// The operations this request carries, and for each insert the visual
+		// it sent. Edits queued while the request is in flight stay pending.
+		const sent = new Map(pendingRef.current);
+		const sentVisuals = new Map<string, EditableVisual>();
+
 		// One operation list rather than a request per change, so the version
 		// moves once and concurrent editors contend once.
-		const operations = Array.from(pendingRef.current.values()).map((op) => {
+		const operations = Array.from(sent.values()).map((op) => {
 			if (op.type === "addVisual") {
 				// The visual as it is now. An edit to a visual not yet saved
 				// keeps the insert rather than queueing an update, so the
@@ -1394,6 +1408,7 @@ export function ReportEditor({
 				const v =
 					visuals.find((x) => x.visualId === op.visual.visualId) ??
 					op.visual;
+				sentVisuals.set(v.visualId, v);
 				return {
 					type: "addVisual",
 					// Sent explicitly so every session applies the insert to
@@ -1482,19 +1497,44 @@ export function ReportEditor({
 				setConflict(
 					`${detail.error} The current version is ${detail.currentVersion}.`,
 				);
-				return;
+				return false;
 			}
 			if (!response.ok) {
 				const detail = await response.json().catch(() => null);
 				setConflict(detail?.error ?? "Could not save");
-				return;
+				return false;
 			}
 
 			const result = await response.json();
-			pendingRef.current.clear();
+			// Only the operations this request carried are done. One replaced
+			// while the request was in flight is a newer edit and stays. An
+			// insert edited since it was sent now exists on the server, so the
+			// later edit goes as an update.
+			for (const [key, op] of sent) {
+				if (pendingRef.current.get(key) !== op) continue;
+				if (op.type === "addVisual") {
+					const now = visualsRef.current.find(
+						(v) => v.visualId === op.visual.visualId,
+					);
+					if (now && now !== sentVisuals.get(op.visual.visualId)) {
+						pendingRef.current.set(key, {
+							type: "updateVisual",
+							visualId: op.visual.visualId,
+						});
+						continue;
+					}
+				}
+				pendingRef.current.delete(key);
+			}
+			// Everything in the history describes unsaved work, and the
+			// operations an undo produces are only valid against the version
+			// the editor loaded. Once a save has moved that version, putting
+			// back a visual the server has since deleted would insert a row
+			// rather than restore one.
+			history.clear();
 			setBaseVersion(result.version);
 			live.acknowledge(result.seq ?? 0);
-			setDirty(false);
+			setDirty(pendingRef.current.size > 0);
 			setSavedAt(Date.now());
 			// The draft is a real page now. Opening it hands the editor back to
 			// the parent's data, which is where every other page comes from,
@@ -1504,14 +1544,16 @@ export function ReportEditor({
 				setDraftPage(null);
 				onSaved();
 				onSelectPage(draftId);
-				return;
+				return true;
 			}
 			setHistoryKey((k) => k + 1);
 			onSaved();
+			return true;
 		} catch (error) {
 			setConflict(
 				error instanceof Error ? error.message : "Could not save",
 			);
+			return false;
 		} finally {
 			setSaving(false);
 		}
@@ -1759,16 +1801,21 @@ export function ReportEditor({
 		}
 
 		setRemovingPage(true);
+		const removeKey = `page:${target.pageId}`;
 		try {
-			pendingRef.current.set(`page:${target.pageId}`, {
+			pendingRef.current.set(removeKey, {
 				type: "removePage",
 				pageId: target.pageId,
 			});
-			await save();
-			// Cleared only by a save that landed. A conflict leaves the removal
-			// queued and says so, and stepping to another page now would take
-			// the operation with it.
-			if (pendingRef.current.size > 0) return;
+			// A save that did not land takes the removal back out of the
+			// queue, so the next ordinary save does not delete the page. The
+			// conflict message stays up and the page stays open.
+			const saved = await save();
+			if (!saved || pendingRef.current.has(removeKey)) {
+				pendingRef.current.delete(removeKey);
+				setDirty(pendingRef.current.size > 0);
+				return;
+			}
 
 			setConfirmingPage(null);
 			await onSaved();
@@ -2125,7 +2172,7 @@ export function ReportEditor({
 				open={pickerOpen}
 				initialCategory={pickerCategory}
 				onPick={addVisual}
-				onClose={() => setPickerOpen(false)}
+				onClose={closePicker}
 			/>
 
 			{confirmingRemove && (
@@ -2339,160 +2386,175 @@ export function ReportEditor({
 					panel === "report" ||
 					panel === "history" ||
 					(panel === "visual" && selected)) && (
-					<PropertiesPanel
-						reportId={reportId}
-						sources={sources}
-						visual={panel === "visual" ? selected : null}
-						source={
-							selected?.sourceKey
-								? sources[selected.sourceKey]
-								: undefined
-						}
-						onChange={updateVisual}
-						onRemove={removeVisual}
-						onDuplicate={duplicateVisual}
-						onDeselect={() => selectVisual(null)}
-						readOnly={locks.protectEdit}
-						groups={groups}
-						pageSource={
-							pageSourceKey ? sources[pageSourceKey] : undefined
-						}
-						pageConfig={pageConfig}
-						pageTitle={pageTitle}
-						reportDescription={description}
-						placement={
-							<>
-								{!isPersonal && (
-									<ReportPlacement
-										reportId={reportId}
-										slug={slug}
-										categoryId={categoryId}
-										dirty={dirty}
-									/>
-								)}
+					<UnsavedEditsContext.Provider value={dirty}>
+						<PropertiesPanel
+							reportId={reportId}
+							sources={sources}
+							visual={panel === "visual" ? selected : null}
+							source={
+								selected?.sourceKey
+									? sources[selected.sourceKey]
+									: undefined
+							}
+							onChange={updateVisual}
+							onRemove={removeVisual}
+							onDuplicate={duplicateVisual}
+							onDeselect={() => selectVisual(null)}
+							readOnly={locks.protectEdit}
+							groups={groups}
+							pageSource={
+								pageSourceKey
+									? sources[pageSourceKey]
+									: undefined
+							}
+							pageConfig={pageConfig}
+							pageTitle={pageTitle}
+							reportDescription={description}
+							placement={
+								<>
+									{!isPersonal && (
+										<ReportPlacement
+											reportId={reportId}
+											slug={slug}
+											categoryId={categoryId}
+											dirty={dirty}
+										/>
+									)}
 
-								{/* Who may change what, above the control that
+									{/* Who may change what, above the control that
 							    would be refused by it. Only an administrator
 							    sees the way in; the capability is checked
 							    again on the server, which decides. */}
-								{(canProtect ||
-									reportProtectDelete ||
-									reportProtectEdit ||
-									pageLocks.some(
-										(p) => p.protectDelete || p.protectEdit,
-									)) && (
-									<Section
-										id="report-protection"
-										title="Protection"
-										count={
-											pageLocks.filter(
-												(p) =>
-													p.protectDelete ||
-													p.protectEdit,
-											).length +
-											(reportProtectDelete ? 1 : 0) +
-											(reportProtectEdit ? 1 : 0)
-										}
-									>
-										{describe({
-											protectDelete: reportProtectDelete,
-											protectEdit: reportProtectEdit,
-										}).map((line) => (
-											<Hint key={line}>{line}</Hint>
-										))}
-										{!reportProtectDelete &&
-											!reportProtectEdit && (
-												<Hint>
-													Nothing is locked at the
-													report level. Individual
-													pages may still be.
-												</Hint>
-											)}
-										<button
-											type="button"
-											className={`${styles.saveButton} ${styles.sectionButton}`}
-											onClick={() => setProtecting(true)}
-											disabled={!canProtect}
-											title={
-												canProtect
-													? undefined
-													: "Only an administrator can change this."
+									{(canProtect ||
+										reportProtectDelete ||
+										reportProtectEdit ||
+										pageLocks.some(
+											(p) =>
+												p.protectDelete ||
+												p.protectEdit,
+										)) && (
+										<Section
+											id="report-protection"
+											title="Protection"
+											count={
+												pageLocks.filter(
+													(p) =>
+														p.protectDelete ||
+														p.protectEdit,
+												).length +
+												(reportProtectDelete ? 1 : 0) +
+												(reportProtectEdit ? 1 : 0)
 											}
 										>
-											{canProtect
-												? "Change protection"
-												: "Protection is set by an administrator"}
-										</button>
-									</Section>
-								)}
+											{describe({
+												protectDelete:
+													reportProtectDelete,
+												protectEdit: reportProtectEdit,
+											}).map((line) => (
+												<Hint key={line}>{line}</Hint>
+											))}
+											{!reportProtectDelete &&
+												!reportProtectEdit && (
+													<Hint>
+														Nothing is locked at the
+														report level. Individual
+														pages may still be.
+													</Hint>
+												)}
+											<button
+												type="button"
+												className={`${styles.saveButton} ${styles.sectionButton}`}
+												onClick={() =>
+													setProtecting(true)
+												}
+												disabled={!canProtect}
+												title={
+													canProtect
+														? undefined
+														: "Only an administrator can change this."
+												}
+											>
+												{canProtect
+													? "Change protection"
+													: "Protection is set by an administrator"}
+											</button>
+										</Section>
+									)}
 
-								{/* Kept away from the toolbar, where it sat between
+									{/* Kept away from the toolbar, where it sat between
 							    Done and Publish and was one slip from either.
 							    Down here it takes a deliberate trip into the
 							    settings panel, and still asks. */}
-								<div className={styles.dangerBlock}>
-									<span className={styles.fieldLabel}>
-										Delete this report
-									</span>
-									<Hint>
-										Removes every page on it. Anyone who
-										could open it loses it.
-									</Hint>
-									<button
-										type="button"
-										className={styles.dangerButton}
-										onClick={() =>
-											setConfirmingRemove(true)
-										}
-										disabled={saving || removing}
-									>
-										{removing
-											? "Deleting"
-											: "Delete report"}
-									</button>
-								</div>
-							</>
-						}
-						panelTab={
-							panel === "report" || panel === "history"
-								? panel
-								: "page"
-						}
-						onPanelTab={setPanel}
-						onClose={() => setPanel(null)}
-						historySlug={slug}
-						historyKey={historyKey}
-						onRestored={() => {
-							// The restore has already landed. Everything the
-							// editor is holding is now a version behind, and
-							// reconstructing it here would be guessing, so the
-							// page reloads from what was actually written.
-							setHistoryKey((k) => k + 1);
-							onSaved();
-							onExit();
-						}}
-						onPageChange={(next) => {
-							setPageConfig(next);
-							pendingRef.current.set("page", {
-								type: "updatePage",
-							});
-							setDirty(true);
-						}}
-						onPageTitleChange={(next) => {
-							setPageTitle(next);
-							pendingRef.current.set("page", {
-								type: "updatePage",
-							});
-							setDirty(true);
-						}}
-						onDescriptionChange={(next) => {
-							setDescription(next);
-							pendingRef.current.set("report", {
-								type: "updateReport",
-							});
-							setDirty(true);
-						}}
-					/>
+									<div className={styles.dangerBlock}>
+										<span className={styles.fieldLabel}>
+											Delete this report
+										</span>
+										<Hint>
+											Removes every page on it. Anyone who
+											could open it loses it.
+										</Hint>
+										<button
+											type="button"
+											className={styles.dangerButton}
+											onClick={() =>
+												setConfirmingRemove(true)
+											}
+											disabled={saving || removing}
+										>
+											{removing
+												? "Deleting"
+												: "Delete report"}
+										</button>
+									</div>
+								</>
+							}
+							panelTab={
+								panel === "report" || panel === "history"
+									? panel
+									: "page"
+							}
+							onPanelTab={setPanel}
+							onClose={() => setPanel(null)}
+							historySlug={slug}
+							historyKey={historyKey}
+							onRestored={() => {
+								// The restore has already landed. Everything the
+								// editor is holding is now a version behind, and
+								// reconstructing it here would be guessing, so the
+								// page reloads from what was actually written.
+								setHistoryKey((k) => k + 1);
+								onSaved();
+								onExit();
+							}}
+							// Each of these is put back by an undo, so each records a
+							// step first. Keyed so a run of keystrokes in one field is
+							// one step rather than one per character.
+							onPageChange={(next) => {
+								record("pageConfig");
+								setPageConfig(next);
+								pendingRef.current.set("page", {
+									type: "updatePage",
+								});
+								setDirty(true);
+							}}
+							onPageTitleChange={(next) => {
+								record("pageTitle");
+								setPageTitle(next);
+								pendingRef.current.set("page", {
+									type: "updatePage",
+								});
+								setDirty(true);
+							}}
+							onDescriptionChange={(next) => {
+								record("description");
+								setDescription(next);
+								pendingRef.current.set("report", {
+									type: "updateReport",
+								});
+								setDirty(true);
+							}}
+						/>
+					</UnsavedEditsContext.Provider>
 				)}
 				<EditorRail
 					panel={panel}

@@ -358,10 +358,10 @@ export function AlertDialog({
 		unusual ? definition.anomaly : null,
 	]);
 	useEffect(() => {
-		if (!sourceKey || !measure) {
-			setPreview(null);
-			return;
-		}
+		// The last figures belong to what was measured before, so they go
+		// rather than sit beside the new choice until its reply lands.
+		setPreview(null);
+		if (!sourceKey || !measure) return;
 		const controller = new AbortController();
 		const timer = setTimeout(async () => {
 			setPreviewing(true);
@@ -393,7 +393,9 @@ export function AlertDialog({
 					setPreviewError("Could not read the value.");
 				}
 			} finally {
-				setPreviewing(false);
+				// An aborted read has been replaced by a newer one, which owns
+				// the flag now.
+				if (!controller.signal.aborted) setPreviewing(false);
 			}
 		}, 450);
 		return () => {
@@ -422,6 +424,8 @@ export function AlertDialog({
 				return;
 			}
 			onSaved(body.alert);
+		} catch {
+			setError("Could not save the alert.");
 		} finally {
 			setSaving(false);
 		}

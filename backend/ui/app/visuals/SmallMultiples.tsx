@@ -9,6 +9,12 @@ import { Sparkline } from "./Sparkline";
 import { VisualError, VisualEmpty } from "./VisualFrame";
 import { VisualLoadingState } from "./LoadingState";
 import type { VisualStyle } from "../../lib/visuals/style";
+import {
+	matchesSelection,
+	selectionCovers,
+	selectionValue,
+	type SelectionPart,
+} from "../../lib/visuals/selection";
 import type { FieldMeta } from "./types";
 import styles from "./Visual.module.css";
 
@@ -43,6 +49,12 @@ interface SmallMultiplesProps {
 	fields: Map<string, FieldMeta>;
 	style?: VisualStyle;
 	options?: Record<string, unknown>;
+	// Fires when a reader clicks a panel, with the value of the splitting
+	// dimension that panel draws.
+	onSelect?: (selection: SelectionPart[]) => void;
+	// The page selection this visual made, so the chosen panel stays solid
+	// and the others fade.
+	selection?: SelectionPart[];
 }
 
 export function SmallMultiples({
@@ -52,6 +64,8 @@ export function SmallMultiples({
 	filters,
 	fields,
 	options,
+	onSelect,
+	selection,
 }: SmallMultiplesProps) {
 	const [splitField, axisField] = dimensions;
 	const measure = measures[0];
@@ -76,6 +90,9 @@ export function SmallMultiples({
 			string,
 			{ at: string; value: number | null }[]
 		>();
+		// The value each panel stands for as the row carries it, which is
+		// what a click on the panel filters by.
+		const raws = new Map<string, unknown>();
 		for (const row of rows) {
 			const key = String(row[splitField] ?? "");
 			const entry = {
@@ -85,6 +102,7 @@ export function SmallMultiples({
 			const bucket = grouped.get(key);
 			if (bucket) bucket.push(entry);
 			else grouped.set(key, [entry]);
+			if (!raws.has(key)) raws.set(key, row[splitField]);
 		}
 
 		// Ordered by how large each panel is overall, so the ones worth reading
@@ -93,11 +111,18 @@ export function SmallMultiples({
 		return [...grouped.entries()]
 			.map(([label, series]) => ({
 				label,
+				raw: raws.get(label),
 				series,
 				total: series.reduce((sum, p) => sum + (p.value ?? 0), 0),
 			}))
 			.sort((a, b) => b.total - a.total);
 	}, [rows, splitField, axisField, measure]);
+
+	// Every period any panel has, in the order the query returned them. Each
+	// panel is drawn against this whole run, so a panel missing a period leaves
+	// a gap there and its points stay under the same periods as every other
+	// panel's.
+	const periods = useMemo(() => sharedPeriods(panels), [panels]);
 
 	// One scale across every panel, which is what makes them comparable.
 	const domain = useMemo(() => {
@@ -119,6 +144,7 @@ export function SmallMultiples({
 	if (panels.length === 0 || !domain) return <VisualEmpty />;
 
 	const hint = (fields.get(measure)?.formatHint as FormatHint) ?? "decimal";
+	const marking = selectionCovers(selection, [splitField]) ? selection : null;
 	const columns = Math.max(1, Math.min(6, Number(options?.columns) || 3));
 	const stroke = colors?.series[0];
 
@@ -130,12 +156,49 @@ export function SmallMultiples({
 			}}
 		>
 			{panels.map((panel) => {
-				const values = panel.series.map((p) => p.value);
+				const byPeriod = new Map(
+					panel.series.map((p) => [p.at, p.value] as const),
+				);
+				const values = periods.map((at) => byPeriod.get(at) ?? null);
 				// The latest figure rather than the total: these are read as
 				// series, and where one has got to is the number beside it.
 				const latest = [...values].reverse().find((v) => v !== null);
+				const chosen =
+					marking !== null &&
+					matchesSelection(marking, { [splitField]: panel.raw });
+				const pick = () =>
+					onSelect?.([
+						{
+							field: splitField,
+							values: [selectionValue(panel.raw)],
+						},
+					]);
 				return (
-					<div key={panel.label} className={styles.multiple}>
+					<div
+						key={panel.label}
+						className={`${styles.multiple} ${
+							onSelect ? styles.multiplePickable : ""
+						} ${chosen ? styles.multipleChosen : ""} ${
+							marking && !chosen ? styles.multipleDimmed : ""
+						}`}
+						{...(onSelect
+							? {
+									role: "button",
+									tabIndex: 0,
+									"aria-pressed": chosen,
+									onClick: pick,
+									onKeyDown: (e: React.KeyboardEvent) => {
+										if (
+											e.key === "Enter" ||
+											e.key === " "
+										) {
+											e.preventDefault();
+											pick();
+										}
+									},
+								}
+							: {})}
+					>
 						<div className={styles.multipleHead}>
 							<span className={styles.multipleLabel}>
 								{panel.label}
@@ -151,6 +214,7 @@ export function SmallMultiples({
 							width={160}
 							height={44}
 							stretch
+							keepSlots
 							domain={domain}
 							color={stroke}
 							fill
@@ -161,4 +225,47 @@ export function SmallMultiples({
 			})}
 		</div>
 	);
+}
+
+// One order over the periods of every panel. Each panel arrives sorted by the
+// query, so each is a run in the warehouse's own order, and joining the runs
+// with each period placed after the ones it follows in any panel reproduces
+// that order without sorting the labels again on the client.
+function sharedPeriods(panels: { series: { at: string }[] }[]): string[] {
+	const following = new Map<string, Set<string>>();
+	const waitingOn = new Map<string, number>();
+	for (const panel of panels) {
+		panel.series.forEach(({ at }, index) => {
+			if (!waitingOn.has(at)) {
+				waitingOn.set(at, 0);
+				following.set(at, new Set());
+			}
+			if (index === 0) return;
+			const before = panel.series[index - 1].at;
+			const after = following.get(before)!;
+			if (before === at || after.has(at)) return;
+			after.add(at);
+			waitingOn.set(at, waitingOn.get(at)! + 1);
+		});
+	}
+
+	// Map order is first appearance, which settles ties between periods no
+	// panel relates.
+	const ordered: string[] = [];
+	const ready = [...waitingOn.keys()].filter((at) => waitingOn.get(at) === 0);
+	while (ready.length > 0) {
+		const at = ready.shift()!;
+		ordered.push(at);
+		for (const next of following.get(at)!) {
+			const left = waitingOn.get(next)! - 1;
+			waitingOn.set(next, left);
+			if (left === 0) ready.push(next);
+		}
+	}
+	// A period left over would mean two panels disagreed on the order. Kept
+	// rather than dropped, at the end.
+	for (const at of waitingOn.keys()) {
+		if (!ordered.includes(at)) ordered.push(at);
+	}
+	return ordered;
 }

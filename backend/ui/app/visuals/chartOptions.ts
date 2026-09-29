@@ -16,6 +16,12 @@ import {
 	paretoCumulative,
 } from "../../lib/query/visualSpec";
 import { matchCountry } from "../../lib/visuals/countryNames";
+import {
+	matchesSelection,
+	selectionCovers,
+	selectionValue,
+	type SelectionPart,
+} from "../../lib/visuals/selection";
 import { worldMapName } from "./worldMap";
 
 // Builds the ECharts option for each visual type.
@@ -38,14 +44,31 @@ export interface ChartContext {
 	// Set when this chart produced the page selection. Marks that are not in it
 	// are dimmed rather than removed, so the selection is read in context.
 	//
-	// A set rather than a single value: a reader who drags across five bars has
-	// selected five, and highlighting the first of them while the page filters
-	// on all five says two different things at once.
-	highlight?: { field: string; values: string[] } | null;
+	// A set of values per field rather than a single value. A reader who drags
+	// across five bars has selected five, and a click on a heatmap cell or a
+	// stacked segment selects one value of each of two fields.
+	selection?: SelectionPart[] | null;
+	// The dimension a stacked chart split into series, so a selected segment
+	// can be matched by its series as well as by its category.
+	seriesField?: string;
 	// What the author set on this particular visual, as declared in the visual
 	// catalogue. Read through option(), which applies the catalogue fallback so
 	// a chart and the properties panel cannot disagree about what unset means.
 	options?: Record<string, unknown>;
+}
+
+// Text from the data, made safe to place inside a tooltip's HTML.
+//
+// Tooltip formatters return markup, and a category name, a series name or a
+// row value is whatever the warehouse holds. Escaped so a value containing
+// markup is shown as text rather than rendered.
+function escapeHtml(value: unknown): string {
+	return String(value ?? "")
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;")
+		.replace(/'/g, "&#39;");
 }
 
 // Sorting a chart by its own values.
@@ -69,22 +92,60 @@ function sortedRows(
 	);
 }
 
-// Opacity per data point, dimming everything that is not the selection.
-// Returns undefined when nothing is selected, so the normal path allocates no
-// per-point styling at all.
+// How faint a mark outside the selection is drawn, the same on every type so
+// a selection reads the same wherever it was made.
+const dimmedOpacity = 0.25;
+
+// The selection when it applies to this chart's fields, or null. Everything on
+// screen being selected also counts as nothing to mark, which happens once a
+// chart has narrowed to what was drawn on it. There is nothing to contrast
+// against then, so dimming would only make the whole chart look faded.
+function activeSelection(
+	ctx: ChartContext,
+	markCount: number = ctx.rows.length,
+): SelectionPart[] | null {
+	const fields = ctx.seriesField
+		? [...ctx.dimensions, ctx.seriesField]
+		: ctx.dimensions;
+	if (!selectionCovers(ctx.selection, fields)) return null;
+	const primary = ctx.selection.find(
+		(entry) => entry.field === ctx.dimensions[0],
+	);
+	if (
+		ctx.selection.length === 1 &&
+		primary &&
+		primary.values.length >= markCount
+	) {
+		return null;
+	}
+	return ctx.selection;
+}
+
+// Opacity for one mark given the dimension values it stands for. Undefined
+// when nothing is selected, so the normal path allocates no per-point styling.
+function markOpacity(
+	selection: SelectionPart[] | null,
+	mark: Record<string, unknown>,
+): number | undefined {
+	if (!selection) return undefined;
+	return matchesSelection(selection, mark) ? 1 : dimmedOpacity;
+}
+
+// Opacity per data row, dimming everything that is not the selection. The
+// series a value belongs to is matched too when the series are values of a
+// dimension.
 function highlightOpacity(
 	ctx: ChartContext,
-	rowIndex: number,
+	row: Record<string, unknown> | undefined,
+	seriesName?: string,
 ): number | undefined {
-	if (!ctx.highlight) return undefined;
-
-	// Everything on screen is in the selection, which happens once a chart has
-	// narrowed to what was drawn on it. There is nothing to contrast against,
-	// so dimming would only make the whole chart look faded.
-	if (ctx.highlight.values.length >= ctx.rows.length) return undefined;
-
-	const value = String(ctx.rows[rowIndex]?.[ctx.highlight.field] ?? "");
-	return ctx.highlight.values.includes(value) ? 1 : 0.25;
+	const selection = activeSelection(ctx);
+	if (!selection) return undefined;
+	const mark: Record<string, unknown> = { ...(row ?? {}) };
+	if (ctx.seriesField && seriesName !== undefined) {
+		mark[ctx.seriesField] = seriesName;
+	}
+	return markOpacity(selection, mark);
 }
 
 // The colour a threshold rule puts on one bar.
@@ -323,6 +384,33 @@ function referenceMarkLine(
 	};
 }
 
+// A vertical rule at each selected category, added to whatever reference lines
+// the author drew. Left off when every category is selected or when the rules
+// would crowd the plot, since a line per category marks nothing.
+function withSelectionLines(
+	ctx: ChartContext,
+	reference: ReturnType<typeof referenceMarkLine>,
+	categories: string[],
+) {
+	if (categories.length === 0 || categories.length > 12) return reference;
+	const rules = categories.map((category) => ({
+		xAxis: category,
+		label: { show: false },
+		lineStyle: {
+			color: ctx.colors.text,
+			width: 1,
+			type: "solid" as const,
+			opacity: 0.55,
+		},
+	}));
+	return {
+		silent: true,
+		symbol: "none" as const,
+		animation: false,
+		data: [...(reference?.data ?? []), ...rules],
+	};
+}
+
 // Bounds for an axis that a handful of values would otherwise ruin.
 //
 // A scatter of the largest few hundred orders is a readable cloud until one of
@@ -425,9 +513,9 @@ function pivotSecondDimension(ctx: ChartContext): ChartContext {
 		// hint of their own. They hold the measure, so they read like it.
 		hintFor: (field) =>
 			series.includes(field) ? ctx.hintFor(measure) : ctx.hintFor(field),
-		// A selection was made against the rows before the pivot, and those
-		// rows no longer exist.
-		highlight: null,
+		// Each pivoted row still carries its category, and each series is a
+		// value of this field, so a selected segment can be found by both.
+		seriesField,
 	};
 }
 
@@ -439,12 +527,17 @@ export function buildCartesian(
 	// Only where the chart stacks. Everywhere else a second dimension is the
 	// author asking for something the type does not draw, and quietly turning
 	// it into eleven series would be a different chart from the one they built.
-	const ctx = kind === "stacked100" ? pivotSecondDimension(input) : input;
+	const shaped = kind === "stacked100" ? pivotSecondDimension(input) : input;
+	// Ordered once, before anything reads a row, and carried on the context,
+	// so the categories, every series, the tooltip, the selection dimming and
+	// the threshold colours all index into the same sequence.
+	const ctx: ChartContext = {
+		...shaped,
+		rows: sortedRows(shaped, shaped.measures[0]),
+	};
 	const { dimensions, measures, colors, style } = ctx;
 	const axisField = dimensions[0];
-	// Ordered before anything reads a row, so the categories and every series
-	// are built from the same sequence.
-	const rows = sortedRows(ctx, measures[0]);
+	const rows = ctx.rows;
 	const categories = rows.map((r) => String(r[axisField] ?? ""));
 	const primaryHint = ctx.hintFor(measures[0]);
 
@@ -460,6 +553,18 @@ export function buildCartesian(
 					measures.reduce((sum, m) => sum + (toNumber(r[m]) ?? 0), 0),
 				)
 			: null;
+
+	// A line has no bar to dim, and its points are hidden on a long series, so
+	// a selected period is marked with a rule across the plot instead.
+	const lineSelection =
+		(kind === "line" || kind === "area") && orientation === "vertical"
+			? activeSelection(ctx)
+			: null;
+	const selectedCategories = lineSelection
+		? rows
+				.filter((r) => matchesSelection(lineSelection, r))
+				.map((r) => String(r[axisField] ?? ""))
+		: [];
 
 	const series = measures.map((measure, index) => {
 		const s = styleForMeasure(style, measure, index);
@@ -522,7 +627,7 @@ export function buildCartesian(
 					: ((toNumber(r[measure]) ?? 0) / totals[rowIndex]) * 100
 				: toNumber(r[measure]);
 
-			const opacity = highlightOpacity(ctx, rowIndex);
+			const opacity = highlightOpacity(ctx, r, measure);
 			// A threshold colour only reads on a filled mark, so it is left to
 			// the bars. A line changing colour partway along says the series
 			// changed, which is not what a rule about one value means.
@@ -613,7 +718,13 @@ export function buildCartesian(
 			areaStyle,
 			// Only on the first series, so one reference draws one line.
 			markLine:
-				index === 0 ? referenceMarkLine(ctx, orientation) : undefined,
+				index === 0
+					? withSelectionLines(
+							ctx,
+							referenceMarkLine(ctx, orientation),
+							selectedCategories,
+						)
+					: undefined,
 			data,
 		};
 	});
@@ -690,9 +801,9 @@ function cartesianTooltip(
 			? ctx.measures.reduce((sum, m) => sum + (toNumber(row[m]) ?? 0), 0)
 			: 0;
 
-		const header = `<div style="font-weight:600;margin-bottom:4px">${
-			first.axisValue ?? String(row[axisField] ?? "")
-		}</div>`;
+		const header = `<div style="font-weight:600;margin-bottom:4px">${escapeHtml(
+			first.axisValue ?? String(row[axisField] ?? ""),
+		)}</div>`;
 
 		const lines = list.map((entry) => {
 			const e = entry as { seriesName: string; marker: string };
@@ -714,14 +825,14 @@ function cartesianTooltip(
 							100
 						).toFixed(1)}%)</span>`
 					: "";
-			return `<div>${e.marker} ${e.seriesName}: <b>${value}</b>${share}</div>`;
+			return `<div>${e.marker} ${escapeHtml(e.seriesName)}: <b>${escapeHtml(value)}</b>${share}</div>`;
 		});
 
 		const extras = (ctx.style?.tooltip?.extraFields ?? [])
 			.filter((f) => row[f] !== undefined)
 			.map(
 				(f) =>
-					`<div style="opacity:.75">${f}: ${formatValue(row[f], ctx.hintFor(f))}</div>`,
+					`<div style="opacity:.75">${escapeHtml(f)}: ${escapeHtml(formatValue(row[f], ctx.hintFor(f)))}</div>`,
 			);
 
 		return header + lines.join("") + extras.join("");
@@ -772,19 +883,26 @@ export function buildPie(ctx: ChartContext, donut: boolean) {
 	// bar chart. Matched by name rather than by row, because the slices are
 	// sorted and grouped here and no longer line up with the rows. Nothing is
 	// dimmed when every slice is selected, since there is nothing to contrast.
-	const selected =
-		ctx.highlight && ctx.highlight.values.length < grouped.length
-			? new Set(ctx.highlight.values)
-			: null;
+	const selected = activeSelection(ctx, grouped.length);
+	const hasTail = grouped !== ordered;
 
 	const data = grouped.map((r, i) => {
 		const name = String(r[field] ?? "");
+		const tail = hasTail && i === grouped.length - 1;
+		const opacity = tail
+			? selected
+				? dimmedOpacity
+				: undefined
+			: markOpacity(selected, { [field]: r[field] });
 		return {
 			name,
 			value: toNumber(r[measure]) ?? 0,
+			// The gathered slice stands for several values, so a click on it
+			// selects nothing.
+			...(tail ? { tail: true } : {}),
 			itemStyle: {
 				color: colors.series[i % colors.series.length],
-				...(selected ? { opacity: selected.has(name) ? 1 : 0.25 } : {}),
+				...(opacity === undefined ? {} : { opacity }),
 			},
 		};
 	});
@@ -819,7 +937,7 @@ export function buildPie(ctx: ChartContext, donut: boolean) {
 					percent: number;
 					marker: string;
 				};
-				return `${e.marker} ${e.name}<br/><b>${formatValue(e.value, hint)}</b> (${e.percent}%)`;
+				return `${e.marker} ${escapeHtml(e.name)}<br/><b>${formatValue(e.value, hint)}</b> (${e.percent}%)`;
 			},
 		},
 		series: [
@@ -889,35 +1007,88 @@ export function buildTreemap(ctx: ChartContext) {
 		textBorderWidth: 0,
 	});
 
+	// A tile outside the selection is mixed most of the way into the surface,
+	// which dims it without a second colour scheme to keep in step.
+	const selection = activeSelection(ctx);
+	const dimmedStrength = 0.22;
+
 	// A second dimension nests, which is what a treemap is actually for.
 	const nested = dimensions.length > 1;
 	let data: unknown[];
 
+	// A selected group fills the chart, which is the treemap's zoom. Held in
+	// the data rather than in the library's own view state, so it survives
+	// the redraw a selection causes and a second click on the group's header
+	// clears the selection and zooms back out.
+	const zoomedGroups =
+		nested && selection
+			? (selection.find((entry) => entry.field === dimensions[0])
+					?.values ?? null)
+			: null;
+
 	if (nested) {
-		const groups = new Map<string, { name: string; value: number }[]>();
+		const groups = new Map<
+			string,
+			{ raw: unknown; children: { raw: unknown; value: number }[] }
+		>();
 		for (const row of rows) {
 			const parent = String(row[dimensions[0]] ?? "");
-			const child = String(row[dimensions[1]] ?? "");
-			const list = groups.get(parent) ?? [];
-			list.push({ name: child, value: toNumber(row[measure]) ?? 0 });
-			groups.set(parent, list);
+			const group = groups.get(parent) ?? {
+				raw: row[dimensions[0]],
+				children: [],
+			};
+			group.children.push({
+				raw: row[dimensions[1]],
+				value: toNumber(row[measure]) ?? 0,
+			});
+			groups.set(parent, group);
 		}
 
-		data = Array.from(groups.entries()).map(([name, children], i) => {
-			const hue = colors.series[i % colors.series.length];
+		const entries = Array.from(groups.entries()).map(
+			([name, group], index) => ({ name, group, index }),
+		);
+		const zoomed = zoomedGroups
+			? entries.filter((entry) =>
+					zoomedGroups.includes(selectionValue(entry.group.raw)),
+				)
+			: [];
+		const shown = zoomed.length > 0 ? zoomed : entries;
+
+		data = shown.map(({ name, group, index }) => {
+			// Coloured by its place among all the groups, so a group keeps
+			// its colour when it is zoomed into.
+			const hue = colors.series[index % colors.series.length];
 			// Largest first, so the tiles inside a group are laid out and
 			// stepped through in the same order.
-			const ordered = [...children].sort((a, b) => b.value - a.value);
-			const parentFill = tone(hue, 0.5);
+			const ordered = [...group.children].sort(
+				(a, b) => b.value - a.value,
+			);
+			const parentIn =
+				markOpacity(selection, { [dimensions[0]]: group.raw }) !==
+				dimmedOpacity;
+			const parentFill = tone(hue, parentIn ? 0.5 : dimmedStrength);
 
 			return {
 				name,
 				itemStyle: { color: parentFill },
-				upperLabel: labelStyle(parentFill),
+				upperLabel: {
+					...labelStyle(parentFill),
+					// A zoomed group's header is the way back out, so it
+					// says so.
+					...(zoomed.length > 0 ? { formatter: "‹  {b}" } : {}),
+				},
 				children: ordered.map((child, rank) => {
-					const fill = tone(hue, strengthAt(rank));
+					const inside =
+						markOpacity(selection, {
+							[dimensions[0]]: group.raw,
+							[dimensions[1]]: child.raw,
+						}) !== dimmedOpacity;
+					const fill = tone(
+						hue,
+						inside ? strengthAt(rank) : dimmedStrength,
+					);
 					return {
-						name: child.name,
+						name: String(child.raw ?? ""),
 						value: child.value,
 						itemStyle: { color: fill },
 						label: labelStyle(fill),
@@ -935,9 +1106,15 @@ export function buildTreemap(ctx: ChartContext) {
 
 		data = ordered.map((r, rank) => {
 			const hue = colors.series[rank % colors.series.length];
+			const inside =
+				markOpacity(selection, {
+					[dimensions[0]]: r[dimensions[0]],
+				}) !== dimmedOpacity;
 			const fill = tone(
 				hue,
-				strengthAt(Math.floor(rank / colors.series.length)),
+				inside
+					? strengthAt(Math.floor(rank / colors.series.length))
+					: dimmedStrength,
 			);
 			return {
 				name: String(r[dimensions[0]] ?? ""),
@@ -955,20 +1132,20 @@ export function buildTreemap(ctx: ChartContext) {
 			...tooltip(ctx, "item"),
 			formatter: (p: unknown) => {
 				const e = p as { name: string; value: number };
-				return `${e.name}<br/><b>${formatValue(e.value, hint)}</b>`;
+				return `${escapeHtml(e.name)}<br/><b>${formatValue(e.value, hint)}</b>`;
 			},
 		},
 		series: [
 			{
 				type: "treemap",
 				roam: false,
-				// Clicking a group opens it, and the breadcrumb goes back up.
-				// Without this a click on a nested treemap did nothing visible
-				// while still filtering the page, which read as the chart
-				// ignoring the click.
-				nodeClick: nested ? ("zoomToNode" as const) : false,
+				// Clicking a group selects it, and the selected group is
+				// drawn filling the chart above. The library's own zoom is
+				// off because it lives in view state that the redraw after
+				// every selection throws away.
+				nodeClick: false as const,
 				breadcrumb: {
-					show: nested,
+					show: false,
 					itemStyle: {
 						color: colors.surface,
 						borderColor: colors.grid,
@@ -1012,7 +1189,7 @@ export function buildFunnel(ctx: ChartContext) {
 			...tooltip(ctx, "item"),
 			formatter: (p: unknown) => {
 				const e = p as { name: string; value: number; marker: string };
-				return `${e.marker} ${e.name}: <b>${formatValue(e.value, hint)}</b>`;
+				return `${e.marker} ${escapeHtml(e.name)}: <b>${formatValue(e.value, hint)}</b>`;
 			},
 		},
 		series: [
@@ -1032,10 +1209,14 @@ export function buildFunnel(ctx: ChartContext) {
 				},
 				data: rows.map((r, i) => {
 					const fill = colors.series[i % colors.series.length];
+					const opacity = highlightOpacity(ctx, r);
 					return {
 						name: String(r[dimensions[0]] ?? ""),
 						value: toNumber(r[measures[0]]) ?? 0,
-						itemStyle: { color: fill },
+						itemStyle: {
+							color: fill,
+							...(opacity === undefined ? {} : { opacity }),
+						},
 						label: {
 							color: contrastingText(fill, "#ffffff", "#16181d"),
 						},
@@ -1116,22 +1297,31 @@ export function buildWaterfall(ctx: ChartContext) {
 	// carries the running total. Positive and negative steps are separate
 	// series so they can be coloured independently.
 	const base: number[] = [];
-	const rising: (number | string)[] = [];
-	const falling: (number | string)[] = [];
+	const rising: unknown[] = [];
+	const falling: unknown[] = [];
 	let running = 0;
 
-	for (const value of values) {
+	// A step outside the selection is dimmed like a bar anywhere else. The
+	// plain number is kept where nothing is selected.
+	const step = (value: number | string, rowIndex: number) => {
+		const opacity = highlightOpacity(ctx, rows[rowIndex]);
+		return opacity === undefined || value === "-"
+			? value
+			: { value, itemStyle: { opacity } };
+	};
+
+	values.forEach((value, rowIndex) => {
 		if (value >= 0) {
 			base.push(running);
-			rising.push(value);
+			rising.push(step(value, rowIndex));
 			falling.push("-");
 		} else {
 			base.push(running + value);
 			rising.push("-");
-			falling.push(-value);
+			falling.push(step(-value, rowIndex));
 		}
 		running += value;
-	}
+	});
 
 	return {
 		animation: false,
@@ -1150,7 +1340,7 @@ export function buildWaterfall(ctx: ChartContext) {
 				const cumulative = values
 					.slice(0, first.dataIndex + 1)
 					.reduce((a, b) => a + b, 0);
-				return `<div style="font-weight:600">${first.axisValue}</div>
+				return `<div style="font-weight:600">${escapeHtml(first.axisValue)}</div>
 					<div>Change: <b>${formatValue(value, hint)}</b></div>
 					<div style="opacity:.75">Running total: ${formatValue(cumulative, hint)}</div>`;
 			},
@@ -1204,13 +1394,22 @@ export function buildWaterfall(ctx: ChartContext) {
 // So what did not match is counted and handed back with the option, and the
 // visual says so under the map. Naming the unmatched values is the difference
 // between a map somebody can fix and a map they have to trust.
-export function buildChoropleth(ctx: ChartContext, known: Map<string, string>) {
+export function buildChoropleth(
+	ctx: ChartContext,
+	known: Map<string, string>,
+	// Each region's extent in degrees, for zooming onto a selected one. Left
+	// out, the map stays at the whole world.
+	boundsOf?: (name: string) => [number, number, number, number] | null,
+) {
 	const { rows, dimensions, measures, colors } = ctx;
 	const field = dimensions[0];
 	const measure = measures[0];
 	const hint = ctx.hintFor(measure);
 
 	const placed = new Map<string, number>();
+	// The values in the data behind each region, so a click on the region
+	// selects what the data calls it rather than what the boundary file does.
+	const rawsFor = new Map<string, string[]>();
 	const unmatched: string[] = [];
 
 	for (const row of rows) {
@@ -1229,7 +1428,40 @@ export function buildChoropleth(ctx: ChartContext, known: Map<string, string>) {
 		// Two values landing on one country are added, which is what happens
 		// when the data holds both a code and a name for the same place.
 		placed.set(country, (placed.get(country) ?? 0) + value);
+		const raws = rawsFor.get(country) ?? [];
+		if (!raws.includes(raw)) raws.push(raw);
+		rawsFor.set(country, raws);
 	}
+
+	const selection = activeSelection(ctx, placed.size);
+	const chosen = selection
+		? [...placed.keys()].filter((name) =>
+				(rawsFor.get(name) ?? []).some((raw) =>
+					matchesSelection(selection, { [field]: raw }),
+				),
+			)
+		: [];
+
+	// One selected region is zoomed onto, so a small country clicked on a
+	// world map can be seen. Zoom is the share of the world the region spans,
+	// halved to leave its neighbours in view, and capped so a very small
+	// region is not blown up past recognition.
+	const box = chosen.length === 1 ? boundsOf?.(chosen[0]) : null;
+	const focus = box
+		? {
+				center: [(box[0] + box[2]) / 2, (box[1] + box[3]) / 2],
+				zoom: Math.min(
+					12,
+					Math.max(
+						1,
+						Math.min(
+							360 / Math.max(box[2] - box[0], 1),
+							170 / Math.max(box[3] - box[1], 1),
+						) / 2,
+					),
+				),
+			}
+		: {};
 
 	const values = [...placed.values()];
 	if (values.length === 0) {
@@ -1247,9 +1479,9 @@ export function buildChoropleth(ctx: ChartContext, known: Map<string, string>) {
 				// Every country is drawn, including the ones the data says
 				// nothing about, so the tooltip has to tell the two apart.
 				if (typeof p.value !== "number" || Number.isNaN(p.value)) {
-					return `${p.name}<br/>No data`;
+					return `${escapeHtml(p.name)}<br/>No data`;
 				}
-				return `${p.name}<br/>${measure}: ${formatValue(p.value, hint)}`;
+				return `${escapeHtml(p.name)}<br/>${escapeHtml(measure)}: ${formatValue(p.value, hint)}`;
 			},
 		},
 		visualMap: {
@@ -1291,10 +1523,29 @@ export function buildChoropleth(ctx: ChartContext, known: Map<string, string>) {
 					borderWidth: 0.5,
 				},
 				select: { disabled: true },
-				data: [...placed.entries()].map(([name, value]) => ({
-					name,
-					value,
-				})),
+				...focus,
+				data: [...placed.entries()].map(([name, value]) => {
+					const raws = rawsFor.get(name) ?? [];
+					const inside = !selection || chosen.includes(name);
+					return {
+						name,
+						value,
+						raws,
+						// The selected region is outlined as well as left
+						// solid, since a small country dimmed around is
+						// otherwise hard to find.
+						...(selection
+							? {
+									itemStyle: inside
+										? {
+												borderColor: colors.text,
+												borderWidth: 1.5,
+											}
+										: { opacity: dimmedOpacity },
+								}
+							: {}),
+					};
+				}),
 			},
 		],
 	};
@@ -1339,6 +1590,7 @@ export function buildTimeline(ctx: ChartContext) {
 			if (from === null || to === null) return null;
 			return {
 				label: String(row[labelField] ?? ""),
+				opacity: highlightOpacity(ctx, row),
 				from,
 				to: Math.max(to, from),
 				value: measure ? toNumber(row[measure]) : null,
@@ -1368,13 +1620,13 @@ export function buildTimeline(ctx: ChartContext) {
 				if (!bar) return "";
 				const days = Math.max(1, Math.round((bar.to - bar.from) / day));
 				const lines = [
-					`<strong>${bar.label}</strong>`,
+					`<strong>${escapeHtml(bar.label)}</strong>`,
 					`${asDate(bar.from)} to ${asDate(bar.to)}`,
 					days === 1 ? "1 day" : `${days} days`,
 				];
 				if (measure && bar.value !== null) {
 					lines.push(
-						`${measure}: ${formatValue(bar.value, ctx.hintFor(measure))}`,
+						`${escapeHtml(measure)}: ${formatValue(bar.value, ctx.hintFor(measure))}`,
 					);
 				}
 				return lines.join("<br/>");
@@ -1418,7 +1670,12 @@ export function buildTimeline(ctx: ChartContext) {
 				},
 				// A span of zero has no width to draw, so a single day is
 				// given one rather than disappearing.
-				data: bars.map((bar) => Math.max(bar.to - bar.from, day / 2)),
+				data: bars.map((bar) => {
+					const span = Math.max(bar.to - bar.from, day / 2);
+					return bar.opacity === undefined
+						? span
+						: { value: span, itemStyle: { opacity: bar.opacity } };
+				}),
 			},
 		],
 	};
@@ -1459,6 +1716,16 @@ export function buildCalendar(ctx: ChartContext) {
 	// the empty state rather than by an empty grid of twelve months.
 	if (points.length === 0) return null;
 
+	// Days outside the selection are faded, and read by the same key a click
+	// on a day selects, which is the plain date.
+	const selection = activeSelection(ctx, points.length);
+	const cells = points.map(([day, value]) => {
+		const opacity = markOpacity(selection, { [dateField]: day });
+		return opacity === undefined
+			? [day, value]
+			: { value: [day, value], itemStyle: { opacity } };
+	});
+
 	const days = points.map(([day]) => day).sort();
 	const from = days[0];
 	const to = days[days.length - 1];
@@ -1472,7 +1739,7 @@ export function buildCalendar(ctx: ChartContext) {
 			trigger: "item" as const,
 			formatter: (params: unknown) => {
 				const p = params as { value: [string, number] };
-				return `${p.value[0]}<br/>${measure}: ${formatValue(p.value[1], hint)}`;
+				return `${escapeHtml(p.value[0])}<br/>${escapeHtml(measure)}: ${formatValue(p.value[1], hint)}`;
 			},
 		},
 		visualMap: {
@@ -1519,7 +1786,7 @@ export function buildCalendar(ctx: ChartContext) {
 			{
 				type: "heatmap" as const,
 				coordinateSystem: "calendar" as const,
-				data: points,
+				data: cells,
 			},
 		],
 	};
@@ -1547,6 +1814,11 @@ export function buildSankey(ctx: ChartContext) {
 
 	const nodes = new Map<string, string>();
 	const links = new Map<string, number>();
+	// The row values behind each node and link, which is what a click on one
+	// selects. The labels are text, and a date or a number read back out of a
+	// label is not always the value the filter needs.
+	const nodeRaw = new Map<string, { raw: unknown; side: 0 | 1 }>();
+	const linkRaws = new Map<string, [unknown, unknown]>();
 
 	for (const row of rows) {
 		const value = toNumber(row[measure]);
@@ -1559,12 +1831,38 @@ export function buildSankey(ctx: ChartContext) {
 
 		nodes.set(leftOf(left), left);
 		nodes.set(rightOf(right), right);
+		nodeRaw.set(leftOf(left), { raw: row[fromField], side: 0 });
+		nodeRaw.set(rightOf(right), { raw: row[toField], side: 1 });
 
 		const key = `${leftOf(left)}\u001f${rightOf(right)}`;
 		links.set(key, (links.get(key) ?? 0) + value);
+		linkRaws.set(key, [row[fromField], row[toField]]);
 	}
 
 	if (links.size === 0) return null;
+
+	// A link is selected when both of its ends match whatever the selection
+	// says about them, and a node when a selected link touches it. So picking
+	// a node keeps its flows and the nodes at their other ends, and picking a
+	// flow keeps that flow and its two ends.
+	const selection = activeSelection(ctx, Number.POSITIVE_INFINITY);
+	const solidLinks = new Set<string>();
+	const solidNodes = new Set<string>();
+	if (selection) {
+		for (const [key, [left, right]] of linkRaws) {
+			if (
+				matchesSelection(selection, {
+					[fromField]: left,
+					[toField]: right,
+				})
+			) {
+				solidLinks.add(key);
+				const [source, target] = key.split("\u001f");
+				solidNodes.add(source);
+				solidNodes.add(target);
+			}
+		}
+	}
 
 	return {
 		animation: false,
@@ -1583,9 +1881,9 @@ export function buildSankey(ctx: ChartContext) {
 				if (p.dataType === "edge") {
 					const source = nodes.get(p.data.source ?? "") ?? "";
 					const target = nodes.get(p.data.target ?? "") ?? "";
-					return `${source} to ${target}<br/>${formatValue(p.value, hint)}`;
+					return `${escapeHtml(source)} to ${escapeHtml(target)}<br/>${formatValue(p.value, hint)}`;
 				}
-				return `${nodes.get(p.name) ?? p.name}<br/>${formatValue(p.value, hint)}`;
+				return `${escapeHtml(nodes.get(p.name) ?? p.name)}<br/>${formatValue(p.value, hint)}`;
 			},
 		},
 		series: [
@@ -1607,10 +1905,31 @@ export function buildSankey(ctx: ChartContext) {
 						nodes.get((params as { name: string }).name) ?? "",
 				},
 				lineStyle: { color: "gradient", opacity: 0.4 },
-				data: [...nodes.keys()].map((id) => ({ name: id })),
+				data: [...nodes.keys()].map((id) => ({
+					name: id,
+					raw: nodeRaw.get(id)?.raw,
+					side: nodeRaw.get(id)?.side ?? 0,
+					...(selection && !solidNodes.has(id)
+						? { itemStyle: { opacity: dimmedOpacity } }
+						: {}),
+				})),
 				links: [...links.entries()].map(([key, value]) => {
 					const [source, target] = key.split("\u001f");
-					return { source, target, value };
+					return {
+						source,
+						target,
+						value,
+						raws: linkRaws.get(key),
+						...(selection
+							? {
+									lineStyle: {
+										opacity: solidLinks.has(key)
+											? 0.6
+											: 0.08,
+									},
+								}
+							: {}),
+					};
 				}),
 			},
 		],
@@ -1756,6 +2075,7 @@ export function buildBoxPlot(ctx: ChartContext) {
 	const boxes = rows
 		.map((row) => ({
 			label: groupField ? String(row[groupField] ?? "") : "All",
+			opacity: groupField ? highlightOpacity(ctx, row) : undefined,
 			count: toNumber(row[c.count]) ?? 0,
 			outliers: toNumber(row[c.outliers]) ?? 0,
 			five: [
@@ -1786,7 +2106,7 @@ export function buildBoxPlot(ctx: ChartContext) {
 				if (!entry) return "";
 				const [lo, q1, median, q3, hi] = entry.five as number[];
 				const lines = [
-					`<strong>${entry.label}</strong>`,
+					`<strong>${escapeHtml(entry.label)}</strong>`,
 					`Highest inside: ${formatValue(hi, hint)}`,
 					`Upper quartile: ${formatValue(q3, hint)}`,
 					`Median: ${formatValue(median, hint)}`,
@@ -1836,7 +2156,14 @@ export function buildBoxPlot(ctx: ChartContext) {
 					borderColor: colors.series[0],
 					borderWidth: 1.25,
 				},
-				data: boxes.map((entry) => entry.five),
+				data: boxes.map((entry) =>
+					entry.opacity === undefined
+						? entry.five
+						: {
+								value: entry.five,
+								itemStyle: { opacity: entry.opacity },
+							},
+				),
 			},
 		],
 	};
@@ -1861,11 +2188,11 @@ export function buildPareto(ctx: ChartContext) {
 	const hint = ctx.hintFor(measure);
 
 	const categories = rows.map((r) => String(r[labelField] ?? ""));
-	const bars = rows.map((row, index) => ({
+	const bars = rows.map((row) => ({
 		value: toNumber(row[measure]),
 		itemStyle: {
 			color: colors.series[0],
-			opacity: highlightOpacity(ctx, index),
+			opacity: highlightOpacity(ctx, row),
 			borderRadius: [2, 2, 0, 0] as [number, number, number, number],
 		},
 	}));
@@ -1893,8 +2220,8 @@ export function buildPareto(ctx: ChartContext) {
 				if (!row) return "";
 				const share = toNumber(row[paretoCumulative]);
 				return [
-					`<strong>${String(row[labelField] ?? "")}</strong>`,
-					`${measure}: ${formatValue(row[measure], hint)}`,
+					`<strong>${escapeHtml(row[labelField])}</strong>`,
+					`${escapeHtml(measure)}: ${formatValue(row[measure], hint)}`,
 					share === null ? "" : `Running share: ${share.toFixed(1)}%`,
 				]
 					.filter(Boolean)
@@ -2007,6 +2334,10 @@ export function buildSlope(ctx: ChartContext) {
 	const up = colors.resolve({ token: "success" }, colors.series[0]);
 	const down = colors.resolve({ token: "danger" }, colors.series[1]);
 
+	// Each line is one category, so a selected category keeps its line and
+	// the others fade.
+	const selection = activeSelection(ctx, pairs.length);
+
 	const series = pairs.map((pair) => ({
 		type: "line" as const,
 		name: pair.label,
@@ -2014,8 +2345,15 @@ export function buildSlope(ctx: ChartContext) {
 		symbolSize: 7,
 		// Rising and falling read differently at a glance, which is the whole
 		// point of the shape.
-		itemStyle: { color: pair.now >= pair.then ? up : down },
-		lineStyle: { width: 1.75, color: pair.now >= pair.then ? up : down },
+		itemStyle: {
+			color: pair.now >= pair.then ? up : down,
+			opacity: markOpacity(selection, { [labelField]: pair.label }),
+		},
+		lineStyle: {
+			width: 1.75,
+			color: pair.now >= pair.then ? up : down,
+			opacity: markOpacity(selection, { [labelField]: pair.label }),
+		},
 		// Only the right-hand end is labelled. Both ends doubles the ink for
 		// one extra column of names, and the left is already an axis.
 		endLabel: {
@@ -2051,7 +2389,7 @@ export function buildSlope(ctx: ChartContext) {
 						? null
 						: (pair.now - pair.then) / Math.abs(pair.then);
 				return [
-					`<strong>${pair.label}</strong>`,
+					`<strong>${escapeHtml(pair.label)}</strong>`,
 					`Before: ${formatValue(pair.then, hint)}`,
 					`After: ${formatValue(pair.now, hint)}`,
 					change === null
@@ -2127,7 +2465,9 @@ export function buildBullet(ctx: ChartContext) {
 	const categories = rows.map((r) => String(r[labelField] ?? ""));
 	const colourByTarget = ctx.options?.colourByTarget !== false;
 
-	const bars = rows.map((row, index) => {
+	// Read from the row the bar draws rather than by position, because the
+	// rows are sorted here and the positions no longer match the query's.
+	const bars = rows.map((row) => {
 		const actual = toNumber(row[actualField]);
 		const target = toNumber(row[targetField]);
 		const met = actual !== null && target !== null && actual >= target;
@@ -2140,13 +2480,14 @@ export function buildBullet(ctx: ChartContext) {
 						? colors.resolve({ token: "success" }, colors.series[0])
 						: colors.resolve({ token: "warning" }, colors.series[0])
 					: colors.series[0],
-				opacity: highlightOpacity(ctx, index),
+				opacity: highlightOpacity(ctx, row),
 				borderRadius: 2,
 			},
 		};
 	});
 
 	const targets = rows.map((row) => toNumber(row[targetField]));
+	const targetOpacity = rows.map((row) => highlightOpacity(ctx, row));
 
 	return {
 		animation: false,
@@ -2164,9 +2505,9 @@ export function buildBullet(ctx: ChartContext) {
 				const actual = toNumber(row[actualField]);
 				const target = toNumber(row[targetField]);
 				const lines = [
-					`<strong>${String(row[labelField] ?? "")}</strong>`,
-					`${actualField}: ${formatValue(actual, hint)}`,
-					`${targetField}: ${formatValue(target, ctx.hintFor(targetField))}`,
+					`<strong>${escapeHtml(row[labelField])}</strong>`,
+					`${escapeHtml(actualField)}: ${formatValue(actual, hint)}`,
+					`${escapeHtml(targetField)}: ${formatValue(target, ctx.hintFor(targetField))}`,
 				];
 				// The share of target is the number the chart is actually
 				// about, and it is the one nobody can read off a bar.
@@ -2218,8 +2559,22 @@ export function buildBullet(ctx: ChartContext) {
 				symbol: "rect",
 				symbolSize: [3, 24],
 				itemStyle: { color: colors.text },
+				// Named by category, so a click on the tick selects the same
+				// thing a click on its bar does.
 				data: targets.map((value, index) =>
-					value === null ? null : [value, index],
+					value === null
+						? null
+						: {
+								value: [value, index],
+								name: categories[index],
+								...(targetOpacity[index] === undefined
+									? {}
+									: {
+											itemStyle: {
+												opacity: targetOpacity[index],
+											},
+										}),
+							},
 				),
 			},
 		],
@@ -2295,10 +2650,16 @@ export function buildScatter(ctx: ChartContext) {
 			// out rather than pinned to an axis it does not sit on.
 			if (x === null || y === null) return null;
 			const size = sizeField ? toNumber(row[sizeField]) : null;
+			const opacity = highlightOpacity(ctx, row);
 			return {
 				value: [x, y, size ?? 0],
 				name: labelField ? String(row[labelField] ?? "") : "",
 				symbolSize: radiusFor(size),
+				// Solid rather than the cloud's usual translucency, so the
+				// selected point stands out from the ones overlapping it.
+				...(opacity === undefined
+					? {}
+					: { itemStyle: { opacity: opacity === 1 ? 1 : 0.12 } }),
 			};
 		})
 		.filter((point): point is NonNullable<typeof point> => point !== null);
@@ -2327,15 +2688,17 @@ export function buildScatter(ctx: ChartContext) {
 					value: [number, number, number];
 				};
 				const lines = [
-					`${xField}: ${formatValue(p.value[0], xHint)}`,
-					`${yField}: ${formatValue(p.value[1], yHint)}`,
+					`${escapeHtml(xField)}: ${formatValue(p.value[0], xHint)}`,
+					`${escapeHtml(yField)}: ${formatValue(p.value[1], yHint)}`,
 				];
 				if (sizeField) {
 					lines.push(
-						`${sizeField}: ${formatValue(p.value[2], ctx.hintFor(sizeField))}`,
+						`${escapeHtml(sizeField)}: ${formatValue(p.value[2], ctx.hintFor(sizeField))}`,
 					);
 				}
-				const head = p.name ? `<strong>${p.name}</strong><br/>` : "";
+				const head = p.name
+					? `<strong>${escapeHtml(p.name)}</strong><br/>`
+					: "";
 				return head + lines.join("<br/>");
 			},
 		},
@@ -2408,16 +2771,29 @@ export function buildHeatmap(ctx: ChartContext) {
 		new Set(rows.map((r) => String(r[colField] ?? ""))),
 	);
 
-	const data: [number, number, number][] = [];
+	const data: {
+		value: [number, number, number];
+		raws: [unknown, unknown];
+		itemStyle?: { opacity: number };
+	}[] = [];
 	let min = Number.POSITIVE_INFINITY;
 	let max = Number.NEGATIVE_INFINITY;
+
+	// A cell is one row value and one column value, and carries both so a
+	// click reads them back without going through the axis labels.
+	const selection = activeSelection(ctx, Number.POSITIVE_INFINITY);
 
 	for (const row of rows) {
 		const x = colValues.indexOf(String(row[colField] ?? ""));
 		const y = rowValues.indexOf(String(row[rowField] ?? ""));
 		const value = toNumber(row[measure]) ?? 0;
 		if (x < 0 || y < 0) continue;
-		data.push([x, y, value]);
+		const opacity = markOpacity(selection, row);
+		data.push({
+			value: [x, y, value],
+			raws: [row[rowField], row[colField]],
+			...(opacity === undefined ? {} : { itemStyle: { opacity } }),
+		});
 		if (value < min) min = value;
 		if (value > max) max = value;
 	}
@@ -2434,7 +2810,7 @@ export function buildHeatmap(ctx: ChartContext) {
 			...tooltip(ctx, "item"),
 			formatter: (p: unknown) => {
 				const e = p as { value: [number, number, number] };
-				return `${rowValues[e.value[1]]} / ${colValues[e.value[0]]}<br/><b>${formatValue(
+				return `${escapeHtml(rowValues[e.value[1]])} / ${escapeHtml(colValues[e.value[0]])}<br/><b>${formatValue(
 					e.value[2],
 					hint,
 				)}</b>`;
@@ -2502,12 +2878,19 @@ export function buildRadar(ctx: ChartContext) {
 				type: "radar",
 				data: rows.slice(0, 6).map((row, i) => {
 					const color = colors.series[i % colors.series.length];
+					// A shape outside the selection keeps a faint outline
+					// and loses its fill, so the selected one is the shape
+					// read.
+					const opacity = highlightOpacity(ctx, row);
+					const faded = opacity !== undefined && opacity < 1;
 					return {
 						name: String(row[dimensions[0]] ?? ""),
 						value: measures.map((m) => toNumber(row[m]) ?? 0),
-						lineStyle: { color },
-						itemStyle: { color },
-						areaStyle: { color: withAlpha(color, 0.15) },
+						lineStyle: { color, ...(faded ? { opacity } : {}) },
+						itemStyle: { color, ...(faded ? { opacity } : {}) },
+						areaStyle: {
+							color: withAlpha(color, faded ? 0.03 : 0.15),
+						},
 					};
 				}),
 			},

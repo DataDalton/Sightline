@@ -243,7 +243,9 @@ export function DatePicker({
 			return;
 		}
 		if (e.key === "Escape") {
+			// Kept from reaching an enclosing dialog, which would close too.
 			e.preventDefault();
+			e.stopPropagation();
 			close();
 			wrapRef.current?.querySelector("button")?.focus();
 		}

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
+import { ConfirmDialog } from "../components/shared/ConfirmDialog";
 import styles from "./FieldPicker.module.css";
 
 // Switching between saved views, and saving the current one.
@@ -59,6 +60,8 @@ export function SavedViews({
 	const [name, setName] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	// The view waiting on a yes before it is deleted.
+	const [deleting, setDeleting] = useState<SavedView | null>(null);
 	const wrapperRef = useRef<HTMLDivElement | null>(null);
 
 	const { data, mutate } = useSWR<{ views: SavedView[] }>(
@@ -134,12 +137,24 @@ export function SavedViews({
 
 	const remove = async (viewId: string) => {
 		setBusy(true);
+		setError(null);
 		try {
-			await fetch(`/api/views/${viewId}`, { method: "DELETE" });
+			const response = await fetch(`/api/views/${viewId}`, {
+				method: "DELETE",
+			});
+			if (!response.ok) {
+				const detail = await response.json().catch(() => null);
+				throw new Error(detail?.error ?? "Could not delete the view");
+			}
 			await mutate();
 			if (activeViewId === viewId) onApply(null);
+		} catch (e) {
+			setError(
+				e instanceof Error ? e.message : "Could not delete the view",
+			);
 		} finally {
 			setBusy(false);
+			setDeleting(null);
 		}
 	};
 
@@ -196,50 +211,59 @@ export function SavedViews({
 							<div className={styles.groupTitle}>Saved</div>
 						)}
 						{views.map((view) => (
-							<button
-								key={view.viewId}
-								type="button"
-								className={styles.item}
-								onClick={() => {
-									onApply(view);
-									setOpen(false);
-								}}
-							>
-								<span
-									className={`${styles.checkbox} ${
-										activeViewId === view.viewId
-											? styles.checked
-											: ""
-									}`}
-									aria-hidden="true"
-								/>
-								<span className={styles.itemLabel}>
-									{view.name}
-								</span>
-								<span className={styles.kindTag}>
-									{view.isShared ? "shared" : ""}
-									{view.isOwner && (
-										<span
-											role="button"
-											tabIndex={0}
-											onClick={(e) => {
-												e.stopPropagation();
-												void remove(view.viewId);
-											}}
-											onKeyDown={(e) => {
-												if (e.key === "Enter") {
-													e.stopPropagation();
-													void remove(view.viewId);
-												}
-											}}
-											style={{ marginLeft: 8 }}
-											aria-label={`Delete ${view.name}`}
-										>
-											✕
+							// The delete control sits beside the view rather than inside it, since
+							// a button nested in a button is not reachable or announced reliably.
+							<div key={view.viewId} className={styles.viewRow}>
+								<button
+									type="button"
+									className={styles.item}
+									onClick={() => {
+										onApply(view);
+										setOpen(false);
+									}}
+								>
+									<span
+										className={`${styles.checkbox} ${
+											activeViewId === view.viewId
+												? styles.checked
+												: ""
+										}`}
+										aria-hidden="true"
+									/>
+									<span className={styles.itemLabel}>
+										{view.name}
+									</span>
+									{view.isShared && (
+										<span className={styles.kindTag}>
+											shared
 										</span>
 									)}
-								</span>
-							</button>
+								</button>
+								{view.isOwner && (
+									<button
+										type="button"
+										className={styles.viewDelete}
+										onClick={() => setDeleting(view)}
+										disabled={busy}
+										aria-label={`Delete ${view.name}`}
+										title="Delete this view"
+									>
+										<svg
+											width="12"
+											height="12"
+											viewBox="0 0 24 24"
+											fill="none"
+											stroke="currentColor"
+											strokeWidth="2"
+											strokeLinecap="round"
+											strokeLinejoin="round"
+											aria-hidden="true"
+										>
+											<path d="M18 6L6 18M6 6l12 12" />
+										</svg>
+									</button>
+								)}
+							</div>
 						))}
 					</div>
 
@@ -282,6 +306,16 @@ export function SavedViews({
 						</div>
 					)}
 				</div>
+			)}
+
+			{deleting && (
+				<ConfirmDialog
+					title="Delete this view?"
+					body={`${deleting.name} is deleted, for anyone it was shared with too. The report itself does not change.`}
+					busy={busy}
+					onConfirm={() => void remove(deleting.viewId)}
+					onCancel={() => setDeleting(null)}
+				/>
 			)}
 		</div>
 	);

@@ -105,6 +105,41 @@
 	background: var(--state-hover);
 }
 
+/* A row label that filters the page when clicked. Plain text until hovered,
+   so the matrix reads as a table rather than as a column of links. */
+.labelButton {
+	padding: 0;
+	border: 0;
+	background: none;
+	font: inherit;
+	color: inherit;
+	cursor: pointer;
+	text-align: left;
+}
+
+.labelButton:hover {
+	text-decoration: underline;
+}
+
+.labelButton:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: 2px;
+	border-radius: var(--radius-sm);
+}
+
+/* The rows a selection made here covers, and the rest. Faded through the
+   text colour rather than opacity, because the label cell is sticky and a
+   translucent one would show the figures scrolling underneath it. */
+.row.rowChosen .cell,
+.row.rowChosen .labelCell {
+	background: var(--state-selected);
+}
+
+.row.rowDimmed .cell,
+.row.rowDimmed .labelCell {
+	color: var(--text-muted);
+}
+
 /* Depth is carried by indentation and by weight, so the hierarchy is readable
    without relying on colour. */
 .level0 .labelCell {

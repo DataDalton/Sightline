@@ -228,9 +228,13 @@ export async function startThread(input: {
 	return threadId;
 }
 
+// With a thread id, only that thread, and only when this person can see it.
+// Asked directly rather than looked for in the newest page, so an older thread
+// opens as well as a recent one.
 export async function listThreads(
 	email: string,
 	groups: string[],
+	threadId: string | null = null,
 ): Promise<ThreadSummary[]> {
 	const me = email.toLowerCase();
 	const rows = await sql<{
@@ -259,9 +263,10 @@ export async function listThreads(
 		   ORDER BY created_on DESC LIMIT 1
 		 ) last ON TRUE
 		 WHERE ${visibleTo}
+		   AND ($3::text IS NULL OR t.thread_id::text = $3)
 		 ORDER BY t.last_message_on DESC
 		 LIMIT 100`,
-		[me, groups],
+		[me, groups, threadId],
 	);
 	const members = await membersOf(rows.map((r) => r.thread_id));
 
@@ -311,7 +316,7 @@ export async function openThread(
 	groups: string[],
 ): Promise<{ thread: ThreadSummary; messages: ThreadMessage[] } | null> {
 	const me = email.toLowerCase();
-	const thread = (await listThreads(me, groups)).find(
+	const thread = (await listThreads(me, groups, threadId)).find(
 		(t) => t.id === threadId,
 	);
 	if (!thread) return null;

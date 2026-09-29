@@ -129,10 +129,11 @@ export function DerivedFigures({
 			{transforms.map((transform, index) => {
 				const readable = readableAt(index);
 				return (
-					<div
-						key={`${transform.as}-${index}`}
-						className={styles.ruleCard}
-					>
+					// Keyed by position. The name changes with every keystroke
+					// in its own input, so a key built from it would remount the
+					// card and take the focus away. Every field here is
+					// controlled, so a reorder only redraws the values.
+					<div key={index} className={styles.ruleCard}>
 						<div className={styles.ruleHeader}>
 							<span className={styles.ruleNumber}>
 								{index + 1}

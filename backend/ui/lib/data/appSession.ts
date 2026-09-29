@@ -48,6 +48,13 @@ function toStatementParameters(params?: QueryParams) {
 	});
 }
 
+// How long a statement is followed after the first wait runs out, and how
+// often it is asked about. Long enough for a stopped warehouse to start, so a
+// scheduled check does not miss its day because the warehouse was asleep.
+const maxWaitMs = 10 * 60 * 1000;
+const pollStartMs = 1000;
+const pollMaxMs = 10 * 1000;
+
 export async function queryAsApp(
 	sql: string,
 	params?: QueryParams,
@@ -64,12 +71,38 @@ export async function queryAsApp(
 	const { WorkspaceClient } = await import("@databricks/sdk-experimental");
 	const workspace = new WorkspaceClient({});
 
-	const response = await workspace.statementExecution.executeStatement({
+	let response = await workspace.statementExecution.executeStatement({
 		warehouse_id: warehouseId,
 		statement: sql,
 		wait_timeout: "50s",
 		parameters: toStatementParameters(params),
 	});
+
+	// A warehouse that is starting answers PENDING or RUNNING once the wait
+	// above runs out. The statement is still going, so it is followed until it
+	// finishes rather than treated as a failure, up to an overall ceiling.
+	const startedAt = Date.now();
+	let pollMs = pollStartMs;
+	while (
+		response.status?.state === "PENDING" ||
+		response.status?.state === "RUNNING"
+	) {
+		const statementId = response.statement_id;
+		if (!statementId) break;
+		if (Date.now() - startedAt >= maxWaitMs) {
+			await workspace.statementExecution
+				.cancelExecution({ statement_id: statementId })
+				.catch(() => {});
+			throw new Error(
+				"The warehouse did not finish the statement in time.",
+			);
+		}
+		await new Promise((resolve) => setTimeout(resolve, pollMs));
+		pollMs = Math.min(pollMs * 2, pollMaxMs);
+		response = await workspace.statementExecution.getStatement({
+			statement_id: statementId,
+		});
+	}
 
 	if (response.status?.state !== "SUCCEEDED") {
 		throw new Error(
@@ -82,7 +115,21 @@ export async function queryAsApp(
 	// rather than the row objects the SQL driver produces. Callers expect the
 	// latter, so the shapes are reconciled here.
 	const columns = response.manifest?.schema?.columns ?? [];
-	const data = response.result?.data_array ?? [];
+	const data = [...(response.result?.data_array ?? [])];
+
+	// A large answer arrives in chunks, and the response carries only the
+	// first. The rest are fetched in order until none is left.
+	let nextChunk = response.result?.next_chunk_index;
+	const statementId = response.statement_id;
+	while (nextChunk !== undefined && nextChunk !== null && statementId) {
+		const chunk =
+			await workspace.statementExecution.getStatementResultChunkN({
+				statement_id: statementId,
+				chunk_index: nextChunk,
+			});
+		for (const values of chunk.data_array ?? []) data.push(values);
+		nextChunk = chunk.next_chunk_index;
+	}
 
 	return data.map((values) => {
 		const row: Row = {};

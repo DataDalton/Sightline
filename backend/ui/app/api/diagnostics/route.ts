@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getIdentity } from "@/lib/auth/identity";
-import { getTrackedGroups, policyCacheStats } from "@/lib/auth/policy";
+import {
+	getTrackedGroups,
+	policyCacheStats,
+	resolvePolicyClass,
+} from "@/lib/auth/policy";
+import { canAdminister } from "@/lib/platform/access";
 import { userSessionStats } from "@/lib/data/userSession";
 import { cacheStats } from "@/lib/query/cache";
 import { telemetryStats } from "@/lib/telemetry/usage";
@@ -25,6 +30,14 @@ export async function GET(request: NextRequest) {
 			{ error: "Not authenticated" },
 			{ status: 401 },
 		);
+	}
+
+	// Group names, cache sizes and schema state describe the installation, so
+	// only an administrator sees them. Reported as missing to anybody else, as
+	// the other admin routes do.
+	const policy = await resolvePolicyClass(identity);
+	if (!(await canAdminister(policy, identity))) {
+		return NextResponse.json({ error: "Not found" }, { status: 404 });
 	}
 
 	const response = NextResponse.json({

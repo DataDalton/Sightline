@@ -138,11 +138,30 @@ export function Select({
 		});
 	}, []);
 
+	// The options and value as of this render, read when the list opens. The
+	// highlight and the focus are set once per opening, so typing in the filter
+	// or a parent passing a fresh options array does not reset them.
+	const shownRef = useRef(shown);
+	shownRef.current = shown;
+	const valueRef = useRef(value);
+	valueRef.current = value;
+	const searchableRef = useRef(searchable);
+	searchableRef.current = searchable;
+
+	// Waits for the list to be placed, since the filter box is only mounted
+	// once it has somewhere to be drawn.
+	const listShown = open && box !== null;
+	useEffect(() => {
+		if (!listShown) return;
+		if (searchableRef.current) searchRef.current?.focus();
+		setActive(
+			shownRef.current.findIndex((o) => o.value === valueRef.current),
+		);
+	}, [listShown]);
+
 	useEffect(() => {
 		if (!open) return;
 		place();
-		if (searchable) searchRef.current?.focus();
-		setActive(shown.findIndex((o) => o.value === value));
 
 		// Capture, so a scroll inside the dialog is seen as well as one on the
 		// page. A fixed list does not move with what it is anchored to, so it
@@ -153,7 +172,7 @@ export function Select({
 			window.removeEventListener("scroll", place, true);
 			window.removeEventListener("resize", place);
 		};
-	}, [open, place, searchable, shown, value]);
+	}, [open, place]);
 
 	// Keeps the highlighted option in view while arrowing past the fold.
 	useEffect(() => {
@@ -195,7 +214,9 @@ export function Select({
 
 		switch (e.key) {
 			case "Escape":
+				// Kept from reaching an enclosing dialog, which would close too.
 				e.preventDefault();
+				e.stopPropagation();
 				close();
 				return;
 			case "ArrowDown":
@@ -313,7 +334,12 @@ export function Select({
 						}}
 						// Keyed here as well as on the field, because the portal
 						// moves the list out of the wrapper the handler sits on.
-						onKeyDown={onKeyDown}
+						// React still bubbles portal events to the wrapper, so
+						// the event stops here rather than being handled twice.
+						onKeyDown={(e) => {
+							onKeyDown(e);
+							e.stopPropagation();
+						}}
 					>
 						{searchable && (
 							<input

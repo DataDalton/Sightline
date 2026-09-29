@@ -25,6 +25,11 @@ import {
 	scalePosition,
 	type VisualStyle,
 } from "../../lib/visuals/style";
+import {
+	matchesSelection,
+	selectionCovers,
+	type SelectionPart,
+} from "../../lib/visuals/selection";
 import { readThemeColors, mix, withAlpha } from "./colors";
 import { ColumnFilter } from "./ColumnFilter";
 import { VisualError } from "./VisualFrame";
@@ -90,6 +95,14 @@ interface DataGridProps {
 		pinnedColumns: string[];
 		columnWidths: Record<string, number>;
 	}) => void;
+	// Fires when a reader clicks a cell in a dimension column, with the
+	// column and the row's own value, so the page can filter to it the way a
+	// click on a chart mark does. Measure cells are figures rather than
+	// values of anything, so they are left alone.
+	onCellSelect?: (field: string, value: unknown) => void;
+	// The page selection this grid made. Its rows stay as they are and the
+	// rest fade, as the marks outside a selection do on a chart.
+	selection?: SelectionPart[];
 }
 
 interface SortState {
@@ -159,6 +172,8 @@ export function DataGrid({
 	pinnedColumns,
 	columnWidths,
 	onColumnLayout,
+	onCellSelect,
+	selection,
 }: DataGridProps) {
 	const [rows, setRows] = useState<Record<string, unknown>[]>([]);
 	// Seeded from the fields the visual is defined with, not left empty until
@@ -170,10 +185,47 @@ export function DataGrid({
 		...dimensions,
 		...measures,
 	]);
-	const [sort, setSort] = useState<SortState | null>(null);
-	const [columnFilters, setColumnFilters] = useState<
+	const [sortState, setSort] = useState<SortState | null>(null);
+	const [columnFilterState, setColumnFilters] = useState<
 		Record<string, string[]>
 	>({});
+
+	// The fields the query can sort and filter on. A breakdown switch can take
+	// away the column a sort or a column filter names, and sending it anyway
+	// fails the query, so both are read through this set.
+	const queryFieldKey = [
+		...dimensions,
+		...measures,
+		...(transforms ?? []).map((t) => t.as),
+	].join("\u001f");
+	const queryFields = useMemo(
+		() => new Set(queryFieldKey.split("\u001f")),
+		[queryFieldKey],
+	);
+	const sort =
+		sortState && queryFields.has(sortState.field) ? sortState : null;
+	const columnFilters = useMemo(() => {
+		const kept: Record<string, string[]> = {};
+		for (const [field, values] of Object.entries(columnFilterState)) {
+			if (queryFields.has(field)) kept[field] = values;
+		}
+		return kept;
+	}, [columnFilterState, queryFields]);
+
+	// Dropped from state as well, so a column that comes back later starts
+	// unsorted and unfiltered rather than picking up an old choice.
+	useEffect(() => {
+		setSort((prev) => (prev && !queryFields.has(prev.field) ? null : prev));
+		setColumnFilters((prev) =>
+			Object.keys(prev).every((field) => queryFields.has(field))
+				? prev
+				: Object.fromEntries(
+						Object.entries(prev).filter(([field]) =>
+							queryFields.has(field),
+						),
+					),
+		);
+	}, [queryFields]);
 	const [search, setSearch] = useState("");
 	const [debouncedSearch, setDebouncedSearch] = useState("");
 	const [loading, setLoading] = useState(true);
@@ -363,6 +415,10 @@ export function DataGrid({
 	const fetchPage = useCallback(
 		async (offset: number, replace: boolean) => {
 			const token = ++requestRef.current;
+			// The query this request answers. The ref moves on with the next
+			// render, so reading it after the response would cache these rows
+			// under whatever query is current by then.
+			const cacheKey = queryKeyRef.current;
 			if (replace) setLoading(true);
 			else setLoadingMore(true);
 			setError(null);
@@ -398,7 +454,7 @@ export function DataGrid({
 				setHasMore(more);
 
 				if (replace) {
-					firstPages.set(queryKeyRef.current, {
+					firstPages.set(cacheKey, {
 						rows: data.rows ?? [],
 						columns: data.columns ?? [],
 						hasMore: more,
@@ -567,6 +623,10 @@ export function DataGrid({
 		// but a round trip is still a round trip.
 		const remembered = firstPages.get(queryKey);
 		if (remembered) {
+			// Retires any request still in flight, so a late answer to an
+			// earlier query cannot replace these rows.
+			requestRef.current++;
+			setLoadingMore(false);
 			setRows(remembered.rows);
 			setColumns(remembered.columns);
 			setHasMore(remembered.hasMore);
@@ -1033,6 +1093,11 @@ export function DataGrid({
 	// because the rows are virtualised: the rendered window moves, so a row's
 	// position in the DOM says nothing about where it sits in the result.
 	const striped = style?.stripedRows !== false;
+
+	// Only a selection about this grid's own dimensions marks its rows. One
+	// left over from a breakdown switch names a column that is gone.
+	const marking = selectionCovers(selection, dimensions) ? selection : null;
+	const pickable = onCellSelect ? new Set(dimensions) : null;
 
 	// The change in one measure against the earlier window, or null when there
 	// is nothing to compare: no comparison asked for, not a measure, the row
@@ -1511,12 +1576,19 @@ export function DataGrid({
 					>
 						{virtualizer.getVirtualItems().map((item) => {
 							const row = rows[item.index];
+							const chosen =
+								marking !== null &&
+								matchesSelection(marking, row);
 							return (
 								<div
 									key={item.key}
 									className={`${styles.row} ${
 										striped && item.index % 2 === 1
 											? styles.rowAlt
+											: ""
+									} ${chosen ? styles.rowChosen : ""} ${
+										marking && !chosen
+											? styles.rowDimmed
 											: ""
 									}`}
 									style={{
@@ -1552,7 +1624,33 @@ export function DataGrid({
 													!drag.settling
 														? styles.lifted
 														: ""
+												} ${
+													pickable?.has(column)
+														? styles.pickable
+														: ""
 												}`}
+												onClick={
+													pickable?.has(column)
+														? () => {
+																// A drag across the
+																// text to copy it
+																// ends in a click,
+																// and is not a
+																// choice of value.
+																if (
+																	window
+																		.getSelection()
+																		?.toString()
+																) {
+																	return;
+																}
+																onCellSelect?.(
+																	column,
+																	row[column],
+																);
+															}
+														: undefined
+												}
 												style={{
 													width: widths.get(column),
 													left: isPinned

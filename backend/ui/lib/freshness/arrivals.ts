@@ -18,6 +18,8 @@
 //
 // Pure, so every rule here can be tested with dates written out by hand.
 
+import { quantile } from "../stats";
+
 const minute = 60_000;
 const hour = 60 * minute;
 const day = 24 * hour;
@@ -72,14 +74,6 @@ export function readLatenessSetting(raw: unknown): LatenessSetting {
 }
 
 const allDays = [0, 1, 2, 3, 4, 5, 6];
-
-function quantile(sorted: number[], q: number): number {
-	if (sorted.length === 0) return 0;
-	const at = (sorted.length - 1) * q;
-	const low = Math.floor(at);
-	const high = Math.ceil(at);
-	return sorted[low] + (sorted[high] - sorted[low]) * (at - low);
-}
 
 function utcMidnight(t: number): number {
 	return Math.floor(t / day) * day;

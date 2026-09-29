@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import * as echarts from "echarts/core";
 import {
 	BarChart,
@@ -40,14 +41,26 @@ import {
 	type ComparePeriod,
 	type DateClause,
 } from "../../lib/query/compare";
-import { formatValue, type FormatHint } from "../../lib/format";
+import {
+	blankLabel,
+	formatDate,
+	formatValue,
+	type FormatHint,
+} from "../../lib/format";
 import { describeChart } from "../../lib/visuals/chartSummary";
 import { matchCountry } from "../../lib/visuals/countryNames";
 import { checkEncoding } from "../../lib/visuals/catalog";
 import { indicesToValues, rangeToIndices } from "../../lib/visuals/brush";
+import {
+	canSelect,
+	selectionFromClick,
+	selectionValue,
+	type MarkClick,
+	type SelectionPart,
+} from "../../lib/visuals/selection";
 import type { VisualStyle } from "../../lib/visuals/style";
 import { readThemeColors } from "./colors";
-import { ensureWorldMap } from "./worldMap";
+import { ensureWorldMap, regionBounds } from "./worldMap";
 import {
 	buildBoxPlot,
 	buildBullet,
@@ -72,6 +85,47 @@ import {
 import { VisualEmpty, VisualError, VisualLoading } from "./VisualFrame";
 import type { FieldMeta } from "./types";
 import styles from "./Visual.module.css";
+
+// Loaded when somebody asks, since every time series carries the way in and
+// few are followed.
+const ExplainDialog = dynamic(
+	() => import("../explain/ExplainDialog").then((m) => m.ExplainDialog),
+	{ ssr: false },
+);
+
+// Charts drawn across a category axis, where a point on a date axis is one
+// period and the point before it is the period before.
+const periodCharts = new Set([
+	"barChart",
+	"lineChart",
+	"areaChart",
+	"comboChart",
+	"stackedBarChart",
+]);
+
+// Charts whose marks are each one value of a dimension, such as a bar for a
+// region or a slice for a channel. A mark's change is read against the period
+// before the page's date range.
+const memberCharts = new Set([
+	...periodCharts,
+	"horizontalBarChart",
+	"pieChart",
+	"donutChart",
+	"treemapChart",
+	"funnelChart",
+	"paretoChart",
+]);
+
+// A mark clicked on a chart, and the two questions whose difference is its
+// change.
+interface Pointed {
+	label: string;
+	measure: string;
+	current: unknown[];
+	previous: unknown[];
+	// The earlier side in words, such as "12/01/2025" or "the period before".
+	against: string;
+}
 
 // Only the chart types in use are registered, so the bundle carries those
 // rather than all of ECharts. Canvas rendering is chosen over SVG because a
@@ -119,10 +173,19 @@ const summaryValueColumns = new Set<string>([
 	distributionColumns.binEnd,
 ]);
 
-export interface ChartSelection {
-	field: string;
-	value: string;
-}
+// The dimension values a clicked mark stands for, outermost first. Usually one
+// field, and two for a mark that sits at a pair of values such as a heatmap
+// cell, a stacked segment or a flow between two nodes.
+export type ChartSelection = SelectionPart[];
+
+// Types drawn as a continuous line, where the points can be hidden and a click
+// anywhere in a period's column picks that period.
+const columnPickCharts = new Set(["lineChart", "areaChart"]);
+
+// How far the pointer can travel between press and release and still count as
+// a click. Further than this was a drag, such as a brushed range or a panned
+// map, and the release is not a choice of mark.
+const clickSlop = 4;
 
 interface ChartProps {
 	visualType: string;
@@ -157,11 +220,13 @@ interface ChartProps {
 	// cross-filter or drill down, because the same click means different
 	// things depending on how the visual was configured.
 	onSelect?: (selection: ChartSelection) => void;
-	// Highlighted rather than filtered, so the clicked chart still shows the
-	// whole picture with the selection standing out.
-	// Values this chart's own selection covers. Everything else is dimmed, so
-	// the selection reads against the rest rather than replacing it.
-	selectedValues?: string[];
+	// The page selection this chart made. Highlighted rather than filtered, so
+	// the clicked chart still shows the whole picture with the selection
+	// standing out and everything else dimmed.
+	selection?: SelectionPart[];
+	// Fires when a reader clicks the chart away from any mark, which is how a
+	// selection made here is let go of without finding the chip that shows it.
+	onClearSelection?: () => void;
 	// Fires when a reader drags across the chart to select a range. Separate
 	// from onSelect because a range is a different intent from a single
 	// category: it means "these ones", not "this one".
@@ -198,12 +263,16 @@ export function Chart({
 	style,
 	options,
 	onSelect,
-	selectedValues,
+	selection,
+	onClearSelection,
 	onSelectRange,
 	imageRef,
 	title,
 }: ChartProps) {
 	const containerRef = useRef<HTMLDivElement | null>(null);
+	// The element the chart draws into, held in state as well as the ref so
+	// the drawing effect runs again when a new one mounts.
+	const [container, setContainer] = useState<HTMLDivElement | null>(null);
 	const chartRef = useRef<echarts.ECharts | null>(null);
 	const { resolved } = useTheme();
 
@@ -329,8 +398,84 @@ export function Chart({
 	// not carry it.
 	const areasRef = useRef<unknown>(null);
 
-	const liveRef = useRef({ onSelect, onSelectRange, dimensions, rows });
-	liveRef.current = { onSelect, onSelectRange, dimensions, rows };
+	// What a click on a mark does, replaced on every draw.
+	const pickRef = useRef<((params: MarkClick) => void) | null>(null);
+	// The instance the canvas listeners are bound to, so a redraw does not
+	// bind them a second time.
+	const zrBoundRef = useRef<echarts.ECharts | null>(null);
+	// Where the last press landed and whether the pointer travelled before
+	// it was released, which tells a click from a drag.
+	// Whether the library reported a click on a mark for the same press, so
+	// the canvas listener can tell a mark from empty space.
+	const pressRef = useRef({ x: 0, y: 0, moved: false, marked: false });
+
+	// A time series can say where the change into any of its periods came
+	// from, for a measure the dataset defines. A figure worked out on the
+	// chart has no definition to split.
+	const periodField =
+		periodCharts.has(visualType) &&
+		dimensions.length > 0 &&
+		(dimensions[0] === compareField ||
+			/date|timestamp/i.test(fields.get(dimensions[0])?.dataType ?? ""))
+			? dimensions[0]
+			: null;
+	// The page's date range moved back by its own length, which is what a
+	// bar or a slice that is not a period is compared against. Null when the
+	// page has no range to move.
+	const previousWindow = useMemo(
+		() =>
+			memberCharts.has(visualType) && compareField
+				? shiftDateFilters(
+						(filters ?? []) as DateClause[],
+						compareField,
+						"previous",
+					)
+				: null,
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[visualType, compareField, filterKey],
+	);
+	const explainable = Boolean(periodField || previousWindow);
+	const [pointed, setPointed] = useState<Pointed | null>(null);
+	const [explaining, setExplaining] = useState<Pointed | null>(null);
+
+	// A mark chosen under other filters is not a mark on this chart.
+	useEffect(() => setPointed(null), [filterKey, periodField]);
+
+	// Whether a click on a mark means something here. A chart with nowhere to
+	// send a selection, or whose marks are not values of a dimension, keeps
+	// the plain cursor so it does not invite a click that does nothing.
+	const selectable =
+		onSelect !== undefined && canSelect(visualType, dimensions);
+	const interactive = selectable || explainable;
+
+	const liveRef = useRef({
+		onSelect,
+		onClearSelection,
+		onSelectRange,
+		visualType,
+		dimensions,
+		measures,
+		rows,
+		periodField,
+		fields,
+		filters,
+		previousWindow,
+		selectable,
+	});
+	liveRef.current = {
+		onSelect,
+		onClearSelection,
+		onSelectRange,
+		visualType,
+		dimensions,
+		measures,
+		rows,
+		periodField,
+		fields,
+		filters,
+		previousWindow,
+		selectable,
+	};
 
 	// A range selection needs an axis to select across, so it is offered on the
 	// cartesian charts and not on a pie or a gauge.
@@ -369,66 +514,79 @@ export function Chart({
 
 		// The chart that produced a selection marks it, so the reader can see
 		// what they picked rather than only its effect on everything else.
-		if (
-			selectedValues &&
-			selectedValues.length > 0 &&
-			dimensions.length > 0
-		) {
-			ctx.highlight = { field: dimensions[0], values: selectedValues };
+		if (selection && selection.length > 0 && dimensions.length > 0) {
+			ctx.selection = selection;
 		}
 
-		switch (visualType) {
-			case "pieChart":
-				return buildPie(ctx, false);
-			case "donutChart":
-				return buildPie(ctx, true);
-			case "treemapChart":
-				return buildTreemap(ctx);
-			case "funnelChart":
-				return buildFunnel(ctx);
-			case "gauge":
-				return buildGauge(ctx);
-			case "waterfallChart":
-				return buildWaterfall(ctx);
-			case "bulletChart":
-				return buildBullet(ctx);
-			case "slopeChart":
-				return buildSlope(ctx);
-			case "paretoChart":
-				return buildPareto(ctx);
-			case "histogramChart":
-				return buildHistogram(ctx);
-			case "boxPlot":
-				return buildBoxPlot(ctx);
-			case "calendarChart":
-				return buildCalendar(ctx);
-			case "timelineChart":
-				return buildTimeline(ctx);
-			case "choroplethChart":
-				return countries
-					? buildChoropleth(ctx, countries).option
-					: null;
-			case "sankeyChart":
-				return buildSankey(ctx);
-			case "heatmapChart":
-				return buildHeatmap(ctx);
-			case "radarChart":
-				return buildRadar(ctx);
-			case "horizontalBarChart":
-				return buildCartesian(ctx, "bar", "horizontal");
-			case "stackedBarChart":
-				return buildCartesian(ctx, "stacked100");
-			case "comboChart":
-				return buildCartesian(ctx, "combo");
-			case "areaChart":
-				return buildCartesian(ctx, "area");
-			case "scatterChart":
-				return buildScatter(ctx);
-			case "lineChart":
-				return buildCartesian(ctx, "line");
-			default:
-				return buildCartesian(ctx, "bar");
-		}
+		const built = (() => {
+			switch (visualType) {
+				case "pieChart":
+					return buildPie(ctx, false);
+				case "donutChart":
+					return buildPie(ctx, true);
+				case "treemapChart":
+					return buildTreemap(ctx);
+				case "funnelChart":
+					return buildFunnel(ctx);
+				case "gauge":
+					return buildGauge(ctx);
+				case "waterfallChart":
+					return buildWaterfall(ctx);
+				case "bulletChart":
+					return buildBullet(ctx);
+				case "slopeChart":
+					return buildSlope(ctx);
+				case "paretoChart":
+					return buildPareto(ctx);
+				case "histogramChart":
+					return buildHistogram(ctx);
+				case "boxPlot":
+					return buildBoxPlot(ctx);
+				case "calendarChart":
+					return buildCalendar(ctx);
+				case "timelineChart":
+					return buildTimeline(ctx);
+				case "choroplethChart":
+					return countries
+						? buildChoropleth(ctx, countries, regionBounds).option
+						: null;
+				case "sankeyChart":
+					return buildSankey(ctx);
+				case "heatmapChart":
+					return buildHeatmap(ctx);
+				case "radarChart":
+					return buildRadar(ctx);
+				case "horizontalBarChart":
+					return buildCartesian(ctx, "bar", "horizontal");
+				case "stackedBarChart":
+					return buildCartesian(ctx, "stacked100");
+				case "comboChart":
+					return buildCartesian(ctx, "combo");
+				case "areaChart":
+					return buildCartesian(ctx, "area");
+				case "scatterChart":
+					return buildScatter(ctx);
+				case "lineChart":
+					return buildCartesian(ctx, "line");
+				default:
+					return buildCartesian(ctx, "bar");
+			}
+		})();
+
+		// The library puts a pointer over every mark by default, which on a
+		// chart that does nothing with a click promises something it does not
+		// do.
+		if (!built || interactive) return built;
+		const series = (built as { series?: unknown }).series;
+		return {
+			...built,
+			series: (Array.isArray(series) ? series : [series]).map(
+				(entry) => ({
+					...(entry as Record<string, unknown>),
+					cursor: "default",
+				}),
+			),
+		};
 		// Held by content, since the selection is rebuilt on every render.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [
@@ -442,11 +600,35 @@ export function Chart({
 		// same settings does not rebuild the chart and drop a selection a
 		// reader is in the middle of drawing.
 		JSON.stringify(options ?? {}),
-		(selectedValues ?? []).join("\u0000"),
+		JSON.stringify(selection ?? []),
+		interactive,
 		comparison.rows,
 		comparisonFilters,
 		countries,
+		// The palette is read off the document when the option is built, so
+		// a theme change has to build it again.
+		resolved,
 	]);
+
+	// The categories along the axis in the order the chart drew them, as rows
+	// a brushed range can be read from. Taken from the built option, so a
+	// chart sorted by value or pivoted into a stack maps a range to the bars
+	// the reader covered rather than to rows in query order.
+	const brushRows = useMemo(() => {
+		const field = dimensions[0];
+		if (!option || !field) return rows;
+		const o = option as { xAxis?: unknown; yAxis?: unknown };
+		const axes = [o.xAxis, o.yAxis].flatMap((axis) =>
+			Array.isArray(axis) ? axis : [axis],
+		) as ({ type?: string; data?: unknown[] } | undefined)[];
+		const category = axes.find(
+			(axis) => axis?.type === "category" && Array.isArray(axis.data),
+		);
+		if (!category?.data) return rows;
+		return category.data.map((value) => ({ [field]: value }));
+	}, [option, rows, dimensions]);
+	const brushRowsRef = useRef(brushRows);
+	brushRowsRef.current = brushRows;
 
 	// How many marks the axis bounds leave off the chart.
 	//
@@ -519,6 +701,9 @@ export function Chart({
 	useEffect(() => {
 		if (!containerRef.current || !option) return;
 
+		// Created on whichever element is mounted now. The container is
+		// replaced whenever a placeholder has stood in for the chart, and
+		// attachContainer drops the instance bound to the old one.
 		if (!chartRef.current) {
 			chartRef.current = echarts.init(containerRef.current, undefined, {
 				renderer: "canvas",
@@ -576,11 +761,9 @@ export function Chart({
 				const area = Array.isArray(areas)
 					? (areas[0] as { coordRange?: unknown } | undefined)
 					: undefined;
-				const {
-					dimensions: dims,
-					rows: current,
-					onSelectRange: report,
-				} = liveRef.current;
+				const { dimensions: dims, onSelectRange: report } =
+					liveRef.current;
+				const current = brushRowsRef.current;
 				const field = dims[0];
 				if (!field || !report) return;
 
@@ -588,7 +771,7 @@ export function Chart({
 					rangeToIndices(area?.coordRange, current.length),
 					current,
 					field,
-				);
+				).map(selectionValue);
 				report(field, values);
 			};
 
@@ -615,45 +798,181 @@ export function Chart({
 			});
 		}
 
-		chartRef.current.off("click");
-		chartRef.current.on(
-			"click",
-			(params: {
-				name?: string;
-				dataIndex?: number;
-				treePathInfo?: unknown[];
-			}) => {
-				const {
-					dimensions: dims,
-					rows: current,
-					onSelect: pick,
-				} = liveRef.current;
-				if (!pick || dims.length === 0) return;
+		// One mark chosen, from a click on the mark itself or from a click in
+		// a period's column on a line. Assigned on every draw so it closes
+		// over nothing stale, and read through the ref by the listeners, which
+		// are bound once per chart instance.
+		pickRef.current = (params: MarkClick) => {
+			const {
+				visualType: type,
+				dimensions: dims,
+				measures: shown,
+				rows: current,
+				onSelect: pick,
+				periodField: axis,
+				fields: known,
+				filters: applied,
+				previousWindow: earlier,
+			} = liveRef.current;
 
-				// A nested treemap draws two dimensions, so which one was
-				// clicked depends on how deep the tile is. The path includes
-				// the root, so a group is two long and a tile inside it is
-				// three. Taking the first dimension either way filtered the
-				// group field by a tile name that is not in it, which matched
-				// nothing and read as the click doing nothing.
-				const depth = params.treePathInfo?.length ?? 0;
-				const field =
-					depth > 2 && dims.length > 1 ? dims[depth - 2] : dims[0];
+			const measure =
+				params.seriesName && shown.includes(params.seriesName)
+					? params.seriesName
+					: shown[0];
+			const usable = Boolean(measure && known.has(measure));
+			const base = applied ?? [];
 
-				const value =
-					params.name ??
-					(params.dataIndex !== undefined
-						? String(current[params.dataIndex]?.[field] ?? "")
-						: "");
-				if (value) pick({ field, value });
-			},
-		);
+			if (axis && params.name) {
+				// A period is compared with the one before it in time,
+				// whatever order the bars are drawn in.
+				const periods = [
+					...new Set(current.map((r) => String(r[axis] ?? ""))),
+				]
+					.filter(Boolean)
+					.sort();
+				const at = periods.indexOf(params.name);
+				setPointed(
+					at > 0 && usable
+						? {
+								label: formatDate(params.name),
+								measure,
+								current: [
+									...base,
+									{
+										field: axis,
+										op: "eq",
+										value: params.name,
+									},
+								],
+								previous: [
+									...base,
+									{
+										field: axis,
+										op: "eq",
+										value: periods[at - 1],
+									},
+								],
+								against: formatDate(periods[at - 1]),
+							}
+						: null,
+				);
+			} else if (
+				earlier &&
+				dims.length > 0 &&
+				params.name &&
+				(params.treePathInfo?.length ?? 0) <= 2
+			) {
+				// Anything else is one value of the first dimension,
+				// compared with itself over the period before.
+				const clause =
+					params.name === blankLabel
+						? { field: dims[0], op: "is_empty" }
+						: { field: dims[0], op: "eq", value: params.name };
+				setPointed(
+					usable
+						? {
+								label: params.name,
+								measure,
+								current: [...base, clause],
+								previous: [...earlier, clause],
+								against: "the period before",
+							}
+						: null,
+				);
+			}
+
+			if (!pick) return;
+
+			// Which field a mark stands for depends on the type. A nested
+			// treemap tile is a group and a tile, a sankey node is one
+			// side, and a slope point is its line rather than its end.
+			// Read in one place so the filter, the chip and the dimming
+			// agree.
+			const chosen = selectionFromClick(type, dims, shown, params);
+			if (chosen && chosen.length > 0) pick(chosen);
+		};
+
+		const chart = chartRef.current;
+		chart.off("click");
+		chart.on("click", (params: unknown) => {
+			pressRef.current.marked = true;
+			if (pressRef.current.moved) return;
+			pickRef.current?.(params as MarkClick);
+		});
+
+		// Clicks away from any mark, heard on the canvas underneath the
+		// series. Bound once per instance, because the library's own event
+		// handling listens on the same surface and clearing every listener
+		// there would take its handling with it.
+		if (zrBoundRef.current !== chart) {
+			zrBoundRef.current = chart;
+			const zr = chart.getZr();
+			zr.on("mousedown", (e: { offsetX: number; offsetY: number }) => {
+				pressRef.current = {
+					x: e.offsetX,
+					y: e.offsetY,
+					moved: false,
+					marked: false,
+				};
+			});
+			zr.on("mouseup", (e: { offsetX: number; offsetY: number }) => {
+				const press = pressRef.current;
+				press.moved =
+					Math.abs(e.offsetX - press.x) > clickSlop ||
+					Math.abs(e.offsetY - press.y) > clickSlop;
+			});
+			zr.on(
+				"click",
+				(e: { target?: unknown; offsetX: number; offsetY: number }) => {
+					// The library dispatches a click on a mark before this
+					// runs, and that click has been handled.
+					const press = pressRef.current;
+					const marked = press.marked;
+					press.marked = false;
+					if (press.moved || marked) return;
+					const live = liveRef.current;
+					const point = [e.offsetX, e.offsetY];
+					const inPlot =
+						columnPickCharts.has(live.visualType) &&
+						chart.containPixel({ gridIndex: 0 }, point);
+
+					// A line's points are hidden on a long series, so a click
+					// in the plot picks the period whose column it landed in.
+					// The line and the area under it are shapes with no data
+					// of their own, so a click on them lands here too.
+					if (inPlot && (live.selectable || live.periodField)) {
+						const at = chart.convertFromPixel(
+							{ gridIndex: 0 },
+							point,
+						) as number[] | number;
+						const index = Math.round(
+							Array.isArray(at) ? Number(at[0]) : Number(at),
+						);
+						const field = live.dimensions[0];
+						const row = brushRowsRef.current[index];
+						if (field && row && Number.isFinite(index)) {
+							pickRef.current?.({
+								name: String(row[field] ?? ""),
+								dataIndex: index,
+							});
+							return;
+						}
+					}
+
+					// Anything else under the pointer is a legend entry or a
+					// label, which has its own job. Only empty space lets go.
+					if (e.target && !inPlot) return;
+					if (live.selectable) live.onClearSelection?.();
+				},
+			);
+		}
 		// resolved is a dependency because the palette is read off the
-		// document, so a theme change has to repaint.
+		// document, so a theme change has to repaint. container is one because
+		// a new element needs a chart created on it.
 		// Deliberately narrow. The handlers read what they need at call time, so
 		// a fresh callback from the page is not a reason to rebuild the chart
 		// and throw away whatever the reader was doing in it.
-	}, [option, resolved, supportsBrush]);
+	}, [option, resolved, supportsBrush, container]);
 
 	// The observer attaches to the element itself rather than on mount.
 	//
@@ -665,7 +984,15 @@ export function Chart({
 	const observerRef = useRef<ResizeObserver | null>(null);
 
 	const attachContainer = useCallback((element: HTMLDivElement | null) => {
+		// An instance is bound to the element it was created on. Once that
+		// element is gone, painting into the instance draws off screen, so it
+		// is disposed and the next draw creates one on the new element.
+		if (element !== containerRef.current) {
+			chartRef.current?.dispose();
+			chartRef.current = null;
+		}
 		containerRef.current = element;
+		setContainer(element);
 		observerRef.current?.disconnect();
 
 		if (!element) {
@@ -755,8 +1082,56 @@ export function Chart({
 					measures,
 					title,
 				)}
-				style={{ cursor: onSelect ? "pointer" : "default" }}
+				// No cursor of its own. The library sets one per element as
+				// the pointer moves, a pointer over a mark that does something
+				// and the plain arrow everywhere else, and a pointer set here
+				// would claim the whole box was clickable.
 			/>
+			{pointed && (
+				<div className={styles.chartWhy}>
+					<button
+						type="button"
+						className={styles.chartWhyButton}
+						onClick={() => setExplaining(pointed)}
+					>
+						Why did {pointed.label} change?
+					</button>
+					<button
+						type="button"
+						className={styles.chartWhyClose}
+						onClick={() => setPointed(null)}
+						aria-label="Dismiss"
+					>
+						<svg
+							width="10"
+							height="10"
+							viewBox="0 0 10 10"
+							aria-hidden="true"
+						>
+							<path
+								d="M1 1l8 8M9 1l-8 8"
+								stroke="currentColor"
+								strokeWidth="1.5"
+								strokeLinecap="round"
+							/>
+						</svg>
+					</button>
+				</div>
+			)}
+			{explaining && (
+				<ExplainDialog
+					sourceKey={sourceKey}
+					measure={explaining.measure}
+					hint={
+						(fields.get(explaining.measure)
+							?.formatHint as FormatHint) ?? "decimal"
+					}
+					filters={explaining.current}
+					previousFilters={explaining.previous}
+					against={explaining.against}
+					onClose={() => setExplaining(null)}
+				/>
+			)}
 			{clipped > 0 && (
 				<p className={styles.chartFootnote} role="status">
 					{clipped === 1

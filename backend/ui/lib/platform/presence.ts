@@ -32,6 +32,32 @@ export interface PresentUser {
 	isSelf: boolean;
 }
 
+// Longest session id and id-like value kept. Enough for any generated id,
+// short enough that a heartbeat cannot be used to store arbitrary text.
+const maxIdLength = 64;
+
+function sessionKey(sessionId: string): string {
+	return String(sessionId).slice(0, maxIdLength);
+}
+
+// Only the fields a cursor needs, each bounded. The state arrives from a
+// client and is shown to everybody else in the report, so nothing else in it
+// is stored.
+function boundedState(state: PresenceState): PresenceState {
+	const id = (value: unknown): string | null =>
+		typeof value === "string" ? value.slice(0, maxIdLength) : null;
+	const out: PresenceState = {};
+	if (state && typeof state === "object") {
+		if (state.pageId !== undefined) out.pageId = id(state.pageId);
+		if (state.visualId !== undefined) out.visualId = id(state.visualId);
+		if (typeof state.editing === "boolean") out.editing = state.editing;
+	}
+	return out;
+}
+
+// A session row belongs to the person who first wrote it. Every write matches
+// on the email as well as the session id, so nobody can move, mark or relabel
+// somebody else's session by sending its id.
 export async function heartbeat(
 	reportId: string,
 	email: string,
@@ -46,12 +72,13 @@ export async function heartbeat(
 		   state = EXCLUDED.state,
 		   heartbeat_on = now(),
 		   expires_on = EXCLUDED.expires_on
-		 WHERE presence.left_on IS NULL`,
+		 WHERE presence.left_on IS NULL
+		   AND presence.user_email = EXCLUDED.user_email`,
 		[
 			reportId,
 			email,
-			sessionId,
-			JSON.stringify(state),
+			sessionKey(sessionId),
+			JSON.stringify(boundedState(state)),
 			String(leaseSeconds),
 		],
 	);
@@ -80,7 +107,7 @@ export async function listPresent(
 		sessionId: row.session_id,
 		state: row.state ?? {},
 		ageSeconds: Math.round(Number(row.age_seconds) || 0),
-		isSelf: row.session_id === sessionId,
+		isSelf: row.session_id === sessionKey(sessionId),
 	}));
 }
 
@@ -105,7 +132,8 @@ export async function leave(
 		 VALUES ($1, $2, $3, now(), now() + ($4 || ' seconds')::interval, now())
 		 ON CONFLICT (report_id, session_id) DO UPDATE SET
 		   left_on = now(),
-		   expires_on = EXCLUDED.expires_on`,
-		[reportId, email, sessionId, String(leaseSeconds)],
+		   expires_on = EXCLUDED.expires_on
+		 WHERE presence.user_email = EXCLUDED.user_email`,
+		[reportId, email, sessionKey(sessionId), String(leaseSeconds)],
 	);
 }

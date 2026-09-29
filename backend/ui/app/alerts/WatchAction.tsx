@@ -54,14 +54,26 @@ function conditionsFrom(filters: unknown[] | undefined): Condition[] {
 		const op = f.op as ConditionOp;
 		if (typeof f.field !== "string" || !ops.has(op)) return [];
 		if (f.field.startsWith("<")) return [];
+		const scalar = (v: unknown) =>
+			typeof v === "string" ||
+			typeof v === "number" ||
+			typeof v === "boolean";
+		const values = Array.isArray(f.values)
+			? f.values.filter(scalar).map(String)
+			: null;
+		const value = scalar(f.value) ? String(f.value) : null;
+		const needsValue = op !== "is_empty" && op !== "is_not_empty";
+		// A comparison with nothing to compare against would read as a
+		// different rule, so it is left out rather than carried half formed.
+		if (needsValue && !values?.length && value === null) return [];
 		return [
 			{
 				field: f.field,
 				op,
-				...(Array.isArray(f.values)
-					? { values: f.values.map(String) }
-					: typeof f.value === "string"
-						? { value: f.value }
+				...(values?.length
+					? { values }
+					: value !== null
+						? { value }
 						: {}),
 				negate: f.negate === true,
 				join: "and" as const,

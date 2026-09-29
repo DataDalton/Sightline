@@ -70,6 +70,8 @@ export function AlertCard({
 	const [busy, setBusy] = useState(false);
 	const [message, setMessage] = useState<string | null>(null);
 	const [confirming, setConfirming] = useState(false);
+	// A switch or a delete on its way, so a second click does not send another.
+	const [changing, setChanging] = useState(false);
 	const [showHistory, setShowHistory] = useState(false);
 
 	const checkNow = async () => {
@@ -95,18 +97,58 @@ export function AlertCard({
 	};
 
 	const setEnabled = async (enabled: boolean) => {
-		await fetch(`${alertsKey}/${alert.id}`, {
-			method: "PATCH",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ enabled }),
-		});
-		onChanged();
+		if (changing) return;
+		setChanging(true);
+		setMessage(null);
+		try {
+			const response = await fetch(`${alertsKey}/${alert.id}`, {
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ enabled }),
+			});
+			if (!response.ok) {
+				const body = await response.json().catch(() => null);
+				setMessage(
+					body?.error ??
+						(enabled
+							? "Could not turn the alert on."
+							: "Could not turn the alert off."),
+				);
+				return;
+			}
+			onChanged();
+		} catch {
+			setMessage(
+				enabled
+					? "Could not turn the alert on."
+					: "Could not turn the alert off.",
+			);
+		} finally {
+			setChanging(false);
+		}
 	};
 
 	const remove = async () => {
-		await fetch(`${alertsKey}/${alert.id}`, { method: "DELETE" });
-		setConfirming(false);
-		onChanged();
+		if (changing) return;
+		setChanging(true);
+		setMessage(null);
+		try {
+			const response = await fetch(`${alertsKey}/${alert.id}`, {
+				method: "DELETE",
+			});
+			if (!response.ok) {
+				const body = await response.json().catch(() => null);
+				setMessage(body?.error ?? "Could not delete the alert.");
+				return;
+			}
+			onChanged();
+		} catch {
+			setMessage("Could not delete the alert.");
+		} finally {
+			// Closed either way. A failure is reported on the card.
+			setConfirming(false);
+			setChanging(false);
+		}
 	};
 
 	const filters = describeConditions(alert.definition.conditions);
@@ -124,6 +166,7 @@ export function AlertCard({
 				<Toggle
 					checked={alert.enabled}
 					onChange={(on) => void setEnabled(on)}
+					disabled={changing}
 					ariaLabel={
 						alert.enabled
 							? "Turn this alert off"
@@ -228,6 +271,7 @@ export function AlertCard({
 					title="Delete this alert?"
 					body={`${alert.name} stops checking, and its history goes with it. Messages it already sent stay in your inbox.`}
 					confirmLabel="Delete"
+					busy={changing}
 					onConfirm={remove}
 					onCancel={() => setConfirming(false)}
 				/>

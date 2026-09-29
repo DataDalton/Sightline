@@ -1,9 +1,10 @@
 import type { Identity } from "../auth/identity";
 import { resolvePolicyClass } from "../auth/policy";
-import { sql } from "../data/lakebase";
+import { sql, transaction } from "../data/lakebase";
+import { reachableSet } from "../platform/sources";
 import type { Row } from "../data/types";
 import { toNumber } from "../format";
-import { notify } from "../notify/store";
+import { notify, type NewNotification } from "../notify/store";
 import { getReport } from "../platform/reports";
 import { compileQuery } from "../query/builder";
 import { parseQuerySpec } from "../query/spec";
@@ -18,6 +19,7 @@ import {
 	restrictableSources,
 	restrictionFor,
 } from "../alerts/recorded";
+import { confirmableSources } from "../platform/sources";
 import { asApp, asOwner, type RunQuery } from "../alerts/runner";
 import { pageLink } from "./store";
 
@@ -46,10 +48,13 @@ interface DeliveryRow {
 	source_key: string | null;
 	schedule: Schedule;
 	state: { values?: Record<string, number | null> };
+	last_run_on: string | null;
+	next_run_on: string;
 }
 
 const deliveryColumns = `delivery_id::text, owner_email, report_id::text,
-	page_id::text, source_key, schedule, state`;
+	page_id::text, source_key, schedule, state, last_run_on::text,
+	next_run_on::text`;
 
 interface PageRow {
 	slug: string;
@@ -161,10 +166,14 @@ async function deliver(
 	row: DeliveryRow,
 	run: RunQuery,
 	restricted: boolean,
+	// The time to put back instead of moving the schedule, for a send the
+	// owner asked for.
+	keep: string | null = null,
 ): Promise<void> {
 	let status = "ok";
 	let error: string | null = null;
 	let values = row.state.values ?? {};
+	let message: { ownerEmail: string; input: NewNotification } | null = null;
 
 	try {
 		const [page] = await sql<PageRow>(
@@ -194,7 +203,8 @@ async function deliver(
 				before !== 0 &&
 				figure.value !== null
 			) {
-				figure.change = ((figure.value - before) / Math.abs(before)) * 100;
+				figure.change =
+					((figure.value - before) / Math.abs(before)) * 100;
 			}
 		}
 		values = Object.fromEntries(figures.map((f) => [f.measure, f.value]));
@@ -213,31 +223,54 @@ async function deliver(
 						.join(". ") + "."
 				: "Your scheduled page is ready.";
 
-		await notify(row.owner_email, {
-			kind: "delivery",
-			title,
-			body,
-			link: pageLink(page.slug, page.page_title, page.is_first),
-			data: { deliveryId: row.delivery_id },
-		});
+		message = {
+			ownerEmail: row.owner_email,
+			input: {
+				kind: "delivery",
+				title,
+				body,
+				link: pageLink(page.slug, page.page_title, page.is_first),
+				data: { deliveryId: row.delivery_id },
+			},
+		};
 	} catch (e) {
 		error = e instanceof Error ? e.message : String(e);
 		status = error.startsWith("Waiting") ? "waiting" : "error";
+		message = null;
 	}
 
-	await sql(
+	// Saved before anything is sent, and only while the row still holds the
+	// run this one started from. Two runs of the same delivery at once then
+	// send once, and a process that stops after the save sends nothing rather
+	// than sending again after the lease.
+	const saved = await sql(
 		`UPDATE deliveries SET
 		   state = $2, last_run_on = now(), last_status = $3, last_error = $4,
 		   next_run_on = $5
-		 WHERE delivery_id = $1::uuid`,
+		 WHERE delivery_id = $1::uuid
+		   AND last_run_on IS NOT DISTINCT FROM $6::timestamptz
+		 RETURNING delivery_id`,
 		[
 			row.delivery_id,
 			JSON.stringify({ values }),
 			status,
 			error ? error.slice(0, 500) : null,
-			nextRun(row.schedule, new Date()).toISOString(),
+			keep ?? nextRun(row.schedule, new Date()).toISOString(),
+			row.last_run_on,
 		],
 	);
+	if (saved.length === 0 || !message) return;
+
+	try {
+		await notify(message.ownerEmail, message.input);
+	} catch (e) {
+		const failure = e instanceof Error ? e.message : String(e);
+		await sql(
+			`UPDATE deliveries SET last_status = 'error', last_error = $2
+			 WHERE delivery_id = $1::uuid`,
+			[row.delivery_id, failure.slice(0, 500)],
+		);
+	}
 }
 
 async function runAll(
@@ -328,17 +361,28 @@ export function runDeliveriesForOwner(identity: Identity): void {
 	if (!run) return;
 
 	void (async () => {
-		const mine = await sql<{ delivery_id: string; slug: string }>(
-			`SELECT d.delivery_id::text, r.slug FROM deliveries d
+		const mine = await sql<{
+			delivery_id: string;
+			slug: string;
+			source_key: string | null;
+		}>(
+			`SELECT d.delivery_id::text, r.slug, d.source_key
+			 FROM deliveries d
 			 JOIN reports r ON r.report_id = d.report_id AND r.is_active
 			 WHERE d.owner_email = $1 AND d.enabled`,
 			[email],
 		);
 		if (mine.length === 0) return;
 
+		// Opening the report is not enough on its own. The figures are worked
+		// out later as the app, so the owner has to be able to read the source
+		// they come from as well.
+		const readable = await confirmableSources(identity);
 		const policy = await resolvePolicyClass(identity);
 		const confirmed: string[] = [];
-		for (const { delivery_id, slug } of mine) {
+		for (const { delivery_id, slug, source_key } of mine) {
+			if (!source_key) continue;
+			if (readable && !readable.has(source_key)) continue;
 			if (await getReport(policy, identity, slug)) {
 				confirmed.push(delivery_id);
 			}
@@ -374,17 +418,38 @@ export function runDeliveriesForOwner(identity: Identity): void {
 export async function sendNow(identity: Identity, id: string): Promise<void> {
 	const run = asOwner(identity);
 	if (!run) throw new Error("A user token is required to send this now.");
-	const rows = await sql<DeliveryRow & { next_run_on: string }>(
-		`SELECT ${deliveryColumns}, next_run_on::text FROM deliveries
+	const email = identity.email.toLowerCase();
+	const found = await sql<{ source_key: string | null }>(
+		`SELECT source_key FROM deliveries
 		 WHERE delivery_id::text = $1 AND owner_email = $2`,
-		[id, identity.email.toLowerCase()],
+		[id, email],
 	);
-	const row = rows[0];
+	if (!found[0]) throw new Error("Not found");
+	const reachable = await reachableSet(identity);
+	const sourceKey = found[0].source_key;
+	if (reachable && (!sourceKey || !reachable.has(sourceKey))) {
+		throw new Error("That dataset is not one you can read.");
+	}
+
+	// Claimed as the timer claims, so the timer does not send the same page
+	// while this one is worked out. The time it was due is put back after.
+	const row = await transaction(async (client) => {
+		const held = await client.query<DeliveryRow>(
+			`SELECT ${deliveryColumns} FROM deliveries
+			 WHERE delivery_id::text = $1 AND owner_email = $2
+			 FOR UPDATE`,
+			[id, email],
+		);
+		const claimed = held.rows[0];
+		if (!claimed) return null;
+		await client.query(
+			`UPDATE deliveries
+			 SET next_run_on = now() + interval '${claimLease}'
+			 WHERE delivery_id::text = $1`,
+			[id],
+		);
+		return claimed;
+	});
 	if (!row) throw new Error("Not found");
-	const keep = row.next_run_on;
-	await deliver(row, run, false);
-	await sql(
-		`UPDATE deliveries SET next_run_on = $2 WHERE delivery_id::text = $1`,
-		[id, keep],
-	);
+	await deliver(row, run, false, row.next_run_on);
 }

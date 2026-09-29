@@ -1103,6 +1103,38 @@ const migrations: string[] = [
 	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS expected_by TIMESTAMPTZ`,
 	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS last_arrival TIMESTAMPTZ`,
 	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS arrival_pattern JSONB`,
+	// Readers who asked to be told when a source's data is late, beside the
+	// people who look after it, who are told regardless.
+	`CREATE TABLE IF NOT EXISTS late_subscriptions (
+		email      TEXT NOT NULL,
+		source_key TEXT NOT NULL,
+		created_on TIMESTAMPTZ NOT NULL DEFAULT now(),
+		PRIMARY KEY (email, source_key)
+	)`,
+	`CREATE INDEX IF NOT EXISTS late_subscriptions_source_idx
+		ON late_subscriptions (source_key)`,
+
+	// Indexes for the lookups that run on a timer or on every page open.
+	// A reader's recent pages, matched without regard to case.
+	`CREATE INDEX IF NOT EXISTS usage_events_user_lower_idx
+		ON usage_events (lower(user_email), occurred_on DESC)`,
+	// Dropping a source's cached answers when its data changes.
+	`CREATE INDEX IF NOT EXISTS result_cache_source_idx
+		ON result_cache (source_key)`,
+	// A page's visuals, read with every report.
+	`CREATE INDEX IF NOT EXISTS report_visuals_page_idx
+		ON report_visuals (page_id) WHERE is_active`,
+	`CREATE INDEX IF NOT EXISTS report_visuals_source_idx
+		ON report_visuals (source_key) WHERE is_active`,
+	`CREATE INDEX IF NOT EXISTS report_pages_source_idx
+		ON report_pages (source_key) WHERE is_active`,
+	// The sweep deletes by age.
+	`CREATE INDEX IF NOT EXISTS notifications_created_idx
+		ON notifications (created_on)`,
+	`CREATE INDEX IF NOT EXISTS table_arrivals_time_idx
+		ON table_arrivals (arrived_on)`,
+	`CREATE INDEX IF NOT EXISTS alert_events_fired_idx
+		ON alert_events (fired_on)`,
 	`ALTER TABLE usage_events DROP CONSTRAINT IF EXISTS usage_events_event_type_check`,
 	`ALTER TABLE usage_events ADD CONSTRAINT usage_events_event_type_check
 	 CHECK (event_type IN ('page_view', 'query', 'export', 'edit', 'error',

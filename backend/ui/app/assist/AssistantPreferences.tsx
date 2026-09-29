@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import styles from "./Assist.module.css";
 
@@ -31,6 +31,13 @@ export function AssistantPreferences() {
 	const [instructions, setInstructions] = useState("");
 	const [saving, setSaving] = useState(false);
 	const [saved, setSaved] = useState(false);
+	const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	useEffect(
+		() => () => {
+			if (savedTimer.current) clearTimeout(savedTimer.current);
+		},
+		[],
+	);
 	const [failure, setFailure] = useState<string | null>(null);
 
 	useEffect(() => {
@@ -50,7 +57,11 @@ export function AssistantPreferences() {
 			if (!response.ok) throw new Error(body?.error ?? "Could not save");
 			await mutate(body as Profile, { revalidate: false });
 			setSaved(true);
-			setTimeout(() => setSaved(false), 1500);
+			if (savedTimer.current) clearTimeout(savedTimer.current);
+			savedTimer.current = setTimeout(() => {
+				savedTimer.current = null;
+				setSaved(false);
+			}, 1500);
 		} catch (error) {
 			setFailure(
 				error instanceof Error ? error.message : "Could not save",

@@ -2,7 +2,7 @@ import type { Identity } from "../auth/identity";
 import { sql } from "../data/lakebase";
 import { toFilterLogic } from "../explore/conditions";
 import { formatCompact, type FormatHint } from "../format";
-import { reachableSet } from "../platform/sources";
+import { confirmableSources, reachableSet } from "../platform/sources";
 import { compileQuery } from "../query/builder";
 import { parseQuerySpec, QuerySpecError, type QuerySpec } from "../query/spec";
 import { filterDiscoveryComplete } from "../semantic/filterDiscovery";
@@ -246,16 +246,27 @@ export async function createAlert(
 		`INSERT INTO alert_rules
 		   (owner_email, name, source_key, definition, next_check_on,
 		    access_confirmed_on)
-		 VALUES ($1, $2, $3, $4, now(), now())
+		 VALUES ($1, $2, $3, $4, now(), CASE WHEN $5 THEN now() END)
 		 RETURNING ${alertColumns}`,
 		[
 			identity.email.toLowerCase(),
 			definition.name,
 			definition.sourceKey,
 			JSON.stringify(definition),
+			await accessConfirmed(identity, definition.sourceKey),
 		],
 	);
 	return toRecord(rows[0]);
+}
+
+// Whether saving confirms the owner can read the alert's source, which is
+// what lets its checks run later while they are away.
+async function accessConfirmed(
+	identity: Identity,
+	sourceKey: string,
+): Promise<boolean> {
+	const confirmable = await confirmableSources(identity);
+	return !confirmable || confirmable.has(sourceKey);
 }
 
 export async function updateAlert(
@@ -281,7 +292,7 @@ export async function updateAlert(
 		   name = $3, source_key = $4, definition = $5,
 		   state = CASE WHEN $6 THEN '{}'::jsonb ELSE state END,
 		   next_check_on = CASE WHEN $6 OR $7 THEN now() ELSE next_check_on END,
-		   access_confirmed_on = now(),
+		   access_confirmed_on = CASE WHEN $8 THEN now() END,
 		   modified_on = now()
 		 WHERE owner_email = $1 AND rule_id = $2
 		 RETURNING ${alertColumns}`,
@@ -293,6 +304,7 @@ export async function updateAlert(
 			JSON.stringify(definition),
 			reset,
 			rescheduled,
+			await accessConfirmed(identity, definition.sourceKey),
 		],
 	);
 	return rows[0] ? toRecord(rows[0]) : null;

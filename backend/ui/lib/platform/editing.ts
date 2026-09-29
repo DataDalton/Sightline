@@ -292,6 +292,134 @@ async function assertPagesAreUnlocked(
 	}
 }
 
+// Refuses a batch naming any page or visual that belongs to a different report.
+//
+// Permission is checked against the report in the request, so every id the
+// operations carry has to be held to that same report. Otherwise an editor of
+// one report could name a page or visual from another and write to it.
+//
+// A page or visual created earlier in the same batch counts as belonging, as
+// long as its id is not already taken by another report. An insert that
+// conflicts does nothing, so a later operation on that id would reach the
+// other report's row.
+async function assertTargetsBelongToReport(
+	reportId: string,
+	operations: EditOperation[],
+): Promise<void> {
+	const pageIds = new Set<string>();
+	const visualIds = new Set<string>();
+	const addedPages = new Set<string>();
+	const addedVisuals = new Set<string>();
+
+	const isId = (value: unknown): value is string =>
+		typeof value === "string" && value.length > 0;
+
+	for (const op of operations) {
+		switch (op.type) {
+			case "addPage":
+				if (!isId(op.pageId)) {
+					throw new EditRejectedError("A page id is required.");
+				}
+				addedPages.add(op.pageId.toLowerCase());
+				pageIds.add(op.pageId.toLowerCase());
+				break;
+			case "addVisual":
+				if (!isId(op.pageId)) {
+					throw new EditRejectedError("A page id is required.");
+				}
+				pageIds.add(op.pageId.toLowerCase());
+				if (op.visualId !== undefined && op.visualId !== null) {
+					if (!isId(op.visualId)) {
+						throw new EditRejectedError("A visual id is invalid.");
+					}
+					addedVisuals.add(op.visualId.toLowerCase());
+					visualIds.add(op.visualId.toLowerCase());
+				}
+				break;
+			case "updateVisual":
+			case "removeVisual":
+				if (!isId(op.visualId)) {
+					throw new EditRejectedError("A visual id is required.");
+				}
+				visualIds.add(op.visualId.toLowerCase());
+				break;
+			case "reorderVisuals":
+				if (!isId(op.pageId) || !Array.isArray(op.visualIds)) {
+					throw new EditRejectedError(
+						"A reorder needs a page and a list of visuals.",
+					);
+				}
+				pageIds.add(op.pageId.toLowerCase());
+				for (const id of op.visualIds) {
+					if (!isId(id)) {
+						throw new EditRejectedError("A visual id is invalid.");
+					}
+					visualIds.add(id.toLowerCase());
+				}
+				break;
+			case "updatePage":
+			case "removePage":
+				if (!isId(op.pageId)) {
+					throw new EditRejectedError("A page id is required.");
+				}
+				pageIds.add(op.pageId.toLowerCase());
+				break;
+			case "reorderPages":
+				if (Array.isArray(op.pageIds)) {
+					for (const id of op.pageIds) {
+						if (isId(id)) pageIds.add(id.toLowerCase());
+					}
+				}
+				break;
+		}
+	}
+
+	if (pageIds.size === 0 && visualIds.size === 0) return;
+
+	// One round trip answers both questions. The text casts keep a malformed
+	// id from failing the uuid comparison with a database error.
+	const rows = await sql<{ kind: string; id: string; report_id: string }>(
+		`SELECT 'page' AS kind, page_id::text AS id, report_id::text AS report_id
+		   FROM report_pages WHERE page_id::text = ANY($1::text[])
+		 UNION ALL
+		 SELECT 'visual' AS kind, v.visual_id::text AS id,
+		        p.report_id::text AS report_id
+		   FROM report_visuals v
+		   JOIN report_pages p ON p.page_id = v.page_id
+		  WHERE v.visual_id::text = ANY($2::text[])`,
+		[Array.from(pageIds), Array.from(visualIds)],
+	);
+
+	const pageOwner = new Map<string, string>();
+	const visualOwner = new Map<string, string>();
+	for (const row of rows) {
+		(row.kind === "page" ? pageOwner : visualOwner).set(
+			row.id,
+			row.report_id,
+		);
+	}
+
+	const owned = reportId.toLowerCase();
+	const refuse = () => {
+		throw new EditRejectedError(
+			"This edit names a page or visual that is not part of this report.",
+		);
+	};
+
+	for (const id of pageIds) {
+		const owner = pageOwner.get(id);
+		if (owner === undefined ? !addedPages.has(id) : owner !== owned) {
+			refuse();
+		}
+	}
+	for (const id of visualIds) {
+		const owner = visualOwner.get(id);
+		if (owner === undefined ? !addedVisuals.has(id) : owner !== owned) {
+			refuse();
+		}
+	}
+}
+
 async function assertDefinitionsAreDrawable(
 	operations: EditOperation[],
 ): Promise<void> {
@@ -389,6 +517,7 @@ export async function applyEdits(
 		throw new Error("No operations supplied");
 	}
 
+	await assertTargetsBelongToReport(request.reportId, request.operations);
 	await assertDefinitionsAreDrawable(request.operations);
 	await assertPagesAreUnlocked(request.reportId, request.operations);
 
@@ -426,6 +555,18 @@ export async function applyEdits(
 		for (const op of request.operations) {
 			switch (op.type) {
 				case "addVisual": {
+					// Checked again inside the transaction, so a page moved or
+					// named wrongly can never take a visual into another report.
+					const page = await client.query(
+						`SELECT 1 FROM report_pages
+						 WHERE page_id = $1 AND report_id = $2`,
+						[op.pageId, request.reportId],
+					);
+					if (page.rows.length === 0) {
+						throw new EditRejectedError(
+							"This edit names a page that is not part of this report.",
+						);
+					}
 					const next = await client.query<{ sort_order: number }>(
 						`SELECT COALESCE(MAX(sort_order), -1) + 1 AS sort_order
 						 FROM report_visuals WHERE page_id = $1`,
@@ -477,7 +618,9 @@ export async function applyEdits(
 						   layout_y = COALESCE($7, layout_y),
 						   layout_w = COALESCE($8, layout_w),
 						   layout_h = COALESCE($9, layout_h)
-						 WHERE visual_id = $1`,
+						 WHERE visual_id = $1
+						   AND page_id IN (SELECT page_id FROM report_pages
+						                   WHERE report_id = $10)`,
 						[
 							op.visualId,
 							op.title ?? null,
@@ -488,6 +631,7 @@ export async function applyEdits(
 							layout?.y ?? null,
 							layout?.w ?? null,
 							layout?.h ?? null,
+							request.reportId,
 						],
 					);
 					break;
@@ -497,8 +641,11 @@ export async function applyEdits(
 					// Deactivated rather than deleted, so a version restore can
 					// bring it back and the audit trail still resolves it.
 					await client.query(
-						`UPDATE report_visuals SET is_active = FALSE WHERE visual_id = $1`,
-						[op.visualId],
+						`UPDATE report_visuals SET is_active = FALSE
+						 WHERE visual_id = $1
+						   AND page_id IN (SELECT page_id FROM report_pages
+						                   WHERE report_id = $2)`,
+						[op.visualId, request.reportId],
 					);
 					break;
 
@@ -506,8 +653,10 @@ export async function applyEdits(
 					for (let i = 0; i < op.visualIds.length; i++) {
 						await client.query(
 							`UPDATE report_visuals SET sort_order = $2
-							 WHERE visual_id = $1 AND page_id = $3`,
-							[op.visualIds[i], i, op.pageId],
+							 WHERE visual_id = $1 AND page_id = $3
+							   AND page_id IN (SELECT page_id FROM report_pages
+							                   WHERE report_id = $4)`,
+							[op.visualIds[i], i, op.pageId, request.reportId],
 						);
 					}
 					break;

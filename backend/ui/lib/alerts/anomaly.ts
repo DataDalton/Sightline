@@ -1,4 +1,5 @@
-import { toNumber } from "../format";
+import { groupLabel, toNumber } from "../format";
+import { median } from "../stats";
 
 // Whether a figure is unusual, judged against its own history.
 //
@@ -194,14 +195,6 @@ export function baselineKeys(
 
 // --- Usual -----------------------------------------------------------------
 
-function median(values: number[]): number {
-	const sorted = [...values].sort((a, b) => a - b);
-	const mid = Math.floor(sorted.length / 2);
-	return sorted.length % 2
-		? sorted[mid]
-		: (sorted[mid - 1] + sorted[mid]) / 2;
-}
-
 // How many typical movements away counts as unusual, and the least distance
 // that does, as a share of usual. The least distance stops a figure that has
 // barely moved in weeks from alerting on the first small change.
@@ -298,12 +291,7 @@ export function readAnomalies(
 		const value = toNumber(row[measure]);
 		if (!key || value === null) continue;
 		keys.push(key);
-		const raw = groupBy ? row[groupBy] : null;
-		const group = groupBy
-			? raw === null || raw === undefined || raw === ""
-				? "(blank)"
-				: String(raw)
-			: null;
+		const group = groupBy ? groupLabel(row[groupBy]) : null;
 		const byPeriod = series.get(group) ?? new Map<string, number>();
 		byPeriod.set(key, value);
 		series.set(group, byPeriod);

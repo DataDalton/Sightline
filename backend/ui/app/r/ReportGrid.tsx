@@ -529,6 +529,7 @@ export function ReportGrid({
 											)}
 											columnOrder={columnOrder}
 											pinnedColumns={pinnedColumns}
+											columnWidths={columnWidths}
 											onColumnLayout={onColumnLayout}
 										/>
 									</div>
@@ -541,6 +542,7 @@ export function ReportGrid({
 										frameHeight={heightForRows(item.rect.h)}
 										columnOrder={columnOrder}
 										pinnedColumns={pinnedColumns}
+										columnWidths={columnWidths}
 										onColumnLayout={onColumnLayout}
 									/>
 								)}

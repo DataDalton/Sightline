@@ -55,6 +55,7 @@ export default function MyPagesView() {
 		curated: boolean;
 	} | null>(null);
 	const [deleting, setDeleting] = useState(false);
+	const [removeFailure, setRemoveFailure] = useState<string | null>(null);
 
 	const mine = data?.mine ?? [];
 	const shared = data?.sharedWithMe ?? [];
@@ -67,18 +68,37 @@ export default function MyPagesView() {
 		if (!removing) return;
 		const { page, curated } = removing;
 		setDeleting(true);
+		setRemoveFailure(null);
+		const whenWrong = curated
+			? "Could not delete this report."
+			: "Could not delete this page.";
 		try {
-			await fetch(curated ? "/api/authoring" : "/api/personal", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(
-					curated
-						? { action: "removeReport", reportId: page.reportId }
-						: { action: "remove", reportId: page.reportId },
-				),
-			});
+			const response = await fetch(
+				curated ? "/api/authoring" : "/api/personal",
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify(
+						curated
+							? {
+									action: "removeReport",
+									reportId: page.reportId,
+								}
+							: { action: "remove", reportId: page.reportId },
+					),
+				},
+			);
+			if (!response.ok) {
+				const body = await response.json().catch(() => null);
+				setRemoveFailure(body?.error ?? whenWrong);
+				return;
+			}
 			await mutate();
 			setRemoving(null);
+		} catch (error) {
+			setRemoveFailure(
+				error instanceof Error ? error.message : whenWrong,
+			);
 		} finally {
 			setDeleting(false);
 		}
@@ -131,9 +151,10 @@ export default function MyPagesView() {
 					<button
 						type="button"
 						className={styles.cardAction}
-						onClick={() =>
-							setRemoving({ page, curated: kind === "authored" })
-						}
+						onClick={() => {
+							setRemoveFailure(null);
+							setRemoving({ page, curated: kind === "authored" });
+						}}
 					>
 						Delete
 					</button>
@@ -217,26 +238,35 @@ export default function MyPagesView() {
 							: "Delete this page"
 					}
 					body={
-						removing.curated ? (
-							<>
-								<strong>{removing.page.title}</strong> is in a
-								category, so everyone who can open it loses it.
-							</>
-						) : removing.page.sharedWith > 0 ? (
-							<>
-								<strong>{removing.page.title}</strong> will be
-								removed, and the {removing.page.sharedWith}
-								{removing.page.sharedWith === 1
-									? " person"
-									: " people"}{" "}
-								it is shared with will lose it.
-							</>
-						) : (
-							<>
-								<strong>{removing.page.title}</strong> will be
-								removed.
-							</>
-						)
+						<>
+							{removing.curated ? (
+								<>
+									<strong>{removing.page.title}</strong> is in
+									a category, so everyone who can open it
+									loses it.
+								</>
+							) : removing.page.sharedWith > 0 ? (
+								<>
+									<strong>{removing.page.title}</strong> will
+									be removed, and the{" "}
+									{removing.page.sharedWith}
+									{removing.page.sharedWith === 1
+										? " person"
+										: " people"}{" "}
+									it is shared with will lose it.
+								</>
+							) : (
+								<>
+									<strong>{removing.page.title}</strong> will
+									be removed.
+								</>
+							)}
+							{removeFailure && (
+								<div className={form.failure}>
+									{removeFailure}
+								</div>
+							)}
+						</>
 					}
 					busy={deleting}
 					onConfirm={remove}

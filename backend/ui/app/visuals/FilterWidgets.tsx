@@ -15,6 +15,7 @@ import { useValuePages } from "../hooks/useValuePages";
 import { DatePicker } from "../components/shared/DatePicker";
 import { FilterChip } from "./FilterChip";
 import { Select } from "../components/shared/Select";
+import { localIsoDate } from "../../lib/visuals/pageDefaults";
 import styles from "./Filters.module.css";
 
 // Filter widgets an editor can place on a page.
@@ -254,10 +255,23 @@ export function SearchFilter({
 	label,
 	placeholder,
 }: SearchProps) {
-	const { setWidgetFilter } = usePageFilters();
-	const [text, setText] = useState("");
+	const { setWidgetFilter, byWidget } = usePageFilters();
+
+	// The text in force, from the page filter state. The box holds what is
+	// being typed and is brought back into line whenever the applied text
+	// changes, such as by a saved view loading or by Clear all.
+	const applied = byWidget[visualId]?.[0]?.value ?? "";
+	const [text, setText] = useState(applied);
+	const [seenApplied, setSeenApplied] = useState(applied);
+	if (seenApplied !== applied) {
+		setSeenApplied(applied);
+		if (text.trim() !== applied) setText(applied);
+	}
 
 	useEffect(() => {
+		// Nothing to send while the box already says what is applied, so
+		// mounting does not overwrite a filter restored from a view or a link.
+		if (text.trim() === applied) return;
 		const timer = setTimeout(() => {
 			const trimmed = text.trim();
 			if (trimmed === "") {
@@ -273,7 +287,7 @@ export function SearchFilter({
 			]);
 		}, 300);
 		return () => clearTimeout(timer);
-	}, [text, fields, visualId, setWidgetFilter]);
+	}, [text, applied, fields, visualId, setWidgetFilter]);
 
 	// The one control that stays in the strip rather than behind a chip.
 	// Everything else opens to be read; this one is typed into, and putting a
@@ -403,7 +417,15 @@ interface Preset {
 
 const startOfDay = (d: Date) =>
 	new Date(d.getFullYear(), d.getMonth(), d.getDate());
-const iso = (d: Date) => d.toISOString().slice(0, 10);
+// Presets are local calendar dates, so they are written from the local parts.
+const iso = localIsoDate;
+// Slider positions come from date strings parsed as UTC midnight, so they are
+// written back in UTC to land on the same day.
+const utcIso = (d: Date) => d.toISOString().slice(0, 10);
+// Calendar days back from a local date, which stays on midnight across a
+// daylight saving change where a fixed count of milliseconds would not.
+const daysBefore = (n: Date, days: number) =>
+	new Date(n.getFullYear(), n.getMonth(), n.getDate() - days);
 
 // Grouped by how people actually ask: a rolling window, a period to date, or a
 // named period. Rolling and to-date are different questions and are often
@@ -413,19 +435,19 @@ const presets: Preset[] = [
 		label: "7d",
 		title: "Last 7 days",
 		group: "rolling",
-		resolve: (n) => [new Date(n.getTime() - 7 * 864e5), n],
+		resolve: (n) => [daysBefore(n, 7), n],
 	},
 	{
 		label: "30d",
 		title: "Last 30 days",
 		group: "rolling",
-		resolve: (n) => [new Date(n.getTime() - 30 * 864e5), n],
+		resolve: (n) => [daysBefore(n, 30), n],
 	},
 	{
 		label: "90d",
 		title: "Last 90 days",
 		group: "rolling",
-		resolve: (n) => [new Date(n.getTime() - 90 * 864e5), n],
+		resolve: (n) => [daysBefore(n, 90), n],
 	},
 	{
 		label: "12m",
@@ -476,29 +498,57 @@ export function DateRangeFilter({
 	mode = "combined",
 	defaultPreset,
 }: DateRangeProps) {
-	const { setWidgetFilter, clausesExcept } = usePageFilters();
-	const [from, setFrom] = useState("");
-	const [to, setTo] = useState("");
-	const [activePreset, setActivePreset] = useState<string | null>(null);
+	const { setWidgetFilter, clausesExcept, byWidget } = usePageFilters();
 
-	// The boxes and the highlighted preset, brought into line with the range the
-	// page opened on. The filter itself is already applied: it was in the
-	// opening state before this rendered, which is what stopped the visuals
-	// asking for everything first. This only makes the control say so.
-	const shown = useRef(false);
-	useEffect(() => {
-		if (shown.current) return;
-		shown.current = true;
-		if (!defaultPreset) return;
+	// The range in force, as the page filter state holds it. That state is
+	// where the opening default, a saved view or a shared link put it, and
+	// where Clear all takes it away, so the control reads from it rather than
+	// keeping a copy that could disagree.
+	const appliedClauses = byWidget[visualId];
+	const appliedFrom =
+		appliedClauses?.find((c) => c.op === "gte")?.value ?? "";
+	const appliedTo = appliedClauses?.find((c) => c.op === "lte")?.value ?? "";
 
-		const preset = presets.find((p) => p.label === defaultPreset);
-		if (!preset) return;
+	// The preset whose range today is exactly the one applied. The default
+	// preset is tried first so it wins where two resolve to the same range.
+	const matchingPreset = (start: string, end: string): string | null => {
+		if (!start || !end) return null;
+		const today = startOfDay(new Date());
+		const ordered = [
+			...presets.filter((p) => p.label === defaultPreset),
+			...presets.filter((p) => p.label !== defaultPreset),
+		];
+		const found = ordered.find((p) => {
+			const [s, e] = p.resolve(today);
+			return iso(s) === start && iso(e) === end;
+		});
+		return found?.label ?? null;
+	};
 
-		const [start, end] = preset.resolve(startOfDay(new Date()));
-		setFrom(iso(start));
-		setTo(iso(end));
-		setActivePreset(preset.label);
-	}, [defaultPreset]);
+	// Local while a slider is dragged, and brought back into line whenever the
+	// applied range changes from anywhere.
+	const [from, setFrom] = useState(appliedFrom);
+	const [to, setTo] = useState(appliedTo);
+	const [activePreset, setActivePreset] = useState<string | null>(() =>
+		matchingPreset(appliedFrom, appliedTo),
+	);
+	const [seenApplied, setSeenApplied] = useState(
+		`${appliedFrom}|${appliedTo}`,
+	);
+	if (seenApplied !== `${appliedFrom}|${appliedTo}`) {
+		setSeenApplied(`${appliedFrom}|${appliedTo}`);
+		setFrom(appliedFrom);
+		setTo(appliedTo);
+		const presetNow = activePreset
+			? presets.find((p) => p.label === activePreset)
+			: undefined;
+		const [s, e] = presetNow
+			? presetNow.resolve(startOfDay(new Date()))
+			: [null, null];
+		if (!s || !e || iso(s) !== appliedFrom || iso(e) !== appliedTo) {
+			setActivePreset(matchingPreset(appliedFrom, appliedTo));
+		}
+	}
 
 	const showPresets = mode === "presets" || mode === "combined";
 	const showCalendar = mode === "calendar" || mode === "combined";
@@ -661,16 +711,19 @@ export function DateRangeFilter({
 								value={sliderValue}
 								// A day, so a drag lands on a date rather than a time.
 								step={864e5}
-								format={(v) => iso(new Date(v))}
+								format={(v) => utcIso(new Date(v))}
 								onChange={([lo, hi]) => {
-									setFrom(iso(new Date(lo)));
-									setTo(iso(new Date(hi)));
+									setFrom(utcIso(new Date(lo)));
+									setTo(utcIso(new Date(hi)));
 									setActivePreset(null);
 								}}
 								// The query waits for the drag to finish: one per
 								// pointer move would be a query per pixel.
 								onCommit={([lo, hi]) =>
-									apply(iso(new Date(lo)), iso(new Date(hi)))
+									apply(
+										utcIso(new Date(lo)),
+										utcIso(new Date(hi)),
+									)
 								}
 							/>
 						) : (
@@ -700,9 +753,25 @@ export function NumericRangeFilter({
 	label,
 	mode = "combined",
 }: NumericRangeProps) {
-	const { setWidgetFilter, clausesExcept } = usePageFilters();
-	const [min, setMin] = useState("");
-	const [max, setMax] = useState("");
+	const { setWidgetFilter, clausesExcept, byWidget } = usePageFilters();
+
+	// The bounds in force, from the page filter state. The boxes hold what is
+	// being typed and are brought back into line whenever the applied bounds
+	// change, such as by a saved view loading or by Clear all.
+	const appliedMin =
+		byWidget[visualId]?.find((c) => c.op === "gte")?.value ?? "";
+	const appliedMax =
+		byWidget[visualId]?.find((c) => c.op === "lte")?.value ?? "";
+	const [min, setMin] = useState(appliedMin);
+	const [max, setMax] = useState(appliedMax);
+	const [seenApplied, setSeenApplied] = useState(
+		`${appliedMin}|${appliedMax}`,
+	);
+	if (seenApplied !== `${appliedMin}|${appliedMax}`) {
+		setSeenApplied(`${appliedMin}|${appliedMax}`);
+		if (min.trim() !== appliedMin) setMin(appliedMin);
+		if (max.trim() !== appliedMax) setMax(appliedMax);
+	}
 	const others = clausesExcept(visualId);
 
 	// Requested whenever a slider was asked for, so the fallback is decided
@@ -743,12 +812,14 @@ export function NumericRangeFilter({
 	};
 
 	// Typing is debounced; dragging commits on release. Both avoid a query per
-	// keystroke or per pixel.
+	// keystroke or per pixel. Boxes that already match the applied bounds send
+	// nothing, so mounting does not overwrite a filter restored from a view.
 	useEffect(() => {
 		if (!showInputs) return;
+		if (min.trim() === appliedMin && max.trim() === appliedMax) return;
 		const timer = setTimeout(() => apply(min, max), 350);
 		return () => clearTimeout(timer);
-	}, [min, max, showInputs]);
+	}, [min, max, showInputs, appliedMin, appliedMax]);
 
 	const sliderValue = useMemo((): [number, number] => {
 		if (!bounds) return [0, 1];
@@ -884,18 +955,44 @@ export function ThresholdFilter({
 	field,
 	label,
 	direction = "above",
-	defaultValue = null,
 }: ThresholdProps) {
-	const { setWidgetFilter } = usePageFilters();
-	const [value, setValue] = useState(
-		defaultValue === null ? "" : String(defaultValue),
+	const { setWidgetFilter, byWidget } = usePageFilters();
+
+	// The cutoff in force, from the page filter state. The opening default is
+	// already there when the page loads, as is a cutoff restored from a saved
+	// view or a link, and Clear all removes it. The box holds what is being
+	// typed and is brought back into line whenever the applied cutoff changes.
+	const appliedClause = byWidget[visualId]?.[0];
+	const applied = appliedClause?.value ?? "";
+	const appliedSense: "above" | "below" = appliedClause
+		? appliedClause.op === "lte"
+			? "below"
+			: "above"
+		: direction;
+	const [value, setValue] = useState(applied);
+	const [sense, setSense] = useState<"above" | "below">(appliedSense);
+	const [seenApplied, setSeenApplied] = useState(
+		`${applied}|${appliedSense}`,
 	);
-	const [sense, setSense] = useState<"above" | "below">(direction);
+	if (seenApplied !== `${applied}|${appliedSense}`) {
+		setSeenApplied(`${applied}|${appliedSense}`);
+		if (value.trim() !== applied) setValue(applied);
+		if (appliedClause) setSense(appliedSense);
+	}
 
 	const op = sense === "above" ? "gte" : "lte";
 
 	// Debounced, so typing a five figure number is one query rather than five.
+	// Nothing is sent while the control already matches what is applied, so
+	// mounting does not overwrite a cutoff restored from a view or a link.
 	useEffect(() => {
+		const trimmedNow = value.trim();
+		if (
+			trimmedNow === applied &&
+			(!appliedClause || appliedClause.op === op)
+		) {
+			return;
+		}
 		const timer = setTimeout(() => {
 			const trimmed = value.trim();
 			setWidgetFilter(
@@ -906,7 +1003,7 @@ export function ThresholdFilter({
 			);
 		}, 350);
 		return () => clearTimeout(timer);
-	}, [value, op, field, visualId, setWidgetFilter]);
+	}, [value, op, applied, appliedClause, field, visualId, setWidgetFilter]);
 
 	return (
 		<FilterChip

@@ -32,6 +32,11 @@ interface SparklineProps {
 	// shape rather than as a size. A fixed width wider than its column is what
 	// put a horizontal scrollbar under a grid of these.
 	stretch?: boolean;
+	// Places each value at its own index along the width, so a null holds its
+	// slot empty rather than closing up. A grid of these drawn over one shared
+	// run of periods needs it, or a series missing a period is stretched and
+	// its points stop lining up with the others.
+	keepSlots?: boolean;
 }
 
 export function Sparkline({
@@ -43,6 +48,7 @@ export function Sparkline({
 	domain,
 	fill = false,
 	stretch = false,
+	keepSlots = false,
 }: SparklineProps) {
 	const points = values.filter((v): v is number => v !== null);
 	// One point is a dot, not a trend. Two is the fewest that has a direction.
@@ -65,11 +71,17 @@ export function Sparkline({
 			? pad + usableH / 2
 			: pad + usableH - ((value - min) / span) * usableH;
 
-	const step = points.length > 1 ? usableW / (points.length - 1) : 0;
-	const coords = points.map(
-		(value, index) => [pad + step * index, y(value)] as const,
-	);
+	const slots = keepSlots ? values.length : points.length;
+	const step = slots > 1 ? usableW / (slots - 1) : 0;
+	const coords = (
+		keepSlots
+			? values.flatMap((value, index) =>
+					value === null ? [] : [[index, value] as const],
+				)
+			: points.map((value, index) => [index, value] as const)
+	).map(([slot, value]) => [pad + step * slot, y(value)] as const);
 	const path = coords.map(([x, cy]) => `${x},${cy}`).join(" ");
+	const [firstX] = coords[0];
 	const [lastX, lastY] = coords[coords.length - 1];
 
 	const stroke = color ?? "currentColor";
@@ -91,7 +103,7 @@ export function Sparkline({
 		>
 			{fill && (
 				<polygon
-					points={`${pad},${height - pad} ${path} ${pad + usableW},${height - pad}`}
+					points={`${firstX},${height - pad} ${path} ${lastX},${height - pad}`}
 					fill={stroke}
 					opacity="0.14"
 				/>

@@ -38,6 +38,10 @@ const nextConfig = {
 	// Next writes CLAUDE.md and AGENTS.md into the project on every dev run.
 	// Nothing here depends on them, so they stay out of the tree.
 	agentRules: false,
+	// The demo builds into its own folder. Turbopack keeps a cache there
+	// between runs, and one written under the demo's settings and read back
+	// under the real workspace's left every route answering 404.
+	distDir: process.env.NEXT_DIST_DIR || ".next",
 	trailingSlash: true,
 	skipTrailingSlashRedirect: true,
 	reactStrictMode: true,

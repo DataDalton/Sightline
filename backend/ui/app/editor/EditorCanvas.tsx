@@ -780,6 +780,18 @@ function CanvasItem({
 			onPointerMove={ctx.move}
 			onPointerUp={(e) => ctx.finishGesture(e, visual.visualId)}
 			onPointerCancel={ctx.cancel}
+			// Enter or Space on the focused item selects it, as a press does.
+			// Only when the item itself has focus, so typing in a text panel
+			// or a control inside it is left alone.
+			onKeyDown={(e) => {
+				if (e.target !== e.currentTarget) return;
+				if (e.key !== "Enter" && e.key !== " ") return;
+				e.preventDefault();
+				ctx.onSelect(
+					visual.visualId,
+					e.shiftKey || e.metaKey || e.ctrlKey,
+				);
+			}}
 			role="button"
 			tabIndex={0}
 			aria-label={`${visual.title ?? visualByType[visual.visualType]?.label ?? visual.visualType}${
@@ -992,6 +1004,14 @@ function ControlSlot({
 				isSelected ? styles.controlSlotSelected : ""
 			}`}
 			onPointerDown={() => onSelect(visual.visualId)}
+			// Enter or Space on the focused slot selects it, as a press does.
+			// Keys typed into the control inside it are left alone.
+			onKeyDown={(e) => {
+				if (e.target !== e.currentTarget) return;
+				if (e.key !== "Enter" && e.key !== " ") return;
+				e.preventDefault();
+				onSelect(visual.visualId);
+			}}
 			role="button"
 			tabIndex={0}
 			aria-pressed={isSelected}

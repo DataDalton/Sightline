@@ -37,7 +37,11 @@ export async function POST(
 		const message = error instanceof Error ? error.message : "Failed";
 		return privateJson(
 			{ error: message },
-			message === "Not found" ? 404 : 500,
+			message === "Not found"
+				? 404
+				: message === "That dataset is not one you can read."
+					? 403
+					: 500,
 		);
 	}
 }

@@ -135,6 +135,18 @@ interface PlatformResponse {
 // An instant in a table cell. The elapsed time is what gets scanned down the
 // column, and the clock reading is one hover away rather than widening every
 // row that carries one.
+// Enter and Space on a focused row do what a click on it does, so rows that
+// open something work from the keyboard too.
+function onActivate(action: () => void) {
+	return (e: React.KeyboardEvent) => {
+		if (e.target !== e.currentTarget) return;
+		if (e.key === "Enter" || e.key === " ") {
+			e.preventDefault();
+			action();
+		}
+	};
+}
+
 function When({ iso }: { iso: string | null }) {
 	if (!iso) return <>-</>;
 	return <span title={clock(iso)}>{ago(iso)}</span>;
@@ -435,6 +447,7 @@ function UsageSection({
 									<tr
 										key={r.reportId}
 										className={styles.rowClickable}
+										tabIndex={0}
 										onClick={() =>
 											setDrill({
 												kind: "report",
@@ -442,6 +455,13 @@ function UsageSection({
 												label: r.title,
 											})
 										}
+										onKeyDown={onActivate(() =>
+											setDrill({
+												kind: "report",
+												id: r.reportId,
+												label: r.title,
+											}),
+										)}
 										title="See who viewed this and when"
 									>
 										<td>{r.title}</td>
@@ -491,6 +511,7 @@ function UsageSection({
 									<tr
 										key={u.userEmail}
 										className={styles.rowClickable}
+										tabIndex={0}
 										onClick={() =>
 											setDrill({
 												kind: "user",
@@ -498,6 +519,13 @@ function UsageSection({
 												label: u.userEmail,
 											})
 										}
+										onKeyDown={onActivate(() =>
+											setDrill({
+												kind: "user",
+												id: u.userEmail,
+												label: u.userEmail,
+											}),
+										)}
 										title="See everything this person has done"
 									>
 										<td>{u.userEmail}</td>
@@ -716,7 +744,11 @@ function DrillDrawer({
 									<tr
 										key={v.userEmail}
 										className={styles.rowClickable}
+										tabIndex={0}
 										onClick={() => onOpenUser(v.userEmail)}
+										onKeyDown={onActivate(() =>
+											onOpenUser(v.userEmail),
+										)}
 										title="See everything this person has done"
 									>
 										<td>{v.userEmail}</td>

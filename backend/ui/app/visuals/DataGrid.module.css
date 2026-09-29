@@ -732,9 +732,32 @@
    of the data, which is a caveat and not a failure. */
 .exportNote {
 	font-size: 11px;
-	color: var(--warning-text, #92400e);
-	background: var(--warning-bg, #fef3c7);
+	color: var(--warning);
+	background: var(--warning-subtle);
 	border-radius: 4px;
 	padding: 2px 8px;
 	white-space: nowrap;
+}
+
+/* A dimension cell that filters the page to its value when clicked. Plain
+   until hovered, so the grid still reads as a table. */
+.pickable {
+	cursor: pointer;
+}
+
+.pickable:hover .cellText {
+	text-decoration: underline;
+}
+
+/* The rows a selection made here covers, and the rest. The rest fade through
+   their contents rather than the row, because a pinned cell carries its own
+   ground and a translucent one would show the columns scrolling under it. */
+.rowChosen {
+	background: var(--state-selected);
+}
+
+.rowDimmed .cellText,
+.rowDimmed .cellChange,
+.rowDimmed .dataBar {
+	opacity: 0.4;
 }

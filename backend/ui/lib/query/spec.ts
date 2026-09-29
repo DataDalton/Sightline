@@ -465,7 +465,9 @@ function filterKey(f: QueryFilter): string {
 	const key = [
 		f.field,
 		f.op,
-		f.values ? f.values.join("") : (f.value ?? ""),
+		// A list is written as JSON, so no two different lists join to the
+		// same string.
+		f.values ? JSON.stringify(f.values) : (f.value ?? ""),
 	].join("\u0000");
 	return f.negate ? `!${key}` : key;
 }

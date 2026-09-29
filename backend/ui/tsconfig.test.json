@@ -15,6 +15,7 @@
 	"files": [
 		"lib/query/builder.ts",
 		"lib/query/builder.test.ts",
+		"lib/query/dateRange.test.ts",
 		"lib/query/logic.test.ts",
 		"lib/query/spec.ts",
 		"lib/query/limits.test.ts",
@@ -66,6 +67,7 @@
 		"lib/alerts/anomaly.test.ts",
 		"lib/explain/drivers.ts",
 		"lib/explain/drivers.test.ts",
+		"lib/format.test.ts",
 		"lib/alerts/schedule.ts",
 		"lib/alerts/schedule.test.ts",
 		"lib/semantic/types.ts",
@@ -136,6 +138,8 @@
 		"lib/visuals/presets.ts",
 		"lib/visuals/presets.test.ts",
 		"lib/visuals/countryNames.ts",
-		"lib/visuals/countryNames.test.ts"
+		"lib/visuals/countryNames.test.ts",
+		"lib/visuals/selection.ts",
+		"lib/visuals/selection.test.ts"
 	]
 }

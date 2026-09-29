@@ -32,6 +32,31 @@ export async function reachableSet(
 	return new Set();
 }
 
+// The sources an owner can be confirmed to read while they are away, or null
+// where every source counts as confirmed.
+//
+// Asked of the catalogue whenever a token is present, whichever access model
+// decides who reaches a report. A confirmation lets a check run later as the
+// app, so it has to rest on the owner's own grant on the data. Under the
+// grants model reachableSet answers null without asking, and treating that as
+// confirmation would let the app keep reading a source the owner has lost.
+//
+// Without a token, local development runs every query under the developer's
+// own credentials, and a deployed app has no way to confirm anything.
+export async function confirmableSources(
+	identity: Identity,
+): Promise<Set<string> | null> {
+	if (identity.userToken) {
+		try {
+			return await readableSources(identity);
+		} catch (error) {
+			console.warn("Source access could not be confirmed:", error);
+			return new Set();
+		}
+	}
+	return isDatabricksApp ? new Set() : null;
+}
+
 function fieldOf(f: SemanticField) {
 	return {
 		name: f.name,

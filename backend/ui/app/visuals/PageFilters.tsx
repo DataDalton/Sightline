@@ -56,6 +56,7 @@ interface PageState {
 
 	crossFilter: CrossFilter | null;
 	setCrossFilter: (next: CrossFilter | null) => void;
+	clearCrossFilterFrom: (visualId: string) => void;
 
 	// The dimension a page's switcher is currently set to. Visuals configured
 	// with the "<selected>" placeholder resolve it to this, which is how one
@@ -90,6 +91,7 @@ const PageFilterContext = createContext<PageState>({
 	byWidget: {},
 	crossFilter: null,
 	setCrossFilter: () => {},
+	clearCrossFilterFrom: () => {},
 	selectedDimension: null,
 	setSelectedDimension: () => {},
 	selectedGrain: null,
@@ -180,18 +182,29 @@ export function PageFilterProvider({
 
 	// Clicking the same point again clears the selection, which is what makes
 	// cross-filtering feel like a toggle rather than a mode to escape from.
+	// Compared by the clauses rather than the label, since two selections can
+	// read the same and filter differently.
 	const setCrossFilter = useCallback((next: CrossFilter | null) => {
 		setCrossFilterState((prev) => {
 			if (!next) return null;
 			if (
 				prev &&
 				prev.sourceVisualId === next.sourceVisualId &&
-				prev.label === next.label
+				JSON.stringify(prev.clauses) === JSON.stringify(next.clauses)
 			) {
 				return null;
 			}
 			return next;
 		});
+	}, []);
+
+	// Lets go of a selection only when the given visual made it. A click on
+	// empty space in one chart, or a brush cleared there, must not undo a
+	// selection somebody made in another.
+	const clearCrossFilterFrom = useCallback((visualId: string) => {
+		setCrossFilterState((prev) =>
+			prev && prev.sourceVisualId === visualId ? null : prev,
+		);
 	}, []);
 
 	const drillDown = useCallback((visualId: string, step: DrillStep) => {
@@ -273,6 +286,7 @@ export function PageFilterProvider({
 			byWidget,
 			crossFilter,
 			setCrossFilter,
+			clearCrossFilterFrom,
 			selectedDimension,
 			setSelectedDimension,
 			selectedGrain,
@@ -295,6 +309,7 @@ export function PageFilterProvider({
 			byWidget,
 			crossFilter,
 			setCrossFilter,
+			clearCrossFilterFrom,
 			selectedDimension,
 			selectedGrain,
 			drillByVisual,

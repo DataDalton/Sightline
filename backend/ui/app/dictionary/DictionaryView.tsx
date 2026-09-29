@@ -259,7 +259,20 @@ export default function DictionaryView() {
 									<tr
 										key={`${f.sourceKey}.${f.name}`}
 										className={styles.row}
+										tabIndex={0}
 										onClick={() => setOpen(f)}
+										onKeyDown={(e) => {
+											// Enter and Space open it, the same as a click.
+											if (e.target !== e.currentTarget)
+												return;
+											if (
+												e.key === "Enter" ||
+												e.key === " "
+											) {
+												e.preventDefault();
+												setOpen(f);
+											}
+										}}
 										title="See where this is used"
 									>
 										<td>
@@ -381,6 +394,15 @@ function UsagePanel({
 		}
 		return [...groups.values()];
 	}, [usage]);
+
+	// Escape closes the panel, as the scrim does.
+	useEffect(() => {
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === "Escape") onClose();
+		};
+		document.addEventListener("keydown", onKey);
+		return () => document.removeEventListener("keydown", onKey);
+	}, [onClose]);
 
 	return (
 		<>

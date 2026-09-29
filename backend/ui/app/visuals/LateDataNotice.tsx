@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import useSWR from "swr";
 import styles from "./LateData.module.css";
 
@@ -82,6 +83,9 @@ export function LateDataNotice({ sourceKeys }: { sourceKeys: string[] }) {
 						{source.description ? ` ${source.description}` : ""}
 					</p>
 				))}
+				<Link href="/status" className={styles.link}>
+					See data status or get told when it is late
+				</Link>
 			</div>
 		</div>
 	);

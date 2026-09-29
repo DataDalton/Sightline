@@ -6,6 +6,7 @@ import { runCatalogQuery } from "./ucMetadata";
 import { syncSourceFields } from "./fieldSync";
 import { syncSourceMetadata } from "./ucMetadata";
 import { loadRegistry } from "./registry";
+import { isValidObjectName } from "./types";
 
 // Finding tables in Unity Catalog and registering one as a source.
 //
@@ -157,6 +158,15 @@ export async function registerSource(
 	if (!title) throw new RegistrationError("A name is required.");
 	if (!input.catalog || !input.schema || !input.object) {
 		throw new RegistrationError("Choose a table to register.");
+	}
+	// These names are written into warehouse SQL wherever the source is read,
+	// so anything outside the plain identifier set is refused here.
+	for (const name of [input.catalog, input.schema, input.object]) {
+		if (!isValidObjectName(name)) {
+			throw new RegistrationError(
+				`${String(name).slice(0, 100)} is not a name this platform can register. Use letters, digits, underscores and hyphens.`,
+			);
+		}
 	}
 
 	const sourceKey = (

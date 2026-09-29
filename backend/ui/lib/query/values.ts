@@ -2,11 +2,12 @@ import { createHash } from "node:crypto";
 import type { Identity } from "../auth/identity";
 import { resolvePolicyClass } from "../auth/policy";
 import { queryAsUser } from "../data/userSession";
+import { plainDates } from "../format";
 import { isDatabricksApp } from "../runtime";
 import { getSource } from "../semantic/registry";
 import { settings } from "../settings";
 import { QuerySpecError } from "./spec";
-import { QueryAccessError } from "./execute";
+import { assertCanReadSource, QueryAccessError } from "./execute";
 import { isShareable } from "./cache";
 import type { QueryFilter } from "./spec";
 import { compileQuery } from "./builder";
@@ -75,13 +76,17 @@ function cacheKey(
 				l: request.limit ?? defaultLimit,
 				o: request.offset ?? 0,
 				// Filters change the result set, so they belong in the key.
+				// Each condition as JSON, so a list of values cannot join to
+				// the same text as a different list, and a negated condition
+				// never shares a key with the plain one.
 				fl: (request.filters ?? [])
 					.map((x) =>
-						[
+						JSON.stringify([
 							x.field,
 							x.op,
-							x.values?.join("") ?? x.value ?? "",
-						].join(" "),
+							x.values ?? x.value ?? "",
+							x.negate === true,
+						]),
 					)
 					.sort(),
 			}),
@@ -125,6 +130,8 @@ export async function getDistinctValues(
 			`"${request.field}" is not a dimension on "${request.sourceKey}"`,
 		);
 	}
+
+	await assertCanReadSource(identity, source.sourceKey);
 
 	const policy = await resolvePolicyClass(identity);
 	if (policy.degraded) {
@@ -186,22 +193,24 @@ export async function getDistinctValues(
 				transforms: [],
 			});
 
-			const rows = identity.userToken
-				? await queryAsUser(
-						identity.userToken,
-						compiled.sql,
-						compiled.params,
-						identity.email.toLowerCase(),
-					)
-				: !isDatabricksApp
-					? await (
-							await import("../data/localSession")
-						).queryLocally(compiled.sql, compiled.params)
-					: (() => {
-							throw new QueryAccessError(
-								"A user token is required to read column values.",
-							);
-						})();
+			const rows = plainDates(
+				identity.userToken
+					? await queryAsUser(
+							identity.userToken,
+							compiled.sql,
+							compiled.params,
+							identity.email.toLowerCase(),
+						)
+					: !isDatabricksApp
+						? await (
+								await import("../data/localSession")
+							).queryLocally(compiled.sql, compiled.params)
+						: (() => {
+								throw new QueryAccessError(
+									"A user token is required to read column values.",
+								);
+							})(),
+			);
 
 			const truncated = rows.length > limit;
 			const values = (truncated ? rows.slice(0, limit) : rows)

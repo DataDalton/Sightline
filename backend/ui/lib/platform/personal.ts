@@ -493,15 +493,34 @@ export async function publishPage(
 		title: string;
 		slug: string;
 		is_personal: boolean;
+		owner_email: string | null;
+		is_shared: boolean;
 	}>(
-		`SELECT title, slug, is_personal FROM reports
-		 WHERE report_id = $1 AND is_active = TRUE`,
+		`SELECT r.title, r.slug, r.is_personal, r.owner_email,
+		        EXISTS (
+		          SELECT 1 FROM access_policies p
+		          WHERE p.resource_type = 'report'
+		            AND p.resource_id = r.report_id::text
+		            AND p.is_active = TRUE
+		        ) AS is_shared
+		 FROM reports r
+		 WHERE r.report_id = $1 AND r.is_active = TRUE`,
 		[reportId],
 	);
 	const report = found[0];
 	if (!report) throw new AuthoringError("That page does not exist.");
 	if (!report.is_personal) {
 		throw new AuthoringError("That report is already published.");
+	}
+
+	// Holding the publish capability on the category says where a page may
+	// go, not whose page it may be. The caller has to own it, or its owner
+	// has to have shared it, which is the same set publishablePages offers.
+	const owns =
+		(report.owner_email ?? "").toLowerCase() ===
+		identity.email.toLowerCase();
+	if (!owns && !report.is_shared) {
+		throw new AuthoringError("That is not one of your pages.");
 	}
 
 	const category = await sql<{ category_id: string }>(

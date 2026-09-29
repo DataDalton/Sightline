@@ -1,11 +1,12 @@
 import type { Identity } from "../auth/identity";
 import { resolvePolicyClass } from "../auth/policy";
 import { queryAsUser } from "../data/userSession";
+import { plainDates } from "../format";
 import { isDatabricksApp } from "../runtime";
 import { getSource } from "../semantic/registry";
 import { settings } from "../settings";
 import { compileQuery } from "./builder";
-import { QueryAccessError } from "./execute";
+import { assertCanReadSource, QueryAccessError } from "./execute";
 import { changedSince } from "../freshness/marks";
 import { isShareable, liveTtlSeconds } from "./cache";
 import { QuerySpecError, type QueryFilter } from "./spec";
@@ -84,6 +85,8 @@ export async function getFieldRange(
 		throw new QuerySpecError(`Unknown field "${field}" on "${sourceKey}"`);
 	}
 
+	await assertCanReadSource(identity, source.sourceKey);
+
 	const policy = await resolvePolicyClass(identity);
 	if (policy.degraded) {
 		throw new QueryAccessError(
@@ -136,22 +139,24 @@ export async function getFieldRange(
 					transforms: [],
 				});
 
-				const rows = identity.userToken
-					? await queryAsUser(
-							identity.userToken,
-							compiled.sql,
-							compiled.params,
-							identity.email.toLowerCase(),
-						)
-					: !isDatabricksApp
-						? await (
-								await import("../data/localSession")
-							).queryLocally(compiled.sql, compiled.params)
-						: (() => {
-								throw new QueryAccessError(
-									"A user token is required to read a field range.",
-								);
-							})();
+				const rows = plainDates(
+					identity.userToken
+						? await queryAsUser(
+								identity.userToken,
+								compiled.sql,
+								compiled.params,
+								identity.email.toLowerCase(),
+							)
+						: !isDatabricksApp
+							? await (
+									await import("../data/localSession")
+								).queryLocally(compiled.sql, compiled.params)
+							: (() => {
+									throw new QueryAccessError(
+										"A user token is required to read a field range.",
+									);
+								})(),
+				);
 
 				const value = rows[0]?.[field];
 				return value === null || value === undefined

@@ -79,13 +79,18 @@ export function SheetActions({
 			const response = await fetch(`/api/sheets/${id}`, {
 				method: "DELETE",
 			});
+			// The dialog closes either way, so a failure shows beside the
+			// actions button rather than behind the dialog.
+			setConfirming(false);
 			if (!response.ok) {
 				const body = await response.json().catch(() => null);
 				setProblem(body?.error ?? "The sheet could not be deleted.");
 				return;
 			}
-			setConfirming(false);
 			onDeleted();
+		} catch {
+			setConfirming(false);
+			setProblem("The sheet could not be deleted.");
 		} finally {
 			setBusy(false);
 		}

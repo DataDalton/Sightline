@@ -230,9 +230,15 @@ export default function InboxView({
 	const [older, setOlder] = useState<InboxItem[]>([]);
 	const [exhausted, setExhausted] = useState(false);
 	const [loadingMore, setLoadingMore] = useState(false);
+	const [moreFailed, setMoreFailed] = useState(false);
+	// The view a page of older entries belongs to. A page that lands after the
+	// view changed is dropped rather than appended to the wrong list.
+	const keyRef = useRef(key);
+	keyRef.current = key;
 	useEffect(() => {
 		setOlder([]);
 		setExhausted(false);
+		setMoreFailed(false);
 	}, [key]);
 
 	const items = data ? [...data.items, ...older] : undefined;
@@ -240,14 +246,24 @@ export default function InboxView({
 	const loadMore = async () => {
 		const last = items?.[items.length - 1];
 		if (!key || !last) return;
+		const requested = key;
 		setLoadingMore(true);
+		setMoreFailed(false);
 		try {
 			const response = await fetch(
 				`${key}&before=${encodeURIComponent(last.createdOn)}`,
 			);
-			const next = (await response.json()) as { items: InboxItem[] };
-			setOlder((o) => [...o, ...next.items]);
-			if (next.items.length < pageSize) setExhausted(true);
+			if (!response.ok) throw new Error("Older entries did not load");
+			const next = (await response.json()) as { items?: InboxItem[] };
+			if (!Array.isArray(next.items)) {
+				throw new Error("Older entries did not load");
+			}
+			if (keyRef.current !== requested) return;
+			const page = next.items;
+			setOlder((o) => [...o, ...page]);
+			if (page.length < pageSize) setExhausted(true);
+		} catch {
+			if (keyRef.current === requested) setMoreFailed(true);
 		} finally {
 			setLoadingMore(false);
 		}
@@ -255,6 +271,8 @@ export default function InboxView({
 
 	const changed = () => {
 		setOlder([]);
+		setExhausted(false);
+		setMoreFailed(false);
 		void mutate();
 		refresh();
 	};
@@ -396,7 +414,11 @@ export default function InboxView({
 								onClick={loadMore}
 								disabled={loadingMore}
 							>
-								{loadingMore ? "Loading" : "Show older"}
+								{loadingMore
+									? "Loading"
+									: moreFailed
+										? "Could not load older entries. Try again"
+										: "Show older"}
 							</button>
 						)}
 					</div>

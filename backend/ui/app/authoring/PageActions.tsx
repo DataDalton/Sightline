@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import useSWR from "swr";
 import { Modal } from "../components/shared/Modal";
+import { ConfirmDialog } from "../components/shared/ConfirmDialog";
 import { useUser } from "../context/UserContext";
 import { Select } from "../components/shared/Select";
 import styles from "./Authoring.module.css";
@@ -38,6 +39,8 @@ export function PageActions({
 	const [sharing, setSharing] = useState(false);
 	const [publishing, setPublishing] = useState(false);
 	const [removing, setRemoving] = useState(false);
+	const [confirmingRemove, setConfirmingRemove] = useState(false);
+	const [removeFailure, setRemoveFailure] = useState<string | null>(null);
 
 	if (!isPersonal || !user) return null;
 
@@ -89,8 +92,34 @@ export function PageActions({
 					type="button"
 					className={styles.openButton}
 					disabled={removing}
-					onClick={async () => {
+					onClick={() => {
+						setRemoveFailure(null);
+						setConfirmingRemove(true);
+					}}
+				>
+					{removing ? "Removing" : "Remove"}
+				</button>
+			)}
+
+			{confirmingRemove && (
+				<ConfirmDialog
+					title="Remove this page"
+					body={
+						<>
+							<strong>{title}</strong> will be removed. Anyone it
+							is shared with loses it.
+							{removeFailure && (
+								<div className={styles.failure}>
+									{removeFailure}
+								</div>
+							)}
+						</>
+					}
+					confirmLabel="Remove"
+					busy={removing}
+					onConfirm={async () => {
 						setRemoving(true);
+						setRemoveFailure(null);
 						try {
 							const response = await fetch("/api/personal", {
 								method: "POST",
@@ -102,17 +131,33 @@ export function PageActions({
 									reportId,
 								}),
 							});
+							if (!response.ok) {
+								const detail = await response
+									.json()
+									.catch(() => null);
+								setRemoveFailure(
+									detail?.error ??
+										"Could not remove this page",
+								);
+								return;
+							}
 							// Nothing left to look at, so back to where pages
 							// are listed rather than a page that no longer
 							// resolves.
-							if (response.ok) router.push("/");
+							setConfirmingRemove(false);
+							router.push("/");
+						} catch (error) {
+							setRemoveFailure(
+								error instanceof Error
+									? error.message
+									: "Could not remove this page",
+							);
 						} finally {
 							setRemoving(false);
 						}
 					}}
-				>
-					{removing ? "Removing" : "Remove"}
-				</button>
+					onCancel={() => setConfirmingRemove(false)}
+				/>
 			)}
 
 			{sharing && (
@@ -151,8 +196,13 @@ export function ShareDialog({
 	const [busy, setBusy] = useState(false);
 	const [failure, setFailure] = useState<string | null>(null);
 
+	// Resolves true when the server accepted the change, so a caller can keep
+	// what was typed after a failure.
 	const post = useCallback(
-		async (body: Record<string, unknown>, whenWrong: string) => {
+		async (
+			body: Record<string, unknown>,
+			whenWrong: string,
+		): Promise<boolean> => {
 			setBusy(true);
 			setFailure(null);
 			try {
@@ -164,11 +214,13 @@ export function ShareDialog({
 				const detail = await response.json().catch(() => null);
 				if (!response.ok) {
 					setFailure(detail?.error ?? whenWrong);
-					return;
+					return false;
 				}
 				if (Array.isArray(detail?.shares)) setShares(detail.shares);
+				return true;
 			} catch (error) {
 				setFailure(error instanceof Error ? error.message : whenWrong);
+				return false;
 			} finally {
 				setBusy(false);
 			}
@@ -185,6 +237,16 @@ export function ShareDialog({
 		);
 	}, [post]);
 
+	// The typed address is cleared only once it has been shared, so a failure
+	// leaves it in place to correct or retry. The busy check covers Enter,
+	// which does not pass through the disabled button.
+	const share = async () => {
+		if (busy || !email.trim()) return;
+		if (await post({ action: "share", email }, "Could not share")) {
+			setEmail("");
+		}
+	};
+
 	return (
 		<Modal isOpen onClose={onClose} title={`Share ${title}`} width="480px">
 			<div className={styles.form}>
@@ -199,11 +261,7 @@ export function ShareDialog({
 							onKeyDown={(e) => {
 								if (e.key !== "Enter") return;
 								e.preventDefault();
-								if (!email.trim()) return;
-								void post(
-									{ action: "share", email },
-									"Could not share",
-								).then(() => setEmail(""));
+								void share();
 							}}
 							autoFocus
 						/>
@@ -211,12 +269,7 @@ export function ShareDialog({
 							type="button"
 							className={styles.primary}
 							disabled={busy || !email.trim()}
-							onClick={() =>
-								void post(
-									{ action: "share", email },
-									"Could not share",
-								).then(() => setEmail(""))
-							}
+							onClick={() => void share()}
 						>
 							Share
 						</button>

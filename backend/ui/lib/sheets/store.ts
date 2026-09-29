@@ -400,6 +400,10 @@ export interface Present {
 
 const leaseSeconds = 30;
 
+// A session row belongs to the person who first wrote it. Both writes below
+// match on the email as well as the session id, so nobody can move or mark
+// somebody else's session by sending its id.
+
 export async function heartbeat(
 	identity: Identity,
 	sheetId: string,
@@ -422,7 +426,8 @@ export async function heartbeat(
 		 VALUES ($1, $2, $3, $4, now() + ($5 || ' seconds')::interval)
 		 ON CONFLICT (sheet_id, session_id) DO UPDATE SET
 		   state = EXCLUDED.state, expires_on = EXCLUDED.expires_on
-		 WHERE sheet_presence.left_on IS NULL`,
+		 WHERE sheet_presence.left_on IS NULL
+		   AND sheet_presence.user_email = EXCLUDED.user_email`,
 		[
 			sheetId,
 			session,
@@ -462,7 +467,8 @@ export async function leaveSheet(
 		 VALUES ($1, $2, $3, now() + ($4 || ' seconds')::interval, now())
 		 ON CONFLICT (sheet_id, session_id) DO UPDATE SET
 		   left_on = now(),
-		   expires_on = EXCLUDED.expires_on`,
+		   expires_on = EXCLUDED.expires_on
+		 WHERE sheet_presence.user_email = EXCLUDED.user_email`,
 		[
 			sheetId,
 			sessionId.slice(0, 64),

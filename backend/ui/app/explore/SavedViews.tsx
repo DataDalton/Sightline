@@ -48,6 +48,7 @@ export function SavedViews({
 	sourceTitle,
 	onOpen,
 	onSaved,
+	onDeleted,
 }: {
 	// What is on screen now, or null before a dataset is chosen.
 	current: ExploreState | null;
@@ -58,6 +59,8 @@ export function SavedViews({
 	sourceTitle: (key: string) => string;
 	onOpen: (view: SavedView) => void;
 	onSaved: (view: SavedView) => void;
+	// Told which view went, so an open one is no longer shown as open.
+	onDeleted?: (id: string) => void;
 }) {
 	const { data, mutate } = useSWR<{ views: SavedView[] }>(viewsKey);
 	const views = data?.views ?? [];
@@ -68,6 +71,14 @@ export function SavedViews({
 	const [confirming, setConfirming] = useState<string | null>(null);
 	const [copied, setCopied] = useState(false);
 	const wrapRef = useRef<HTMLDivElement | null>(null);
+	const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	useEffect(
+		() => () => {
+			if (copiedTimer.current) clearTimeout(copiedTimer.current);
+		},
+		[],
+	);
 
 	useEffect(() => {
 		if (!open) return;
@@ -130,7 +141,8 @@ export function SavedViews({
 
 	const remove = async (id: string) => {
 		setConfirming(null);
-		await request(`${viewsKey}/${id}`, { method: "DELETE" });
+		const done = await request(`${viewsKey}/${id}`, { method: "DELETE" });
+		if (done) onDeleted?.(id);
 	};
 
 	// The address carries the exploration, so copying it shares exactly what
@@ -138,7 +150,11 @@ export function SavedViews({
 	const copyLink = () => {
 		void navigator.clipboard?.writeText(window.location.href).then(() => {
 			setCopied(true);
-			setTimeout(() => setCopied(false), 1500);
+			if (copiedTimer.current) clearTimeout(copiedTimer.current);
+			copiedTimer.current = setTimeout(() => {
+				copiedTimer.current = null;
+				setCopied(false);
+			}, 1500);
 		});
 	};
 

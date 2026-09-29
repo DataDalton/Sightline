@@ -14,6 +14,7 @@ import {
 } from "../alerts/access";
 import { parseMetricViewCalculations } from "./metricViewCalculations";
 import { getSource } from "./registry";
+import { quoteName, quotedRef } from "./types";
 
 // Discovering which groups change what a reader sees.
 //
@@ -94,7 +95,10 @@ async function tablesBehind(
 	// that only changes when the view does.
 	if (recorded && recorded.length > 0) return [self, ...recorded];
 
-	const rows = await runCatalogQuery(identity, `SHOW CREATE TABLE ${self}`);
+	const rows = await runCatalogQuery(
+		identity,
+		`SHOW CREATE TABLE ${quotedRef(catalog, schema, object)}`,
+	);
 	const statement = String(Object.values(rows[0] ?? {})[0] ?? "");
 	const referenced = parseMetricViewTables(statement);
 
@@ -148,7 +152,7 @@ export async function discoverSourceGroups(
 		const filters = await runCatalogQuery(
 			identity,
 			`SELECT filter_name, target_columns
-			 FROM ${catalog}.information_schema.row_filters
+			 FROM ${quoteName(catalog)}.information_schema.row_filters
 			 WHERE table_schema = :schema AND table_name = :name`,
 			{ schema, name },
 		);
@@ -158,7 +162,7 @@ export async function discoverSourceGroups(
 		const masks = await runCatalogQuery(
 			identity,
 			`SELECT count(*) AS n
-			 FROM ${catalog}.information_schema.column_masks
+			 FROM ${quoteName(catalog)}.information_schema.column_masks
 			 WHERE table_schema = :schema AND table_name = :name`,
 			{ schema, name },
 		);
@@ -179,7 +183,7 @@ export async function discoverSourceGroups(
 			const definitions = await runCatalogQuery(
 				identity,
 				`SELECT routine_definition
-				 FROM ${catalog}.information_schema.routines
+				 FROM ${quoteName(catalog)}.information_schema.routines
 				 WHERE routine_schema = :schema AND routine_name = :name`,
 				{ schema: routineSchema, name: routineName },
 			);
@@ -220,7 +224,7 @@ async function mapAccessFields(
 		// compared against the old one.
 		const rows = await runCatalogQuery(
 			identity,
-			`SHOW CREATE TABLE ${source.catalog_name}.${source.schema_name}.${source.object_name}`,
+			`SHOW CREATE TABLE ${quotedRef(source.catalog_name, source.schema_name, source.object_name)}`,
 		);
 		view = parseMetricViewCalculations(
 			String(Object.values(rows[0] ?? {})[0] ?? ""),
