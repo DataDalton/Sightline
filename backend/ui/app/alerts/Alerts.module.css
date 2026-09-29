@@ -375,6 +375,40 @@
 	max-width: 100%;
 }
 
+/* The second line of the rule, for what unusual is judged against. */
+.sentenceLine {
+	display: flex;
+	flex-basis: 100%;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-2) var(--space-1);
+}
+
+.inlineField {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+	flex-wrap: wrap;
+	color: var(--text-secondary);
+	font-size: var(--text-sm);
+}
+
+.smallInput {
+	width: 10ch;
+	padding: var(--space-1) var(--space-2);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-sm);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font: inherit;
+	font-variant-numeric: tabular-nums;
+}
+
+.smallInput:focus {
+	border-color: var(--focus-ring);
+	outline: none;
+}
+
 .thresholdWrap {
 	display: inline-flex;
 	align-items: center;
@@ -581,6 +615,26 @@
 	font-weight: 600;
 	text-align: right;
 	white-space: nowrap;
+}
+
+/* An unusual alert's usual range, marked across the bar by its two ends, so
+   a bar that stops short of it or runs past it reads as leaving it. */
+.barBand {
+	position: absolute;
+	top: -3px;
+	bottom: -3px;
+	z-index: 1;
+	border-left: 2px solid var(--text-secondary);
+	border-right: 2px solid var(--text-secondary);
+	border-radius: 2px;
+	background: color-mix(in srgb, var(--text-secondary) 14%, transparent);
+}
+
+.barUsual {
+	display: block;
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+	font-weight: 400;
 }
 
 .more {

@@ -1084,6 +1084,25 @@ const migrations: string[] = [
 	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS freshness_note TEXT`,
 	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS checked_on TIMESTAMPTZ`,
 	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS data_changed_on TIMESTAMPTZ`,
+
+	// When each watched table's data changed, timed by its commit, so when a
+	// table usually loads can be learned and a late load noticed. See
+	// lib/freshness/arrivals.
+	`CREATE TABLE IF NOT EXISTS table_arrivals (
+		table_name TEXT NOT NULL,
+		arrived_on TIMESTAMPTZ NOT NULL,
+		PRIMARY KEY (table_name, arrived_on)
+	)`,
+	// When the longer history behind a table was last read to learn from.
+	`ALTER TABLE source_checks ADD COLUMN IF NOT EXISTS learned_on TIMESTAMPTZ`,
+	// How a source's lateness is judged, learned or set by hand, and where it
+	// stands: whether it is late, when its next load was expected, when its
+	// last load landed and the pattern that was learned.
+	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS lateness JSONB NOT NULL DEFAULT '{"mode":"auto"}'`,
+	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS late_state TEXT`,
+	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS expected_by TIMESTAMPTZ`,
+	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS last_arrival TIMESTAMPTZ`,
+	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS arrival_pattern JSONB`,
 	`ALTER TABLE usage_events DROP CONSTRAINT IF EXISTS usage_events_event_type_check`,
 	`ALTER TABLE usage_events ADD CONSTRAINT usage_events_event_type_check
 	 CHECK (event_type IN ('page_view', 'query', 'export', 'edit', 'error',
@@ -1269,6 +1288,10 @@ export async function initPlatformSchema(): Promise<void> {
 // rather than on the request path.
 export async function sweepExpired(): Promise<void> {
 	await sql(`DELETE FROM presence WHERE expires_on < now()`);
+	// Arrivals are learned from over six weeks. Older ones say nothing more.
+	await sql(
+		`DELETE FROM table_arrivals WHERE arrived_on < now() - interval '60 days'`,
+	);
 	await sql(`DELETE FROM result_cache WHERE expires_on < now()`);
 	await sql(`DELETE FROM reader_access WHERE expires_on < now()`);
 	await sql(`DELETE FROM reader_policy WHERE expires_on < now()`);

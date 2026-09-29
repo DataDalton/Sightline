@@ -9,6 +9,7 @@ import { SkeletonReport } from "../components/shared/Skeleton";
 import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { titleSeparator, usePageTitle } from "../hooks/usePageTitle";
 import { DataFreshness } from "../visuals/DataFreshness";
+import { LateDataNotice } from "../visuals/LateDataNotice";
 import { VisualRenderer, type VisualSpec } from "../visuals/VisualRenderer";
 import { PageFilterProvider } from "../visuals/PageFilters";
 import {
@@ -522,6 +523,13 @@ export default function ReportView({
 		? sources[freshnessSourceKey]
 		: undefined;
 	const configuredFreshness = page?.config?.freshness;
+
+	// Every source the page reads, for the notice that says one is late.
+	const pageSourceKeys = [
+		page?.sourceKey,
+		report.sourceKey,
+		...(page?.visuals ?? []).map((v) => v.sourceKey),
+	].filter((key): key is string => Boolean(key));
 	const freshnessField =
 		configuredFreshness?.field ?? freshnessSource?.defaultTimeField ?? null;
 
@@ -892,6 +900,8 @@ export default function ReportView({
 								))}
 							</div>
 						)}
+
+						<LateDataNotice sourceKeys={pageSourceKeys} />
 
 						{(filterWidgets.length > 0 || visuals.length > 0) && (
 							<div

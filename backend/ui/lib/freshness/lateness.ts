@@ -1,0 +1,346 @@
+import { sql } from "../data/lakebase";
+import { knownMembers } from "../messages/store";
+import { notify } from "../notify/store";
+import { categoryRoleId } from "../platform/roles";
+import {
+	describePattern,
+	describeSpan,
+	judge,
+	learnPattern,
+	learningWindowMs,
+	readLatenessSetting,
+	type ArrivalPattern,
+	type LateState,
+	type LatenessSetting,
+} from "./arrivals";
+
+// Whether each source's data has arrived when it usually does.
+//
+// Judged from the arrivals the checker records for each table a source reads,
+// so it needs no warehouse and runs on every replica. A source reading several
+// tables is as late as the latest of them. The first replica to see a source
+// go late is the one that tells people, since the change of state is claimed
+// in the same statement that writes it.
+
+// How late a state is, so a source reading several tables takes the worst.
+const rank: Record<LateState | "unwatched", number> = {
+	late: 6,
+	overdue: 5,
+	on_time: 4,
+	learning: 3,
+	irregular: 2,
+	off: 1,
+	unwatched: 0,
+};
+
+interface SourceRow {
+	source_key: string;
+	title: string;
+	kind: string;
+	catalog_name: string;
+	schema_name: string;
+	object_name: string;
+	base_tables: string[] | null;
+	freshness_mode: string;
+	lateness: unknown;
+	late_state: string | null;
+}
+
+export interface StoredPattern extends ArrivalPattern {
+	// The table the pattern was learned from, for a source reading several.
+	table: string;
+}
+
+function tablesOf(row: SourceRow): string[] {
+	if (row.kind === "metric_view") {
+		return Array.isArray(row.base_tables) ? row.base_tables : [];
+	}
+	return [`${row.catalog_name}.${row.schema_name}.${row.object_name}`];
+}
+
+// Judged at most this often on one replica. What decides it moves with the
+// clock and with each look, neither of which changes much in a minute.
+const everyMs = 60_000;
+let lastRun = 0;
+let running = false;
+
+export async function evaluateLateness(force = false): Promise<void> {
+	const now = Date.now();
+	if (running || (!force && now - lastRun < everyMs)) return;
+	running = true;
+	lastRun = now;
+	try {
+		await evaluate(now);
+	} finally {
+		running = false;
+	}
+}
+
+async function evaluate(now: number): Promise<void> {
+	const sources = await sql<SourceRow>(
+		`SELECT source_key, title, kind, catalog_name, schema_name, object_name,
+		        base_tables, freshness_mode, lateness, late_state
+		 FROM data_sources WHERE is_active`,
+	);
+	const tables = [...new Set(sources.flatMap(tablesOf))];
+	if (tables.length === 0) return;
+
+	const [arrivals, checks] = await Promise.all([
+		sql<{ table_name: string; arrived_on: string }>(
+			`SELECT table_name, arrived_on::text FROM table_arrivals
+			 WHERE table_name = ANY($1::text[])
+			   AND arrived_on > now() - make_interval(secs => $2)`,
+			[tables, learningWindowMs / 1000],
+		),
+		sql<{ table_name: string; checked_on: string | null }>(
+			`SELECT table_name, checked_on::text FROM source_checks
+			 WHERE table_name = ANY($1::text[])`,
+			[tables],
+		),
+	]);
+
+	const byTable = new Map<string, number[]>();
+	for (const a of arrivals) {
+		const list = byTable.get(a.table_name) ?? [];
+		list.push(Date.parse(a.arrived_on));
+		byTable.set(a.table_name, list);
+	}
+	const checkedOn = new Map(
+		checks.map((c) => [
+			c.table_name,
+			c.checked_on ? Date.parse(c.checked_on) : null,
+		]),
+	);
+
+	for (const source of sources) {
+		const setting = readLatenessSetting(source.lateness);
+		const names = tablesOf(source);
+
+		let state: LateState | "unwatched" = "unwatched";
+		let expectedBy: number | null = null;
+		let lastArrival: number | null = null;
+		let pattern: StoredPattern | null = null;
+
+		// A source on a timer has no history to learn from.
+		if (source.freshness_mode === "checked" && names.length > 0) {
+			for (const table of names) {
+				const seen = byTable.get(table) ?? [];
+				const last = seen.length ? Math.max(...seen) : null;
+				const learned = learnPattern(seen, now, setting);
+				const judged = judge(
+					learned,
+					last,
+					checkedOn.get(table) ?? null,
+					now,
+					setting,
+				);
+				// The worst table speaks for the source. Between two equally
+				// placed, the one with more history says more about it.
+				const better =
+					rank[judged.state] > rank[state] ||
+					(rank[judged.state] === rank[state] &&
+						learned.arrivals > (pattern?.arrivals ?? -1));
+				if (better) {
+					state = judged.state;
+					expectedBy = judged.expectedBy;
+					lastArrival = last;
+					pattern = { ...learned, table };
+				}
+			}
+		}
+
+		const values = [
+			source.source_key,
+			state,
+			expectedBy ? new Date(expectedBy).toISOString() : null,
+			lastArrival ? new Date(lastArrival).toISOString() : null,
+			pattern ? JSON.stringify(pattern) : null,
+		];
+
+		if (state === "late") {
+			// Claimed and written together, so only the replica that moved it
+			// to late tells anyone, and only once per late load.
+			const moved = await sql<{ source_key: string }>(
+				`UPDATE data_sources SET late_state = $2, expected_by = $3,
+				   last_arrival = $4, arrival_pattern = $5
+				 WHERE source_key = $1 AND late_state IS DISTINCT FROM 'late'
+				 RETURNING source_key`,
+				values,
+			);
+			if (moved.length > 0 && pattern) {
+				await tellLookAfters(source, pattern, lastArrival, now).catch(
+					(error) => {
+						console.warn("Late data notice was not sent:", error);
+					},
+				);
+			}
+			if (moved.length > 0) continue;
+		}
+
+		await sql(
+			`UPDATE data_sources SET late_state = $2, expected_by = $3,
+			   last_arrival = $4, arrival_pattern = $5
+			 WHERE source_key = $1`,
+			values,
+		);
+	}
+}
+
+// The people who look after a source, meaning whoever may manage the catalogue of
+// sources, and the maintainers of every category with a report built on it.
+async function lookAfters(sourceKey: string): Promise<{
+	people: string[];
+	link: string | null;
+}> {
+	const reports = await sql<{ category_id: string | null; slug: string }>(
+		`SELECT DISTINCT r.category_id, r.slug
+		 FROM reports r
+		 LEFT JOIN report_pages p ON p.report_id = r.report_id AND p.is_active
+		 LEFT JOIN report_visuals v ON v.page_id = p.page_id AND v.is_active
+		 WHERE r.is_active
+		   AND (r.source_key = $1 OR p.source_key = $1 OR v.source_key = $1)`,
+		[sourceKey],
+	);
+	const categoryRoles = [
+		...new Set(
+			reports
+				.map((r) => r.category_id)
+				.filter((c): c is string => Boolean(c)),
+		),
+	].map(categoryRoleId);
+
+	const subjects = await sql<{ subject_type: string; subject_id: string }>(
+		`SELECT DISTINCT a.subject_type, a.subject_id
+		 FROM role_assignments a
+		 LEFT JOIN role_capabilities c ON c.role_id = a.role_id
+		 WHERE a.is_active
+		   AND ((a.scope_type = 'global' AND c.capability = 'semantic.sync')
+		        OR (a.scope_type = 'category' AND a.role_id = ANY($1::text[])))`,
+		[categoryRoles],
+	);
+
+	const people = new Set(
+		subjects
+			.filter((s) => s.subject_type === "user")
+			.map((s) => s.subject_id.toLowerCase()),
+	);
+	const groups = subjects
+		.filter((s) => s.subject_type === "group")
+		.map((s) => s.subject_id);
+	for (const members of Object.values(await knownMembers(groups))) {
+		for (const email of members) people.add(email.toLowerCase());
+	}
+
+	const curated = reports.find((r) => r.category_id);
+	return {
+		people: [...people],
+		link: curated ? `/r/${curated.slug}/` : null,
+	};
+}
+
+async function tellLookAfters(
+	source: SourceRow,
+	pattern: StoredPattern,
+	lastArrival: number | null,
+	now: number,
+): Promise<void> {
+	const { people, link } = await lookAfters(source.source_key);
+	if (people.length === 0) return;
+	const since = lastArrival
+		? `The last load was ${describeSpan(now - lastArrival)} ago.`
+		: "";
+	// Said in UTC, since the people told may be anywhere, and marked so.
+	const usual = describePattern(pattern, "UTC").replace(
+		/ (AM|PM)\.$/,
+		" $1 UTC.",
+	);
+	const body = `${usual} ${since}`.trim();
+	await Promise.all(
+		people.map((email) =>
+			notify(email, {
+				kind: "data",
+				title: `${source.title} has not updated`,
+				body,
+				link,
+				data: { sourceKey: source.source_key },
+			}),
+		),
+	);
+}
+
+export interface LateSource {
+	sourceKey: string;
+	title: string;
+	state: LateState | "unwatched";
+	expectedBy: string | null;
+	lastArrival: string | null;
+	description: string | null;
+}
+
+// The standing of some sources, for the pages built on them and for the
+// administration screens.
+export async function latenessOf(
+	sourceKeys: string[] | null,
+	timeZone: string,
+): Promise<LateSource[]> {
+	const rows = await sql<{
+		source_key: string;
+		title: string;
+		late_state: string | null;
+		expected_by: string | null;
+		last_arrival: string | null;
+		arrival_pattern: StoredPattern | null;
+	}>(
+		`SELECT source_key, title, late_state, expected_by::text,
+		        last_arrival::text, arrival_pattern
+		 FROM data_sources
+		 WHERE is_active AND ($1::text[] IS NULL OR source_key = ANY($1::text[]))`,
+		[sourceKeys],
+	);
+	return rows.map((r) => ({
+		sourceKey: r.source_key,
+		title: r.title,
+		state: (r.late_state as LateState | null) ?? "unwatched",
+		expectedBy: r.expected_by,
+		lastArrival: r.last_arrival,
+		description: r.arrival_pattern
+			? describePattern(r.arrival_pattern, timeZone)
+			: null,
+	}));
+}
+
+export interface LatenessDetail {
+	setting: LatenessSetting;
+	state: LateState | "unwatched";
+	expectedBy: string | null;
+	lastArrival: string | null;
+	// Said in the reader's own time zone by the screen showing it.
+	pattern: StoredPattern | null;
+}
+
+// One source's standing and setting, for its settings dialog.
+export async function latenessDetail(
+	sourceKey: string,
+): Promise<LatenessDetail | null> {
+	const rows = await sql<{
+		lateness: unknown;
+		late_state: string | null;
+		expected_by: string | null;
+		last_arrival: string | null;
+		arrival_pattern: StoredPattern | null;
+	}>(
+		`SELECT lateness, late_state, expected_by::text, last_arrival::text,
+		        arrival_pattern
+		 FROM data_sources WHERE source_key = $1`,
+		[sourceKey],
+	);
+	const row = rows[0];
+	if (!row) return null;
+	return {
+		setting: readLatenessSetting(row.lateness),
+		state: (row.late_state as LateState | null) ?? "unwatched",
+		expectedBy: row.expected_by,
+		lastArrival: row.last_arrival,
+		pattern: row.arrival_pattern,
+	};
+}

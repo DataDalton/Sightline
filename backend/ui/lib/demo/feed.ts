@@ -1,4 +1,5 @@
 import { sql } from "../data/lakebase";
+import { landTodaysLoads } from "./arrivals";
 
 // New visits to the online store while the demonstration runs, so a page on
 // the live web source can be watched updating. A few rows for today land every
@@ -27,10 +28,19 @@ async function arrive(): Promise<void> {
 	);
 }
 
+// The other tables' morning loads, looked for every few minutes rather than
+// on every visit, since they land once a day.
+const loadsEveryMs = 5 * 60_000;
+let loadsAt = 0;
+
 export function startDemoFeed(): void {
 	if (timer) return;
 	timer = setInterval(() => {
 		void arrive().catch(() => {});
+		if (Date.now() - loadsAt >= loadsEveryMs) {
+			loadsAt = Date.now();
+			void landTodaysLoads().catch(() => {});
+		}
 	}, everyMs);
 	timer.unref?.();
 }

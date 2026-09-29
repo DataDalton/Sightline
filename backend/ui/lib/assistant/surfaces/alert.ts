@@ -5,6 +5,7 @@ import {
 	describeRule,
 	type AlertCondition,
 } from "../../alerts/rule";
+import type { AnomalySettings } from "../../alerts/anomaly";
 import { frequencies } from "../../alerts/schedule";
 import type { SemanticSource } from "../../semantic/types";
 import {
@@ -37,6 +38,7 @@ export interface AlertDraft {
 	threshold: number | null;
 	schedule: { frequency: string; hour: number; weekday: number };
 	notifyRecover: boolean;
+	anomaly: AnomalySettings | null;
 }
 
 const tool = {
@@ -85,6 +87,49 @@ const tool = {
 					description:
 						"For above and below, also tell them when it is back.",
 				},
+				anomaly: {
+					type: "object",
+					description:
+						"For unusual only: how usual is worked out from the measure's own history.",
+					properties: {
+						timeField: {
+							type: "string",
+							description:
+								"A date dimension to read the history across. Defaults to the dataset's time field.",
+						},
+						compareTo: {
+							type: "string",
+							enum: ["same_weekday", "recent"],
+							description:
+								"same_weekday compares a day with the same weekday in recent weeks, which suits daily data with a weekly rhythm. recent compares with the periods just before.",
+						},
+						periods: {
+							type: "integer",
+							description:
+								"How many earlier periods make up usual, 3 to 26.",
+						},
+						sensitivity: {
+							type: "string",
+							enum: ["low", "medium", "high", "percent"],
+							description:
+								"low reports only big swings, medium clear ones, high small ones too. percent uses the percent given.",
+						},
+						percent: {
+							type: "number",
+							description:
+								"With sensitivity percent, how far from usual counts, such as 20.",
+						},
+						direction: {
+							type: "string",
+							enum: ["either", "up", "down"],
+						},
+						minimum: {
+							type: "number",
+							description:
+								"Ignore groups whose usual figure is below this.",
+						},
+					},
+				},
 				name: {
 					type: "string",
 					description:
@@ -112,6 +157,7 @@ export function alertSurface(
 			`What the dialog holds now: ${describeState(current)}`,
 			"- Read the dataset with describe_source before choosing fields. Keep the dataset already chosen unless they name another.",
 			"- An alert watches one measure, as one total or for each value of one dimension given as groupBy. Conditions narrow the rows first.",
+			"- unusual needs no threshold. Usual is worked out from the measure's own history across a date field, and each finished period is compared with it. Use it when they ask to hear about anything odd, unexpected, a spike or a drop, or give no number. For daily data compare the same weekday over the last 8 weeks unless they say otherwise.",
 			"- above and below compare with a value in the measure's own units. rises_by, falls_by and changes_by compare with the previous check as a percentage. changes fires on any change.",
 			"- A percentage measure holds percentage points from 0 to 100, so five percent is 5, never 0.05.",
 			"- If they want above or below and gave no value, run one query for the current value, choose a round threshold near it, and say which you chose.",
@@ -134,6 +180,21 @@ export function alertSurface(
 					: null;
 				const conditions = readConditions(args.conditions, source);
 
+				// An unusual alert reads its history across a date field,
+				// the dataset's own unless the model named another.
+				let anomaly: Record<string, unknown> | undefined;
+				if (args.condition === "unusual") {
+					anomaly = {
+						...asRecord(args.anomaly),
+					};
+					const named = text(anomaly.timeField, 200);
+					anomaly.timeField = requireField(
+						source,
+						named || source.defaultTimeField || "",
+						"dimension",
+					);
+				}
+
 				const definition = cleanDefinition({
 					name: text(args.name, 120),
 					sourceKey: source.sourceKey,
@@ -148,6 +209,7 @@ export function alertSurface(
 						weekday: args.weekday,
 					},
 					notifyRecover: args.notifyRecover === true,
+					anomaly,
 				});
 
 				const draft: AlertDraft = {
@@ -169,6 +231,7 @@ export function alertSurface(
 						(definition.condition === "above" ||
 							definition.condition === "below") &&
 						definition.notifyRecover,
+					anomaly: definition.anomaly,
 				};
 
 				const rule = describeRule({
@@ -177,6 +240,7 @@ export function alertSurface(
 					condition: definition.condition,
 					threshold: definition.threshold,
 					format: (v) => (v === null ? "" : String(v)),
+					anomaly: definition.anomaly,
 				});
 				return {
 					ok: true,

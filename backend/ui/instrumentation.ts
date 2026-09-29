@@ -32,6 +32,7 @@ export async function register() {
 	const { runScheduledAlerts } = await import("@/lib/alerts/runner");
 	const { runScheduledDeliveries } = await import("@/lib/deliveries/runner");
 	const { runChecks } = await import("@/lib/freshness/checker");
+	const { evaluateLateness } = await import("@/lib/freshness/lateness");
 	const { startMarksPolling, stopMarksPolling } =
 		await import("@/lib/freshness/marks");
 
@@ -165,9 +166,16 @@ export async function register() {
 	// sources can be followed closely. The claim in the checker hands each
 	// table to one replica. See lib/freshness/checker.
 	startMarksPolling();
+	//
+	// Whether a source is late moves with the clock as well as with each look,
+	// so it is judged on the same tick, at most once a minute. See
+	// lib/freshness/lateness.
 	const checkTimer = setInterval(() => {
 		void runChecks().catch((error) => {
 			console.warn("Checking sources for new data failed:", error);
+		});
+		void evaluateLateness().catch((error) => {
+			console.warn("Judging late data failed:", error);
 		});
 	}, 5_000);
 	checkTimer.unref?.();

@@ -7,13 +7,24 @@ import { encodeState } from "../explore/state";
 import { toNumber } from "../format";
 import { notify } from "../notify/store";
 import { reachableSet } from "../platform/sources";
-import { compileQuery } from "../query/builder";
+import { compileQuery, type RowRestriction } from "../query/builder";
+import { maxLimit, parseQuerySpec } from "../query/spec";
+import type { SemanticSource } from "../semantic/types";
+import {
+	periodKey,
+	readAnomalies,
+	spacingDays,
+	targetPeriod,
+	todayIn,
+	windowStart,
+} from "./anomaly";
 import { isDatabricksApp } from "../runtime";
 import { getSource, listSources } from "../semantic/registry";
 import { settings } from "../settings";
 import {
 	describeFirings,
 	evaluate,
+	maxGroups,
 	type AlertDefinition,
 	type Firing,
 	type Reading,
@@ -84,6 +95,78 @@ function readingsFrom(definition: AlertDefinition, rows: Row[]): Reading[] {
 	return out;
 }
 
+// Reads an unusual alert, comparing each group's latest finished period with
+// its usual, from the measure's own history.
+//
+// Two questions. The first finds how long one period of the date field is
+// and which is the latest finished, from the dates themselves, since a field
+// may hold days, weeks or months. The second reads just the history the
+// comparison needs, split by group.
+async function readUnusual(
+	source: SemanticSource,
+	definition: AlertDefinition,
+	run: RunQuery,
+	restriction?: RowRestriction,
+): Promise<Reading[]> {
+	const settings = definition.anomaly;
+	if (!settings) return [];
+	const timeField = settings.timeField;
+	const base = alertSpec(source, definition);
+	const options = restriction ? { restriction } : undefined;
+
+	const probe = compileQuery(
+		source,
+		parseQuerySpec({
+			...base,
+			dimensions: [timeField],
+			sort: [{ field: timeField, direction: "desc" }],
+			limit: 60,
+			offset: 0,
+		}),
+		options,
+	);
+	const recent = await run(probe.sql, probe.params);
+	const keys = recent
+		.map((row) => periodKey(row[timeField]))
+		.filter((k): k is string => k !== null);
+	const today = todayIn(definition.schedule.timeZone);
+	const spacing = spacingDays(keys);
+	const target = targetPeriod(keys, spacing, today);
+	if (!target) return [];
+
+	const history = compileQuery(
+		source,
+		parseQuerySpec({
+			...base,
+			dimensions: definition.groupBy
+				? [timeField, definition.groupBy]
+				: [timeField],
+			filters: [
+				...base.filters,
+				{
+					field: timeField,
+					op: "gte",
+					value: windowStart(settings, spacing, target),
+				},
+				{ field: timeField, op: "lte", value: target },
+			],
+			sort: [{ field: timeField, direction: "desc" }],
+			limit: maxLimit,
+			offset: 0,
+		}),
+		options,
+	);
+	const rows = await run(history.sql, history.params);
+	const { readings } = readAnomalies(rows, {
+		timeField,
+		groupBy: definition.groupBy,
+		measure: definition.measure,
+		settings,
+		today,
+	});
+	return readings.slice(0, maxGroups);
+}
+
 // Where a notification takes somebody: Explore, holding the same numbers the
 // alert read, so the tap lands on the figures rather than on a description.
 export function exploreLink(definition: AlertDefinition): string {
@@ -138,11 +221,17 @@ async function check(
 			);
 		}
 
-		const compiled = compileQuery(source, alertSpec(source, definition), {
-			restriction,
-		});
-		const rows = await run(compiled.sql, compiled.params);
-		readings = readingsFrom(definition, rows);
+		if (definition.condition === "unusual") {
+			readings = await readUnusual(source, definition, run, restriction);
+		} else {
+			const compiled = compileQuery(
+				source,
+				alertSpec(source, definition),
+				{ restriction },
+			);
+			const rows = await run(compiled.sql, compiled.params);
+			readings = readingsFrom(definition, rows);
+		}
 		const outcome = evaluate(definition, readings, state);
 		state = outcome.state;
 		firings = outcome.firings;
@@ -375,18 +464,36 @@ export async function checkAlertNow(
 export async function previewAlert(
 	identity: Identity,
 	raw: unknown,
-): Promise<{ readings: Reading[]; firings: Firing[]; formatted: string[] }> {
+): Promise<{
+	readings: Reading[];
+	firings: Firing[];
+	formatted: string[];
+	// For an unusual alert, each group's usual range in words.
+	usual: (string | null)[];
+}> {
 	const run = asOwner(identity);
 	if (!run) throw new Error("A user token is required to preview an alert.");
 	const { definition, source } = await checkDefinition(identity, raw);
-	const compiled = compileQuery(source, alertSpec(source, definition));
-	const rows = await run(compiled.sql, compiled.params);
-	const readings = readingsFrom(definition, rows);
+	let readings: Reading[];
+	if (definition.condition === "unusual") {
+		readings = await readUnusual(source, definition, run);
+	} else {
+		const compiled = compileQuery(source, alertSpec(source, definition));
+		const rows = await run(compiled.sql, compiled.params);
+		readings = readingsFrom(definition, rows);
+	}
 	const { firings } = evaluate(definition, readings, {});
 	const format = wordingFor(definition).format;
 	return {
 		readings: readings.slice(0, 20),
 		firings,
 		formatted: readings.slice(0, 20).map((r) => format(r.value)),
+		usual: readings
+			.slice(0, 20)
+			.map((r) =>
+				r.low === undefined || r.low === null
+					? null
+					: `${format(r.low)} to ${format(r.high ?? null)}`,
+			),
 	};
 }

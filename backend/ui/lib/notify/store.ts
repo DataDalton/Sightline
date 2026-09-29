@@ -13,6 +13,7 @@ export type NotificationKind =
 	| "share"
 	| "message"
 	| "delivery"
+	| "data"
 	| "system";
 
 export const notificationKinds: NotificationKind[] = [
@@ -20,6 +21,7 @@ export const notificationKinds: NotificationKind[] = [
 	"share",
 	"message",
 	"delivery",
+	"data",
 	"system",
 ];
 
@@ -28,6 +30,7 @@ export const kindLabel: Record<NotificationKind, string> = {
 	share: "Pages shared with you",
 	message: "Conversations",
 	delivery: "Scheduled pages",
+	data: "Late data",
 	system: "Announcements",
 };
 

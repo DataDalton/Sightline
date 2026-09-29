@@ -25,6 +25,7 @@ export const kindPaths: Record<InboxItem["kind"], string> = {
 	share: "M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8M16 6l-4-4-4 4M12 2v13",
 	message: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
 	delivery: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2",
+	data: "M12 3C7 3 4 4.3 4 6v12c0 1.7 3 3 8 3s8-1.3 8-3V6c0-1.7-3-3-8-3zM4 6c0 1.7 3 3 8 3s8-1.3 8-3M12 13v3M12 11h.01",
 	system: "M3 11l18-8-8 18-2-8z",
 };
 

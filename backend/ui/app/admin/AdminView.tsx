@@ -126,6 +126,7 @@ interface PlatformResponse {
 		cacheTtlSeconds: number;
 		isLive: boolean;
 		freshnessMode: "checked" | "timer";
+		lateState: string;
 		dimensions: number;
 		measures: number;
 	}[];
@@ -2447,6 +2448,14 @@ function PlatformSection({
 													? " watched"
 													: " on a timer"}
 											</span>
+											{s.lateState === "late" && (
+												<span
+													className={`${styles.badge} ${styles.badgeWarning}`}
+													title="Its data has not arrived when it usually does. Open it to see when it was expected."
+												>
+													late
+												</span>
+											)}
 										</td>
 										<td className={styles.mono}>
 											{s.object}

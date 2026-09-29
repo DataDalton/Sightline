@@ -48,6 +48,7 @@ import {
 } from "@/lib/runtime";
 import { latestSyncRun } from "@/lib/semantic/syncRun";
 import { freshnessDetails } from "@/lib/freshness/marks";
+import { latenessDetail, latenessOf } from "@/lib/freshness/lateness";
 
 // Admin data, gated on group membership rather than on a per-resource grant.
 // Everything here describes other people's activity, so it is not something a
@@ -149,9 +150,11 @@ export async function GET(request: NextRequest) {
 				formatHint: f.formatHint ?? null,
 			});
 			const freshness = (await freshnessDetails()).get(source.sourceKey);
+			const lateness = await latenessDetail(source.sourceKey);
 			return NextResponse.json({
 				source: {
 					freshness: freshness ?? null,
+					lateness,
 					sourceKey: source.sourceKey,
 					title: source.title,
 					description: source.description ?? null,
@@ -267,9 +270,15 @@ export async function GET(request: NextRequest) {
 				// The last catalogue walk, so a source list nobody has synced
 				// since March does not read as current.
 				lastSync: await latestSyncRun().catch(() => null),
-				sources: await freshnessDetails().then((fresh) =>
+				sources: await Promise.all([
+					freshnessDetails(),
+					latenessOf(null, "UTC"),
+				]).then(([fresh, late]) =>
 					listSources().map((s) => ({
 						freshnessMode: fresh.get(s.sourceKey)?.mode ?? "timer",
+						lateState:
+							late.find((l) => l.sourceKey === s.sourceKey)
+								?.state ?? "unwatched",
 						sourceKey: s.sourceKey,
 						title: s.title,
 						kind: s.kind,

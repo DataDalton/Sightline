@@ -22,6 +22,7 @@ import {
 	sampleSheet,
 	type ReportSeed,
 } from "./content";
+import { seedArrivals } from "./arrivals";
 import { sampleTables, sources } from "./datasets";
 
 // Everything the demonstration shows, written into the local Postgres on
@@ -497,6 +498,7 @@ export async function seedDemo(): Promise<void> {
 		);
 		await seedWarehouse();
 		await seedSources(catalog);
+		await seedArrivals();
 		await loadRegistry(true);
 		await seedContent();
 		await seedSheet();

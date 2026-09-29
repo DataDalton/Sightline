@@ -36,6 +36,11 @@ const kinds: { kind: keyof PushPreferences; label: string; hint: string }[] = [
 		hint: "When a page you subscribed to arrives.",
 	},
 	{
+		kind: "data",
+		label: "Late data",
+		hint: "When data you look after has not arrived when it usually does.",
+	},
+	{
 		kind: "system",
 		label: "Announcements",
 		hint: "Notices from the people who run the app.",

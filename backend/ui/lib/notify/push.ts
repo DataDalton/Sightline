@@ -181,6 +181,7 @@ export const defaultPushPreferences: PushPreferences = {
 	share: true,
 	message: true,
 	delivery: true,
+	data: true,
 	system: true,
 };
 

@@ -8,6 +8,9 @@ import { TabStrip } from "../components/shared/TabStrip";
 import type { FreshnessDetail } from "../../lib/freshness/marks";
 import { checkIntervals, clampCheckSeconds } from "../../lib/freshness/history";
 import { CheckSetting, unitSeconds, type Unit } from "./CheckSetting";
+import { LateSetting } from "./LateSetting";
+import type { LatenessSetting } from "../../lib/freshness/arrivals";
+import type { LatenessDetail } from "../../lib/freshness/lateness";
 import styles from "./Admin.module.css";
 
 // Correcting how a source and its fields are presented.
@@ -41,6 +44,7 @@ interface SourceDetail {
 	cacheTtlSeconds: number;
 	isLive: boolean;
 	freshness: FreshnessDetail | null;
+	lateness: LatenessDetail | null;
 	dimensions: Field[];
 	measures: Field[];
 }
@@ -73,6 +77,9 @@ export function EditSourceDialog({
 
 	const [tab, setTab] = useState<"source" | "fields">("source");
 	const [title, setTitle] = useState("");
+	const [lateness, setLateness] = useState<LatenessSetting>({
+		mode: "auto",
+	});
 	const [description, setDescription] = useState("");
 	const [timeField, setTimeField] = useState("");
 	// "live", "default", one of the preset intervals in seconds, or "custom".
@@ -87,6 +94,7 @@ export function EditSourceDialog({
 	// so typing does not fight the revalidation.
 	useEffect(() => {
 		if (!source) return;
+		setLateness(source.lateness?.setting ?? { mode: "auto" });
 		setTitle(source.title);
 		setDescription(source.description ?? "");
 		setTimeField(source.defaultTimeField ?? "");
@@ -151,6 +159,7 @@ export function EditSourceDialog({
 								)
 							: Number(choice),
 				isLive: choice === "live",
+				lateness,
 			});
 
 			const changed = Object.entries(edits).map(([name, patch]) => ({
@@ -259,6 +268,12 @@ export function EditSourceDialog({
 								customUnit={customUnit}
 								onCustomUnit={setCustomUnit}
 								freshness={source.freshness}
+							/>
+
+							<LateSetting
+								value={lateness}
+								onChange={setLateness}
+								detail={source.lateness}
 							/>
 						</div>
 					) : (

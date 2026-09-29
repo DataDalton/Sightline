@@ -289,6 +289,14 @@
 	border: 1px solid var(--border-subtle);
 }
 
+/* A source whose data has not arrived when it usually does. */
+.badgeWarning {
+	margin-left: var(--space-2);
+	border-color: color-mix(in srgb, var(--warning) 45%, transparent);
+	background: var(--warning-subtle);
+	color: var(--warning);
+}
+
 .badgeAdmin {
 	background: var(--brand-subtle);
 	color: var(--brand-strong);

@@ -7,7 +7,13 @@ import { listSources } from "../semantic/registry";
 import type { SemanticSource } from "../semantic/types";
 import { runCatalogQuery } from "../semantic/ucMetadata";
 import { settings } from "../settings";
-import { readHistory, toHistory, type HistoryEntry } from "./history";
+import {
+	isDataChange,
+	readHistory,
+	toHistory,
+	type HistoryEntry,
+} from "./history";
+import { evaluateLateness } from "./lateness";
 import { refreshMarks } from "./marks";
 
 // Watches the tables behind each source for new data.
@@ -32,6 +38,17 @@ import { refreshMarks } from "./marks";
 const claimLease = "2 minutes";
 const historyPage = 25;
 const perPass = 50;
+
+// How much history is read to learn when a table loads, once a day. Delta
+// keeps about a month by default, and a month of a table loaded every hour is
+// several hundred commits, so this reaches back as far as most tables keep.
+const learningPage = 1000;
+const learnEveryMs = 24 * 60 * 60 * 1000;
+
+// Commits closer together than this are recorded as one arrival, so a stream
+// writing every few seconds keeps a few hundred rows a day rather than
+// thousands. The learning only needs to know it arrives often.
+const arrivalSpacingMs = 4 * 60 * 1000;
 
 export function intervalFor(source: SemanticSource): number {
 	if (source.isLive) return liveTtlSeconds();
@@ -113,13 +130,59 @@ async function demoHistory(table: string): Promise<HistoryEntry[]> {
 	];
 }
 
-async function tableHistory(table: string): Promise<HistoryEntry[]> {
+async function tableHistory(
+	table: string,
+	limit = historyPage,
+): Promise<HistoryEntry[]> {
 	if (demoMode) return demoHistory(table);
 	const rows = await asApp(
-		`DESCRIBE HISTORY ${quoted(table)} LIMIT ${historyPage}`,
+		`DESCRIBE HISTORY ${quoted(table)} LIMIT ${limit}`,
 		{},
 	);
 	return toHistory(rows);
+}
+
+// Commits that changed data, recorded as arrivals, timed by the commit. The
+// demonstration's stand-in history has no times, so a change it notices is
+// timed by the look that noticed it.
+async function recordArrivals(
+	table: string,
+	entries: HistoryEntry[],
+	noticedNow: boolean,
+): Promise<void> {
+	const times = entries
+		.filter((e) => isDataChange(e.operation) && e.timestamp !== null)
+		.map((e) => e.timestamp as number);
+	if (noticedNow && times.length === 0) times.push(Date.now());
+	if (times.length === 0) return;
+
+	// Newest first, keeping one per spacing, so a load's last commit is the
+	// one kept and a stream is thinned to a steady beat.
+	const kept: number[] = [];
+	for (const t of [...new Set(times)].sort((a, b) => b - a)) {
+		if (
+			kept.length === 0 ||
+			kept[kept.length - 1] - t >= arrivalSpacingMs
+		) {
+			kept.push(t);
+		}
+	}
+	await sql(
+		`INSERT INTO table_arrivals (table_name, arrived_on)
+		 SELECT $1, t FROM unnest($2::timestamptz[]) AS t
+		 WHERE NOT EXISTS (
+		   SELECT 1 FROM table_arrivals a
+		   WHERE a.table_name = $1
+		     AND a.arrived_on BETWEEN t - make_interval(secs => $3)
+		                          AND t + make_interval(secs => $3)
+		 )
+		 ON CONFLICT DO NOTHING`,
+		[
+			table,
+			kept.map((t) => new Date(t).toISOString()),
+			arrivalSpacingMs / 1000,
+		],
+	);
 }
 
 let warehouseState: { at: number; running: boolean } | null = null;
@@ -212,6 +275,7 @@ async function pass(): Promise<void> {
 		table_name: string;
 		version: string | null;
 		version_at: string | null;
+		learned_on: string | null;
 	}>(
 		`UPDATE source_checks SET
 		   next_check_on = now() + interval '${claimLease}',
@@ -224,7 +288,8 @@ async function pass(): Promise<void> {
 		   LIMIT ${perPass}
 		   FOR UPDATE SKIP LOCKED
 		 )
-		 RETURNING table_name, version::text, version_at::text`,
+		 RETURNING table_name, version::text, version_at::text,
+		           learned_on::text`,
 		[tables, running],
 	);
 	if (due.length === 0) return;
@@ -247,6 +312,35 @@ async function pass(): Promise<void> {
 							};
 				const { latest, changed } = readHistory(history, lastSeen);
 				if (changed) changedTables.add(row.table_name);
+
+				// What this page of history says about when the table
+				// loads, and once a day the longer history, so a table is
+				// learned on its first look rather than after weeks.
+				const learnDue =
+					!demoMode &&
+					(!row.learned_on ||
+						Date.now() - Date.parse(row.learned_on) > learnEveryMs);
+				const learnFrom = learnDue
+					? await tableHistory(row.table_name, learningPage).catch(
+							() => history,
+						)
+					: history.filter(
+							(e) =>
+								lastSeen === null ||
+								e.version > lastSeen.version,
+						);
+				await recordArrivals(
+					row.table_name,
+					learnFrom,
+					demoMode && changed,
+				);
+				if (learnDue) {
+					await sql(
+						`UPDATE source_checks SET learned_on = now()
+						 WHERE table_name = $1`,
+						[row.table_name],
+					);
+				}
 				await sql(
 					`UPDATE source_checks SET
 					   version = $2, version_at = $3, checked_on = now(),
@@ -286,6 +380,9 @@ async function pass(): Promise<void> {
 
 	await settleSources(nextTables, changedTables);
 	await refreshMarks();
+	await evaluateLateness().catch((error) => {
+		console.warn("Judging late data failed:", error);
+	});
 }
 
 // Brings each source's standing up to date from its tables: watched when every

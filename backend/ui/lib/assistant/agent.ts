@@ -252,6 +252,7 @@ function instructions(
 		"- Before each step, say in one short sentence what you are about to check and why. The person sees this as you work.",
 		"- Find the right dataset with list_sources, then read it with describe_source before querying it.",
 		"- Read the field definitions. Pick the measure whose definition answers the question. Where a definition says a measure adds up per record but not across records, do not sum it across records.",
+		"- Before filtering on a value the person named, such as a region or a product line, query that dimension's values to find it as the data spells it. If no value matches, say so and list the closest ones rather than filtering on a guess, which returns nothing.",
 		"- Query as many times as the question needs, and run independent queries together in one turn. For discrepancies, outliers or changes, compare cuts: by period, by segment, against a total, against a peer group.",
 		"- Never state a number you did not get from a query in this conversation. If something cannot be answered from the data, say so and say what is missing.",
 		"- Results are filtered to what the person asking may see. Do not speculate about data outside that.",

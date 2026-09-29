@@ -1,0 +1,32 @@
+/* A page whose data has not arrived when it usually does. Warning colours,
+   since the figures are not wrong so much as possibly behind. */
+.notice {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--space-3);
+	margin-bottom: var(--space-3);
+	padding: var(--space-3) var(--space-4);
+	border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+	border-radius: var(--radius-lg);
+	background: var(--warning-subtle);
+	color: var(--text-primary);
+	font-size: var(--text-sm);
+	line-height: 1.5;
+}
+
+.icon {
+	flex-shrink: 0;
+	margin-top: 2px;
+	color: var(--warning);
+}
+
+.text {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	min-width: 0;
+}
+
+.text p {
+	margin: 0;
+}

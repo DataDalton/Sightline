@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo } from "react";
+import dynamic from "next/dynamic";
+import { useMemo, useState } from "react";
 import { useVisualQuery } from "../hooks/useVisualQuery";
 import { queryForVisual } from "../../lib/query/visualSpec";
 import { resolveKpiGroups, type KpiGroup } from "../../lib/visuals/kpiGroups";
@@ -11,6 +12,7 @@ import {
 	type FormatHint,
 } from "../../lib/format";
 import {
+	comparePeriodLabels,
 	relativeChange,
 	shiftDateFilters,
 	type ComparePeriod,
@@ -23,6 +25,13 @@ import { VisualError } from "./VisualFrame";
 import { VisualLoadingState } from "./LoadingState";
 import { fieldTooltip, type FieldMeta } from "./types";
 import styles from "./Visual.module.css";
+
+// Loaded when somebody asks, since every scorecard carries the way in and few
+// are followed.
+const ExplainDialog = dynamic(
+	() => import("../explain/ExplainDialog").then((m) => m.ExplainDialog),
+	{ ssr: false },
+);
 
 // A row of headline figures. No dimensions, so the query returns exactly one
 // row and each measure becomes a tile.
@@ -70,6 +79,9 @@ export function KpiRow({
 	compareField,
 	sparkline,
 }: KpiRowProps) {
+	// The tile whose change is being broken down, if any.
+	const [explaining, setExplaining] = useState<string | null>(null);
+
 	const { rows, error, isLoading } = useVisualQuery(
 		queryForVisual("kpiRow", {
 			sourceKey,
@@ -256,20 +268,24 @@ export function KpiRow({
 
 				{/* The change, under the figure rather than beside it, so a
 				    row of tiles keeps one column of figures to read down. */}
+				{/* The change is also the way to what drove it, so the
+				    question it raises is one click from its answer. */}
 				{change !== null && (
-					<span
-						className={`${styles.kpiChange} ${
+					<button
+						type="button"
+						className={`${styles.kpiChange} ${styles.kpiChangeButton} ${
 							change > 0
 								? styles.kpiPositive
 								: change < 0
 									? styles.kpiNegative
 									: ""
 						}`}
-						title={
+						onClick={() => setExplaining(name)}
+						title={`${
 							absolute === null
-								? undefined
-								: `${formatDelta(absolute, hint)} against the earlier window`
-						}
+								? ""
+								: `${formatDelta(absolute, hint)} against the earlier window. `
+						}Click to see what drove it.`}
 					>
 						<span aria-hidden="true">
 							{change > 0 ? "▲" : change < 0 ? "▼" : "="}
@@ -277,7 +293,8 @@ export function KpiRow({
 						{Math.abs(change * 100) < 0.05
 							? "no change"
 							: `${change > 0 ? "+" : "-"}${Math.abs(change * 100).toFixed(1)}%`}
-					</span>
+						<span className={styles.kpiWhy}>Why?</span>
+					</button>
 				)}
 
 				{/* Waiting for the comparison rather than reporting there is
@@ -303,6 +320,20 @@ export function KpiRow({
 
 	return (
 		<div className={styles.kpiBands}>
+			{explaining && comparisonFilters && compareTo && (
+				<ExplainDialog
+					sourceKey={sourceKey}
+					measure={explaining}
+					hint={
+						(fields.get(explaining)?.formatHint as FormatHint) ??
+						"decimal"
+					}
+					filters={filters ?? []}
+					previousFilters={comparisonFilters}
+					against={comparePeriodLabels[compareTo].toLowerCase()}
+					onClose={() => setExplaining(null)}
+				/>
+			)}
 			{bands.map((band, i) => (
 				<div key={band.label ?? i} className={styles.kpiBand}>
 					{band.label && (

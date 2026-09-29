@@ -98,6 +98,7 @@ export function wordingFor(definition: AlertDefinition): Wording {
 		condition: definition.condition,
 		threshold: definition.threshold,
 		format: measureFormat(source, definition.measure),
+		anomaly: definition.anomaly,
 	};
 }
 
@@ -171,6 +172,14 @@ export async function checkDefinition(
 	) {
 		throw new AlertDefinitionError(
 			`${definition.groupBy} is not a field on ${source.title}.`,
+		);
+	}
+	if (
+		definition.anomaly &&
+		!source.dimensions.some((d) => d.name === definition.anomaly?.timeField)
+	) {
+		throw new AlertDefinitionError(
+			`${definition.anomaly.timeField} is not a date field on ${source.title}.`,
 		);
 	}
 	try {

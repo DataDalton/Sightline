@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
+import { WatchAction } from "../alerts/WatchAction";
 
 import { Chart } from "./chartEntry";
 import { DataGrid } from "./DataGrid";
@@ -747,6 +748,7 @@ function VisualBody({
 							}}
 							available={Boolean(reportId && pageId)}
 						/>
+						<WatchAction visual={visual} sources={sources} />
 						<ChartActions
 							getImage={getChartImage}
 							onShowTable={() => {
@@ -935,14 +937,17 @@ function VisualBody({
 			<VisualFrame
 				visualId={visual.visualId}
 				actions={
-					<NotesAction
-						count={notes.length}
-						onOpen={() => {
-							setShowingNotes(true);
-							noteAction("notes");
-						}}
-						available={Boolean(reportId && pageId)}
-					/>
+					<>
+						<WatchAction visual={visual} sources={sources} />
+						<NotesAction
+							count={notes.length}
+							onOpen={() => {
+								setShowingNotes(true);
+								noteAction("notes");
+							}}
+							available={Boolean(reportId && pageId)}
+						/>
+					</>
 				}
 				title={displayTitle(visual)}
 				flush

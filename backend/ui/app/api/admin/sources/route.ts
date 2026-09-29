@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { readLatenessSetting } from "@/lib/freshness/arrivals";
 import { getIdentity } from "@/lib/auth/identity";
 import { resolvePolicyClass } from "@/lib/auth/policy";
 import { canDo } from "@/lib/platform/access";
@@ -129,6 +130,10 @@ export async function POST(request: NextRequest) {
 						: Number(body.cacheTtlSeconds) || 0,
 				isLive:
 					typeof body.isLive === "boolean" ? body.isLive : undefined,
+				lateness:
+					body.lateness === undefined
+						? undefined
+						: readLatenessSetting(body.lateness),
 			});
 			return NextResponse.json({ ok: true });
 		}

@@ -1,5 +1,12 @@
 import type { Condition } from "../explore/conditions";
 import { cleanState } from "../explore/state";
+import {
+	AnomalySettingsError,
+	cleanAnomaly,
+	describeComparison,
+	describePeriod,
+	type AnomalySettings,
+} from "./anomaly";
 import { cleanSchedule, type Schedule } from "./schedule";
 
 // An alert: one measure, optionally split by a dimension, narrowed by the same
@@ -10,6 +17,7 @@ import { cleanSchedule, type Schedule } from "./schedule";
 // tested on its own.
 
 export type AlertCondition =
+	| "unusual"
 	| "above"
 	| "below"
 	| "rises_by"
@@ -18,6 +26,7 @@ export type AlertCondition =
 	| "changes";
 
 export const alertConditions: AlertCondition[] = [
+	"unusual",
 	"above",
 	"below",
 	"rises_by",
@@ -27,6 +36,7 @@ export const alertConditions: AlertCondition[] = [
 ];
 
 export const conditionLabel: Record<AlertCondition, string> = {
+	unusual: "is unusual",
 	above: "is above",
 	below: "is below",
 	rises_by: "rises by more than",
@@ -46,7 +56,7 @@ export function isRelative(condition: AlertCondition): boolean {
 }
 
 export function needsThreshold(condition: AlertCondition): boolean {
-	return condition !== "changes";
+	return condition !== "changes" && condition !== "unusual";
 }
 
 export interface AlertDefinition {
@@ -61,6 +71,8 @@ export interface AlertDefinition {
 	schedule: Schedule;
 	// For above and below: also say when the value is back on the right side.
 	notifyRecover: boolean;
+	// The history an unusual alert is judged against. Null otherwise.
+	anomaly: AnomalySettings | null;
 }
 
 // The most groups one alert follows. Past this it is a report, not an alert,
@@ -105,6 +117,19 @@ export function cleanDefinition(raw: unknown): AlertDefinition {
 		threshold = n;
 	}
 
+	let anomaly: AnomalySettings | null = null;
+	if (condition === "unusual") {
+		try {
+			anomaly = cleanAnomaly(r.anomaly);
+		} catch (error) {
+			throw new AlertDefinitionError(
+				error instanceof AnomalySettingsError
+					? error.message
+					: "The history to compare with is not set up.",
+			);
+		}
+	}
+
 	// The conditions are Explore's own, so they are checked the way a saved
 	// exploration is.
 	const state = cleanState({
@@ -128,6 +153,7 @@ export function cleanDefinition(raw: unknown): AlertDefinition {
 		threshold,
 		schedule: cleanSchedule(r.schedule),
 		notifyRecover: r.notifyRecover === true,
+		anomaly,
 	};
 }
 
@@ -137,11 +163,21 @@ export interface Reading {
 	// The group's value as text, or null for the one total.
 	group: string | null;
 	value: number | null;
+	// For an unusual alert, the period read, its usual figure and range, and whether
+	// the value sits outside that range.
+	period?: string;
+	usual?: number | null;
+	low?: number | null;
+	high?: number | null;
+	unusual?: boolean;
 }
 
 export interface GroupState {
 	value: number | null;
 	met: boolean;
+	// For an unusual alert, the period last judged, so one period is reported once
+	// however often the alert is checked.
+	period?: string;
 }
 
 // What was seen at the last check, by group. The total is stored under "".
@@ -154,6 +190,11 @@ export interface Firing {
 	// Percentage change from the last check, for the relative conditions.
 	change: number | null;
 	kind: "fired" | "recovered";
+	// For an unusual alert, the period and what was usual for it.
+	period?: string;
+	usual?: number | null;
+	low?: number | null;
+	high?: number | null;
 }
 
 function groupKey(group: string | null): string {
@@ -192,6 +233,33 @@ export function evaluate(
 		const before = previous[key];
 		const value = reading.value;
 		const last = before?.value ?? null;
+
+		// Judged against its own history rather than the last check. Reported
+		// once per period, since an hourly check reads the same finished day
+		// all day.
+		if (definition.condition === "unusual") {
+			const met = reading.unusual === true;
+			state[key] = { value, met, period: reading.period };
+			if (met && before?.period !== reading.period) {
+				firings.push({
+					group: reading.group,
+					value,
+					previous: last,
+					change:
+						value !== null && reading.usual
+							? ((value - reading.usual) /
+									Math.abs(reading.usual)) *
+								100
+							: null,
+					kind: "fired",
+					period: reading.period,
+					usual: reading.usual ?? null,
+					low: reading.low ?? null,
+					high: reading.high ?? null,
+				});
+			}
+			continue;
+		}
 
 		let met = false;
 		let change: number | null = null;
@@ -268,6 +336,7 @@ export interface Wording {
 	threshold: number | null;
 	// Formats a value of the measure the way a report would show it.
 	format: (value: number | null) => string;
+	anomaly?: AnomalySettings | null;
 }
 
 function thresholdText(w: Wording): string {
@@ -280,6 +349,9 @@ function thresholdText(w: Wording): string {
 // The rule in one sentence, as the alert list shows it.
 export function describeRule(w: Wording): string {
 	const who = w.groupBy ? `${w.measure} for any ${w.groupBy}` : w.measure;
+	if (w.condition === "unusual") {
+		return `${who} is unusual${w.anomaly ? `, ${describeComparison(w.anomaly)}` : ""}`;
+	}
 	const t = thresholdText(w);
 	return `${who} ${conditionLabel[w.condition]}${t ? ` ${t}` : ""}`;
 }
@@ -291,6 +363,14 @@ function firingLine(w: Wording, f: Firing): string {
 		return `${subject}${w.measure} is ${now}, back ${w.condition === "above" ? "at or below" : "at or above"} ${thresholdText(w)}`;
 	}
 	switch (w.condition) {
+		case "unusual": {
+			const when = f.period ? ` on ${describePeriod(f.period)}` : "";
+			const pct =
+				f.change === null
+					? ""
+					: ` (${f.change > 0 ? "+" : ""}${f.change.toFixed(0)}%)`;
+			return `${subject}${w.measure} was ${now}${when}, usually ${w.format(f.low ?? null)} to ${w.format(f.high ?? null)}${pct}`;
+		}
 		case "above":
 		case "below":
 			return `${subject}${w.measure} is ${now}, ${w.condition} ${thresholdText(w)}`;

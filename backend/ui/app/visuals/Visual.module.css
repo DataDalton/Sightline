@@ -152,6 +152,48 @@
 	white-space: nowrap;
 }
 
+/* The change as a button, which looks like the figure it was until pointed
+   at, then says what it does. */
+.kpiChangeButton {
+	align-self: flex-start;
+	margin: -2px -6px;
+	padding: 2px 6px;
+	border: none;
+	border-radius: var(--radius-sm);
+	background: none;
+	font-family: inherit;
+	cursor: pointer;
+}
+
+.kpiChangeButton:hover,
+.kpiChangeButton:focus-visible {
+	background: var(--state-hover);
+}
+
+.kpiChangeButton:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: 1px;
+}
+
+.kpiWhy {
+	margin-left: 2px;
+	color: var(--text-link);
+	font-weight: 600;
+	opacity: 0;
+	transition: opacity var(--transition-fast);
+}
+
+.kpiChangeButton:hover .kpiWhy,
+.kpiChangeButton:focus-visible .kpiWhy {
+	opacity: 1;
+}
+
+@media (hover: none) {
+	.kpiWhy {
+		opacity: 1;
+	}
+}
+
 .kpiPositive {
 	color: var(--delta-positive);
 }

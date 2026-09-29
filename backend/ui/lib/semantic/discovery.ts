@@ -1,4 +1,5 @@
 import { sql } from "../data/lakebase";
+import type { LatenessSetting } from "../freshness/arrivals";
 import type { Identity } from "../auth/identity";
 import { insertLog } from "../activityLog";
 import { runCatalogQuery } from "./ucMetadata";
@@ -309,6 +310,9 @@ export interface SourceEdit {
 	cacheTtlSeconds?: number;
 	// Whether the data streams in. See isLive in lib/semantic/types.
 	isLive?: boolean;
+	// How lateness is judged: learned, off, or set by hand. See
+	// lib/freshness/arrivals.
+	lateness?: LatenessSetting;
 }
 
 export async function updateSource(
@@ -342,6 +346,7 @@ export async function updateSource(
 		   default_time_field = COALESCE($4, default_time_field),
 		   cache_ttl_seconds = COALESCE($5, cache_ttl_seconds),
 		   is_live = COALESCE($6, is_live),
+		   lateness = COALESCE($7::jsonb, lateness),
 		   modified_on = now()
 		 WHERE source_key = $1 AND is_active = TRUE
 		 RETURNING source_key`,
@@ -354,10 +359,17 @@ export async function updateSource(
 				? null
 				: Math.max(0, Math.floor(input.cacheTtlSeconds)),
 			input.isLive ?? null,
+			input.lateness ? JSON.stringify(input.lateness) : null,
 		],
 	);
 	if (updated.length === 0) {
 		throw new RegistrationError("That source is not registered.");
+	}
+	// Judged again straight away, so the setting shows its effect on the
+	// screen that changed it rather than a minute later.
+	if (input.lateness) {
+		const { evaluateLateness } = await import("../freshness/lateness");
+		await evaluateLateness(true).catch(() => {});
 	}
 
 	await insertLog({

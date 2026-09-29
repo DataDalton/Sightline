@@ -10,6 +10,14 @@ import {
 	type AlertDefinition,
 } from "../../lib/alerts/rule";
 import type { Frequency } from "../../lib/alerts/schedule";
+import {
+	defaultAnomaly,
+	describePeriod,
+	type AnomalySettings,
+	type CompareTo,
+	type Direction,
+	type Sensitivity,
+} from "../../lib/alerts/anomaly";
 import type { AlertRecord } from "../../lib/alerts/store";
 import type { AlertDraft } from "../../lib/assistant/surfaces/alert";
 import {
@@ -23,7 +31,7 @@ import { AssistPrompt } from "../assist/AssistPrompt";
 import { Modal } from "../components/shared/Modal";
 import { Select } from "../components/shared/Select";
 import { Toggle } from "../components/shared/Toggle";
-import type { SourceMeta } from "../visuals/types";
+import { isTemporalField, type SourceMeta } from "../visuals/types";
 import styles from "./Alerts.module.css";
 
 // Creating or changing an alert.
@@ -43,9 +51,13 @@ export interface AlertPrefill {
 	measure?: string;
 	groupBy?: string | null;
 	conditions?: Condition[];
+	condition?: AlertCondition;
+	// The date field an unusual alert reads its history across.
+	timeField?: string | null;
 }
 
 const conditions: AlertCondition[] = [
+	"unusual",
 	"above",
 	"below",
 	"rises_by",
@@ -73,6 +85,40 @@ const weekdays = [
 
 // Groups drawn as bars before the rest are summed up in a line.
 const shownGroups = 8;
+
+// What an unusual alert compares with, as one choice.
+const comparisons: { value: string; label: string }[] = [
+	{ value: "same_weekday:4", label: "the same weekday, last 4 weeks" },
+	{ value: "same_weekday:8", label: "the same weekday, last 8 weeks" },
+	{ value: "same_weekday:12", label: "the same weekday, last 12 weeks" },
+	{ value: "recent:7", label: "the 7 periods before" },
+	{ value: "recent:14", label: "the 14 periods before" },
+	{ value: "recent:28", label: "the 28 periods before" },
+];
+
+const sensitivities: { value: Sensitivity; label: string }[] = [
+	{ value: "low", label: "only big swings" },
+	{ value: "medium", label: "clear swings" },
+	{ value: "high", label: "small swings too" },
+	{ value: "percent", label: "a set percentage" },
+];
+
+const directions: { value: Direction; label: string }[] = [
+	{ value: "either", label: "either way" },
+	{ value: "up", label: "upward" },
+	{ value: "down", label: "downward" },
+];
+
+// The date field an unusual alert reads across when nobody has chosen one:
+// the dataset's own time field, or the first field that holds dates.
+function defaultTimeField(source: SourceMeta | undefined): string {
+	if (!source) return "";
+	if (source.defaultTimeField) return source.defaultTimeField;
+	return (
+		source.dimensions.find((d) => isTemporalField(source, d.name))?.name ??
+		""
+	);
+}
 
 function hourLabel(hour: number): string {
 	const suffix = hour < 12 ? "AM" : "PM";
@@ -103,8 +149,18 @@ function scheduleText(
 }
 
 interface Preview {
-	readings: { group: string | null; value: number | null }[];
+	readings: {
+		group: string | null;
+		value: number | null;
+		// For an unusual alert, the period read and what was usual for it.
+		period?: string;
+		usual?: number | null;
+		low?: number | null;
+		high?: number | null;
+		unusual?: boolean;
+	}[];
 	formatted: string[];
+	usual?: (string | null)[];
 	firings: { group: string | null }[];
 }
 
@@ -160,8 +216,20 @@ export function AlertDialog({
 	const [rowConditions, setRowConditions] = useState<Condition[]>(
 		start.conditions ?? [],
 	);
+	const startSource = sources.find((s) => s.sourceKey === start.sourceKey);
 	const [condition, setCondition] = useState<AlertCondition>(
-		start.condition ?? "above",
+		start.condition ??
+			prefill?.condition ??
+			// A new alert starts on unusual where the dataset has dates to
+			// read a history across, since that needs no line choosing.
+			(defaultTimeField(startSource) ? "unusual" : "above"),
+	);
+	const [anomaly, setAnomaly] = useState<AnomalySettings>(
+		start.anomaly ??
+			defaultAnomaly(prefill?.timeField ?? defaultTimeField(startSource)),
+	);
+	const [minimumText, setMinimumText] = useState(
+		start.anomaly?.minimum ? String(start.anomaly.minimum) : "",
 	);
 	const [threshold, setThreshold] = useState(
 		start.threshold === null || start.threshold === undefined
@@ -221,8 +289,21 @@ export function AlertDialog({
 			notifyRecover:
 				(condition === "above" || condition === "below") &&
 				notifyRecover,
+			anomaly:
+				condition === "unusual"
+					? {
+							...anomaly,
+							minimum:
+								minimumText.trim() &&
+								Number.isFinite(Number(minimumText))
+									? Number(minimumText)
+									: null,
+						}
+					: null,
 		}),
 		[
+			anomaly,
+			minimumText,
 			name,
 			sourceKey,
 			measure,
@@ -252,6 +333,12 @@ export function AlertDialog({
 		setHour(draft.schedule.hour);
 		setWeekday(draft.schedule.weekday);
 		setNotifyRecover(draft.notifyRecover);
+		if (draft.anomaly) {
+			setAnomaly(draft.anomaly);
+			setMinimumText(
+				draft.anomaly.minimum ? String(draft.anomaly.minimum) : "",
+			);
+		}
 		if (draft.name) setName(draft.name);
 		setError(null);
 	};
@@ -259,11 +346,16 @@ export function AlertDialog({
 	// The value now, read under the reader's own access, so a threshold is
 	// chosen against the real figure. Read again when what is measured
 	// changes, not when the threshold does.
+	//
+	// An unusual alert reads its history instead, so what it compares with
+	// is part of what is measured.
+	const unusual = condition === "unusual";
 	const watchedKey = JSON.stringify([
 		sourceKey,
 		measure,
 		groupBy,
 		rowConditions,
+		unusual ? definition.anomaly : null,
 	]);
 	useEffect(() => {
 		if (!sourceKey || !measure) {
@@ -278,11 +370,15 @@ export function AlertDialog({
 				const response = await fetch("/api/alerts/preview", {
 					method: "POST",
 					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({
-						...definition,
-						condition: "changes",
-						threshold: null,
-					}),
+					body: JSON.stringify(
+						unusual
+							? definition
+							: {
+									...definition,
+									condition: "changes",
+									threshold: null,
+								},
+					),
 					signal: controller.signal,
 				});
 				const body = await response.json();
@@ -370,11 +466,23 @@ export function AlertDialog({
 
 	const readings = preview?.readings ?? [];
 	const scale = Math.max(
-		...readings.slice(0, shownGroups).map((r) => Math.abs(r.value ?? 0)),
+		...readings
+			.slice(0, shownGroups)
+			.flatMap((r) => [
+				Math.abs(r.value ?? 0),
+				Math.abs(r.high ?? 0),
+				Math.abs(r.low ?? 0),
+			]),
 		hasLine ? Math.abs(line) : 0,
 		1e-9,
 	);
-	const firingNow = readings.filter((r) => meets(r.value)).length;
+	const flagged = (r: Preview["readings"][number]) =>
+		unusual ? r.unusual === true : meets(r.value);
+	const firingNow = readings.filter(flagged).length;
+	const period = unusual ? readings[0]?.period : undefined;
+	const temporalFields = (source?.dimensions ?? []).filter((d) =>
+		isTemporalField(source, d.name),
+	);
 
 	const autoName = measure
 		? `${measureMeta?.displayName ?? measure} ${conditionLabel[condition]}${
@@ -448,6 +556,13 @@ export function AlertDialog({
 								setMeasure("");
 								setGroupBy("");
 								setRowConditions([]);
+								const next = sources.find(
+									(s) => s.sourceKey === key,
+								);
+								setAnomaly((held) => ({
+									...held,
+									timeField: defaultTimeField(next),
+								}));
 							}}
 							placeholder="choose a dataset"
 							searchable
@@ -520,14 +635,110 @@ export function AlertDialog({
 									)}
 								</span>
 							)}
+							{unusual && (
+								<Select
+									className={styles.token}
+									bare
+									options={directions}
+									value={anomaly.direction}
+									onChange={(v) =>
+										setAnomaly({
+											...anomaly,
+											direction: v as Direction,
+										})
+									}
+									ariaLabel="Which way"
+								/>
+							)}
 						</span>
+						{/* What unusual means, on its own line of the same
+						    sentence. */}
+						{unusual && (
+							<span className={styles.sentenceLine}>
+								<span className={styles.words}>
+									compared with
+								</span>
+								<Select
+									className={styles.token}
+									bare
+									options={comparisons}
+									value={`${anomaly.compareTo}:${anomaly.periods}`}
+									onChange={(v) => {
+										const [compareTo, periods] =
+											v.split(":");
+										setAnomaly({
+											...anomaly,
+											compareTo: compareTo as CompareTo,
+											periods: Number(periods),
+										});
+									}}
+									ariaLabel="Compared with"
+								/>
+								<span className={styles.words}>of</span>
+								<Select
+									className={`${styles.token} ${anomaly.timeField ? "" : styles.tokenEmpty}`}
+									bare
+									options={temporalFields.map((d) => ({
+										value: d.name,
+										label: d.displayName ?? d.name,
+									}))}
+									value={anomaly.timeField}
+									onChange={(v) =>
+										setAnomaly({ ...anomaly, timeField: v })
+									}
+									placeholder="a date field"
+									disabled={!source}
+									ariaLabel="Date field"
+								/>
+								<span className={styles.words}>counting</span>
+								<Select
+									className={styles.token}
+									bare
+									options={sensitivities}
+									value={anomaly.sensitivity}
+									onChange={(v) =>
+										setAnomaly({
+											...anomaly,
+											sensitivity: v as Sensitivity,
+											percent:
+												v === "percent"
+													? (anomaly.percent ?? 20)
+													: null,
+										})
+									}
+									ariaLabel="How far from usual counts"
+								/>
+								{anomaly.sensitivity === "percent" && (
+									<span className={styles.thresholdWrap}>
+										<input
+											className={styles.threshold}
+											inputMode="decimal"
+											value={anomaly.percent ?? ""}
+											onChange={(e) =>
+												setAnomaly({
+													...anomaly,
+													percent:
+														Number(
+															e.target.value,
+														) || null,
+												})
+											}
+											aria-label="Percentage from usual"
+										/>
+										<span className={styles.unit}>%</span>
+									</span>
+								)}
+							</span>
+						)}
 					</div>
 					<span className={styles.fieldHint}>
-						{crossing
-							? "You are told once when it crosses, not on every check it stays there."
-							: condition === "changes"
-								? "Compared with the previous check."
-								: "Compared with the previous check, as a percentage of it."}
+						{unusual
+							? "Usual is worked out from the measure's own history. Each check looks at the latest finished period, never today, which is still filling up, and tells you about a period once."
+							: crossing
+								? "You are told once when it crosses, not on every check it stays there."
+								: condition === "changes"
+									? "Compared with the previous check."
+									: "Compared with the previous check, as a percentage of it."}
 						{groupBy
 							? ` Each ${groupMeta?.displayName ?? groupBy} is checked on its own.`
 							: ""}
@@ -538,6 +749,22 @@ export function AlertDialog({
 							onChange={setNotifyRecover}
 							label="Also tell me when it is back"
 						/>
+					)}
+					{unusual && groupBy && (
+						<label className={styles.inlineField}>
+							<span>
+								Ignore any {groupMeta?.displayName ?? groupBy}{" "}
+								usually under
+							</span>
+							<input
+								className={styles.smallInput}
+								inputMode="decimal"
+								value={minimumText}
+								onChange={(e) => setMinimumText(e.target.value)}
+								placeholder="no minimum"
+								aria-label="Minimum usual figure"
+							/>
+						</label>
 					)}
 				</div>
 
@@ -627,7 +854,22 @@ export function AlertDialog({
 				{sourceKey && measure && (
 					<div className={styles.now} aria-live="polite">
 						<div className={styles.nowHead}>
-							<span className={styles.blockLabel}>Right now</span>
+							<span className={styles.blockLabel}>
+								{period
+									? `Latest finished, ${describePeriod(period)}`
+									: "Right now"}
+							</span>
+							{unusual && preview && readings.length > 0 && (
+								<span
+									className={`${styles.pill} ${firingNow ? styles.pillHot : ""}`}
+								>
+									{groupBy
+										? `${firingNow} of ${readings.length} unusual`
+										: firingNow
+											? "Unusual"
+											: "Within its usual range"}
+								</span>
+							)}
 							{hasLine && preview && readings.length > 0 && (
 								<span
 									className={`${styles.pill} ${firingNow ? styles.pillHot : ""}`}
@@ -658,9 +900,11 @@ export function AlertDialog({
 						) : preview ? (
 							readings.length === 0 ? (
 								<span className={styles.fieldHint}>
-									Nothing matches the conditions.
+									{unusual
+										? "Not enough history yet. It needs finished periods in the date field, with at least three earlier ones to compare with."
+										: "Nothing matches the conditions."}
 								</span>
-							) : groupBy ? (
+							) : groupBy || unusual ? (
 								<>
 									<ul className={styles.bars}>
 										{readings
@@ -678,16 +922,34 @@ export function AlertDialog({
 														}
 														title={r.group ?? ""}
 													>
-														{r.group ?? "(blank)"}
+														{r.group ?? "Total"}
 													</span>
 													<span
 														className={
 															styles.barTrack
 														}
 													>
+														{/* The usual range behind the
+															    bar, so an unusual one reads
+															    as leaving it. */}
+														{typeof r.low ===
+															"number" &&
+															typeof r.high ===
+																"number" && (
+																<span
+																	className={
+																		styles.barBand
+																	}
+																	style={{
+																		left: `${(Math.max(r.low, 0) / scale) * 100}%`,
+																		width: `${((r.high - Math.max(r.low, 0)) / scale) * 100}%`,
+																	}}
+																	aria-hidden="true"
+																/>
+															)}
 														<span
 															className={`${styles.barFill} ${
-																meets(r.value)
+																flagged(r)
 																	? styles.barFillHot
 																	: ""
 															}`}
@@ -726,6 +988,21 @@ export function AlertDialog({
 														}
 													>
 														{preview.formatted[i]}
+														{preview.usual?.[i] && (
+															<span
+																className={
+																	styles.barUsual
+																}
+															>
+																usually{" "}
+																{
+																	preview
+																		.usual[
+																		i
+																	]
+																}
+															</span>
+														)}
 													</span>
 												</li>
 											))}
