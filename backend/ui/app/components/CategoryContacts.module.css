@@ -303,3 +303,66 @@
 		transition: none;
 	}
 }
+
+/* Everyone shown at once. The panel spans the page, the people sit in an
+   even grid under the question rather than in one long run of chips, and
+   the ask button closes the panel. */
+.panelOpen {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	align-items: start;
+	width: 100%;
+}
+
+.panelOpen .panelText {
+	grid-column: 1 / -1;
+	max-width: none;
+}
+
+.panelOpen > .list {
+	grid-column: 1 / -1;
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+	gap: var(--space-2);
+	padding-left: 0;
+	border-left: none;
+}
+
+.panelOpen .chip {
+	width: 100%;
+}
+
+.panelOpen .name {
+	flex: 1 1 auto;
+	min-width: 0;
+	text-align: left;
+}
+
+.panelOpen .fewer {
+	justify-self: start;
+}
+
+.panelOpen .askAll {
+	justify-self: end;
+}
+
+.fewer {
+	height: 32px;
+	padding: 0 var(--space-3);
+	border: none;
+	border-radius: var(--radius-md);
+	background: none;
+	color: var(--text-link);
+	font-size: var(--text-sm);
+	font-weight: 500;
+	cursor: pointer;
+}
+
+.fewer:hover {
+	background: var(--state-hover);
+}
+
+.fewer:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: 2px;
+}

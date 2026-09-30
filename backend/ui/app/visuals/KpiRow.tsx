@@ -24,7 +24,18 @@ import { readThemeColors, withAlpha } from "./colors";
 import { VisualError } from "./VisualFrame";
 import { VisualLoadingState } from "./LoadingState";
 import { fieldTooltip, type FieldMeta } from "./types";
+import {
+	describeBasis,
+	readTargets,
+	resolveTarget,
+	targetProgress,
+	targetStatusLabels,
+	type TargetPeriod,
+	type TargetProgress,
+	type TargetStatus,
+} from "../../lib/visuals/kpiTargets";
 import styles from "./Visual.module.css";
+import targetStyles from "./KpiTarget.module.css";
 
 // Loaded when somebody asks, since every scorecard carries the way in and few
 // are followed.
@@ -58,6 +69,62 @@ interface KpiRowProps {
 	// The dimension each tile is trended over. One extra query for the row
 	// rather than one per tile, since every tile reads the same shape.
 	sparkline?: string | null;
+	// The "targets" option as stored, a map of measure name to a target value
+	// and which way is better. Read through readTargets, so a half-filled
+	// entry is dropped rather than drawn against nothing.
+	targets?: unknown;
+}
+
+// The shape of the status mark, so on track, close and off target differ by
+// more than colour.
+function StatusMark({ status }: { status: TargetStatus }) {
+	return (
+		<svg
+			className={targetStyles.mark}
+			width="10"
+			height="10"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="3.5"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			{status === "good" ? (
+				<path d="M5 12.5l4.5 4.5L19 7.5" />
+			) : status === "warn" ? (
+				<path d="M12 5v9M12 19v0.5" />
+			) : (
+				<path d="M6 6l12 12M18 6L6 18" />
+			)}
+		</svg>
+	);
+}
+
+function TargetLine({ progress }: { progress: TargetProgress }) {
+	return (
+		<div
+			className={targetStyles.target}
+			data-status={progress.status}
+			title={progress.title}
+		>
+			<span className={targetStyles.track} aria-hidden="true">
+				<span
+					className={targetStyles.fill}
+					style={{ width: `${progress.fill * 100}%` }}
+				/>
+			</span>
+			<span className={targetStyles.label}>
+				<StatusMark status={progress.status} />
+				<span className={targetStyles.hidden}>
+					{targetStatusLabels[progress.status]}.
+				</span>
+				{progress.text}
+				<span className={targetStyles.hidden}>. {progress.title}.</span>
+			</span>
+		</div>
+	);
 }
 
 // A growth measure carries its own sign, so a tile colours it without anyone
@@ -78,6 +145,7 @@ export function KpiRow({
 	compareTo,
 	compareField,
 	sparkline,
+	targets,
 }: KpiRowProps) {
 	// The tile whose change is being broken down, if any.
 	const [explaining, setExplaining] = useState<string | null>(null);
@@ -132,6 +200,75 @@ export function KpiRow({
 					sourceKey,
 					dimensions: [sparkline],
 					measures,
+					filters,
+				})
+			: null,
+	);
+
+	// Keyed on the serialised option for the same reason as the filters.
+	const targetKey = JSON.stringify(targets ?? null);
+	const targetByMeasure = useMemo(
+		() => readTargets(targets),
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[targetKey],
+	);
+
+	// The figures relative targets are measured from. Each earlier window a
+	// target names is one question for every measure on the row, and the
+	// other measures targets name are one more under the row's own filters.
+	// A window that matches the comparison asks the same question, which the
+	// batcher and cache answer once.
+	const targetList = Object.values(targetByMeasure);
+	const wantsPeriod = (period: TargetPeriod) =>
+		Boolean(compareField) &&
+		targetList.some(
+			(t) => t.basis.kind === "period" && t.basis.period === period,
+		);
+	const periodFilters = (period: TargetPeriod) =>
+		wantsPeriod(period) && compareField
+			? shiftDateFilters(
+					(filters ?? []) as DateClause[],
+					compareField,
+					period,
+				)
+			: null;
+	const periodQuery = (period: TargetPeriod) => {
+		const shifted = periodFilters(period);
+		return shifted
+			? queryForVisual("kpiRow", {
+					sourceKey,
+					dimensions: [],
+					measures,
+					filters: shifted,
+				})
+			: null;
+	};
+	const yearBase = useVisualQuery(periodQuery("year"));
+	const quarterBase = useVisualQuery(periodQuery("quarter"));
+	const monthBase = useVisualQuery(periodQuery("month"));
+	const previousBase = useVisualQuery(periodQuery("previous"));
+	const periodRows: Record<TargetPeriod, Record<string, unknown> | null> = {
+		year: yearBase.rows[0] ?? null,
+		quarter: quarterBase.rows[0] ?? null,
+		month: monthBase.rows[0] ?? null,
+		previous: previousBase.rows[0] ?? null,
+	};
+	const baseMeasures = [
+		...new Set(
+			targetList.flatMap((t) =>
+				t.basis.kind === "measure" &&
+				!measures.includes(t.basis.measure)
+					? [t.basis.measure]
+					: [],
+			),
+		),
+	].sort();
+	const measureBase = useVisualQuery(
+		baseMeasures.length > 0
+			? queryForVisual("kpiRow", {
+					sourceKey,
+					dimensions: [],
+					measures: baseMeasures,
 					filters,
 				})
 			: null,
@@ -249,6 +386,34 @@ export function KpiRow({
 
 		const spark = sparkline ? trendFor(name) : [];
 
+		const target = targetByMeasure[name];
+		const base =
+			!target || target.basis.kind === "fixed"
+				? null
+				: target.basis.kind === "period"
+					? toNumber(periodRows[target.basis.period]?.[name])
+					: toNumber(
+							(measures.includes(target.basis.measure)
+								? row
+								: (measureBase.rows[0] ?? {}))[
+								target.basis.measure
+							],
+						);
+		const resolved = target ? resolveTarget(target, base) : null;
+		const measured = resolved
+			? targetProgress(numeric, resolved, hint)
+			: null;
+		// Where a relative target came from, beside how far off it is.
+		const basisWords = target ? describeBasis(target, hint) : null;
+		const progress =
+			measured && basisWords
+				? {
+						...measured,
+						text: `${measured.text}, ${basisWords}`,
+						title: `${measured.title}. Taken from ${basisWords}`,
+					}
+				: measured;
+
 		return (
 			<div key={name} className={styles.kpi} style={{ background }}>
 				<span
@@ -318,6 +483,8 @@ export function KpiRow({
 						&nbsp;
 					</span>
 				)}
+
+				{progress && <TargetLine progress={progress} />}
 
 				{spark.length > 1 && (
 					<Sparkline

@@ -124,6 +124,8 @@ export default function SheetEditor({ id }: { id: string }) {
 			: null,
 	);
 	const pivot = s.data?.mode === "pivot" ? (s.data as PivotData) : null;
+	// Fields the sheet names that its dataset stopped publishing.
+	const missingFields = (table ?? pivot)?.missing ?? [];
 
 	const fieldHints = useMemo(() => {
 		const m = new Map<string, FormatHint>();
@@ -499,6 +501,21 @@ export default function SheetEditor({ id }: { id: string }) {
 					>
 						Dismiss
 					</button>
+				</div>
+			)}
+
+			{missingFields.length > 0 && (
+				// Named rather than silently dropped, so a sheet that lost a
+				// column upstream does not read as complete.
+				<div className={styles.notice} role="status">
+					<span>
+						{missingFields.length === 1
+							? `${missingFields[0]} is no longer in ${source?.title ?? "this dataset"}, so it is left out.`
+							: `${missingFields.join(", ")} are no longer in ${source?.title ?? "this dataset"}, so they are left out.`}{" "}
+						{s.editable
+							? "Remove or replace them to clear this."
+							: "The owner can remove or replace them."}
+					</span>
 				</div>
 			)}
 

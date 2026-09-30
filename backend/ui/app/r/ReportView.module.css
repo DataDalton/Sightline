@@ -449,7 +449,7 @@
    reader back where they were looking without anything having moved. */
 .expandBackdrop {
 	position: fixed;
-	inset: 0;
+	inset: var(--header-height) 0 0 0;
 	z-index: 60;
 	display: flex;
 	align-items: center;
@@ -459,9 +459,11 @@
 	backdrop-filter: blur(2px);
 }
 
+/* The whole window less a margin, so a long series gets every pixel the
+   screen has rather than a box that stops short on a wide monitor. */
 .expandBox {
-	width: min(1600px, 94vw);
-	height: 88vh;
+	width: calc(100vw - 2 * var(--space-4));
+	height: calc(100vh - var(--header-height) - 2 * var(--space-4));
 	display: flex;
 	flex-direction: column;
 	min-height: 0;

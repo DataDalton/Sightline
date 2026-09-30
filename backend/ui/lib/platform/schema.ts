@@ -959,6 +959,82 @@ const statements: string[] = [
 		captured_on TIMESTAMPTZ NOT NULL DEFAULT now(),
 		PRIMARY KEY (owner_email, source_key)
 	)`,
+
+	// Alerts an editor put on a report page, which readers subscribe to. The
+	// definition has the same shape as a personal alert's, schedule included,
+	// and only people who may edit the report change it. See lib/alerts/pageStore.
+	//
+	// Due times live here rather than per scope, because the scopes an alert
+	// is judged in are worked out from its subscribers each time it runs.
+	`CREATE TABLE IF NOT EXISTS page_alerts (
+		alert_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		report_id       UUID NOT NULL REFERENCES reports (report_id) ON DELETE CASCADE,
+		page_id         UUID NOT NULL REFERENCES report_pages (page_id) ON DELETE CASCADE,
+		name            TEXT NOT NULL,
+		source_key      TEXT NOT NULL,
+		definition      JSONB NOT NULL,
+		is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+		next_check_on   TIMESTAMPTZ NOT NULL DEFAULT now(),
+		last_checked_on TIMESTAMPTZ,
+		created_by      TEXT NOT NULL,
+		created_on      TIMESTAMPTZ NOT NULL DEFAULT now(),
+		modified_by     TEXT NOT NULL,
+		modified_on     TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS page_alerts_page_idx
+		ON page_alerts (page_id) WHERE is_active`,
+
+	`CREATE INDEX IF NOT EXISTS page_alerts_due_idx
+		ON page_alerts (next_check_on) WHERE is_active`,
+
+	`CREATE INDEX IF NOT EXISTS page_alerts_source_idx
+		ON page_alerts (source_key) WHERE is_active`,
+
+	// Who follows a page alert. A mute that lasts until lifted is stored as
+	// infinity. access_confirmed_on is when the subscriber was last seen able
+	// to read the alert's dataset, which is what lets a reading be taken for
+	// them while they are away, as for a personal alert.
+	`CREATE TABLE IF NOT EXISTS page_alert_subscriptions (
+		alert_id            UUID NOT NULL REFERENCES page_alerts (alert_id) ON DELETE CASCADE,
+		email               TEXT NOT NULL,
+		muted_until         TIMESTAMPTZ,
+		access_confirmed_on TIMESTAMPTZ,
+		created_on          TIMESTAMPTZ NOT NULL DEFAULT now(),
+		PRIMARY KEY (alert_id, email)
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS page_alert_subscriptions_email_idx
+		ON page_alert_subscriptions (email)`,
+
+	// What a page alert last saw in one access scope. "app" for a dataset that
+	// shows everybody the same rows, or the app narrowed to one recorded
+	// restriction. See scopeKeyFor in lib/alerts/pageRules.
+	`CREATE TABLE IF NOT EXISTS page_alert_state (
+		alert_id        UUID NOT NULL REFERENCES page_alerts (alert_id) ON DELETE CASCADE,
+		scope_key       TEXT NOT NULL,
+		state           JSONB NOT NULL DEFAULT '{}'::jsonb,
+		last_checked_on TIMESTAMPTZ,
+		next_check_on   TIMESTAMPTZ,
+		last_status     TEXT NOT NULL DEFAULT 'waiting',
+		last_error      TEXT,
+		PRIMARY KEY (alert_id, scope_key)
+	)`,
+
+	// Every time a page alert fired in a scope, and how many people were told.
+	`CREATE TABLE IF NOT EXISTS page_alert_events (
+		event_id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		alert_id   UUID NOT NULL REFERENCES page_alerts (alert_id) ON DELETE CASCADE,
+		scope_key  TEXT NOT NULL,
+		fired_on   TIMESTAMPTZ NOT NULL DEFAULT now(),
+		title      TEXT NOT NULL,
+		body       TEXT NOT NULL DEFAULT '',
+		firings    INTEGER NOT NULL DEFAULT 1,
+		recipients INTEGER NOT NULL DEFAULT 0
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS page_alert_events_alert_idx
+		ON page_alert_events (alert_id, fired_on DESC)`,
 ];
 
 // Columns added after the initial schema shipped. CREATE TABLE IF NOT EXISTS
@@ -1141,6 +1217,47 @@ const migrations: string[] = [
 	                       'page_open', 'visual_action'))`,
 	`CREATE INDEX IF NOT EXISTS usage_events_page_idx
 		ON usage_events (report_id, event_type, occurred_on DESC)`,
+
+	// Where a field stands against its source. A field the source stopped
+	// publishing is marked missing rather than deleted, so its labels survive
+	// and every item that names it can be found and repaired. The fingerprint is
+	// what the last sync saw of it, which is what a rename is recognised by once
+	// the name itself is gone. See lib/semantic/fieldSync and renames.
+	`ALTER TABLE source_fields ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'`,
+	`ALTER TABLE source_fields DROP CONSTRAINT IF EXISTS source_fields_status_check`,
+	`ALTER TABLE source_fields ADD CONSTRAINT source_fields_status_check
+	 CHECK (status IN ('active', 'missing'))`,
+	`ALTER TABLE source_fields ADD COLUMN IF NOT EXISTS missing_since TIMESTAMPTZ`,
+	// Set when an administrator confirmed the field was renamed and remapped
+	// everything that named it. See lib/semantic/remap.
+	`ALTER TABLE source_fields ADD COLUMN IF NOT EXISTS renamed_to TEXT`,
+	// A likely new name offered by the sync, never applied without somebody
+	// confirming it.
+	`ALTER TABLE source_fields ADD COLUMN IF NOT EXISTS rename_candidate TEXT`,
+	`ALTER TABLE source_fields ADD COLUMN IF NOT EXISTS rename_confidence REAL`,
+	`ALTER TABLE source_fields ADD COLUMN IF NOT EXISTS fingerprint JSONB`,
+	// When the people whose items name a missing field were told, so a later
+	// sync does not tell them again.
+	`ALTER TABLE source_fields ADD COLUMN IF NOT EXISTS announced_on TIMESTAMPTZ`,
+	`CREATE INDEX IF NOT EXISTS source_fields_missing_idx
+		ON source_fields (source_key) WHERE status = 'missing'`,
+
+	// When a source's fields were last read from the catalogue, so the daily
+	// pass knows which are due.
+	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS fields_synced_on TIMESTAMPTZ`,
+
+	// Protection an administrator asked for by hand, which detection never
+	// turns off. Added without a default and filled from the flag as it stood,
+	// because every flag set before detection existed was set by hand. The
+	// default follows, so only rows present at that moment inherit.
+	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS row_filter_forced BOOLEAN`,
+	`UPDATE data_sources SET row_filter_forced = has_row_filter
+	 WHERE row_filter_forced IS NULL`,
+	`ALTER TABLE data_sources ALTER COLUMN row_filter_forced SET DEFAULT FALSE`,
+	// When the catalogue was last asked whether the source carries a row
+	// filter or a column mask, and why the last attempt failed if it did.
+	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS protection_checked_on TIMESTAMPTZ`,
+	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS protection_error TEXT`,
 
 	// Starts member_groups from the stored policies still held, so people who
 	// signed in before it existed count as members straight away. A row
@@ -1341,6 +1458,17 @@ export async function sweepExpired(): Promise<void> {
 	);
 	await sql(
 		`DELETE FROM alert_events WHERE fired_on < now() - interval '365 days'`,
+	);
+	await sql(
+		`DELETE FROM page_alert_events WHERE fired_on < now() - interval '365 days'`,
+	);
+	// A scope nobody has been read for in a month belongs to access nobody
+	// holds any more, or to a subscriber who stopped visiting. One claimed
+	// and never checked is judged by when it was claimed.
+	await sql(
+		`DELETE FROM page_alert_state
+		 WHERE coalesce(last_checked_on, next_check_on)
+		       < now() - interval '30 days'`,
 	);
 	await sql(`DELETE FROM sheet_presence WHERE expires_on < now()`);
 	// A recording older than a day is never used, so it is not kept.

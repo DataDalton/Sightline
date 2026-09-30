@@ -32,6 +32,11 @@ import { Modal } from "../components/shared/Modal";
 import { Select } from "../components/shared/Select";
 import { Toggle } from "../components/shared/Toggle";
 import { isTemporalField, type SourceMeta } from "../visuals/types";
+import {
+	changeSubscription,
+	send,
+	type PageAlertRecord,
+} from "./pageAlertClient";
 import styles from "./Alerts.module.css";
 
 // Creating or changing an alert.
@@ -45,6 +50,13 @@ import styles from "./Alerts.module.css";
 //
 // The assistant can fill all of it in from a description, and the person
 // reads it here and saves it themselves.
+//
+// The same dialog writes three things. A personal alert, the default. An
+// alert on a report page, which an editor sets up for everyone who follows it,
+// when page is given. And a personal copy of a page alert, when copyOf is
+// given, which starts from the page alert's whole rule. A new personal alert
+// that a page the reader can open already has is offered as that page's
+// alert first, since following it keeps one alert where there would be two.
 
 export interface AlertPrefill {
 	sourceKey?: string;
@@ -195,21 +207,53 @@ export function AlertDialog({
 	prefill,
 	onClose,
 	onSaved,
+	page,
+	onSavedPage,
+	copyOf,
+	contextPageId,
+	onSubscribed,
 }: {
 	sources: SourceMeta[];
 	editing?: AlertRecord | null;
 	prefill?: AlertPrefill;
 	onClose: () => void;
-	onSaved: (alert: AlertRecord) => void;
+	onSaved?: (alert: AlertRecord) => void;
+	// Saves to an alert on this page instead of one of the reader's own.
+	page?: {
+		pageId: string;
+		pageTitle: string;
+		editing?: PageAlertRecord | null;
+	};
+	onSavedPage?: (alert: PageAlertRecord) => void;
+	// A page alert this new personal alert copies.
+	copyOf?: PageAlertRecord | null;
+	// The page the dialog was opened from, whose own alerts are offered first.
+	contextPageId?: string | null;
+	// Called after following a page alert offered in place of a new one.
+	onSubscribed?: (alert: PageAlertRecord) => void;
 }) {
-	const start: Partial<AlertDefinition> = editing?.definition ?? {
+	const existing =
+		editing?.definition ??
+		page?.editing?.definition ??
+		copyOf?.definition ??
+		null;
+	const start: Partial<AlertDefinition> = existing ?? {
 		sourceKey: prefill?.sourceKey ?? "",
 		measure: prefill?.measure ?? "",
 		groupBy: prefill?.groupBy ?? null,
 		conditions: prefill?.conditions ?? [],
 	};
+	const pageMode = page !== undefined;
+	// Only a brand new personal alert is compared with the pages' alerts. An
+	// edit, a copy and a page alert of its own are what they are.
+	const offersPageAlerts = !pageMode && !editing && !copyOf;
 
-	const [name, setName] = useState(editing?.name ?? "");
+	const [name, setName] = useState(
+		editing?.name ?? page?.editing?.name ?? copyOf?.name ?? "",
+	);
+	const [keepFollowing, setKeepFollowing] = useState(true);
+	const [match, setMatch] = useState<PageAlertRecord | null>(null);
+	const [following, setFollowing] = useState(false);
 	const [sourceKey, setSourceKey] = useState(start.sourceKey ?? "");
 	const [measure, setMeasure] = useState(start.measure ?? "");
 	const [groupBy, setGroupBy] = useState<string>(start.groupBy ?? "");
@@ -260,7 +304,7 @@ export function AlertDialog({
 	const measureMeta = source?.measures.find((m) => m.name === measure);
 	const groupMeta = source?.dimensions.find((d) => d.name === groupBy);
 
-	const timeZone = editing?.definition.schedule.timeZone ?? browserZone();
+	const timeZone = existing?.schedule.timeZone ?? browserZone();
 
 	const knownFields = useMemo<KnownField[]>(
 		() => [
@@ -406,7 +450,82 @@ export function AlertDialog({
 		// does not read the warehouse again.
 	}, [watchedKey]);
 
+	// A page alert that already watches this, looked for once what is watched
+	// is chosen. Only the rule is compared, not the threshold or schedule.
+	const ruleKey = JSON.stringify([
+		sourceKey,
+		measure,
+		groupBy,
+		rowConditions,
+		condition,
+	]);
+	useEffect(() => {
+		setMatch(null);
+		if (!offersPageAlerts || !sourceKey || !measure) return;
+		const controller = new AbortController();
+		const timer = setTimeout(async () => {
+			try {
+				const response = await fetch("/api/page-alerts/matches/", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						definition,
+						pageId: contextPageId ?? null,
+					}),
+					signal: controller.signal,
+				});
+				if (!response.ok) return;
+				const body = (await response.json()) as {
+					matches?: PageAlertRecord[];
+				};
+				setMatch(body.matches?.[0] ?? null);
+			} catch {
+				// Offering the page's alert is a courtesy. Without it the
+				// dialog works as it always does.
+			}
+		}, 450);
+		return () => {
+			clearTimeout(timer);
+			controller.abort();
+		};
+		// Keyed on the rule alone, for the same reason as the preview.
+	}, [ruleKey, offersPageAlerts]);
+
+	const follow = async (found: PageAlertRecord) => {
+		setFollowing(true);
+		setError(null);
+		const sent = await changeSubscription(found.id, { subscribed: true });
+		setFollowing(false);
+		if (!sent.ok || !sent.body.alert) {
+			setError(sent.body.error ?? "Could not follow the page alert.");
+			return;
+		}
+		if (onSubscribed) onSubscribed(sent.body.alert);
+		else onClose();
+	};
+
+	const savePage = async () => {
+		if (!page) return;
+		setSaving(true);
+		setError(null);
+		const id = page.editing?.id;
+		const sent = await send<{ alert?: PageAlertRecord }>(
+			id
+				? `/api/page-alerts/${encodeURIComponent(id)}/`
+				: "/api/page-alerts/",
+			id ? "PUT" : "POST",
+			id ? { definition } : { pageId: page.pageId, definition },
+		);
+		setSaving(false);
+		if (!sent.ok || !sent.body.alert) {
+			setError(sent.body.error ?? "Could not save the alert.");
+			return;
+		}
+		onSavedPage?.(sent.body.alert);
+	};
+
 	const save = async () => {
+		if (pageMode) return savePage();
 		setSaving(true);
 		setError(null);
 		try {
@@ -423,7 +542,11 @@ export function AlertDialog({
 				setError(body?.error ?? "Could not save the alert.");
 				return;
 			}
-			onSaved(body.alert);
+			// A copy made to replace following the page alert leaves it.
+			if (copyOf?.subscribed && !keepFollowing) {
+				await changeSubscription(copyOf.id, { subscribed: false });
+			}
+			onSaved?.(body.alert);
 		} catch {
 			setError("Could not save the alert.");
 		} finally {
@@ -500,7 +623,17 @@ export function AlertDialog({
 		<Modal
 			isOpen
 			onClose={onClose}
-			title={editing ? "Edit alert" : "New alert"}
+			title={
+				pageMode
+					? page?.editing
+						? "Edit page alert"
+						: `New alert on ${page?.pageTitle || "this page"}`
+					: copyOf
+						? "Your own copy"
+						: editing
+							? "Edit alert"
+							: "New alert"
+			}
 			width="660px"
 			footer={
 				<>
@@ -518,12 +651,56 @@ export function AlertDialog({
 						onClick={save}
 						disabled={saving || !sourceKey || !measure}
 					>
-						{saving ? "Saving" : editing ? "Save" : "Create alert"}
+						{saving
+							? "Saving"
+							: editing || page?.editing
+								? "Save"
+								: pageMode
+									? "Add to page"
+									: "Create alert"}
 					</button>
 				</>
 			}
 		>
 			<div className={styles.form}>
+				{match && (
+					<div className={styles.duplicate} role="status">
+						<div className={styles.duplicateText}>
+							<strong>
+								{match.pageId === contextPageId
+									? "This page already has this alert"
+									: `The ${match.pageTitle} page of ${match.reportTitle} already has this alert`}
+							</strong>
+							<span>
+								{match.name}. {match.summary}.{" "}
+								{match.scheduleText}.
+							</span>
+						</div>
+						{match.subscribed ? (
+							<span className={styles.fieldHint}>
+								You follow it already.
+							</span>
+						) : (
+							<button
+								type="button"
+								className={styles.primary}
+								onClick={() => void follow(match)}
+								disabled={following}
+							>
+								{following ? "Subscribing" : "Subscribe"}
+							</button>
+						)}
+					</div>
+				)}
+
+				{pageMode && (
+					<p className={styles.fieldHint}>
+						Everyone who follows this alert is told when it fires,
+						each about the rows they can see. Followers cannot
+						change the rule or when it is checked.
+					</p>
+				)}
+
 				<input
 					className={styles.nameInput}
 					value={name}
@@ -1042,6 +1219,13 @@ export function AlertDialog({
 							{scheduleOpen ? "Done" : "Change"}
 						</button>
 					</div>
+					{copyOf?.subscribed && (
+						<Toggle
+							checked={keepFollowing}
+							onChange={setKeepFollowing}
+							label="Keep following the page alert as well"
+						/>
+					)}
 					{scheduleOpen && (
 						<div className={styles.scheduleRow}>
 							<Select

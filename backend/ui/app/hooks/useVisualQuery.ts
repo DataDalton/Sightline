@@ -1,6 +1,8 @@
 "use client";
 
+import { useCallback, useEffect, useRef } from "react";
 import useSWR from "swr";
+import { useVisualVisibility } from "../visuals/LazyVisual";
 import { canonical } from "./canonicalKey";
 import { runBatchedQuery } from "./queryBatch";
 
@@ -48,7 +50,20 @@ export function useVisualQuery(query: VisualQuery | null) {
 	// deduplicate across every visual on the page however the object was
 	// spelled. Plain stringify made the key depend on property order, which two
 	// components writing the same query eventually disagree on.
-	const key = query ? canonical(query) : null;
+	//
+	// No key until the visual is within a screen of being seen, so a visual
+	// further down a long report asks nothing until the reader heads for it.
+	const { near, onScreen } = useVisualVisibility();
+	const key = query && near ? canonical(query) : null;
+
+	// Zero for a source on a schedule. A live one names its own interval,
+	// which stops while the visual is out of sight. SWR restarts its timer
+	// when this function changes, so it is rebuilt only when that does.
+	const refreshInterval = useCallback(
+		(latest: QueryResponse | undefined) =>
+			onScreen ? (latest?.meta?.refreshAfterMs ?? 0) : 0,
+		[onScreen],
+	);
 
 	const { data, error, isLoading, mutate } = useSWR<QueryResponse>(
 		key,
@@ -59,11 +74,20 @@ export function useVisualQuery(query: VisualQuery | null) {
 			// refetch on mount would only add latency.
 			revalidateIfStale: false,
 			keepPreviousData: true,
-			// Zero for a source on a schedule. A live one names its own
-			// interval, and SWR pauses it while the tab is hidden.
-			refreshInterval: (latest) => latest?.meta?.refreshAfterMs ?? 0,
+			// SWR also pauses this while the tab is hidden.
+			refreshInterval,
 		},
 	);
+
+	// A live visual coming back into sight asks straight away, since what it
+	// shows stopped following the source when it left.
+	const wasOnScreen = useRef(onScreen);
+	const live = Boolean(data?.meta?.refreshAfterMs);
+	useEffect(() => {
+		const returned = onScreen && !wasOnScreen.current;
+		wasOnScreen.current = onScreen;
+		if (returned && live) void mutate();
+	}, [onScreen, live, mutate]);
 
 	return {
 		// Shared constants rather than fresh literals.

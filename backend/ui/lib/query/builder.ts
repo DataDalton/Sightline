@@ -1,6 +1,7 @@
 import { valuelessOperators } from "../search/types";
 import {
 	findField,
+	findMissingField,
 	quotedSourceRef,
 	type SemanticField,
 	type SemanticSource,
@@ -37,6 +38,75 @@ import { distributionColumns } from "./visualSpec";
 // Row filtering is not this module's job. The query runs under the caller's
 // own token, so Unity Catalog applies row filters and column masks during the
 // scan. The platform deliberately does not reimplement them.
+
+// A field the query names that its source used to publish and no longer does.
+//
+// Told apart from a name the source never had, because the two call for
+// different things. A typo is the author's to fix, and a field that went away
+// upstream is something the reader should be told happened rather than shown a
+// warehouse error. The message names only the field and what became of it, so
+// it is safe to pass to the reader as it is.
+export class MissingFieldError extends QuerySpecError {
+	readonly field: string;
+	readonly renamedTo: string | null;
+
+	constructor(
+		field: string,
+		renamedTo: string | null = null,
+		detail: { sourceTitle?: string; candidate?: string | null } = {},
+	) {
+		const where = detail.sourceTitle
+			? `the ${detail.sourceTitle} dataset`
+			: "its dataset";
+		super(
+			renamedTo
+				? `"${field}" was renamed to "${renamedTo}" in ${where}. This item still uses the old name.`
+				: detail.candidate
+					? `"${field}" is no longer in ${where}. It may have been renamed to "${detail.candidate}".`
+					: `"${field}" is no longer in ${where}.`,
+		);
+		this.name = "MissingFieldError";
+		this.field = field;
+		this.renamedTo = renamedTo;
+	}
+}
+
+// Every field name a spec refers to, wherever it sits.
+export function specFieldNames(spec: QuerySpec): string[] {
+	const names: string[] = [...spec.dimensions, ...spec.measures];
+	const walk = (node: FilterNode) => {
+		if ("all" in node) node.all.forEach(walk);
+		else if ("any" in node) node.any.forEach(walk);
+		else if ("not" in node) walk(node.not);
+		else names.push(node.field);
+	};
+	spec.filters.forEach(walk);
+	for (const group of spec.anyOf ?? []) group.forEach(walk);
+	if (spec.where) walk(spec.where);
+	for (const entry of spec.sort) names.push(entry.field);
+	names.push(...(spec.distribution?.detail ?? []));
+	return names;
+}
+
+// Throws MissingFieldError for the first field in the spec its source no
+// longer publishes. Cheap, so it runs before any cache is asked. An answer
+// cached before the field went would otherwise go on being served.
+export function assertFieldsPresent(
+	source: SemanticSource,
+	spec: QuerySpec,
+): void {
+	if (!source.missingFields || source.missingFields.size === 0) return;
+	for (const name of specFieldNames(spec)) missingFieldCheck(source, name);
+}
+
+function missingFieldCheck(source: SemanticSource, name: string): void {
+	const missing = findMissingField(source, name);
+	if (!missing) return;
+	throw new MissingFieldError(name, missing.renamedTo, {
+		sourceTitle: source.title,
+		candidate: missing.renameCandidate,
+	});
+}
 
 export interface CompiledQuery {
 	sql: string;
@@ -627,6 +697,7 @@ function restrictionSql(
 	const refs = restriction.fields.map((name) => {
 		const field = findField(source, name, "dimension");
 		if (!field) {
+			missingFieldCheck(source, name);
 			throw new QuerySpecError(
 				`Unknown dimension "${name}" on source "${source.sourceKey}"`,
 			);
@@ -657,6 +728,7 @@ export function compileDistinctValues(
 	const refs = fields.map((name) => {
 		const field = findField(source, name, "dimension");
 		if (!field) {
+			missingFieldCheck(source, name);
 			throw new QuerySpecError(
 				`Unknown dimension "${name}" on source "${source.sourceKey}"`,
 			);
@@ -681,6 +753,7 @@ export function compileQuery(
 	spec: QuerySpec,
 	options: { restriction?: RowRestriction } = {},
 ): CompiledQuery {
+	assertFieldsPresent(source, spec);
 	if (spec.distribution) return compileDistribution(source, spec);
 
 	if (spec.dimensions.length === 0 && spec.measures.length === 0) {

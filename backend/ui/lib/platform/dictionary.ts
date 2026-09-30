@@ -1,4 +1,3 @@
-import { sql } from "../data/lakebase";
 import type { Identity } from "../auth/identity";
 import type { PolicyClass } from "../auth/policy";
 import { getSource, listSources } from "../semantic/registry";
@@ -17,7 +16,14 @@ import {
 import { getAccessContext } from "./access";
 import { reachableSet } from "./sources";
 import { resolveReportAccess } from "./accessRules";
-import { roleOf, type FieldRole } from "./fieldRefs";
+import { type FieldRole } from "./fieldRefs";
+import {
+	collectDependents,
+	dependentKey,
+	findDependents,
+	type Dependent,
+	type DependentKind,
+} from "./dependents";
 
 // What every field means, and what depends on it.
 //
@@ -108,43 +114,111 @@ export async function dictionaryFields(
 	return fields;
 }
 
-interface UsageRow {
-	report_id: string;
-	slug: string;
-	report_title: string;
-	category_id: string | null;
-	is_personal: boolean;
-	owner_email: string | null;
-	page_title: string | null;
-	visual_id: string;
-	visual_title: string | null;
-	visual_type: string;
-	config: unknown;
+// Where a field is used other than on a visual: saved views, alerts, sheets,
+// saved explorations, deliveries, a page's data-through stamp and the dataset's
+// own default time field. Grouped by kind, because most of these belong to one
+// person and are not the reader's to open.
+export interface OtherUsage {
+	kind: DependentKind;
+	// How many there are, whoever they belong to. A count says nothing about
+	// any one of them.
+	total: number;
+	// The caller's own, by name.
+	yours: { name: string; link: string | null }[];
+	// Reports the caller can open that these sit on, for the kinds that sit on
+	// a report.
+	reports: { title: string; slug: string }[];
 }
 
-// A visual's source is its own, or its page's, or its report's.
-//
-// The same inheritance the reader applies when it builds a query. Matching on
-// report_visuals.source_key alone would report every visual that leaves it null
-// as belonging to no source, which is most of them on a single-source report,
-// and the field would read as unused.
-const effectiveSource = `coalesce(v.source_key, p.source_key, r.source_key)`;
+export interface FieldUsageDetail {
+	usage: FieldUsage[];
+	elsewhere: OtherUsage[];
+}
 
-// Named in any of the four places a config can name it. jsonb_exists covers the
-// two plain string arrays; filters and sort hold objects, so those are searched
-// element by element.
-const referencesField = `(
-	jsonb_exists(coalesce(v.config->'dimensions', '[]'::jsonb), $2)
-	OR jsonb_exists(coalesce(v.config->'measures', '[]'::jsonb), $2)
-	OR EXISTS (
-		SELECT 1 FROM jsonb_array_elements(
-			coalesce(v.config->'filters', '[]'::jsonb)) AS f
-		WHERE f->>'field' = $2)
-	OR EXISTS (
-		SELECT 1 FROM jsonb_array_elements(
-			coalesce(v.config->'sort', '[]'::jsonb)) AS s
-		WHERE s->>'field' = $2)
-)`;
+// Everything that names a field, as much of it as the caller may know about.
+export async function fieldUsageDetail(
+	identity: Identity,
+	policy: PolicyClass,
+	sourceKey: string,
+	fieldName: string,
+): Promise<FieldUsageDetail> {
+	const readable = await reachableSet(identity);
+	if (readable && !readable.has(sourceKey)) {
+		return { usage: [], elsewhere: [] };
+	}
+
+	const dependents = await findDependents(sourceKey, fieldName);
+
+	// Filtered by what the caller can open. A reader being told their figure
+	// also appears on a report they cannot reach is a disclosure about that
+	// report, and the point of the list is the ones they can go and look at.
+	const context = await getAccessContext(policy, identity);
+	const canOpen = (d: Dependent) =>
+		d.report !== null &&
+		resolveReportAccess(
+			context.grants,
+			{
+				reportId: d.report.reportId,
+				categoryId: d.report.categoryId,
+				isPersonal: d.report.isPersonal,
+				ownerEmail: d.report.ownerEmail,
+			},
+			context.email,
+			"view",
+			context.baseline,
+		).allowed;
+
+	const usage: FieldUsage[] = dependents
+		.filter((d) => d.kind === "visual" && canOpen(d))
+		.map((d) => ({
+			reportSlug: d.report!.slug,
+			reportTitle: d.report!.title,
+			reportId: d.report!.reportId,
+			categoryId: d.report!.categoryId,
+			isPersonal: d.report!.isPersonal,
+			ownerEmail: d.report!.ownerEmail,
+			pageTitle: d.pageTitle,
+			visualId: d.id,
+			visualTitle: d.name,
+			visualType: d.visualType ?? "",
+			usedAs: d.usedAs ?? "filter",
+		}));
+
+	const me = identity.email.toLowerCase();
+	const byKind = new Map<DependentKind, Dependent[]>();
+	for (const d of dependents) {
+		if (d.kind === "visual") continue;
+		const held = byKind.get(d.kind) ?? [];
+		held.push(d);
+		byKind.set(d.kind, held);
+	}
+
+	const elsewhere: OtherUsage[] = [];
+	for (const [kind, items] of byKind) {
+		const ids = new Set(items.map((d) => d.id));
+		const yours = new Map<string, { name: string; link: string | null }>();
+		const reports = new Map<string, { title: string; slug: string }>();
+		for (const d of items) {
+			if (d.ownerEmail?.toLowerCase() === me) {
+				yours.set(d.id, { name: d.name ?? "Untitled", link: d.link });
+			}
+			if (d.report && canOpen(d)) {
+				reports.set(d.report.slug, {
+					title: d.report.title,
+					slug: d.report.slug,
+				});
+			}
+		}
+		elsewhere.push({
+			kind,
+			total: ids.size,
+			yours: [...yours.values()],
+			reports: [...reports.values()],
+		});
+	}
+
+	return { usage, elsewhere };
+}
 
 export async function fieldUsage(
 	identity: Identity,
@@ -152,72 +226,25 @@ export async function fieldUsage(
 	sourceKey: string,
 	fieldName: string,
 ): Promise<FieldUsage[]> {
-	const readable = await reachableSet(identity);
-	if (readable && !readable.has(sourceKey)) return [];
-
-	const rows = await sql<UsageRow>(
-		`SELECT r.report_id::text   AS report_id,
-		        r.slug              AS slug,
-		        r.title             AS report_title,
-		        r.category_id       AS category_id,
-		        r.is_personal       AS is_personal,
-		        r.owner_email       AS owner_email,
-		        p.title             AS page_title,
-		        v.visual_id::text   AS visual_id,
-		        v.title             AS visual_title,
-		        v.visual_type       AS visual_type,
-		        v.config            AS config
-		 FROM report_visuals v
-		 JOIN report_pages p ON p.page_id = v.page_id
-		 JOIN reports r      ON r.report_id = p.report_id
-		 WHERE v.is_active
-		   AND ${effectiveSource} = $1
-		   AND ${referencesField}
-		 ORDER BY r.title, p.sort_order, v.sort_order`,
-		[sourceKey, fieldName],
-	);
-
-	// Filtered by what the caller can open. A reader being told their figure
-	// also appears on a report they cannot reach is a disclosure about that
-	// report, and the point of the list is the ones they can go and look at.
-	const context = await getAccessContext(policy, identity);
-
-	return rows
-		.filter(
-			(row) =>
-				resolveReportAccess(
-					context.grants,
-					{
-						reportId: row.report_id,
-						categoryId: row.category_id,
-						isPersonal: row.is_personal,
-						ownerEmail: row.owner_email,
-					},
-					context.email,
-					"view",
-					context.baseline,
-				).allowed,
-		)
-		.map((row) => ({
-			reportSlug: row.slug,
-			reportTitle: row.report_title,
-			reportId: row.report_id,
-			categoryId: row.category_id,
-			isPersonal: row.is_personal,
-			ownerEmail: row.owner_email,
-			pageTitle: row.page_title,
-			visualId: row.visual_id,
-			visualTitle: row.visual_title,
-			visualType: row.visual_type,
-			usedAs: roleOf(row.config, fieldName) ?? "filter",
-		}));
+	return (await fieldUsageDetail(identity, policy, sourceKey, fieldName))
+		.usage;
 }
 
-// How many visuals name each field, for every field on the readable sources.
+// Counts per source set, held briefly. The list page asks for every field at
+// once and is reopened often, and the walk reads every stored item on those
+// sources.
+const countTtlMs = 60 * 1000;
+const heldCounts = new Map<
+	string,
+	{ at: number; counts: Map<string, number> }
+>();
+
+// How many items name each field, for every field on the readable sources.
 //
-// One query for the whole catalogue rather than one per field: the page that
-// wants this is showing hundreds of rows at once, and a count beside each is
-// what makes an unused field visible without opening it.
+// One walk for the whole catalogue rather than one per field, because the page
+// that wants this is showing hundreds of rows at once, and a count beside each is
+// what makes an unused field visible without opening it. Every kind of item is
+// counted, so a field used only by somebody's alert does not read as unused.
 export async function usageCounts(
 	identity: Identity,
 ): Promise<Map<string, number>> {
@@ -225,45 +252,30 @@ export async function usageCounts(
 	if (readable && readable.size === 0) return new Map();
 	const keys = [
 		...(readable ?? new Set(listSources().map((s) => s.sourceKey))),
-	];
+	].sort();
 
-	const rows = await sql<{ source_key: string; field: string; uses: string }>(
-		`SELECT ${effectiveSource} AS source_key,
-		        field.name          AS field,
-		        count(*)::text      AS uses
-		 FROM report_visuals v
-		 JOIN report_pages p ON p.page_id = v.page_id
-		 JOIN reports r      ON r.report_id = p.report_id
-		 CROSS JOIN LATERAL (
-		     SELECT jsonb_array_elements_text(
-		                coalesce(v.config->'dimensions', '[]'::jsonb)) AS name
-		     UNION ALL
-		     SELECT jsonb_array_elements_text(
-		                coalesce(v.config->'measures', '[]'::jsonb))
-		     UNION ALL
-		     SELECT f->>'field' FROM jsonb_array_elements(
-		                coalesce(v.config->'filters', '[]'::jsonb)) AS f
-		     UNION ALL
-		     SELECT s->>'field' FROM jsonb_array_elements(
-		                coalesce(v.config->'sort', '[]'::jsonb)) AS s
-		 ) AS field
-		 WHERE v.is_active
-		   AND field.name IS NOT NULL
-		   AND ${effectiveSource} = ANY($1)
-		 GROUP BY 1, 2`,
-		[keys],
-	);
+	const cacheKey = keys.join("\u0000");
+	const held = heldCounts.get(cacheKey);
+	if (held && Date.now() - held.at < countTtlMs) return held.counts;
 
+	// Each item counted once per field, however many places in it name it.
+	const seen = new Set<string>();
 	const counts = new Map<string, number>();
-	for (const row of rows) {
-		counts.set(usageKey(row.source_key, row.field), Number(row.uses));
+	for (const d of await collectDependents(keys)) {
+		const key = dependentKey(d.sourceKey, d.field);
+		const item = `${key}\u0000${d.kind}\u0000${d.id}`;
+		if (seen.has(item)) continue;
+		seen.add(item);
+		counts.set(key, (counts.get(key) ?? 0) + 1);
 	}
+	if (heldCounts.size > 50) heldCounts.clear();
+	heldCounts.set(cacheKey, { at: Date.now(), counts });
 	return counts;
 }
 
 // Source and field together, since a field name is only unique within a source.
 export function usageKey(sourceKey: string, fieldName: string): string {
-	return `${sourceKey}\u0000${fieldName}`;
+	return dependentKey(sourceKey, fieldName);
 }
 
 // How a field is calculated.

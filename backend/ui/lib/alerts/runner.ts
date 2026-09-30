@@ -5,10 +5,10 @@ import type { QueryParams, Row } from "../data/types";
 import { queryAsUser } from "../data/userSession";
 import { encodeState } from "../explore/state";
 import { groupLabel, toNumber } from "../format";
-import { notify } from "../notify/store";
+import { notifyInTransaction, pushNotification } from "../notify/store";
 import { confirmableSources, reachableSet } from "../platform/sources";
-import { compileQuery, type RowRestriction } from "../query/builder";
-import { maxLimit, parseQuerySpec } from "../query/spec";
+import { compileQuery } from "../query/builder";
+import { maxLimit, parseQuerySpec, type QuerySpec } from "../query/spec";
 import type { SemanticSource } from "../semantic/types";
 import {
 	periodKey,
@@ -29,7 +29,10 @@ import {
 	type Firing,
 	type Reading,
 } from "./rule";
+import { BatchReads } from "./reads";
+import { confirmSubscriptions } from "./pageStore";
 import { nextRun } from "./schedule";
+import type { RunIdentity } from "./shared";
 import {
 	recordAccess,
 	recordingWindow,
@@ -74,7 +77,10 @@ const accessWindow = "24 hours";
 // is a minute away.
 const batchSize = 20;
 
-function readingsFrom(definition: AlertDefinition, rows: Row[]): Reading[] {
+export function readingsFrom(
+	definition: AlertDefinition,
+	rows: Row[],
+): Reading[] {
 	if (!definition.groupBy) {
 		const value = rows[0] ? toNumber(rows[0][definition.measure]) : null;
 		return [{ group: null, value }];
@@ -98,30 +104,36 @@ function readingsFrom(definition: AlertDefinition, rows: Row[]): Reading[] {
 // and which is the latest finished, from the dates themselves, since a field
 // may hold days, weeks or months. The second reads just the history the
 // comparison needs, split by group.
-async function readUnusual(
+// The first of those questions, which depends on nothing but the alert.
+export function probeSpec(
 	source: SemanticSource,
 	definition: AlertDefinition,
-	run: RunQuery,
-	restriction?: RowRestriction,
+): QuerySpec | null {
+	const timeField = definition.anomaly?.timeField;
+	if (!timeField) return null;
+	return parseQuerySpec({
+		...alertSpec(source, definition),
+		dimensions: [timeField],
+		sort: [{ field: timeField, direction: "desc" }],
+		limit: 60,
+		offset: 0,
+	});
+}
+
+export type ReadSpec = (spec: QuerySpec) => Promise<Row[]>;
+
+export async function readUnusual(
+	source: SemanticSource,
+	definition: AlertDefinition,
+	read: ReadSpec,
 ): Promise<Reading[]> {
 	const settings = definition.anomaly;
-	if (!settings) return [];
+	const probe = probeSpec(source, definition);
+	if (!settings || !probe) return [];
 	const timeField = settings.timeField;
 	const base = alertSpec(source, definition);
-	const options = restriction ? { restriction } : undefined;
 
-	const probe = compileQuery(
-		source,
-		parseQuerySpec({
-			...base,
-			dimensions: [timeField],
-			sort: [{ field: timeField, direction: "desc" }],
-			limit: 60,
-			offset: 0,
-		}),
-		options,
-	);
-	const recent = await run(probe.sql, probe.params);
+	const recent = await read(probe);
 	const keys = recent
 		.map((row) => periodKey(row[timeField]))
 		.filter((k): k is string => k !== null);
@@ -130,8 +142,7 @@ async function readUnusual(
 	const target = targetPeriod(keys, spacing, today);
 	if (!target) return [];
 
-	const history = compileQuery(
-		source,
+	const rows = await read(
 		parseQuerySpec({
 			...base,
 			dimensions: definition.groupBy
@@ -150,9 +161,7 @@ async function readUnusual(
 			limit: maxLimit,
 			offset: 0,
 		}),
-		options,
 	);
-	const rows = await run(history.sql, history.params);
 	const { readings } = readAnomalies(rows, {
 		timeField,
 		groupBy: definition.groupBy,
@@ -185,7 +194,7 @@ export interface CheckOutcome {
 
 async function check(
 	row: AlertRow,
-	run: RunQuery,
+	reads: BatchReads,
 	reschedule: boolean,
 	// Set when the check runs as the app on a row-filtered dataset, so it has
 	// to be narrowed to what the owner was recorded seeing.
@@ -221,15 +230,13 @@ async function check(
 			);
 		}
 
+		// Read through the batch, so alerts asking the same question under
+		// the same scope share one warehouse query.
+		const read: ReadSpec = (spec) => reads.read(source, spec, restriction);
 		if (definition.condition === "unusual") {
-			readings = await readUnusual(source, definition, run, restriction);
+			readings = await readUnusual(source, definition, read);
 		} else {
-			const compiled = compileQuery(
-				source,
-				alertSpec(source, definition),
-				{ restriction },
-			);
-			const rows = await run(compiled.sql, compiled.params);
+			const rows = await read(alertSpec(source, definition));
 			readings = readingsFrom(definition, rows);
 		}
 		const outcome = evaluate(definition, readings, state);
@@ -242,10 +249,11 @@ async function check(
 		message = null;
 	}
 
-	// The new state and the event it produced land together. The save only
-	// applies while the row still holds the check this one started from, so
-	// two checks of the same alert running at once cannot both fire. The
-	// second finds the row moved on and writes nothing.
+	// The new state, the event it produced and the inbox entry land together.
+	// The save only applies while the row still holds the check this one
+	// started from, so two checks of the same alert running at once cannot
+	// both fire. The second finds the row moved on and writes nothing, and a
+	// process that stops part way leaves neither the event nor the entry.
 	const saved = await transaction(async (client) => {
 		const updated = await client.query<AlertRow>(
 			`UPDATE alert_rules SET
@@ -270,14 +278,33 @@ async function check(
 		);
 		const record = updated.rows[0];
 		if (!record) return null;
-		if (message) {
-			await client.query(
-				`INSERT INTO alert_events (rule_id, title, body, firings)
-				 VALUES ($1, $2, $3, $4)`,
-				[row.rule_id, message.title, message.body, firings.length],
-			);
+		if (!message) return { record, item: null };
+		await client.query(
+			`INSERT INTO alert_events (rule_id, title, body, firings)
+			 VALUES ($1, $2, $3, $4)`,
+			[row.rule_id, message.title, message.body, firings.length],
+		);
+		const item = await notifyInTransaction(client, row.owner_email, {
+			kind: "alert",
+			title: message.title,
+			body: message.body,
+			link: exploreLink(definition),
+			data: { ruleId: row.rule_id },
+		});
+		return { record, item };
+	}).catch(async (e: unknown) => {
+		// Nothing was saved. A check the owner asked for puts back the time
+		// the alert was due, so the claim does not leave it to run at the end
+		// of the lease. A scheduled check is taken again after the lease.
+		if (keep) {
+			await sql(
+				`UPDATE alert_rules SET next_check_on = $2::timestamptz
+				 WHERE rule_id = $1
+				   AND last_checked_on IS NOT DISTINCT FROM $3::timestamptz`,
+				[row.rule_id, keep, row.last_checked_on],
+			).catch(() => undefined);
 		}
-		return record;
+		throw e;
 	});
 
 	if (!saved) {
@@ -293,39 +320,60 @@ async function check(
 		};
 	}
 
-	// Sent once the event is committed. A notification that fails here is
-	// lost rather than the alert firing a second time.
-	if (message) {
-		await notify(row.owner_email, {
-			kind: "alert",
-			title: message.title,
-			body: message.body,
-			link: exploreLink(definition),
-			data: { ruleId: row.rule_id },
-		}).catch((e) => {
-			console.warn(`Alert ${row.rule_id} notification failed:`, e);
-		});
-	}
+	// Pushed only once the entry is committed, so a device is never told of
+	// an entry that rolled back.
+	if (saved.item) pushNotification(row.owner_email, saved.item);
 
 	return {
-		record: toRecord(saved),
+		record: toRecord(saved.record),
 		readings,
 		firings,
 		error,
 	};
 }
 
+// The first question each alert without a restriction asks, for looking up
+// cached answers to the whole batch at once.
+function plannedReads(
+	rows: AlertRow[],
+	restricted: (row: AlertRow) => boolean,
+): { source: SemanticSource; spec: QuerySpec }[] {
+	const out: { source: SemanticSource; spec: QuerySpec }[] = [];
+	for (const row of rows) {
+		if (restricted(row)) continue;
+		const source = getSource(row.definition.sourceKey);
+		if (!source) continue;
+		try {
+			const spec =
+				row.definition.condition === "unusual"
+					? probeSpec(source, row.definition)
+					: alertSpec(source, row.definition);
+			if (spec) out.push({ source, spec });
+		} catch {
+			// Reported by the check itself.
+		}
+	}
+	return out;
+}
+
 async function runAll(
 	rows: AlertRow[],
 	run: RunQuery,
+	identity: RunIdentity,
 	restricted: (row: AlertRow) => boolean = () => false,
+	// Handed in when the page alerts of the same tick read through it too.
+	reads: BatchReads = new BatchReads(identity, run),
 ): Promise<void> {
+	await reads
+		.prefetch(plannedReads(rows, restricted))
+		.catch((error) => console.warn("Alert cache lookup failed:", error));
+
 	// Three at a time: enough to clear an hour's batch quickly, not so many
 	// that alerts crowd out the readers using the same warehouse.
 	const queue = [...rows];
 	const workers = Array.from({ length: 3 }, async () => {
 		for (let row = queue.shift(); row; row = queue.shift()) {
-			await check(row, run, true, restricted(row)).catch((error) => {
+			await check(row, reads, true, restricted(row)).catch((error) => {
 				console.warn(`Alert ${row.rule_id} check failed:`, error);
 			});
 		}
@@ -405,9 +453,28 @@ export async function runScheduledAlerts(): Promise<void> {
 			[unattended, batchSize, restrictable],
 		);
 		const open = new Set(unattended);
+		// One batch for the personal alerts and the page alerts of this tick,
+		// so a page alert asking what a personal alert already asked in the
+		// same scope takes the same rows.
+		const reads = new BatchReads({ app: true }, asApp);
 		if (rows.length > 0) {
-			await runAll(rows, asApp, (row) => !open.has(row.source_key));
+			await runAll(
+				rows,
+				asApp,
+				{ app: true },
+				(row) => !open.has(row.source_key),
+				reads,
+			);
 		}
+
+		// Loaded here rather than at the top, because the page runner reads
+		// its alerts with the helpers above.
+		const { runDuePageAlerts } = await import("./pageRunner");
+		await runDuePageAlerts(reads, unattended, restrictable).catch(
+			(error) => {
+				console.warn("Scheduled page alerts failed:", error);
+			},
+		);
 	} finally {
 		running = false;
 	}
@@ -416,7 +483,17 @@ export async function runScheduledAlerts(): Promise<void> {
 // --- While the owner is here -----------------------------------------------
 
 const lastOwnerRun = new Map<string, number>();
-const ownerThrottleMs = 60 * 1000;
+
+// How often one owner's pass runs on one replica. The pass is started from a
+// poll every open tab makes, and each run reads what the owner can reach and
+// may write confirmations, so it is held back well past the poll interval. An
+// alert that only runs under the owner's token waits at most this much longer.
+export const ownerThrottleMs = 5 * 60 * 1000;
+
+// How long a confirmation that the owner can read a dataset stands before a
+// visit writes it again. Far inside the window the timer asks for, so a
+// confirmation never lapses while the owner keeps visiting.
+export const confirmationRefresh = "1 hour";
 
 // Called from a request the owner made. Returns straight away, and the checks run
 // behind it.
@@ -441,9 +518,19 @@ export function runAlertsForOwner(identity: Identity): void {
 		await sql(
 			`UPDATE alert_rules SET access_confirmed_on = now()
 			 WHERE owner_email = $1
-			   AND ($2::text[] IS NULL OR source_key = ANY($2::text[]))`,
+			   AND ($2::text[] IS NULL OR source_key = ANY($2::text[]))
+			   AND (access_confirmed_on IS NULL
+			        OR access_confirmed_on < now() - interval '${confirmationRefresh}')`,
 			[email, confirmable ? [...confirmable] : null],
 		);
+		// The same for the page alerts they follow, which also needs them to
+		// still be able to open the report.
+		await confirmSubscriptions(identity, confirmable).catch((error) => {
+			console.warn(
+				`Page alert access for ${email} could not be confirmed:`,
+				error,
+			);
+		});
 
 		// What they can see of each row-filtered dataset they have alerts on,
 		// so those alerts keep running on the timer too.
@@ -464,7 +551,29 @@ export function runAlertsForOwner(identity: Identity): void {
 			 RETURNING ${alertColumns}`,
 			[email, readable, batchSize],
 		);
-		if (rows.length > 0) await runAll(rows, run);
+		// One batch under their token for their own alerts and the page
+		// alerts they follow, so the same question is asked once.
+		const reads = new BatchReads({ app: false, ownerEmail: email }, run);
+		if (rows.length > 0) {
+			await runAll(
+				rows,
+				run,
+				{ app: false, ownerEmail: email },
+				() => false,
+				reads,
+			);
+		}
+
+		// Page alerts on datasets the timer cannot read for them, checked
+		// now under their own token. Loaded here for the same reason as in
+		// runScheduledAlerts.
+		const { runPageAlertsForOwner } = await import("./pageRunner");
+		await runPageAlertsForOwner(email, readable, reads).catch((error) => {
+			console.warn(
+				`Page alerts for ${email} could not be checked:`,
+				error,
+			);
+		});
 	})().catch((error) => {
 		console.warn(`Alerts for ${email} could not be checked:`, error);
 	});
@@ -509,7 +618,11 @@ export async function checkAlertNow(
 		return found;
 	});
 	if (!claimed) return null;
-	return check(claimed, run, false, false, claimed.next_check_on);
+	const reads = new BatchReads(
+		{ app: false, ownerEmail: identity.email.toLowerCase() },
+		run,
+	);
+	return check(claimed, reads, false, false, claimed.next_check_on);
 }
 
 // What an alert would read right now, before it is saved.
@@ -528,7 +641,10 @@ export async function previewAlert(
 	const { definition, source } = await checkDefinition(identity, raw);
 	let readings: Reading[];
 	if (definition.condition === "unusual") {
-		readings = await readUnusual(source, definition, run);
+		readings = await readUnusual(source, definition, (spec) => {
+			const compiled = compileQuery(source, spec);
+			return run(compiled.sql, compiled.params);
+		});
 	} else {
 		const compiled = compileQuery(source, alertSpec(source, definition));
 		const rows = await run(compiled.sql, compiled.params);

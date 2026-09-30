@@ -47,8 +47,8 @@ export async function restrictableSources(): Promise<Map<string, string[]>> {
 	return fields;
 }
 
-// Takes a recording for each dataset the owner has an alert or a scheduled
-// page on that needs one, under their own token. Called while they are using
+// Takes a recording for each dataset the owner has an alert, a scheduled page
+// or a followed page alert on that needs one, under their own token. Called while they are using
 // the app.
 export async function recordAccess(
 	identity: Identity,
@@ -65,6 +65,10 @@ export async function recordAccess(
 		   UNION
 		   SELECT owner_email, source_key FROM deliveries
 		   WHERE enabled AND source_key IS NOT NULL
+		   UNION
+		   SELECT s.email AS owner_email, a.source_key
+		   FROM page_alert_subscriptions s
+		   JOIN page_alerts a ON a.alert_id = s.alert_id AND a.is_active
 		 ) w
 		 WHERE w.owner_email = $1
 		   AND w.source_key = ANY($2::text[])
@@ -147,6 +151,37 @@ export async function restrictionFor(
 	if (!row || row.too_many) return null;
 	if (JSON.stringify(row.fields) !== JSON.stringify(fields)) return null;
 	return { fields, tuples: row.tuples };
+}
+
+// The restriction for each of several people on one dataset, in one read, for
+// the subscribers of a page alert. Held to the same rules as restrictionFor,
+// and anybody without a usable recording is left out of the map.
+export async function restrictionsFor(
+	emails: string[],
+	sourceKey: string,
+): Promise<Map<string, RowRestriction>> {
+	const out = new Map<string, RowRestriction>();
+	const fields = (await restrictableSources()).get(sourceKey);
+	if (!fields || emails.length === 0) return out;
+	const rows = await sql<{
+		owner_email: string;
+		fields: string[];
+		tuples: AccessValue[][];
+	}>(
+		`SELECT owner_email, fields, tuples FROM alert_access
+		 WHERE source_key = $1 AND owner_email = ANY($2::text[])
+		   AND NOT too_many
+		   AND captured_on > now() - interval '${recordingWindow}'`,
+		[sourceKey, emails.map((e) => e.toLowerCase())],
+	);
+	for (const row of rows) {
+		if (JSON.stringify(row.fields) !== JSON.stringify(fields)) continue;
+		out.set(row.owner_email.toLowerCase(), {
+			fields,
+			tuples: row.tuples,
+		});
+	}
+	return out;
 }
 
 // Which of an owner's datasets currently have a usable recording, for the

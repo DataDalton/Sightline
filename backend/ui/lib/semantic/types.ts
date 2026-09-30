@@ -74,6 +74,20 @@ export interface SemanticSource {
 	defaultTimeField: string | null;
 	dimensions: SemanticField[];
 	measures: SemanticField[];
+	// Fields the source used to publish and no longer does, by name. Kept
+	// apart from the pickers so nobody builds on one, and so a query naming
+	// one can say what happened rather than fail in the warehouse.
+	missingFields?: ReadonlyMap<string, MissingField>;
+}
+
+export interface MissingField {
+	name: string;
+	kind: FieldKind;
+	missingSince: string | null;
+	// The name an administrator confirmed it was renamed to.
+	renamedTo: string | null;
+	// A likely new name the sync offered, not yet confirmed.
+	renameCandidate: string | null;
 }
 
 // Fully qualified object name, unquoted. For display and for comparing with
@@ -113,6 +127,14 @@ export function quotedRef(
 // Fully qualified object reference for the warehouse, each part quoted.
 export function quotedSourceRef(source: SemanticSource): string {
 	return quotedRef(source.catalog, source.schema, source.object);
+}
+
+// The record of a field the source no longer publishes, or null.
+export function findMissingField(
+	source: SemanticSource,
+	name: string,
+): MissingField | null {
+	return source.missingFields?.get(name) ?? null;
 }
 
 export function findField(

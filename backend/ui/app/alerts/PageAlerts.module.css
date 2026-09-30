@@ -1,0 +1,206 @@
+/* Styles for page alerts, covering the reader's list on a report page, the
+   controls for following one, and the editor's panel. */
+
+.count {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 18px;
+	height: 18px;
+	padding: 0 5px;
+	border-radius: var(--radius-full);
+	background: var(--brand-subtle);
+	color: var(--brand-strong);
+	font-size: var(--text-xs);
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.list {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+	list-style: none;
+}
+
+.item {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	padding: var(--space-3) var(--space-4);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-lg);
+	background: var(--surface-raised);
+}
+
+.itemHead {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: var(--space-3);
+}
+
+.itemText {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.name {
+	font-size: var(--text-sm);
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+
+.rule {
+	color: var(--text-secondary);
+	font-size: var(--text-sm);
+	overflow-wrap: anywhere;
+}
+
+.meta {
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+	overflow-wrap: anywhere;
+}
+
+.controls {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2) var(--space-3);
+	flex-wrap: wrap;
+}
+
+.mute {
+	min-width: 12rem;
+}
+
+@media (max-width: 480px) {
+	.item {
+		padding: var(--space-3);
+	}
+
+	.mute {
+		flex: 1 1 100%;
+	}
+}
+
+.linkButton {
+	padding: var(--space-1) var(--space-2);
+	border-radius: var(--radius-sm);
+	color: var(--text-link);
+	font-size: var(--text-sm);
+	font-weight: 500;
+}
+
+.linkButton:hover:not(:disabled) {
+	background: var(--state-hover);
+}
+
+.linkButton:disabled {
+	opacity: 0.5;
+}
+
+.dangerLink {
+	padding: var(--space-1) var(--space-2);
+	border-radius: var(--radius-sm);
+	color: var(--danger);
+	font-size: var(--text-sm);
+}
+
+.dangerLink:hover:not(:disabled) {
+	background: var(--danger-subtle);
+}
+
+.primary {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: var(--space-2) var(--space-4);
+	border-radius: var(--radius-md);
+	background: var(--brand);
+	color: var(--brand-contrast);
+	font-size: var(--text-sm);
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.primary:hover:not(:disabled) {
+	background: var(--brand-strong);
+}
+
+.primary:disabled {
+	opacity: 0.5;
+}
+
+.secondary {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: var(--space-2) var(--space-4);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font-size: var(--text-sm);
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.secondary:hover:not(:disabled) {
+	background: var(--state-hover);
+}
+
+.error {
+	margin-right: auto;
+	color: var(--danger);
+	font-size: var(--text-sm);
+}
+
+.hint {
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+	line-height: 1.5;
+}
+
+.empty {
+	color: var(--text-muted);
+	font-size: var(--text-sm);
+}
+
+/* The editor's panel lists alerts more tightly than the reader's dialog. */
+.addButton {
+	margin-top: var(--space-3);
+}
+
+.panelList {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	margin-top: var(--space-3);
+	list-style: none;
+}
+
+.panelItem {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-md);
+	background: var(--surface-base);
+}
+
+.panelActions {
+	display: flex;
+	align-items: center;
+	gap: var(--space-1);
+	flex-wrap: wrap;
+}
+
+.targets {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+}

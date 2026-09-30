@@ -13,6 +13,8 @@ import { nextRun } from "../alerts/schedule";
 import { exploreLink, previewAlert } from "../alerts/runner";
 import { describeFirings, evaluate } from "../alerts/rule";
 import { createAlert, nextCheck, wordingFor } from "../alerts/store";
+import { createPageAlert, setSubscription } from "../alerts/pageStore";
+import { resolvePolicyClass } from "../auth/policy";
 import { notify } from "../notify/store";
 import { createSheet } from "../sheets/store";
 import {
@@ -256,6 +258,34 @@ async function seedReport(
 		console.warn(`Demo report "${report.title}" was not built:`, error);
 		return;
 	}
+	if (report.forecast) {
+		// The template's trend line over a date, set to forecast ahead.
+		await sql(
+			`UPDATE report_visuals v
+			 SET config = coalesce(v.config, '{}'::jsonb) || jsonb_build_object(
+			       'options',
+			       coalesce(v.config->'options', '{}'::jsonb)
+			         || '{"forecast": true}'::jsonb)
+			 FROM report_pages p
+			 WHERE p.page_id = v.page_id AND p.report_id = $1::uuid
+			   AND v.visual_type = 'lineChart'
+			   AND jsonb_array_length(coalesce(v.config->'dimensions', '[]'::jsonb)) = 1`,
+			[reportId],
+		);
+	}
+	if (report.targets) {
+		await sql(
+			`UPDATE report_visuals v
+			 SET config = coalesce(v.config, '{}'::jsonb) || jsonb_build_object(
+			       'options',
+			       coalesce(v.config->'options', '{}'::jsonb)
+			         || jsonb_build_object('targets', $2::jsonb))
+			 FROM report_pages p
+			 WHERE p.page_id = v.page_id AND p.report_id = $1::uuid
+			   AND v.visual_type = 'kpiRow'`,
+			[reportId, JSON.stringify(report.targets)],
+		);
+	}
 	for (const page of rest) {
 		try {
 			await addTemplatePage(author, {
@@ -428,6 +458,69 @@ async function seedDelivery(): Promise<void> {
 // Created the way the dialog creates one, then checked against the sample
 // data once here rather than left for the scheduler, so the firing is there
 // from the first page load and says what the data actually says.
+// Alerts kept on a report page for readers to follow, so the page's Alerts
+// button and the editor's Alerts panel have something in them. The demo
+// reader and two colleagues follow the first.
+async function seedPageAlerts(): Promise<void> {
+	const existing = await sql(`SELECT 1 FROM page_alerts LIMIT 1`);
+	if (existing.length > 0) return;
+	const pages = await sql<{ page_id: string }>(
+		`SELECT p.page_id::text AS page_id
+		 FROM report_pages p JOIN reports r ON r.report_id = p.report_id
+		 WHERE r.slug = 'revenue-overview' AND p.is_active
+		 ORDER BY p.sort_order LIMIT 1`,
+	);
+	const pageId = pages[0]?.page_id;
+	if (!pageId) return;
+
+	const author = identityOf(localIdentityEmail);
+	const policy = await resolvePolicyClass(author);
+	const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+	const unusual = await createPageAlert(author, policy, pageId, {
+		name: "Unusual daily revenue by region",
+		sourceKey: "sales_orders",
+		measure: "Revenue",
+		groupBy: "Region",
+		conditions: [],
+		condition: "unusual",
+		schedule: { frequency: "daily", hour: 8, weekday: 1, timeZone },
+		notifyRecover: false,
+		anomaly: {
+			timeField: "Order Date",
+			compareTo: "same_weekday",
+			periods: 8,
+			sensitivity: "medium",
+			percent: null,
+			direction: "either",
+			minimum: null,
+		},
+	});
+	await createPageAlert(author, policy, pageId, {
+		name: "Weekly revenue drop",
+		sourceKey: "sales_orders",
+		measure: "Revenue",
+		groupBy: null,
+		conditions: [],
+		condition: "falls_by",
+		threshold: 10,
+		schedule: { frequency: "weekly", hour: 8, weekday: 1, timeZone },
+		notifyRecover: false,
+	});
+	for (const email of [
+		localIdentityEmail,
+		"jamie.carter@example.com",
+		"casey.nguyen@example.com",
+	]) {
+		const reader = identityOf(email);
+		await setSubscription(
+			reader,
+			await resolvePolicyClass(reader),
+			unusual.id,
+			{ subscribed: true },
+		).catch(() => {});
+	}
+}
+
 async function seedAlert(): Promise<void> {
 	const existing = await sql(`SELECT 1 FROM alert_rules LIMIT 1`);
 	if (existing.length > 0) return;
@@ -506,6 +599,9 @@ export async function seedDemo(): Promise<void> {
 		await seedDelivery();
 		await seedAlert().catch((error) => {
 			console.warn("Demo alert was not created:", error);
+		});
+		await seedPageAlerts().catch((error) => {
+			console.warn("Demo page alerts were not created:", error);
 		});
 	});
 	await loadRegistry(true);

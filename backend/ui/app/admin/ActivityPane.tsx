@@ -56,6 +56,7 @@ const actionLabels: Record<string, string> = {
 	remove_source: "Removed a source",
 	update_source: "Changed a source",
 	update_source_fields: "Relabelled source fields",
+	remap_field: "Remapped a renamed field",
 	update_settings: "Changed settings",
 	sync: "Ran a catalogue sync",
 	share_page: "Shared a page",

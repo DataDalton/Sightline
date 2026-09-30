@@ -1,10 +1,13 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { createContext, useContext, useState, type ReactNode } from "react";
 import type { QueryMeta } from "../hooks/useVisualQuery";
 import { usePageFilters, type DrillStep } from "./PageFilters";
 import { useExpand } from "./ExpandContext";
+import { useNearScreen, VisibilityProvider } from "./LazyVisual";
+import { useUser } from "../context/UserContext";
 import { Skeleton } from "../components/shared/Skeleton";
+import { describeFilters, missingFieldIn } from "../../lib/visuals/emptyState";
 import styles from "./Visual.module.css";
 
 // Shared chrome for every visual: title, freshness, and the loading, empty and
@@ -47,8 +50,26 @@ interface VisualFrameProps {
 	// Set when the reader drew a range across this visual and it narrowed to
 	// it, so the frame can say so and offer the way back.
 	onZoomOut?: (() => void) | null;
+	// Whether the body waits until the frame is near the screen before it
+	// mounts. Off for a frame with nothing to load, such as a text panel.
+	lazy?: boolean;
+	// The height the body holds while it waits, for a frame outside a laid
+	// out page where nothing else gives it one.
+	placeholderHeight?: number;
 	children: ReactNode;
 }
+
+// Which visual an empty state or an error belongs to, and how its fields are
+// named, so a state deep inside a chart or a grid can describe the filters in
+// play without every component passing them down.
+interface VisualScope {
+	visualId: string;
+	nameOf: (field: string) => string;
+}
+
+const VisualScopeContext = createContext<VisualScope | null>(null);
+
+export const VisualScopeProvider = VisualScopeContext.Provider;
 
 function freshnessLabel(meta: QueryMeta): string {
 	if (meta.refreshAfterMs) {
@@ -74,11 +95,18 @@ export function VisualFrame({
 	notice,
 	note,
 	onZoomOut,
+	lazy = true,
+	placeholderHeight,
 	children,
 }: VisualFrameProps) {
 	const { drillUp } = usePageFilters();
 	const expand = useExpand();
 	const showDrill = drill && drill.fields.length > 1;
+
+	// The body mounts once the frame is within a screen of being seen, and
+	// the header draws straight away so the page reads as laid out.
+	const [frame, setFrame] = useState<HTMLDivElement | null>(null);
+	const visibility = useNearScreen(frame, lazy);
 
 	// Offered only where there is a page able to honour it and a visual to
 	// name. The editor canvas and the version comparison draw frames too, and
@@ -90,6 +118,7 @@ export function VisualFrame({
 		// Named on the element, so the assistant's picker can say which
 		// visual somebody pointed at rather than only what text it holds.
 		<div
+			ref={setFrame}
 			className={styles.visual}
 			data-visual-id={visualId ?? undefined}
 			data-visual-title={typeof title === "string" ? title : undefined}
@@ -256,7 +285,22 @@ export function VisualFrame({
 				</div>
 			)}
 			<div className={`${styles.body} ${flush ? styles.bodyFlush : ""}`}>
-				{children}
+				<VisibilityProvider value={visibility}>
+					{visibility.near ? (
+						children
+					) : (
+						<div
+							className={styles.lazyPlaceholder}
+							style={
+								placeholderHeight
+									? { height: placeholderHeight }
+									: undefined
+							}
+						>
+							<VisualLoading rows={5} />
+						</div>
+					)}
+				</VisibilityProvider>
 			</div>
 		</div>
 	);
@@ -278,6 +322,9 @@ export function VisualLoading({ rows = 4 }: { rows?: number }) {
 }
 
 export function VisualError({ error }: { error: Error & { status?: number } }) {
+	const missing = missingFieldIn(error.message);
+	if (missing !== null) return <MissingField field={missing} />;
+
 	// A 403 is an access decision, not a fault. Saying so stops a user
 	// reporting a bug when the platform is working as configured.
 	const isAccess = error.status === 403;
@@ -309,7 +356,154 @@ export function VisualError({ error }: { error: Error & { status?: number } }) {
 	);
 }
 
+// A query that named a field its source has since dropped. Not a fault in the
+// platform and not something retrying fixes, so it says which field and who
+// can put it right rather than showing the server's message.
+function MissingField({ field }: { field: string }) {
+	const { user } = useUser();
+	const canFix = Boolean(user?.canEdit || user?.canAdminister);
+	return (
+		<div className={styles.state} role="status">
+			<svg
+				width="20"
+				height="20"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="2"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+				aria-hidden="true"
+			>
+				<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
+				<path d="M12 9v4M12 17h.01" />
+			</svg>
+			<span className={styles.stateTitle}>
+				{field ? (
+					<>
+						This visual uses <code>{field}</code>, which no longer
+						exists on its source.
+					</>
+				) : (
+					"This visual uses a field that no longer exists on its source."
+				)}
+			</span>
+			<span className={styles.stateDetail}>
+				{canFix
+					? "Edit the visual to choose another field, or ask an admin to remap it."
+					: "A report editor can point it at another field."}
+			</span>
+		</div>
+	);
+}
+
+// The page filters and selections a visual is drawn under, described for an
+// empty state, or null when nothing on the page narrows it.
+export interface EmptyGuidance {
+	// One line per filtered field, such as "Region: North".
+	filters: string[];
+	// The selection made by clicking another visual, with the way to let go
+	// of it.
+	selection: { label: string; clear: () => void } | null;
+	clearAll: (() => void) | null;
+}
+
+export function useEmptyGuidance(): EmptyGuidance | null {
+	const scope = useContext(VisualScopeContext);
+	const { byWidget, crossFilter, clearAll, clearCrossFilterFrom } =
+		usePageFilters();
+	if (!scope) return null;
+
+	const filters = describeFilters(
+		Object.values(byWidget).flat(),
+		scope.nameOf,
+	);
+	// A visual is not filtered by its own click, only by a range drawn across
+	// it, so its own selection does not explain it being empty.
+	const selection =
+		crossFilter &&
+		(crossFilter.sourceVisualId !== scope.visualId ||
+			crossFilter.zoomSource)
+			? {
+					label: crossFilter.label,
+					clear: () =>
+						clearCrossFilterFrom(crossFilter.sourceVisualId),
+				}
+			: null;
+	if (filters.length === 0 && !selection) return null;
+	return {
+		filters,
+		selection,
+		// With only a selection, clearing it clears everything, and one
+		// button says so.
+		clearAll: filters.length > 0 ? clearAll : null,
+	};
+}
+
+// Nothing to draw because of what the page is filtered to. Names each filter
+// and offers to let go of them.
+export function FilteredEmptyState({
+	guidance,
+	message = "No data matches the filters on this page",
+}: {
+	guidance: EmptyGuidance;
+	message?: string;
+}) {
+	const applied = [
+		...(guidance.selection ? [guidance.selection.label] : []),
+		...guidance.filters,
+	];
+	return (
+		<div className={styles.state} role="status">
+			<svg
+				width="20"
+				height="20"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="2"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+				aria-hidden="true"
+			>
+				<path d="M3 5h18l-7 8v6l-4 2v-8z" />
+			</svg>
+			<span className={styles.stateTitle}>{message}</span>
+			<ul className={styles.stateFilters} aria-label="Filters applied">
+				{applied.map((line) => (
+					<li key={line}>{line}</li>
+				))}
+			</ul>
+			<div className={styles.stateActions}>
+				{guidance.selection && (
+					<button
+						type="button"
+						className={styles.stateButton}
+						onClick={guidance.selection.clear}
+					>
+						Clear {guidance.selection.label}
+					</button>
+				)}
+				{guidance.clearAll && (
+					<button
+						type="button"
+						className={styles.stateButton}
+						onClick={guidance.clearAll}
+					>
+						Clear all filters
+					</button>
+				)}
+			</div>
+		</div>
+	);
+}
+
+// Nothing to draw. An explicit message is a reason the caller already knows,
+// such as a missing setting, and is shown as it is. Otherwise, when the page
+// is filtered, the state names the filters and offers to clear them.
 export function VisualEmpty({ message }: { message?: string }) {
+	const guidance = useEmptyGuidance();
+	if (!message && guidance) return <FilteredEmptyState guidance={guidance} />;
 	return (
 		<div className={styles.state}>
 			<svg

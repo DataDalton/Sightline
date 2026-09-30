@@ -12,7 +12,7 @@ import styles from "./Editor.module.css";
 // it was. The assistant has a button of its own, so asking for a change is next
 // to making it by hand.
 
-export type EditorPanel = "visual" | "page" | "report" | "history";
+export type EditorPanel = "visual" | "page" | "alerts" | "report" | "history";
 
 function Icon({ children }: { children: ReactNode }) {
 	return (
@@ -103,6 +103,17 @@ export function EditorRail({
 				<Icon>
 					<rect x="4" y="3" width="16" height="18" rx="2" />
 					<path d="M8 8h8M8 12h8M8 16h5" />
+				</Icon>
+			</RailButton>
+			<RailButton
+				label="Alerts"
+				active={panel === "alerts"}
+				title="Alerts on this page that readers can follow"
+				onClick={() => toggle("alerts")}
+			>
+				<Icon>
+					<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+					<path d="M13.73 21a2 2 0 0 1-3.46 0" />
 				</Icon>
 			</RailButton>
 			<RailButton

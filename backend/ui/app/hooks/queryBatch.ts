@@ -34,6 +34,15 @@ interface Waiting {
 let queue: Waiting[] = [];
 let scheduled = false;
 
+// Queries asked for and not yet answered, counting ones still waiting for
+// their batch to be sent. Read by the print path, which waits for the page
+// to finish loading before handing it to the printer.
+let inFlight = 0;
+
+export function pendingQueries(): number {
+	return inFlight;
+}
+
 // Answers the server sent with the document.
 //
 // A page whose visuals are already cached can be handed their rows rather than
@@ -143,8 +152,26 @@ export function runBatchedQuery(body: string): Promise<QueryResponse> {
 		return Promise.resolve(held);
 	}
 
+	// Counted down once, however many times the batch reports on it.
+	inFlight++;
+	let settled = false;
+	const settle = () => {
+		if (settled) return;
+		settled = true;
+		inFlight--;
+	};
 	return new Promise<QueryResponse>((resolve, reject) => {
-		queue.push({ body, resolve, reject });
+		queue.push({
+			body,
+			resolve: (value) => {
+				settle();
+				resolve(value);
+			},
+			reject: (error) => {
+				settle();
+				reject(error);
+			},
+		});
 		if (scheduled) return;
 		scheduled = true;
 		setTimeout(flush, batchWindowMs);

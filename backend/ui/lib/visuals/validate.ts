@@ -300,6 +300,10 @@ export function validateVisual(
 		// nothing is set. Storing null to mean the same thing is ordinary.
 		if (value === null || value === undefined) continue;
 
+		// Targets per measure are declared apart from the option list, since
+		// they hold one entry for each measure rather than a single value.
+		if (key === definition.measureTargets?.key) continue;
+
 		const option = declared.get(key);
 		if (!option) {
 			// Not an error. Options outlive the visual type an author switched

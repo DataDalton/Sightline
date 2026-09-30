@@ -52,6 +52,10 @@ export interface ThemeColors {
 	tooltipText: string;
 	positive: string;
 	negative: string;
+	// The page's own typeface as a list of family names. A canvas takes a
+	// real family, so the stylesheet's font is passed through rather than
+	// "inherit", which a canvas rejects along with the size beside it.
+	font: string;
 	resolve: (spec: ColorSpec | undefined, fallback: string) => string;
 }
 
@@ -93,6 +97,7 @@ export function readThemeColors(): ThemeColors {
 		tooltipText: readVariable("--chart-tooltip-text", "#ffffff"),
 		positive: readVariable("--delta-positive", "#1a7f45"),
 		negative: readVariable("--delta-negative", "#c22b2b"),
+		font: readVariable("--font-sans", "system-ui, sans-serif"),
 		resolve,
 	};
 }

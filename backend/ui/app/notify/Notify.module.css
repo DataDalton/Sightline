@@ -91,6 +91,11 @@
 	color: var(--warning);
 }
 
+.kind_schema {
+	background: var(--warning-subtle);
+	color: var(--warning);
+}
+
 .kind_system {
 	background: var(--success-subtle);
 	color: var(--success);

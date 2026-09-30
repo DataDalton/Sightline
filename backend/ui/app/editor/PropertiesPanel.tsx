@@ -16,6 +16,8 @@ import {
 } from "../../lib/visuals/style";
 import { readThemeColors } from "../visuals/colors";
 import { resolveKpiGroups, type KpiGroup } from "../../lib/visuals/kpiGroups";
+import { readTargets } from "../../lib/visuals/kpiTargets";
+import { MeasureTargets } from "./MeasureTargets";
 import { ConditionsEditor } from "./ConditionsEditor";
 import { ReferenceLinesEditor } from "./ReferenceLinesEditor";
 import { DerivedFigures } from "./DerivedFigures";
@@ -635,6 +637,7 @@ const optionTab: Record<string, "data" | "behaviour"> = {
 	compareField: "data",
 	sparkline: "data",
 	groups: "data",
+	targets: "data",
 	sortBy: "data",
 	topN: "data",
 	topBy: "data",
@@ -644,6 +647,8 @@ const optionTab: Record<string, "data" | "behaviour"> = {
 	showTotals: "data",
 	columnDimension: "data",
 	onValue: "data",
+	forecast: "data",
+	forecastPeriods: "data",
 	zoomSlider: "behaviour",
 	direction: "behaviour",
 	defaultValue: "behaviour",
@@ -749,7 +754,7 @@ function DataTab({
 			<VisualOptions
 				id="visual-shaping"
 				title="Ranking and comparison"
-				keywords="filter limit sort order top rank compare total period"
+				keywords="filter limit sort order top rank compare total period forecast predict ahead"
 				tab="data"
 				visual={visual}
 				definition={definition}
@@ -993,7 +998,12 @@ function VisualOptions({
 	const declared = (definition.options ?? []).filter(
 		(option) => tabOf(option.key) === tab,
 	);
-	if (declared.length === 0) return null;
+	const targets =
+		definition.measureTargets &&
+		tabOf(definition.measureTargets.key) === tab
+			? definition.measureTargets
+			: null;
+	if (declared.length === 0 && !targets) return null;
 
 	const set = (key: string, value: unknown) =>
 		updateConfig({
@@ -1005,9 +1015,11 @@ function VisualOptions({
 	// tell a deliberate choice from a fallback.
 	const stored = (key: string): unknown => visual.config.options?.[key];
 
-	const chosen = declared.filter(
-		(option) => stored(option.key) !== undefined,
-	).length;
+	const chosen =
+		declared.filter((option) => stored(option.key) !== undefined).length +
+		(targets && Object.keys(readTargets(stored(targets.key))).length > 0
+			? 1
+			: 0);
 
 	return (
 		<Section id={id} title={title} keywords={keywords} count={chosen}>
@@ -1177,6 +1189,20 @@ function VisualOptions({
 					</div>
 				);
 			})}
+			{targets && (
+				<MeasureTargets
+					option={targets}
+					measures={measures}
+					source={source}
+					value={readTargets(stored(targets.key))}
+					onChange={(next) =>
+						set(
+							targets.key,
+							Object.keys(next).length > 0 ? next : undefined,
+						)
+					}
+				/>
+			)}
 		</Section>
 	);
 }

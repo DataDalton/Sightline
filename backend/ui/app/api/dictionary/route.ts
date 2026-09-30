@@ -5,7 +5,7 @@ import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
 import {
 	dictionaryFields,
 	fieldDefinition,
-	fieldUsage,
+	fieldUsageDetail,
 	usageCounts,
 	usageKey,
 } from "@/lib/platform/dictionary";
@@ -36,14 +36,18 @@ export async function GET(request: NextRequest) {
 			const policy = await resolvePolicyClass(identity);
 			// The definition is read from the warehouse and can fail on its
 			// own, which should not cost the reader the usage list beside it.
-			const [usage, definition] = await Promise.all([
-				fieldUsage(identity, policy, sourceKey, field),
+			const [detail, definition] = await Promise.all([
+				fieldUsageDetail(identity, policy, sourceKey, field),
 				fieldDefinition(identity, sourceKey, field).catch((error) => {
 					console.warn("Could not read a field definition:", error);
 					return null;
 				}),
 			]);
-			return NextResponse.json({ usage, definition });
+			return NextResponse.json({
+				usage: detail.usage,
+				elsewhere: detail.elsewhere,
+				definition,
+			});
 		}
 
 		// Counts alongside the list, so a field nothing references is visible

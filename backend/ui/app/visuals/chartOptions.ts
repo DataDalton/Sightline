@@ -22,6 +22,11 @@ import {
 	selectionValue,
 	type SelectionPart,
 } from "../../lib/visuals/selection";
+import {
+	placeForecast,
+	unitWords,
+	type ForecastResult,
+} from "../../lib/visuals/forecast";
 import { worldMapName } from "./worldMap";
 
 // Builds the ECharts option for each visual type.
@@ -55,6 +60,10 @@ export interface ChartContext {
 	// catalogue. Read through option(), which applies the catalogue fallback so
 	// a chart and the properties panel cannot disagree about what unset means.
 	options?: Record<string, unknown>;
+	// Forecasts for the measures of a chart drawn across dates, worked out by
+	// the component from the same rows. Drawn past the last period by the
+	// cartesian builder and ignored everywhere else.
+	forecast?: ForecastResult | null;
 }
 
 // Text from the data, made safe to place inside a tooltip's HTML.
@@ -252,6 +261,7 @@ function valueAxis(ctx: ChartContext, hint: FormatHint) {
 		max: ctx.style?.yAxis?.max,
 		axisLabel: {
 			color: ctx.colors.axis,
+			fontSize: axisFontSize(ctx),
 			formatter: (v: number) => formatCompact(v, hint),
 		},
 		splitLine: {
@@ -259,6 +269,12 @@ function valueAxis(ctx: ChartContext, hint: FormatHint) {
 			lineStyle: { color: ctx.colors.grid },
 		},
 	};
+}
+
+// Larger axis text for a visual opened full size, where there is room for it
+// and the reader is looking closely. The library's own size otherwise.
+function axisFontSize(ctx: ChartContext): number | undefined {
+	return ctx.options?.largeText === true ? 14 : undefined;
 }
 
 function categoryAxis(ctx: ChartContext, categories: string[]) {
@@ -269,6 +285,7 @@ function categoryAxis(ctx: ChartContext, categories: string[]) {
 		axisLabel: {
 			hideOverlap: true,
 			color: ctx.colors.axis,
+			fontSize: axisFontSize(ctx),
 			rotate: ctx.style?.xAxis?.labelRotation ?? 0,
 		},
 		axisLine: { lineStyle: { color: ctx.colors.grid } },
@@ -292,14 +309,27 @@ const baseGrid = { left: 8, right: 16, top: 30, bottom: 8, containLabel: true };
 // This is a view of the same rows rather than a new query. Nothing is fetched,
 // so the window moves at the speed of a repaint and narrowing it never costs a
 // warehouse round trip.
+// Points shown when a long series is opened full size. The rest are one drag
+// of the slider away.
+const openedWindow = 180;
+
 function zoomWindow(ctx: ChartContext, axisIndex: 0 | 1) {
 	if (ctx.options?.zoomSlider !== true) return undefined;
 
 	const on = axisIndex === 0 ? { xAxisIndex: 0 } : { yAxisIndex: 0 };
+	// Opened full size, a long series starts on its most recent stretch, so
+	// the points are far enough apart to read.
+	const points = ctx.rows.length;
+	const start =
+		ctx.options?.largeText === true && points > openedWindow
+			? Math.round((1 - openedWindow / points) * 100)
+			: 0;
 	return [
 		{
 			type: "slider" as const,
 			...on,
+			start,
+			end: 100,
 			height: 18,
 			bottom: 4,
 			borderColor: ctx.colors.grid,
@@ -307,7 +337,7 @@ function zoomWindow(ctx: ChartContext, axisIndex: 0 | 1) {
 			handleStyle: { color: ctx.colors.axis },
 			textStyle: { color: ctx.colors.textMuted, fontSize: 10 },
 		},
-		{ type: "inside" as const, ...on },
+		{ type: "inside" as const, ...on, start, end: 100 },
 	];
 }
 
@@ -516,6 +546,269 @@ function pivotSecondDimension(ctx: ChartContext): ChartContext {
 		// Each pivoted row still carries its category, and each series is a
 		// value of this field, so a selected segment can be found by both.
 		seriesField,
+	};
+}
+
+// One forecast value on the axis, as the tooltip reads it.
+interface ForecastPoint {
+	measure: string;
+	color: string;
+	value: number;
+	lower: number;
+	upper: number;
+	// What the period holds so far, for a period already on the chart but
+	// not yet finished. Null past the chart's end.
+	soFar: number | null;
+	// The typical miss on a single period, as words for the tooltip.
+	note: string | null;
+}
+
+// The fields of a drawn measure series the forecast marks copy.
+interface DrawnSeries {
+	name: string;
+	type: string;
+	yAxisIndex: number;
+	stack?: string;
+	itemStyle: { color: string; borderRadius?: unknown };
+	lineStyle?: { width?: number };
+	data: unknown[];
+}
+
+// Prefix on the id of every forecast series, which is how the tooltip and the
+// chart component tell a forecast mark from a measured one.
+export const forecastSeriesPrefix = "forecast";
+
+// How strongly a forecast bar and the band behind a forecast are filled,
+// against the solid series colour of the measure they continue, and how
+// strongly the dashed edges of the band are drawn.
+const forecastBarOpacity = 0.35;
+const forecastBandOpacity = 0.2;
+const forecastEdgeOpacity = 0.45;
+
+// The legend entry every forecast mark sits under, kept clear of a measure
+// that happens to be called Forecast so toggling one does not hide the other.
+function forecastLegendName(measures: string[]): string {
+	return measures.includes("Forecast") ? "Projected" : "Forecast";
+}
+
+// The marks that continue each measure past its last finished period.
+//
+// A dashed line from the last finished point for a line, and faded bars with
+// a dashed outline for bars. Behind either sits a shaded range drawn as two
+// stacked lines, a line at the lower bound and a filled one the height of the
+// range on top of it, both edges dashed. Every forecast series is silent, so
+// a click on one selects nothing and the keyboard steps over it, and all of
+// them share one legend entry.
+//
+// A period on the chart that has not finished yet is forecast like the ones
+// after it. On a line its partial figure is cut from the solid line and drawn
+// as a hollow point, so the solid line ends at the last finished period and
+// the dashed one carries on from there without a kink. On a bar chart the
+// partial bar stays and a faded bar on top of it shows what the rest of the
+// period is expected to add.
+//
+// A stacked measure draws its forecast stacked the same way but without a
+// range, since a range around one layer of a stack reads as a range around
+// the total. Null when the chart is not an increasing run of dates the
+// forecast lines up with.
+function forecastLayer(
+	ctx: ChartContext,
+	kind: string,
+	orientation: "vertical" | "horizontal",
+	categories: string[],
+	drawn: DrawnSeries[],
+): {
+	appended: string[];
+	series: Record<string, unknown>[];
+	points: Map<number, ForecastPoint[]>;
+} | null {
+	const result = ctx.forecast;
+	if (!result || orientation !== "vertical") return null;
+	if (kind === "stacked100" || kind === "scatter") return null;
+	if (ctx.dimensions.length !== 1) return null;
+	const by = ctx.options?.sortBy;
+	if (by === "valueDesc" || by === "valueAsc") return null;
+	const placed = placeForecast(categories, result);
+	if (!placed) return null;
+
+	const total = categories.length + placed.appended.length;
+	const legendName = forecastLegendName(ctx.measures);
+	const unitWord = unitWords[result.spacing.unit][0];
+	const lines: Record<string, unknown>[] = [];
+	const bands: Record<string, unknown>[] = [];
+	const partials: Record<string, unknown>[] = [];
+	const points = new Map<number, ForecastPoint[]>();
+
+	for (const forecast of result.series) {
+		const index = drawn.findIndex((d) => d.name === forecast.measure);
+		if (index < 0) continue;
+		const measured = drawn[index];
+		if (measured.type !== "line" && measured.type !== "bar") continue;
+		const color = measured.itemStyle.color;
+		const isBar = measured.type === "bar";
+		const stacked = measured.stack !== undefined;
+		const note =
+			forecast.typicalError === null
+				? null
+				: `Typically within ±${Math.max(1, Math.round(forecast.typicalError * 100))}% per ${unitWord}`;
+
+		const marks: (number | null)[] = new Array(total).fill(null);
+		const soFar: (number | null)[] = new Array(total).fill(null);
+		// A line starts at the last finished point so it reads as a
+		// continuation. A bar has no line to continue.
+		if (!isBar) marks[placed.anchorIndex] = forecast.anchor;
+		placed.indices.forEach((at, i) => {
+			const onChart = at < categories.length;
+			const partial = onChart
+				? toNumber(ctx.rows[at]?.[forecast.measure])
+				: null;
+			if (!onChart) {
+				marks[at] = forecast.values[i];
+			} else if (!isBar) {
+				// The partial figure leaves the solid line, which then ends
+				// where the dashed one starts.
+				marks[at] = forecast.values[i];
+				if (!stacked) {
+					measured.data[at] = null;
+					soFar[at] = partial;
+				}
+			} else if (!stacked) {
+				// On top of the partial bar, up to the forecast for the whole
+				// period.
+				marks[at] = Math.max(0, forecast.values[i] - (partial ?? 0));
+			}
+			const list = points.get(at) ?? [];
+			list.push({
+				measure: forecast.measure,
+				color,
+				value: forecast.values[i],
+				lower: forecast.lower[i],
+				upper: forecast.upper[i],
+				soFar: partial,
+				note,
+			});
+			points.set(at, list);
+		});
+
+		// Bars that do not stack take a slot of their own beside the other
+		// measures. Putting the forecast in a stack with its measure keeps
+		// it in that measure's slot, and on the one period both hold a value
+		// the forecast bar is the remainder above the partial one.
+		let stack: string | undefined;
+		if (isBar) {
+			stack = measured.stack ?? `${forecastSeriesPrefix}-slot:${index}`;
+			measured.stack = stack;
+		} else if (stacked) {
+			stack = `${forecastSeriesPrefix}:${measured.stack}`;
+		}
+
+		lines.push({
+			id: `${forecastSeriesPrefix}:${forecast.measure}`,
+			name: legendName,
+			type: measured.type,
+			yAxisIndex: measured.yAxisIndex,
+			stack,
+			silent: true,
+			animation: false,
+			showSymbol: false,
+			symbol: "none",
+			barMaxWidth: 36,
+			itemStyle: isBar
+				? {
+						color: withAlpha(color, forecastBarOpacity),
+						borderColor: color,
+						borderWidth: 1,
+						borderType: "dashed",
+						borderRadius: measured.itemStyle.borderRadius,
+					}
+				: { color },
+			lineStyle: isBar
+				? undefined
+				: {
+						color,
+						width: measured.lineStyle?.width ?? 2,
+						type: "dashed",
+					},
+			data: marks,
+		});
+
+		// The partial figures as hollow points under the measure's own
+		// legend entry, so hiding the measure hides them too.
+		if (soFar.some((v) => v !== null)) {
+			partials.push({
+				id: `${forecastSeriesPrefix}-sofar:${forecast.measure}`,
+				name: measured.name,
+				type: "line",
+				yAxisIndex: measured.yAxisIndex,
+				silent: true,
+				animation: false,
+				showSymbol: true,
+				symbol: "circle",
+				symbolSize: 7,
+				z: 3,
+				itemStyle: {
+					color: withAlpha(color, 0),
+					borderColor: color,
+					borderWidth: 1.5,
+				},
+				lineStyle: { opacity: 0 },
+				data: soFar,
+			});
+		}
+
+		if (stacked) continue;
+		const lower: (number | null)[] = new Array(total).fill(null);
+		const height: (number | null)[] = new Array(total).fill(null);
+		lower[placed.anchorIndex] = forecast.anchor;
+		height[placed.anchorIndex] = 0;
+		placed.indices.forEach((at, i) => {
+			lower[at] = forecast.lower[i];
+			height[at] = forecast.upper[i] - forecast.lower[i];
+		});
+		const band = {
+			name: legendName,
+			type: "line",
+			yAxisIndex: measured.yAxisIndex,
+			stack: `${forecastSeriesPrefix}-band:${index}`,
+			// Stacked as plain sums, so a lower bound below zero still has
+			// the range drawn on top of it rather than on a separate stack.
+			stackStrategy: "all",
+			silent: true,
+			animation: false,
+			showSymbol: false,
+			symbol: "none",
+			z: 1,
+			itemStyle: { color },
+			// Each stacked line is drawn at its running sum, which puts one
+			// on each edge of the range.
+			lineStyle: {
+				color: withAlpha(color, forecastEdgeOpacity),
+				width: 1,
+				type: "dashed",
+			},
+		};
+		bands.push(
+			{
+				...band,
+				id: `${forecastSeriesPrefix}-low:${forecast.measure}`,
+				data: lower,
+			},
+			{
+				...band,
+				id: `${forecastSeriesPrefix}-band:${forecast.measure}`,
+				areaStyle: { color: withAlpha(color, forecastBandOpacity) },
+				data: height,
+			},
+		);
+	}
+
+	if (lines.length === 0) return null;
+	// The lines first, so the legend entry takes its swatch from a line
+	// rather than from the lower bound of the range.
+	return {
+		appended: placed.appended,
+		series: [...lines, ...bands, ...partials],
+		points,
 	};
 }
 
@@ -729,7 +1022,18 @@ export function buildCartesian(
 		};
 	});
 
-	const category = categoryAxis(ctx, categories);
+	const projected = forecastLayer(
+		ctx,
+		kind,
+		orientation,
+		categories,
+		series as DrawnSeries[],
+	);
+
+	const category = categoryAxis(
+		ctx,
+		projected ? [...categories, ...projected.appended] : categories,
+	);
 	const value = valueAxis(
 		ctx,
 		kind === "stacked100" ? "percent" : primaryHint,
@@ -738,7 +1042,7 @@ export function buildCartesian(
 	return {
 		animation: false,
 		color: colors.series,
-		textStyle: { color: colors.text, fontFamily: "inherit" },
+		textStyle: { color: colors.text, fontFamily: colors.font },
 		grid: {
 			...baseGrid,
 			top: Math.max(
@@ -754,7 +1058,12 @@ export function buildCartesian(
 		tooltip: {
 			...tooltip(ctx),
 			axisPointer: { type: kind === "bar" ? "shadow" : "line" },
-			formatter: cartesianTooltip(ctx, axisField, Boolean(totals)),
+			formatter: cartesianTooltip(
+				ctx,
+				axisField,
+				Boolean(totals),
+				projected?.points,
+			),
 		},
 		// Swapping which axis is categorical is the whole difference between a
 		// vertical and a horizontal bar chart.
@@ -782,7 +1091,7 @@ export function buildCartesian(
 							},
 						]
 					: value,
-		series,
+		series: projected ? [...series, ...projected.series] : series,
 	};
 }
 
@@ -790,11 +1099,30 @@ function cartesianTooltip(
 	ctx: ChartContext,
 	axisField: string,
 	normalised: boolean,
+	forecastPoints?: Map<number, ForecastPoint[]>,
 ) {
 	return (params: unknown) => {
-		const list = Array.isArray(params) ? params : [params];
-		if (list.length === 0) return "";
-		const first = list[0] as { dataIndex: number; axisValue?: string };
+		const all = Array.isArray(params) ? params : [params];
+		if (all.length === 0) return "";
+		const first = all[0] as { dataIndex: number; axisValue?: string };
+		// Forecast marks are listed from their own values below, so the
+		// series behind them are left out here.
+		const list = all.filter(
+			(entry) =>
+				!String(
+					(entry as { seriesId?: string }).seriesId ?? "",
+				).startsWith(forecastSeriesPrefix),
+		);
+		const forecasts = forecastPoints?.get(first.dataIndex) ?? [];
+		// A period not finished yet lists its measured figure as so far
+		// beside the forecast, rather than as a figure of its own.
+		const partial = new Set(
+			forecasts.filter((p) => p.soFar !== null).map((p) => p.measure),
+		);
+		const measuredList = list.filter(
+			(entry) =>
+				!partial.has((entry as { seriesName: string }).seriesName),
+		);
 		const row = ctx.rows[first.dataIndex] ?? {};
 
 		const total = ctx.style?.tooltip?.showShare
@@ -805,7 +1133,7 @@ function cartesianTooltip(
 			first.axisValue ?? String(row[axisField] ?? ""),
 		)}</div>`;
 
-		const lines = list.map((entry) => {
+		const lines = measuredList.map((entry) => {
 			const e = entry as { seriesName: string; marker: string };
 			const raw = row[e.seriesName];
 			// A normalised chart still shows the real figure in the tooltip,
@@ -835,7 +1163,22 @@ function cartesianTooltip(
 					`<div style="opacity:.75">${escapeHtml(f)}: ${escapeHtml(formatValue(row[f], ctx.hintFor(f)))}</div>`,
 			);
 
-		return header + lines.join("") + extras.join("");
+		const projected = forecasts.map((point) => {
+			const hint = ctx.hintFor(point.measure);
+			const swatch = `<span style="display:inline-block;width:10px;margin-right:4px;vertical-align:middle;border-top:2px dashed ${escapeHtml(point.color)}"></span>`;
+			const hollow = `<span style="display:inline-block;width:6px;height:6px;margin:0 6px 0 2px;vertical-align:middle;border-radius:50%;border:1.5px solid ${escapeHtml(point.color)}"></span>`;
+			const soFar =
+				point.soFar === null
+					? ""
+					: `<div>${hollow}${escapeHtml(point.measure)} <span style="opacity:.7">so far</span>: <b>${escapeHtml(formatValue(point.soFar, hint))}</b></div>`;
+			const note = point.note
+				? `<div style="opacity:.7;margin-left:14px">${escapeHtml(point.note)}</div>`
+				: "";
+			return `${soFar}<div>${swatch}${escapeHtml(point.measure)} <span style="opacity:.7">Forecast</span>: <b>${escapeHtml(formatValue(point.value, hint))}</b> <span style="opacity:.7">(${escapeHtml(formatValue(point.lower, hint))} to ${escapeHtml(formatValue(point.upper, hint))})</span></div>${note}`;
+		});
+		if (lines.length === 0 && projected.length === 0) return "";
+
+		return header + lines.join("") + projected.join("") + extras.join("");
 	};
 }
 
@@ -926,7 +1269,7 @@ export function buildPie(ctx: ChartContext, donut: boolean) {
 
 	return {
 		animation: false,
-		textStyle: { color: colors.text, fontFamily: "inherit" },
+		textStyle: { color: colors.text, fontFamily: colors.font },
 		legend: { ...legend(ctx, true), type: "scroll", orient: "horizontal" },
 		tooltip: {
 			...tooltip(ctx, "item"),
@@ -1127,7 +1470,7 @@ export function buildTreemap(ctx: ChartContext) {
 
 	return {
 		animation: false,
-		textStyle: { color: colors.text, fontFamily: "inherit" },
+		textStyle: { color: colors.text, fontFamily: colors.font },
 		tooltip: {
 			...tooltip(ctx, "item"),
 			formatter: (p: unknown) => {
@@ -1183,7 +1526,7 @@ export function buildFunnel(ctx: ChartContext) {
 
 	return {
 		animation: false,
-		textStyle: { color: colors.text, fontFamily: "inherit" },
+		textStyle: { color: colors.text, fontFamily: colors.font },
 		legend: legend(ctx, true),
 		tooltip: {
 			...tooltip(ctx, "item"),
@@ -1244,7 +1587,7 @@ export function buildGauge(ctx: ChartContext) {
 
 	return {
 		animation: false,
-		textStyle: { color: colors.text, fontFamily: "inherit" },
+		textStyle: { color: colors.text, fontFamily: colors.font },
 		series: [
 			{
 				type: "gauge",
@@ -1325,7 +1668,7 @@ export function buildWaterfall(ctx: ChartContext) {
 
 	return {
 		animation: false,
-		textStyle: { color: colors.text, fontFamily: "inherit" },
+		textStyle: { color: colors.text, fontFamily: colors.font },
 		grid: baseGrid,
 		legend: { show: false },
 		tooltip: {
@@ -1470,7 +1813,7 @@ export function buildChoropleth(
 
 	const option = {
 		animation: false,
-		textStyle: { color: colors.text, fontFamily: "inherit" },
+		textStyle: { color: colors.text, fontFamily: colors.font },
 		tooltip: {
 			...tooltip(ctx),
 			trigger: "item" as const,
@@ -1608,7 +1951,7 @@ export function buildTimeline(ctx: ChartContext) {
 	return {
 		animation: false,
 		color: colors.series,
-		textStyle: { color: colors.text, fontFamily: "inherit" },
+		textStyle: { color: colors.text, fontFamily: colors.font },
 		grid: { ...baseGrid, top: 12, left: 8 },
 		legend: { show: false },
 		tooltip: {
@@ -1733,7 +2076,7 @@ export function buildCalendar(ctx: ChartContext) {
 
 	return {
 		animation: false,
-		textStyle: { color: colors.text, fontFamily: "inherit" },
+		textStyle: { color: colors.text, fontFamily: colors.font },
 		tooltip: {
 			...tooltip(ctx),
 			trigger: "item" as const,
@@ -1867,7 +2210,7 @@ export function buildSankey(ctx: ChartContext) {
 	return {
 		animation: false,
 		color: colors.series,
-		textStyle: { color: colors.text, fontFamily: "inherit" },
+		textStyle: { color: colors.text, fontFamily: colors.font },
 		tooltip: {
 			...tooltip(ctx),
 			trigger: "item" as const,
@@ -1986,7 +2329,7 @@ export function buildHistogram(ctx: ChartContext) {
 	return {
 		animation: false,
 		color: colors.series,
-		textStyle: { color: colors.text, fontFamily: "inherit" },
+		textStyle: { color: colors.text, fontFamily: colors.font },
 		grid: { ...baseGrid, top: axisNameTop },
 		legend: { show: false },
 		tooltip: {
@@ -2094,7 +2437,7 @@ export function buildBoxPlot(ctx: ChartContext) {
 	return {
 		animation: false,
 		color: colors.series,
-		textStyle: { color: colors.text, fontFamily: "inherit" },
+		textStyle: { color: colors.text, fontFamily: colors.font },
 		grid: { ...baseGrid, top: axisNameTop },
 		legend: { show: false },
 		tooltip: {
@@ -2206,7 +2549,7 @@ export function buildPareto(ctx: ChartContext) {
 	return {
 		animation: false,
 		color: colors.series,
-		textStyle: { color: colors.text, fontFamily: "inherit" },
+		textStyle: { color: colors.text, fontFamily: colors.font },
 		grid: { ...baseGrid, top: 30 },
 		legend: legend(ctx, true),
 		tooltip: {
@@ -2369,7 +2712,7 @@ export function buildSlope(ctx: ChartContext) {
 	return {
 		animation: false,
 		color: colors.series,
-		textStyle: { color: colors.text, fontFamily: "inherit" },
+		textStyle: { color: colors.text, fontFamily: colors.font },
 		// Room on the right for the end labels, which sit outside the plot.
 		grid: {
 			...baseGrid,
@@ -2492,7 +2835,7 @@ export function buildBullet(ctx: ChartContext) {
 	return {
 		animation: false,
 		color: colors.series,
-		textStyle: { color: colors.text, fontFamily: "inherit" },
+		textStyle: { color: colors.text, fontFamily: colors.font },
 		grid: { ...baseGrid, top: 12, bottom: 8 },
 		tooltip: {
 			...tooltip(ctx),
@@ -2667,7 +3010,7 @@ export function buildScatter(ctx: ChartContext) {
 	return {
 		animation: false,
 		color: colors.series,
-		textStyle: { color: colors.text, fontFamily: "inherit" },
+		textStyle: { color: colors.text, fontFamily: colors.font },
 		grid: {
 			...baseGrid,
 			top: axisNameTop,
@@ -2804,7 +3147,7 @@ export function buildHeatmap(ctx: ChartContext) {
 
 	return {
 		animation: false,
-		textStyle: { color: colors.text, fontFamily: "inherit" },
+		textStyle: { color: colors.text, fontFamily: colors.font },
 		grid: { left: 8, right: 8, top: 8, bottom: 60, containLabel: true },
 		tooltip: {
 			...tooltip(ctx, "item"),
@@ -2863,7 +3206,7 @@ export function buildRadar(ctx: ChartContext) {
 
 	return {
 		animation: false,
-		textStyle: { color: colors.text, fontFamily: "inherit" },
+		textStyle: { color: colors.text, fontFamily: colors.font },
 		legend: legend(ctx, true),
 		tooltip: tooltip(ctx, "item"),
 		radar: {

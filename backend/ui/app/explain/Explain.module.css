@@ -218,9 +218,70 @@
 	font-size: var(--text-xs);
 }
 
+/* On a phone each part takes two lines, with its name and its move on the
+   first and the bar across the full width on the second, so the bar keeps
+   enough length to compare against the others. Every control is at least a thumb high. */
 @media (max-width: 560px) {
+	.body {
+		gap: var(--space-3);
+		min-width: 0;
+	}
+
+	.split {
+		padding: var(--space-3);
+		min-width: 0;
+	}
+
 	.row {
-		grid-template-columns: minmax(0, 6rem) minmax(0, 1fr) minmax(0, 7rem);
-		gap: var(--space-2);
+		grid-template-columns: minmax(0, 1fr) auto;
+		grid-template-areas:
+			"name amount"
+			"track track";
+		gap: var(--space-1) var(--space-3);
+		min-height: 44px;
+		padding: var(--space-2);
+	}
+
+	.name {
+		grid-area: name;
+	}
+
+	.amount {
+		grid-area: amount;
+		min-width: 0;
+	}
+
+	.detail {
+		white-space: normal;
+		overflow-wrap: anywhere;
+	}
+
+	.track {
+		grid-area: track;
+		height: 10px;
+		margin: 2px 0;
+	}
+
+	.trailButton {
+		min-height: 40px;
+		padding: var(--space-1) var(--space-3);
+		overflow-wrap: anywhere;
+		text-align: left;
+	}
+
+	.trail,
+	.trailStep {
+		min-width: 0;
+		max-width: 100%;
+	}
+
+	.more {
+		min-height: 40px;
+		padding: var(--space-2) var(--space-3);
+	}
+
+	.summary {
+		min-width: 0;
+		overflow-wrap: anywhere;
 	}
 }

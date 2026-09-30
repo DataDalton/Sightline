@@ -10,13 +10,23 @@ import { ago, clock } from "../admin/when";
 import { ConfirmDialog } from "../components/shared/ConfirmDialog";
 import { SkeletonText } from "../components/shared/Skeleton";
 import { Toggle } from "../components/shared/Toggle";
+import { Modal } from "../components/shared/Modal";
+import { Select } from "../components/shared/Select";
 import { useNotify } from "../notify/NotifyContext";
 import type { SourceMeta } from "../visuals/types";
 import { AlertDialog, type AlertPrefill } from "./AlertDialog";
+import {
+	send,
+	subscriptionsKey,
+	type PageAlertRecord,
+	type PromoteTarget,
+} from "./pageAlertClient";
+import { runsNote, SubscriptionControls } from "./PageAlerts";
 import styles from "./Alerts.module.css";
 
 // The reader's alerts: what each one watches, when it last looked and what it
-// saw, and what it has said before.
+// saw, and what it has said before. Below them, the alerts on report pages
+// they follow, which the pages' editors look after.
 
 export const alertsKey = "/api/alerts";
 
@@ -62,11 +72,16 @@ export function AlertCard({
 	alert,
 	onEdit,
 	onChanged,
+	targets,
 }: {
 	alert: AlertRecord;
 	onEdit: () => void;
 	onChanged: () => void;
+	// Pages the owner may edit that show this alert's dataset, where it could
+	// become a page alert for everyone who reads them.
+	targets?: PromoteTarget[];
 }) {
+	const [promoting, setPromoting] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const [message, setMessage] = useState<string | null>(null);
 	const [confirming, setConfirming] = useState(false);
@@ -253,6 +268,16 @@ export function AlertCard({
 					>
 						{showHistory ? "Hide history" : "History"}
 					</button>
+					{targets && targets.length > 0 && (
+						<button
+							type="button"
+							className={styles.linkButton}
+							onClick={() => setPromoting(true)}
+							title="Put this alert on a report page for its readers to follow"
+						>
+							Promote to page alert
+						</button>
+					)}
 				</span>
 				<button
 					type="button"
@@ -265,6 +290,18 @@ export function AlertCard({
 
 			{message && <p className={styles.message}>{message}</p>}
 			{showHistory && <History id={alert.id} />}
+
+			{promoting && targets && (
+				<PromoteDialog
+					alert={alert}
+					targets={targets}
+					onClose={() => setPromoting(false)}
+					onDone={() => {
+						setPromoting(false);
+						onChanged();
+					}}
+				/>
+			)}
 
 			{confirming && (
 				<ConfirmDialog
@@ -280,11 +317,175 @@ export function AlertCard({
 	);
 }
 
+// Turning a personal alert into one on a page the owner edits. The page alert
+// takes the same rule and schedule, the owner follows it, and the personal
+// alert goes, so they hear about it once.
+function PromoteDialog({
+	alert,
+	targets,
+	onClose,
+	onDone,
+}: {
+	alert: AlertRecord;
+	targets: PromoteTarget[];
+	onClose: () => void;
+	onDone: () => void;
+}) {
+	const [pageId, setPageId] = useState(targets[0]?.pageId ?? "");
+	const [busy, setBusy] = useState(false);
+	const [failure, setFailure] = useState<string | null>(null);
+
+	const promote = async () => {
+		setBusy(true);
+		setFailure(null);
+		const sent = await send<{ alert?: PageAlertRecord }>(
+			"/api/page-alerts/promote/",
+			"POST",
+			{ alertId: alert.id, pageId },
+		);
+		setBusy(false);
+		if (!sent.ok) {
+			setFailure(sent.body.error ?? "Could not make it a page alert.");
+			return;
+		}
+		onDone();
+	};
+
+	return (
+		<Modal
+			isOpen
+			onClose={onClose}
+			title="Promote to page alert"
+			width="520px"
+			footer={
+				<>
+					{failure && (
+						<span className={styles.formError} role="alert">
+							{failure}
+						</span>
+					)}
+					<button
+						type="button"
+						className={styles.secondary}
+						onClick={onClose}
+					>
+						Cancel
+					</button>
+					<button
+						type="button"
+						className={styles.primary}
+						onClick={() => void promote()}
+						disabled={busy || !pageId}
+					>
+						{busy ? "Promoting" : "Promote"}
+					</button>
+				</>
+			}
+		>
+			<div className={styles.form}>
+				<p className={styles.fieldHint}>
+					{alert.name} becomes an alert on the page you choose, which
+					anyone reading it can follow. You follow it in its place,
+					and this personal alert is deleted.
+				</p>
+				<Select
+					options={targets.map((t) => ({
+						value: t.pageId,
+						label: t.pageTitle,
+						group: t.reportTitle,
+					}))}
+					value={pageId}
+					onChange={setPageId}
+					searchable={targets.length > 12}
+					ariaLabel="Page"
+				/>
+			</div>
+		</Modal>
+	);
+}
+
+// One page alert the reader follows, labelled with the page it comes from.
+function SubscriptionCard({
+	alert,
+	onChanged,
+	onCopy,
+}: {
+	alert: PageAlertRecord;
+	onChanged: () => void;
+	onCopy: () => void;
+}) {
+	const filters = describeConditions(alert.definition.conditions);
+	const note = runsNote(alert);
+	return (
+		<article
+			className={`${styles.card} ${alert.muted ? styles.cardOff : ""}`}
+		>
+			<header className={styles.cardHead}>
+				<div className={styles.cardTitleBlock}>
+					<span className={styles.fromPage}>
+						From {alert.reportTitle}, {alert.pageTitle} page
+					</span>
+					<h2 className={styles.cardTitle}>{alert.name}</h2>
+					<p className={styles.summary}>{alert.summary}</p>
+				</div>
+			</header>
+			<dl className={styles.facts}>
+				<div>
+					<dt>Dataset</dt>
+					<dd>{alert.sourceTitle ?? alert.definition.sourceKey}</dd>
+				</div>
+				{filters && (
+					<div>
+						<dt>Filters</dt>
+						<dd>{filters}</dd>
+					</div>
+				)}
+				<div>
+					<dt>Checked</dt>
+					<dd>
+						{alert.scheduleText}
+						{note && (
+							<span className={styles.fieldHint}> {note}</span>
+						)}
+					</dd>
+				</div>
+			</dl>
+			<footer className={styles.cardFoot}>
+				<SubscriptionControls
+					alert={alert}
+					onChanged={onChanged}
+					onCopy={onCopy}
+				/>
+				<Link href={alert.link} className={styles.linkButton}>
+					Open the page
+				</Link>
+			</footer>
+		</article>
+	);
+}
+
 // The alerts view of the inbox: a toolbar with the count and New alert, then
 // the alerts themselves, or a short start when there are none.
 export function AlertsPanel() {
 	const notify = useNotify();
 	const { data, error, isLoading, mutate } = useSWR<AlertList>(alertsKey);
+	const { data: followed, mutate: refollow } = useSWR<{
+		subscriptions: PageAlertRecord[];
+	}>(data?.enabled ? subscriptionsKey : null);
+	const [copying, setCopying] = useState<PageAlertRecord | null>(null);
+	// Where each dataset of the reader's alerts could become a page alert.
+	const alertSources = [
+		...new Set((data?.alerts ?? []).map((a) => a.definition.sourceKey)),
+	]
+		.sort()
+		.join(",");
+	const { data: promotable } = useSWR<{
+		targets: Record<string, PromoteTarget[]>;
+	}>(
+		data?.enabled && alertSources
+			? `/api/page-alerts/promote/?sources=${encodeURIComponent(alertSources)}`
+			: null,
+	);
 	const { data: authoring } = useSWR<{ sources: SourceMeta[] }>(
 		"/api/authoring",
 	);
@@ -299,6 +500,7 @@ export function AlertsPanel() {
 
 	const changed = () => {
 		void mutate();
+		void refollow();
 		notify.refresh();
 	};
 
@@ -419,10 +621,45 @@ export function AlertsPanel() {
 								alert={alert}
 								onEdit={() => setDialog({ editing: alert })}
 								onChanged={changed}
+								targets={
+									promotable?.targets[
+										alert.definition.sourceKey
+									]
+								}
 							/>
 						))}
 					</div>
 				</>
+			)}
+
+			{(followed?.subscriptions.length ?? 0) > 0 && (
+				<>
+					<h2 className={styles.sectionTitle}>
+						Page alerts you follow
+					</h2>
+					<div className={styles.list}>
+						{followed?.subscriptions.map((alert) => (
+							<SubscriptionCard
+								key={alert.id}
+								alert={alert}
+								onChanged={() => void refollow()}
+								onCopy={() => setCopying(alert)}
+							/>
+						))}
+					</div>
+				</>
+			)}
+
+			{copying && (
+				<AlertDialog
+					sources={sources}
+					copyOf={copying}
+					onClose={() => setCopying(null)}
+					onSaved={() => {
+						setCopying(null);
+						changed();
+					}}
+				/>
 			)}
 
 			{dialog && (
@@ -432,6 +669,10 @@ export function AlertsPanel() {
 					prefill={dialog.prefill}
 					onClose={() => setDialog(null)}
 					onSaved={() => {
+						setDialog(null);
+						changed();
+					}}
+					onSubscribed={() => {
 						setDialog(null);
 						changed();
 					}}

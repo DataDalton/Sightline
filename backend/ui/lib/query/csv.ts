@@ -6,11 +6,32 @@
 // into one valid document, which is a property worth stating and testing on its
 // own.
 
+// Text a spreadsheet program would run as a formula when the file is opened
+// starts with one of these. A tab or carriage return is read past to the
+// character after it by some programs, so those count as well.
+const formulaLead = /^[=+\-@\t\r]/;
+
+// A plain decimal number written as text, as the warehouse returns DECIMAL
+// columns. Opened as a number, so it runs nothing and stays a number.
+const plainNumber = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
+
+// Makes a text cell inert in a spreadsheet by prefixing a single quote, which
+// every spreadsheet program reads as "this is text". Only text is changed. A
+// number, a boolean, and text that is only a plain number pass through, so
+// -5 stays a number a spreadsheet can sum. Applied to every cell and header
+// a CSV file is built from, so no export path can skip it.
+export function neutraliseFormula(value: unknown): unknown {
+	if (typeof value !== "string") return value;
+	if (!formulaLead.test(value) || plainNumber.test(value)) return value;
+	return `'${value}`;
+}
+
 // A cell containing a delimiter, quote or newline is quoted, and embedded
-// quotes are doubled.
+// quotes are doubled. Text that would run as a formula is made inert first.
 export function escapeCell(value: unknown): string {
 	if (value === null || value === undefined) return "";
-	const text = typeof value === "string" ? value : String(value);
+	const safe = neutraliseFormula(value);
+	const text = typeof safe === "string" ? safe : String(safe);
 	if (/[",\r\n]/.test(text)) {
 		return `"${text.replace(/"/g, '""')}"`;
 	}

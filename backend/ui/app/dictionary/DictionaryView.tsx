@@ -42,8 +42,42 @@ interface Usage {
 	visualType: string;
 	isPersonal: boolean;
 	ownerEmail: string | null;
-	usedAs: "dimension" | "measure" | "filter" | "sort";
+	usedAs: "dimension" | "measure" | "filter" | "sort" | "option";
 }
+
+// Places other than a visual that name the field. See OtherUsage in
+// lib/platform/dictionary.
+interface OtherUsage {
+	kind: string;
+	total: number;
+	yours: { name: string; link: string | null }[];
+	reports: { title: string; slug: string }[];
+}
+
+// What each kind of item is called, singular and plural.
+const otherKindWords: Record<string, [string, string]> = {
+	pageFreshness: ["page's data-through date", "pages' data-through dates"],
+	savedView: ["saved view", "saved views"],
+	exploration: ["exploration", "explorations"],
+	exploreView: ["saved exploration", "saved explorations"],
+	alert: ["alert", "alerts"],
+	pageAlert: ["page alert", "page alerts"],
+	delivery: ["scheduled page", "scheduled pages"],
+	sheet: ["sheet", "sheets"],
+	sourceDefaultTime: [
+		"dataset's default time field",
+		"dataset's default time field",
+	],
+};
+
+// Where a visual names a field, in words.
+const usedAsWords: Record<Usage["usedAs"], string> = {
+	dimension: "a dimension",
+	measure: "a measure",
+	filter: "a filter",
+	sort: "a sort",
+	option: "a setting",
+};
 
 type Shown = "all" | "dimension" | "measure" | "unused";
 
@@ -366,12 +400,14 @@ function UsagePanel({
 }) {
 	const { data, isLoading } = useSWR<{
 		usage: Usage[];
+		elsewhere?: OtherUsage[];
 		definition: Definition | null;
 	}>(
 		`/api/dictionary?sourceKey=${encodeURIComponent(field.sourceKey)}&field=${encodeURIComponent(field.name)}`,
 	);
 
 	const usage = data?.usage ?? [];
+	const elsewhere = data?.elsewhere ?? [];
 	const definition = data?.definition ?? null;
 
 	// Grouped by report, because the question is which reports to check before
@@ -569,14 +605,74 @@ function UsagePanel({
 									</span>
 									<span className={styles.usageWhere}>
 										{use.pageTitle
-											? `${use.pageTitle}, as a ${use.usedAs}`
-											: `as a ${use.usedAs}`}
+											? `${use.pageTitle}, as ${usedAsWords[use.usedAs] ?? use.usedAs}`
+											: `as ${usedAsWords[use.usedAs] ?? use.usedAs}`}
 									</span>
 								</li>
 							))}
 						</ul>
 					</div>
 				))}
+				{elsewhere.length > 0 && (
+					<>
+						<h3 className={styles.panelSection}>Also used by</h3>
+						<ul className={styles.usageList}>
+							{elsewhere.map((other) => {
+								const words = otherKindWords[other.kind] ?? [
+									other.kind,
+									other.kind,
+								];
+								return (
+									<li key={other.kind}>
+										<span className={styles.usageVisual}>
+											{other.kind === "sourceDefaultTime"
+												? `The ${words[0]}`
+												: `${other.total} ${other.total === 1 ? words[0] : words[1]}`}
+										</span>
+										{other.yours.length > 0 && (
+											<span className={styles.usageWhere}>
+												Yours:{" "}
+												{other.yours.map((item, i) => (
+													<span
+														key={`${item.name}-${i}`}
+													>
+														{i > 0 && ", "}
+														{item.link ? (
+															<Link
+																href={item.link}
+															>
+																{item.name}
+															</Link>
+														) : (
+															item.name
+														)}
+													</span>
+												))}
+											</span>
+										)}
+										{other.reports.length > 0 && (
+											<span className={styles.usageWhere}>
+												On{" "}
+												{other.reports.map(
+													(report, i) => (
+														<span key={report.slug}>
+															{i > 0 && ", "}
+															<Link
+																href={`/r/${report.slug}`}
+															>
+																{report.title}
+															</Link>
+														</span>
+													),
+												)}
+											</span>
+										)}
+									</li>
+								);
+							})}
+						</ul>
+					</>
+				)}
 			</aside>
 		</>
 	);

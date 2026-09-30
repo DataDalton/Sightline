@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { byteOrderMark, csvHeader, csvRows, escapeCell } from "./csv";
+import {
+	byteOrderMark,
+	csvHeader,
+	csvRows,
+	escapeCell,
+	neutraliseFormula,
+} from "./csv";
 import { maxExportRows } from "./exportLimits";
 import { maxLimit } from "./spec";
 
@@ -67,6 +73,56 @@ test("a value is written under the column asked for, not the one it sorts to", (
 test("a zero survives, since it is a figure and not an absence", () => {
 	assert.equal(escapeCell(0), "0");
 	assert.equal(escapeCell(false), "false");
+});
+
+test("text that would run as a formula is made inert", () => {
+	for (const lead of ["=", "+", "-", "@", "\t", "\r"]) {
+		const value = `${lead}HYPERLINK("http://example.invalid")`;
+		assert.equal(
+			neutraliseFormula(value),
+			`'${value}`,
+			JSON.stringify(lead),
+		);
+	}
+	assert.equal(escapeCell("=1+1"), "'=1+1");
+	assert.equal(escapeCell("@SUM(A1)"), "'@SUM(A1)");
+	assert.equal(escapeCell("-2+3"), "'-2+3");
+	// Quoted after the prefix, so the prefix stays inside the field.
+	assert.equal(escapeCell('=cmd|" /c calc"'), `"'=cmd|"" /c calc"""`);
+	assert.equal(escapeCell("\rline"), `"'\rline"`);
+});
+
+test("numbers are left as numbers", () => {
+	assert.equal(neutraliseFormula(-5), -5);
+	assert.equal(escapeCell(-5), "-5");
+	assert.equal(escapeCell(-0.25), "-0.25");
+	assert.equal(escapeCell(BigInt(-7)), "-7");
+	// Text that is only a plain number, as DECIMAL columns arrive.
+	assert.equal(escapeCell("-5"), "-5");
+	assert.equal(escapeCell("+12.50"), "+12.50");
+	assert.equal(escapeCell("-1.5e3"), "-1.5e3");
+	// Near misses are text and are made inert.
+	assert.equal(escapeCell("-5 "), "'-5 ");
+	assert.equal(escapeCell("-Infinity"), "'-Infinity");
+	assert.equal(escapeCell("\t5"), "'\t5");
+});
+
+test("ordinary text is unchanged", () => {
+	assert.equal(escapeCell("North"), "North");
+	assert.equal(escapeCell("a=b"), "a=b");
+	assert.equal(escapeCell(" =1"), " =1");
+	assert.equal(escapeCell("'=already"), "'=already");
+});
+
+test("headers and every row cell are made inert", () => {
+	const columns = ["=region", "revenue"];
+	const document =
+		csvHeader(columns) +
+		csvRows(columns, [{ "=region": "+North", revenue: -3 }]);
+	assert.equal(
+		document,
+		`${byteOrderMark}'=region,revenue\r\n'+North,-3\r\n`,
+	);
 });
 
 // The export asks for one row past its ceiling so it can tell a result that

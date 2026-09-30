@@ -2218,6 +2218,51 @@ textarea.input {
 	color: var(--text-primary);
 }
 
+/* One target per scorecard measure. The name sits on its own line so a long
+   measure name is not squeezed by the two controls beneath it. */
+.targetList {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+
+.targetRow {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	padding: var(--space-2);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-md);
+}
+
+.targetName {
+	font-size: var(--text-sm);
+	color: var(--text-secondary);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.targetControls {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+	gap: var(--space-2);
+	align-items: center;
+}
+
+.targetFigure {
+	display: flex;
+	align-items: center;
+	gap: var(--space-1);
+	min-width: 0;
+}
+
+.targetUnit {
+	flex-shrink: 0;
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+}
+
 /* Destructive controls, set apart from the settings above them and drawn the
    same on both tabs, so removing a visual and deleting a report look like the
    same kind of act wherever they are met.
@@ -2288,4 +2333,165 @@ textarea.input {
 .dangerButton:disabled {
 	opacity: 0.5;
 	cursor: not-allowed;
+}
+
+/* --- Phone width ---------------------------------------------------------
+
+   Enough of the editor for light edits on a phone. The canvas takes the
+   screen and scrolls down the page, the rail sits along the bottom, and a
+   panel opens as a sheet over the lower part of the screen rather than
+   pushing the canvas out of view. Every control a finger has to hit is at
+   least a fingertip wide in both directions, and text inputs use the size a
+   phone browser does not zoom in on. */
+@media (max-width: 560px) {
+	.editor {
+		min-width: 0;
+	}
+
+	.toolbar {
+		gap: var(--space-1);
+		padding: var(--space-1) var(--space-2);
+		margin-bottom: var(--space-2);
+	}
+
+	.toolButton {
+		min-height: 40px;
+		padding: var(--space-2);
+	}
+
+	.iconTool,
+	.headIcon {
+		width: 40px;
+		height: 40px;
+	}
+
+	.previewSelect {
+		width: 132px;
+	}
+
+	.divider {
+		display: none;
+	}
+
+	.pageTabButton {
+		min-height: 40px;
+	}
+
+	.pageTabRemove {
+		width: 40px;
+		height: 40px;
+		margin-right: 0;
+	}
+
+	.workspace {
+		gap: var(--space-2);
+	}
+
+	/* Down the page, with the page laid out to the canvas width so nothing
+	   is left to reach by scrolling sideways. */
+	.canvasScroll {
+		flex: 1;
+		min-height: 0;
+		overflow-x: hidden;
+		overflow-y: auto;
+		overscroll-behavior: contain;
+		padding: var(--space-2);
+	}
+
+	/* A resize corner a fingertip can take hold of. */
+	.gripSE {
+		right: -6px;
+		bottom: -6px;
+		width: 28px;
+		height: 28px;
+	}
+
+	.panel {
+		position: fixed;
+		top: auto;
+		left: 0;
+		right: 0;
+		bottom: var(--tabbar-height);
+		z-index: 60;
+		width: 100%;
+		max-width: none;
+		height: min(
+			72dvh,
+			calc(100dvh - var(--header-height) - var(--tabbar-height))
+		);
+		max-height: none;
+		border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+		border-bottom: none;
+		box-shadow: var(--shadow-lg);
+		animation: panelUp 160ms ease-out;
+	}
+
+	.panelHead,
+	.visualHead {
+		padding: var(--space-2) var(--space-3);
+	}
+
+	.panelBack {
+		width: 40px;
+		height: 40px;
+	}
+
+	.sectionHead,
+	.checkRow,
+	.fieldBody {
+		min-height: 40px;
+	}
+
+	.iconButton {
+		width: 40px;
+		height: 40px;
+	}
+
+	.input,
+	.select,
+	.titleInput,
+	.panelSearch input {
+		min-height: 40px;
+		font-size: 16px;
+	}
+
+	.bandBreak {
+		min-height: 40px;
+		padding: 0 var(--space-2);
+	}
+
+	.dangerButton {
+		min-height: 40px;
+	}
+
+	.rail {
+		gap: 2px;
+	}
+
+	.railButton {
+		min-height: 48px;
+		min-width: 40px;
+		justify-content: center;
+	}
+
+	.targetControls {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+@media (max-width: 560px) and (prefers-reduced-motion: reduce) {
+	.panel {
+		animation: none;
+	}
+}
+
+@keyframes panelUp {
+	from {
+		opacity: 0;
+		transform: translateY(16px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
 }

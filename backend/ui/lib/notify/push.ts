@@ -182,6 +182,7 @@ export const defaultPushPreferences: PushPreferences = {
 	message: true,
 	delivery: true,
 	data: true,
+	schema: true,
 	system: true,
 };
 

@@ -7,7 +7,7 @@ import { csvHeader, csvRows } from "../query/csv";
 import { executeQuery } from "../query/execute";
 import { maxLimit, parseQuerySpec, type QuerySpec } from "../query/spec";
 import { getSource } from "../semantic/registry";
-import type { SemanticSource } from "../semantic/types";
+import { findMissingField, type SemanticSource } from "../semantic/types";
 import { record } from "../telemetry/usage";
 import {
 	buildPivot,
@@ -35,6 +35,19 @@ interface Resolved {
 	dimensions: string[];
 	measures: string[];
 	logic: ReturnType<typeof toFilterLogic>;
+	// Fields the sheet names that its dataset does not publish, left out of
+	// the query and reported so the page can say which ones.
+	missing: string[];
+}
+
+// Why a sheet cannot be read, naming the field and what became of it where
+// the dataset remembers it.
+function missingFieldProblem(source: SemanticSource, name: string): string {
+	const known = findMissingField(source, name);
+	if (known?.renamedTo) {
+		return `The sheet filters on ${name}, which ${source.title} renamed to ${known.renamedTo}. Change the condition to use the new name.`;
+	}
+	return `The sheet filters on ${name}, which ${source.title} no longer has. Remove that condition to read the sheet.`;
 }
 
 function resolve(def: SheetDefinition): Resolved {
@@ -47,6 +60,13 @@ function resolve(def: SheetDefinition): Resolved {
 		...source.dimensions.map((f) => [f.name, "dimension"] as const),
 		...source.measures.map((f) => [f.name, "measure"] as const),
 	]);
+	// A condition cannot be dropped the way a column can. Without it the sheet
+	// would show more rows than it asks for and look right doing it.
+	for (const condition of def.conditions) {
+		if (!kinds.has(condition.field)) {
+			throw new SheetError(missingFieldProblem(source, condition.field));
+		}
+	}
 	const logic = toFilterLogic(def.conditions, kinds);
 	if (logic.problem) throw new SheetError(logic.problem);
 	return {
@@ -54,6 +74,7 @@ function resolve(def: SheetDefinition): Resolved {
 		dimensions: def.columns.filter((c) => dims.has(c)),
 		measures: def.columns.filter((c) => meas.has(c)),
 		logic,
+		missing: def.columns.filter((c) => !kinds.has(c)),
 	};
 }
 
@@ -87,6 +108,8 @@ export interface TableData {
 	truncated: boolean;
 	computedAt: number;
 	stale: boolean;
+	// Columns the sheet names that its dataset no longer publishes.
+	missing: string[];
 }
 
 export interface PivotData {
@@ -94,6 +117,8 @@ export interface PivotData {
 	table: PivotTable;
 	truncated: boolean;
 	computedAt: number;
+	// Fields in the layout that the dataset no longer publishes.
+	missing: string[];
 }
 
 async function tableRows(
@@ -116,7 +141,11 @@ async function tableRows(
 	// ceiling are the ones that sort first. A formula or note column sorts in
 	// the page over the rows that came back.
 	const sortField =
-		def.sort && def.columns.includes(def.sort.column) ? def.sort : null;
+		def.sort &&
+		(r.dimensions.includes(def.sort.column) ||
+			r.measures.includes(def.sort.column))
+			? def.sort
+			: null;
 	const result = await executeQuery(
 		identity,
 		specFor(
@@ -162,6 +191,7 @@ export async function tableData(
 		truncated,
 		computedAt,
 		stale,
+		missing: r.missing,
 	};
 }
 
@@ -183,9 +213,32 @@ export async function pivotData(
 ): Promise<PivotData> {
 	const def = sheet.definition;
 	const r = resolve(def);
-	const layout = def.pivot;
 	const dims = new Set(r.source.dimensions.map((d) => d.name));
 	const meas = new Set(r.source.measures.map((m) => m.name));
+
+	// A layout field the dataset no longer publishes is left out and reported,
+	// so the rest of the pivot still reads.
+	const gone = (name: string) =>
+		findMissingField(r.source, name) !== null ||
+		(!dims.has(name) && !meas.has(name));
+	const missing = [
+		...new Set(
+			[
+				...def.pivot.rows,
+				...(def.pivot.columns ? [def.pivot.columns] : []),
+				...def.pivot.values,
+			].filter(gone),
+		),
+	];
+	const layout = {
+		rows: def.pivot.rows.filter((f) => !gone(f)),
+		columns:
+			def.pivot.columns && !gone(def.pivot.columns)
+				? def.pivot.columns
+				: null,
+		values: def.pivot.values.filter((f) => !gone(f)),
+	};
+
 	for (const f of [
 		...layout.rows,
 		...(layout.columns ? [layout.columns] : []),
@@ -200,6 +253,7 @@ export async function pivotData(
 			table: { down: layout.rows, columns: [], rows: [], clipped: false },
 			truncated: false,
 			computedAt: Date.now(),
+			missing,
 		};
 	}
 
@@ -234,6 +288,7 @@ export async function pivotData(
 		table,
 		truncated: cells!.rows.length > limits.pivotCells,
 		computedAt: cells!.computedAt,
+		missing,
 	};
 }
 

@@ -6,7 +6,7 @@ import { applyTransforms } from "./transform";
 import { isDatabricksApp } from "../runtime";
 import { getSource } from "../semantic/registry";
 import type { SemanticSource } from "../semantic/types";
-import { compileQuery } from "./builder";
+import { assertFieldsPresent, compileQuery } from "./builder";
 import { reachableSet } from "../platform/sources";
 import { intervalFor, requestCheck } from "../freshness/checker";
 import { overdue } from "../freshness/marks";
@@ -110,6 +110,11 @@ export async function executeQuery(
 	}
 
 	await assertCanReadSource(identity, source.sourceKey);
+
+	// A field the source stopped publishing is named as such before any cache
+	// is asked. The error is a QuerySpecError, so the caller passes its
+	// message to the reader, and it names only the field.
+	assertFieldsPresent(source, spec);
 
 	const policy = await resolvePolicyClass(identity);
 
@@ -360,6 +365,17 @@ export async function executeQueries(
 			return;
 		}
 
+		// Named before the cache is asked, as the single query path does.
+		try {
+			assertFieldsPresent(entry.source, entry.spec);
+		} catch (error) {
+			outcomes[index] = {
+				error: (error as Error).message,
+				status: 400,
+			};
+			return;
+		}
+
 		const lookup = entry.shareable
 			? (lookups.get(entry.key) ?? {
 					entry: null,
@@ -455,11 +471,23 @@ export async function executeQueries(
 					),
 				};
 			} catch (error) {
-				const message =
-					error instanceof Error ? error.message : "Query failed";
+				// A refusal or a problem with the request is the reader's to
+				// read, a missing field included. A warehouse error can carry
+				// schema details, so it is logged rather than returned.
+				const readable =
+					error instanceof QueryAccessError ||
+					error instanceof QuerySpecError;
+				if (!readable) {
+					console.error(`Query failed for ${entry.key}:`, error);
+				}
 				outcomes[index] = {
-					error: message,
-					status: error instanceof QueryAccessError ? 403 : 500,
+					error: readable ? (error as Error).message : "Query failed",
+					status:
+						error instanceof QueryAccessError
+							? 403
+							: error instanceof QuerySpecError
+								? 400
+								: 500,
 				};
 			}
 		}

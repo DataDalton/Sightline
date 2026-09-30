@@ -29,6 +29,7 @@ import { NewPageDialog } from "../authoring/NewPage";
 import { PageStrip } from "./PageStrip";
 import { Select } from "../components/shared/Select";
 import { ReportPlacement } from "./ReportPlacement";
+import { PageDateRangeContext } from "./MeasureTargets";
 import { UnsavedEditsContext } from "./HistoryPanel";
 import { Hint, Section } from "./PanelSection";
 import { VisualPicker } from "./VisualPicker";
@@ -36,6 +37,7 @@ import { AlignTools } from "./AlignTools";
 import type { VisualPreset } from "../../lib/visuals/presets";
 import { PropertiesPanel } from "./PropertiesPanel";
 import { EditorRail, type EditorPanel } from "./EditorRail";
+import { PageAlertsPanel } from "./PageAlertsPanel";
 import { useAssistant } from "../assist/AssistantContext";
 import { useAssistantSurface } from "../assist/useAssistantSurface";
 import type { EditorOp } from "../../lib/assistant/surfaces/editor";
@@ -2387,174 +2389,197 @@ export function ReportEditor({
 					panel === "history" ||
 					(panel === "visual" && selected)) && (
 					<UnsavedEditsContext.Provider value={dirty}>
-						<PropertiesPanel
-							reportId={reportId}
-							sources={sources}
-							visual={panel === "visual" ? selected : null}
-							source={
-								selected?.sourceKey
-									? sources[selected.sourceKey]
-									: undefined
-							}
-							onChange={updateVisual}
-							onRemove={removeVisual}
-							onDuplicate={duplicateVisual}
-							onDeselect={() => selectVisual(null)}
-							readOnly={locks.protectEdit}
-							groups={groups}
-							pageSource={
-								pageSourceKey
-									? sources[pageSourceKey]
-									: undefined
-							}
-							pageConfig={pageConfig}
-							pageTitle={pageTitle}
-							reportDescription={description}
-							placement={
-								<>
-									{!isPersonal && (
-										<ReportPlacement
-											reportId={reportId}
-											slug={slug}
-											categoryId={categoryId}
-											dirty={dirty}
-										/>
-									)}
+						<PageDateRangeContext.Provider
+							value={visuals.some(
+								(v) =>
+									v.visualType === "dateRangeFilter" &&
+									Boolean(v.config.options?.defaultPreset),
+							)}
+						>
+							<PropertiesPanel
+								reportId={reportId}
+								sources={sources}
+								visual={panel === "visual" ? selected : null}
+								source={
+									selected?.sourceKey
+										? sources[selected.sourceKey]
+										: undefined
+								}
+								onChange={updateVisual}
+								onRemove={removeVisual}
+								onDuplicate={duplicateVisual}
+								onDeselect={() => selectVisual(null)}
+								readOnly={locks.protectEdit}
+								groups={groups}
+								pageSource={
+									pageSourceKey
+										? sources[pageSourceKey]
+										: undefined
+								}
+								pageConfig={pageConfig}
+								pageTitle={pageTitle}
+								reportDescription={description}
+								placement={
+									<>
+										{!isPersonal && (
+											<ReportPlacement
+												reportId={reportId}
+												slug={slug}
+												categoryId={categoryId}
+												dirty={dirty}
+											/>
+										)}
 
-									{/* Who may change what, above the control that
+										{/* Who may change what, above the control that
 							    would be refused by it. Only an administrator
 							    sees the way in; the capability is checked
 							    again on the server, which decides. */}
-									{(canProtect ||
-										reportProtectDelete ||
-										reportProtectEdit ||
-										pageLocks.some(
-											(p) =>
-												p.protectDelete ||
-												p.protectEdit,
-										)) && (
-										<Section
-											id="report-protection"
-											title="Protection"
-											count={
-												pageLocks.filter(
-													(p) =>
-														p.protectDelete ||
-														p.protectEdit,
-												).length +
-												(reportProtectDelete ? 1 : 0) +
-												(reportProtectEdit ? 1 : 0)
-											}
-										>
-											{describe({
-												protectDelete:
-													reportProtectDelete,
-												protectEdit: reportProtectEdit,
-											}).map((line) => (
-												<Hint key={line}>{line}</Hint>
-											))}
-											{!reportProtectDelete &&
-												!reportProtectEdit && (
-													<Hint>
-														Nothing is locked at the
-														report level. Individual
-														pages may still be.
-													</Hint>
-												)}
-											<button
-												type="button"
-												className={`${styles.saveButton} ${styles.sectionButton}`}
-												onClick={() =>
-													setProtecting(true)
-												}
-												disabled={!canProtect}
-												title={
-													canProtect
-														? undefined
-														: "Only an administrator can change this."
+										{(canProtect ||
+											reportProtectDelete ||
+											reportProtectEdit ||
+											pageLocks.some(
+												(p) =>
+													p.protectDelete ||
+													p.protectEdit,
+											)) && (
+											<Section
+												id="report-protection"
+												title="Protection"
+												count={
+													pageLocks.filter(
+														(p) =>
+															p.protectDelete ||
+															p.protectEdit,
+													).length +
+													(reportProtectDelete
+														? 1
+														: 0) +
+													(reportProtectEdit ? 1 : 0)
 												}
 											>
-												{canProtect
-													? "Change protection"
-													: "Protection is set by an administrator"}
-											</button>
-										</Section>
-									)}
+												{describe({
+													protectDelete:
+														reportProtectDelete,
+													protectEdit:
+														reportProtectEdit,
+												}).map((line) => (
+													<Hint key={line}>
+														{line}
+													</Hint>
+												))}
+												{!reportProtectDelete &&
+													!reportProtectEdit && (
+														<Hint>
+															Nothing is locked at
+															the report level.
+															Individual pages may
+															still be.
+														</Hint>
+													)}
+												<button
+													type="button"
+													className={`${styles.saveButton} ${styles.sectionButton}`}
+													onClick={() =>
+														setProtecting(true)
+													}
+													disabled={!canProtect}
+													title={
+														canProtect
+															? undefined
+															: "Only an administrator can change this."
+													}
+												>
+													{canProtect
+														? "Change protection"
+														: "Protection is set by an administrator"}
+												</button>
+											</Section>
+										)}
 
-									{/* Kept away from the toolbar, where it sat between
+										{/* Kept away from the toolbar, where it sat between
 							    Done and Publish and was one slip from either.
 							    Down here it takes a deliberate trip into the
 							    settings panel, and still asks. */}
-									<div className={styles.dangerBlock}>
-										<span className={styles.fieldLabel}>
-											Delete this report
-										</span>
-										<Hint>
-											Removes every page on it. Anyone who
-											could open it loses it.
-										</Hint>
-										<button
-											type="button"
-											className={styles.dangerButton}
-											onClick={() =>
-												setConfirmingRemove(true)
-											}
-											disabled={saving || removing}
-										>
-											{removing
-												? "Deleting"
-												: "Delete report"}
-										</button>
-									</div>
-								</>
-							}
-							panelTab={
-								panel === "report" || panel === "history"
-									? panel
-									: "page"
-							}
-							onPanelTab={setPanel}
-							onClose={() => setPanel(null)}
-							historySlug={slug}
-							historyKey={historyKey}
-							onRestored={() => {
-								// The restore has already landed. Everything the
-								// editor is holding is now a version behind, and
-								// reconstructing it here would be guessing, so the
-								// page reloads from what was actually written.
-								setHistoryKey((k) => k + 1);
-								onSaved();
-								onExit();
-							}}
-							// Each of these is put back by an undo, so each records a
-							// step first. Keyed so a run of keystrokes in one field is
-							// one step rather than one per character.
-							onPageChange={(next) => {
-								record("pageConfig");
-								setPageConfig(next);
-								pendingRef.current.set("page", {
-									type: "updatePage",
-								});
-								setDirty(true);
-							}}
-							onPageTitleChange={(next) => {
-								record("pageTitle");
-								setPageTitle(next);
-								pendingRef.current.set("page", {
-									type: "updatePage",
-								});
-								setDirty(true);
-							}}
-							onDescriptionChange={(next) => {
-								record("description");
-								setDescription(next);
-								pendingRef.current.set("report", {
-									type: "updateReport",
-								});
-								setDirty(true);
-							}}
-						/>
+										<div className={styles.dangerBlock}>
+											<span className={styles.fieldLabel}>
+												Delete this report
+											</span>
+											<Hint>
+												Removes every page on it. Anyone
+												who could open it loses it.
+											</Hint>
+											<button
+												type="button"
+												className={styles.dangerButton}
+												onClick={() =>
+													setConfirmingRemove(true)
+												}
+												disabled={saving || removing}
+											>
+												{removing
+													? "Deleting"
+													: "Delete report"}
+											</button>
+										</div>
+									</>
+								}
+								panelTab={
+									panel === "report" || panel === "history"
+										? panel
+										: "page"
+								}
+								onPanelTab={setPanel}
+								onClose={() => setPanel(null)}
+								historySlug={slug}
+								historyKey={historyKey}
+								onRestored={() => {
+									// The restore has already landed. Everything the
+									// editor is holding is now a version behind, and
+									// reconstructing it here would be guessing, so the
+									// page reloads from what was actually written.
+									setHistoryKey((k) => k + 1);
+									onSaved();
+									onExit();
+								}}
+								// Each of these is put back by an undo, so each records a
+								// step first. Keyed so a run of keystrokes in one field is
+								// one step rather than one per character.
+								onPageChange={(next) => {
+									record("pageConfig");
+									setPageConfig(next);
+									pendingRef.current.set("page", {
+										type: "updatePage",
+									});
+									setDirty(true);
+								}}
+								onPageTitleChange={(next) => {
+									record("pageTitle");
+									setPageTitle(next);
+									pendingRef.current.set("page", {
+										type: "updatePage",
+									});
+									setDirty(true);
+								}}
+								onDescriptionChange={(next) => {
+									record("description");
+									setDescription(next);
+									pendingRef.current.set("report", {
+										type: "updateReport",
+									});
+									setDirty(true);
+								}}
+							/>
+						</PageDateRangeContext.Provider>
 					</UnsavedEditsContext.Provider>
+				)}
+				{panel === "alerts" && (
+					<PageAlertsPanel
+						pageId={activePageId}
+						pageTitle={pageTitle}
+						sources={sources}
+						draft={draftPage !== null}
+						onClose={() => setPanel(null)}
+					/>
 				)}
 				<EditorRail
 					panel={panel}

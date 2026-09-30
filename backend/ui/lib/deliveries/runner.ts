@@ -4,9 +4,13 @@ import { sql, transaction } from "../data/lakebase";
 import { reachableSet } from "../platform/sources";
 import type { Row } from "../data/types";
 import { toNumber } from "../format";
-import { notify, type NewNotification } from "../notify/store";
+import {
+	notifyInTransaction,
+	pushNotification,
+	type InboxItem,
+	type NewNotification,
+} from "../notify/store";
 import { getReport } from "../platform/reports";
-import { compileQuery } from "../query/builder";
 import { parseQuerySpec } from "../query/spec";
 import { queryForVisual } from "../query/visualSpec";
 import { getSource, listSources } from "../semantic/registry";
@@ -20,7 +24,15 @@ import {
 	restrictionFor,
 } from "../alerts/recorded";
 import { confirmableSources } from "../platform/sources";
-import { asApp, asOwner, type RunQuery } from "../alerts/runner";
+import { BatchReads } from "../alerts/reads";
+import {
+	asApp,
+	asOwner,
+	confirmationRefresh,
+	ownerThrottleMs,
+	type RunQuery,
+} from "../alerts/runner";
+import type { RunIdentity } from "../alerts/shared";
 import { pageLink } from "./store";
 
 // Works out and sends the pages people have scheduled.
@@ -84,11 +96,12 @@ export interface Figure {
 
 // The headline figures of one page, as it would show them on opening today.
 // KPI tiles from the page's figure dataset only, so a restriction taken on
-// that dataset covers every query made.
+// that dataset covers every query made. Read through the batch, so people who
+// scheduled the same page share its queries where their scope allows.
 export async function pageFigures(
 	pageId: string,
 	sourceKey: string,
-	run: RunQuery,
+	reads: BatchReads,
 	restricted: boolean,
 	ownerEmail: string,
 ): Promise<Figure[]> {
@@ -135,10 +148,11 @@ export async function pageFigures(
 			filters: [...pageFilters, ...(visual.config.filters ?? [])],
 		});
 		if (!shape) continue;
-		const compiled = compileQuery(source, parseQuerySpec(shape), {
+		const rows: Row[] = await reads.read(
+			source,
+			parseQuerySpec(shape),
 			restriction,
-		});
-		const rows: Row[] = await run(compiled.sql, compiled.params);
+		);
 		for (const measure of measures) {
 			const value = toNumber(rows[0]?.[measure]);
 			figures.push({
@@ -164,7 +178,7 @@ function describeChange(change: number | null): string {
 // so one bad day does not retry every minute.
 async function deliver(
 	row: DeliveryRow,
-	run: RunQuery,
+	reads: BatchReads,
 	restricted: boolean,
 	// The time to put back instead of moving the schedule, for a send the
 	// owner asked for.
@@ -191,7 +205,7 @@ async function deliver(
 		const figures = await pageFigures(
 			row.page_id,
 			row.source_key,
-			run,
+			reads,
 			restricted,
 			row.owner_email,
 		);
@@ -239,49 +253,71 @@ async function deliver(
 		message = null;
 	}
 
-	// Saved before anything is sent, and only while the row still holds the
-	// run this one started from. Two runs of the same delivery at once then
-	// send once, and a process that stops after the save sends nothing rather
-	// than sending again after the lease.
-	const saved = await sql(
-		`UPDATE deliveries SET
-		   state = $2, last_run_on = now(), last_status = $3, last_error = $4,
-		   next_run_on = $5
-		 WHERE delivery_id = $1::uuid
-		   AND last_run_on IS NOT DISTINCT FROM $6::timestamptz
-		 RETURNING delivery_id`,
-		[
-			row.delivery_id,
-			JSON.stringify({ values }),
-			status,
-			error ? error.slice(0, 500) : null,
-			keep ?? nextRun(row.schedule, new Date()).toISOString(),
-			row.last_run_on,
-		],
-	);
-	if (saved.length === 0 || !message) return;
-
+	// Saved together with the inbox entry, and only while the row still holds
+	// the run this one started from. Two runs of the same delivery at once
+	// then send once, and a process that stops part way leaves neither the
+	// run nor the entry, so the delivery is taken again after the lease and
+	// sent once.
+	const nextOn = keep ?? nextRun(row.schedule, new Date()).toISOString();
+	let item: InboxItem | null = null;
 	try {
-		await notify(message.ownerEmail, message.input);
+		item = await transaction(async (client) => {
+			const saved = await client.query(
+				`UPDATE deliveries SET
+				   state = $2, last_run_on = now(), last_status = $3,
+				   last_error = $4, next_run_on = $5
+				 WHERE delivery_id = $1::uuid
+				   AND last_run_on IS NOT DISTINCT FROM $6::timestamptz
+				 RETURNING delivery_id`,
+				[
+					row.delivery_id,
+					JSON.stringify({ values }),
+					status,
+					error ? error.slice(0, 500) : null,
+					nextOn,
+					row.last_run_on,
+				],
+			);
+			if (saved.rowCount === 0 || !message) return null;
+			return notifyInTransaction(
+				client,
+				message.ownerEmail,
+				message.input,
+			);
+		});
 	} catch (e) {
+		// Nothing was saved, so a scheduled delivery stays claimed until the
+		// lease ends and is tried again then. A send the owner asked for puts
+		// back the time it was due. The failure is shown on it meanwhile.
 		const failure = e instanceof Error ? e.message : String(e);
 		await sql(
-			`UPDATE deliveries SET last_status = 'error', last_error = $2
-			 WHERE delivery_id = $1::uuid`,
-			[row.delivery_id, failure.slice(0, 500)],
+			`UPDATE deliveries SET last_status = 'error', last_error = $2,
+			   next_run_on = coalesce($3::timestamptz, next_run_on)
+			 WHERE delivery_id = $1::uuid
+			   AND last_run_on IS NOT DISTINCT FROM $4::timestamptz`,
+			[row.delivery_id, failure.slice(0, 500), keep, row.last_run_on],
 		);
+		return;
 	}
+
+	// Pushed only once the entry is committed, so a device is never told of
+	// an entry that rolled back.
+	if (item && message) pushNotification(message.ownerEmail, item);
 }
 
 async function runAll(
 	rows: DeliveryRow[],
 	run: RunQuery,
+	identity: RunIdentity,
 	restricted: (row: DeliveryRow) => boolean = () => false,
 ): Promise<void> {
+	// One set of reads for the batch, so two people who scheduled the same
+	// page share its figure queries.
+	const reads = new BatchReads(identity, run);
 	const queue = [...rows];
 	const workers = Array.from({ length: 3 }, async () => {
 		for (let row = queue.shift(); row; row = queue.shift()) {
-			await deliver(row, run, restricted(row)).catch((error) => {
+			await deliver(row, reads, restricted(row)).catch((error) => {
 				console.warn(`Delivery ${row.delivery_id} failed:`, error);
 			});
 		}
@@ -334,7 +370,12 @@ export async function runScheduledDeliveries(): Promise<void> {
 		);
 		const open = new Set(unattended);
 		if (rows.length > 0) {
-			await runAll(rows, asApp, (row) => !open.has(row.source_key ?? ""));
+			await runAll(
+				rows,
+				asApp,
+				{ app: true },
+				(row) => !open.has(row.source_key ?? ""),
+			);
 		}
 	} finally {
 		running = false;
@@ -343,8 +384,8 @@ export async function runScheduledDeliveries(): Promise<void> {
 
 // --- While the owner is here -----------------------------------------------
 
+// Held back like the alert pass. See ownerThrottleMs in lib/alerts/runner.
 const lastOwnerRun = new Map<string, number>();
-const ownerThrottleMs = 60 * 1000;
 
 // Called from a request the owner made. Confirms which of their scheduled
 // reports they can still open, which is what lets those run while they are
@@ -365,8 +406,12 @@ export function runDeliveriesForOwner(identity: Identity): void {
 			delivery_id: string;
 			slug: string;
 			source_key: string | null;
+			recent: boolean;
 		}>(
-			`SELECT d.delivery_id::text, r.slug, d.source_key
+			`SELECT d.delivery_id::text, r.slug, d.source_key,
+			        coalesce(d.access_confirmed_on
+			                   > now() - interval '${confirmationRefresh}', false)
+			          AS recent
 			 FROM deliveries d
 			 JOIN reports r ON r.report_id = d.report_id AND r.is_active
 			 WHERE d.owner_email = $1 AND d.enabled`,
@@ -377,22 +422,35 @@ export function runDeliveriesForOwner(identity: Identity): void {
 		// Opening the report is not enough on its own. The figures are worked
 		// out later as the app, so the owner has to be able to read the source
 		// they come from as well.
-		const readable = await confirmableSources(identity);
-		const policy = await resolvePolicyClass(identity);
+		//
+		// One confirmed recently stands as it is. It is neither checked nor
+		// written again until it is old enough to need renewing.
 		const confirmed: string[] = [];
-		for (const { delivery_id, slug, source_key } of mine) {
-			if (!source_key) continue;
-			if (readable && !readable.has(source_key)) continue;
-			if (await getReport(policy, identity, slug)) {
-				confirmed.push(delivery_id);
+		const renewed: string[] = [];
+		const stale = mine.filter((d) => {
+			if (d.recent && d.source_key) confirmed.push(d.delivery_id);
+			return !d.recent;
+		});
+		if (stale.length > 0) {
+			const readable = await confirmableSources(identity);
+			const policy = await resolvePolicyClass(identity);
+			for (const { delivery_id, slug, source_key } of stale) {
+				if (!source_key) continue;
+				if (readable && !readable.has(source_key)) continue;
+				if (await getReport(policy, identity, slug)) {
+					renewed.push(delivery_id);
+				}
 			}
 		}
+		if (renewed.length > 0) {
+			await sql(
+				`UPDATE deliveries SET access_confirmed_on = now()
+				 WHERE delivery_id::text = ANY($1::text[])`,
+				[renewed],
+			);
+			confirmed.push(...renewed);
+		}
 		if (confirmed.length === 0) return;
-		await sql(
-			`UPDATE deliveries SET access_confirmed_on = now()
-			 WHERE delivery_id::text = ANY($1::text[])`,
-			[confirmed],
-		);
 
 		const rows = await sql<DeliveryRow>(
 			`UPDATE deliveries SET next_run_on = now() + interval '${claimLease}'
@@ -407,7 +465,9 @@ export function runDeliveriesForOwner(identity: Identity): void {
 			 RETURNING ${deliveryColumns}`,
 			[confirmed, batchSize],
 		);
-		if (rows.length > 0) await runAll(rows, run);
+		if (rows.length > 0) {
+			await runAll(rows, run, { app: false, ownerEmail: email });
+		}
 	})().catch((error) => {
 		console.warn(`Deliveries for ${email} could not be sent:`, error);
 	});
@@ -451,5 +511,6 @@ export async function sendNow(identity: Identity, id: string): Promise<void> {
 		return claimed;
 	});
 	if (!row) throw new Error("Not found");
-	await deliver(row, run, false, row.next_run_on);
+	const reads = new BatchReads({ app: false, ownerEmail: email }, run);
+	await deliver(row, reads, false, row.next_run_on);
 }

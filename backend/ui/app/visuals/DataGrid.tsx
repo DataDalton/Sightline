@@ -32,7 +32,11 @@ import {
 } from "../../lib/visuals/selection";
 import { readThemeColors, mix, withAlpha } from "./colors";
 import { ColumnFilter } from "./ColumnFilter";
-import { VisualError } from "./VisualFrame";
+import {
+	FilteredEmptyState,
+	useEmptyGuidance,
+	VisualError,
+} from "./VisualFrame";
 import type { FieldMeta } from "./types";
 import styles from "./DataGrid.module.css";
 
@@ -1197,6 +1201,10 @@ export function DataGrid({
 		return result;
 	}
 
+	// The page filters this grid is drawn under, named when it comes back
+	// empty.
+	const emptyGuidance = useEmptyGuidance();
+
 	const activeChips = Object.entries(columnFilters).filter(
 		([, values]) => values.length > 0,
 	);
@@ -1563,9 +1571,16 @@ export function DataGrid({
 						))}
 					</div>
 				) : rows.length === 0 ? (
-					<div className={styles.state}>
-						No rows match the current filters
-					</div>
+					emptyGuidance ? (
+						<FilteredEmptyState
+							guidance={emptyGuidance}
+							message="No rows match the filters on this page"
+						/>
+					) : (
+						<div className={styles.state}>
+							No rows match the current filters
+						</div>
+					)
 				) : (
 					<div
 						className={styles.rows}

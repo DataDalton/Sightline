@@ -167,7 +167,10 @@ export function CategoryContacts({
 	const hidden = contacts.length - shown.length;
 
 	return (
-		<section className={styles.panel} aria-label="Maintained by">
+		<section
+			className={`${styles.panel} ${expanded ? styles.panelOpen : ""}`}
+			aria-label="Maintained by"
+		>
 			<div className={styles.panelText}>
 				<span className={styles.panelIcon}>
 					<Icon d={peoplePath} size={16} />
@@ -231,6 +234,15 @@ export function CategoryContacts({
 					</li>
 				)}
 			</ul>
+			{expanded && contacts.length > shownAtFirst && (
+				<button
+					type="button"
+					className={styles.fewer}
+					onClick={() => setExpanded(false)}
+				>
+					Show fewer
+				</button>
+			)}
 			{canAsk && (
 				<button
 					type="button"

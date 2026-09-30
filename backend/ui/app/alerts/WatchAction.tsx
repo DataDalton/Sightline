@@ -21,6 +21,9 @@ const AlertDialog = dynamic(
 // its date field, narrowed by its own filters, and judged against its own
 // history. Nothing to choose unless somebody wants to, which is what makes it
 // something anybody will do from the page they are reading.
+//
+// When the page already has an alert watching the same thing, the dialog
+// offers that one first, so following it is one press.
 
 interface WatchedVisual {
 	sourceKey: string | null;
@@ -85,9 +88,12 @@ function conditionsFrom(filters: unknown[] | undefined): Condition[] {
 export function WatchAction({
 	visual,
 	sources,
+	pageId,
 }: {
 	visual: WatchedVisual;
 	sources: Record<string, SourceMeta>;
+	// The page the visual is on, whose own alerts are offered first.
+	pageId?: string | null;
 }) {
 	const { alertsEnabled } = useNotify();
 	const [open, setOpen] = useState(false);
@@ -142,8 +148,13 @@ export function WatchAction({
 						condition: timeField ? "unusual" : "above",
 						timeField,
 					}}
+					contextPageId={pageId ?? null}
 					onClose={() => setOpen(false)}
 					onSaved={() => {
+						setOpen(false);
+						setWatching(true);
+					}}
+					onSubscribed={() => {
 						setOpen(false);
 						setWatching(true);
 					}}

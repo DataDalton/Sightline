@@ -13,6 +13,7 @@ import {
 	syncSourceFields,
 } from "@/lib/semantic/fieldSync";
 import { loadRegistry } from "@/lib/semantic/registry";
+import { announceMissingFields } from "@/lib/semantic/fieldWatch";
 import {
 	finishSyncRun,
 	latestSyncRun,
@@ -33,6 +34,11 @@ import { demoMode } from "@/lib/runtime";
 // The comments are maintained next to the data, so this keeps the app's
 // tooltips in step with the definitions every other consumer of those views
 // sees, rather than relying on a copy made at seed time.
+//
+// A field the source no longer publishes is marked missing by the first pass,
+// and the people whose items name it are told once, after the registry is
+// rebuilt. The same happens daily without anybody clicking. See
+// lib/semantic/fieldWatch.
 export async function POST(request: NextRequest) {
 	await ensureReadyOrDegrade();
 
@@ -88,6 +94,16 @@ export async function POST(request: NextRequest) {
 		// catalogue access that walk needs.
 		await loadRegistry(true);
 
+		// Told after the registry is rebuilt, so a link in the message opens a
+		// page that already knows the field is gone. A failure here costs the
+		// message, never the sync.
+		const announced = await announceMissingFields(
+			fieldResults.filter((r) => !r.error).map((r) => r.sourceKey),
+		).catch((error) => {
+			console.warn("Could not announce missing fields:", error);
+			return { fields: 0, notified: 0 };
+		});
+
 		const totals = results.reduce(
 			(acc, r) => ({
 				columnsSeen: acc.columnsSeen + r.columnsSeen,
@@ -110,8 +126,22 @@ export async function POST(request: NextRequest) {
 				fieldsReclassified:
 					acc.fieldsReclassified + r.reclassified.length,
 				fieldsMissing: acc.fieldsMissing + r.missing.length,
+				fieldsNewlyMissing:
+					acc.fieldsNewlyMissing + r.newlyMissing.length,
+				fieldsReturned: acc.fieldsReturned + r.returned.length,
+				renamesOffered: acc.renamesOffered + r.renames.length,
+				protectionTurnedOn:
+					acc.protectionTurnedOn + (r.protection?.turnedOn ? 1 : 0),
 			}),
-			{ fieldsAdded: 0, fieldsReclassified: 0, fieldsMissing: 0 },
+			{
+				fieldsAdded: 0,
+				fieldsReclassified: 0,
+				fieldsMissing: 0,
+				fieldsNewlyMissing: 0,
+				fieldsReturned: 0,
+				renamesOffered: 0,
+				protectionTurnedOn: 0,
+			},
 		);
 
 		void insertLog({
@@ -119,7 +149,11 @@ export async function POST(request: NextRequest) {
 			recordId: sourceKey ?? "all",
 			action: "sync_catalog_metadata",
 			changedBy: identity.email,
-			newValue: JSON.stringify({ ...totals, ...fieldTotals }),
+			newValue: JSON.stringify({
+				...totals,
+				...fieldTotals,
+				peopleTold: announced.notified,
+			}),
 		});
 
 		await finishSyncRun(runId);
@@ -132,6 +166,8 @@ export async function POST(request: NextRequest) {
 					r.added.length > 0 ||
 					r.reclassified.length > 0 ||
 					r.missing.length > 0 ||
+					r.returned.length > 0 ||
+					r.protection?.changed ||
 					r.error,
 			),
 		});

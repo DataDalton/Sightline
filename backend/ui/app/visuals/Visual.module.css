@@ -266,6 +266,85 @@
 	color: var(--danger);
 }
 
+.stateTitle {
+	color: var(--text-secondary);
+	font-weight: 600;
+}
+
+.stateTitle code {
+	font-family: var(--font-mono);
+	font-size: 0.95em;
+}
+
+.stateDetail {
+	max-width: 42ch;
+	line-height: 1.4;
+}
+
+/* The filters an empty visual is drawn under, one per line, so a reader can
+   see which of them matched nothing. */
+.stateFilters {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	gap: var(--space-1) var(--space-2);
+	max-width: 100%;
+	list-style: none;
+}
+
+.stateFilters li {
+	padding: 2px var(--space-2);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-sm);
+	background: var(--surface-sunken);
+	color: var(--text-secondary);
+	font-size: var(--text-xs);
+	overflow-wrap: anywhere;
+}
+
+.stateActions {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	gap: var(--space-2);
+}
+
+.stateButton {
+	padding: 4px var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	color: var(--text-link);
+	font-family: inherit;
+	font-size: var(--text-xs);
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.stateButton:hover {
+	background: var(--state-hover);
+}
+
+.stateButton:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: 1px;
+}
+
+/* What a frame holds before it is near enough to the screen to load. Fills
+   the body so the frame keeps the size it will have once loaded. */
+.lazyPlaceholder {
+	height: 100%;
+	min-height: 0;
+}
+
+/* Around a visual that has no frame of its own, so it can be watched the
+   same way. */
+.lazyBoundary {
+	width: 100%;
+	min-width: 0;
+	min-height: 0;
+}
+
 .skeleton {
 	background: linear-gradient(
 		90deg,
@@ -972,6 +1051,14 @@
 	flex: 1 1 auto;
 	min-height: 0;
 	width: 100%;
+}
+
+/* A chart whose marks can be stepped through from the keyboard. The ring is
+   drawn inside the box, since the frame around it clips anything outside. */
+.chartCanvas:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: -2px;
+	border-radius: var(--radius-sm);
 }
 
 /* What the chart is not showing. A trimmed axis is the only way a cloud of

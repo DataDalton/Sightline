@@ -41,6 +41,11 @@ const kinds: { kind: keyof PushPreferences; label: string; hint: string }[] = [
 		hint: "When data you look after has not arrived when it usually does.",
 	},
 	{
+		kind: "schema",
+		label: "Changed fields",
+		hint: "When a dataset behind something you own gains, loses or renames a field.",
+	},
+	{
 		kind: "system",
 		label: "Announcements",
 		hint: "Notices from the people who run the app.",

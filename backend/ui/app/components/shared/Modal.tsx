@@ -11,6 +11,10 @@ interface ModalProps {
 	children: React.ReactNode;
 	footer?: React.ReactNode;
 	width?: string;
+	// On a phone, fill the screen from top to bottom rather than rising only
+	// as high as the content. For a dialog whose content is a long list read
+	// by scrolling, where a partial sheet leaves little room to read it.
+	fullHeightOnPhone?: boolean;
 }
 
 // Open modals in the order they opened. Escape closes only the last one, so a
@@ -43,6 +47,7 @@ export const Modal = memo(function Modal({
 	children,
 	footer,
 	width = "560px",
+	fullHeightOnPhone = false,
 }: ModalProps) {
 	const id = useId();
 	const titleId = `${id}-title`;
@@ -139,7 +144,9 @@ export const Modal = memo(function Modal({
 		>
 			<div
 				ref={dialogRef}
-				className={styles.modal}
+				className={`${styles.modal} ${
+					fullHeightOnPhone ? styles.fullHeightOnPhone : ""
+				}`}
 				style={{ maxWidth: width, outline: "none" }}
 				role="dialog"
 				aria-modal="true"

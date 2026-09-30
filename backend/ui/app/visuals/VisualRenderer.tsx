@@ -23,7 +23,8 @@ import {
 	ThresholdFilter,
 } from "./FilterWidgets";
 import { usePageFilters } from "./PageFilters";
-import { VisualFrame } from "./VisualFrame";
+import { VisualFrame, VisualLoading, VisualScopeProvider } from "./VisualFrame";
+import { LazyBoundary } from "./LazyVisual";
 import { ChartActions } from "./ChartActions";
 import { NotesAction, VisualNotes, usePageNotes } from "./VisualNotes";
 import { ErrorBoundary } from "../components/shared/ErrorBoundary";
@@ -103,6 +104,9 @@ interface VisualRendererProps {
 	// it, and anything inside that sizes to a number rather than to its box,
 	// such as a chart canvas, is told the same figure.
 	frameHeight?: number;
+	// Drawn full size on its own over the page, which offers a zoom window
+	// on a long series and larger axis text.
+	expanded?: boolean;
 	// A reader's own column arrangement for a grid, held by the page so a
 	// saved view can carry it.
 	columnOrder?: string[];
@@ -140,14 +144,29 @@ function displayTitle(visual: VisualSpec): string | null {
 //
 // Keyed on the visual id, so editing a broken visual into a working one clears
 // the error without a reload.
+//
+// Also says which visual everything inside belongs to and how its fields are
+// named, so an empty state anywhere inside can describe the page's filters.
 export function VisualRenderer(props: VisualRendererProps) {
+	const { visual, sources } = props;
+	const source = visual.sourceKey ? sources[visual.sourceKey] : undefined;
+	const scope = useMemo(() => {
+		const fields = fieldMap(source);
+		return {
+			visualId: visual.visualId,
+			nameOf: (field: string) => fields.get(field)?.displayName || field,
+		};
+	}, [visual.visualId, source]);
+
 	return (
 		<ErrorBoundary
-			label={displayTitle(props.visual) ?? "This visual"}
-			resetKey={`${props.visual.visualId}:${props.visual.visualType}`}
+			label={displayTitle(visual) ?? "This visual"}
+			resetKey={`${visual.visualId}:${visual.visualType}`}
 			inline
 		>
-			<VisualBody {...props} />
+			<VisualScopeProvider value={scope}>
+				<VisualBody {...props} />
+			</VisualScopeProvider>
 		</ErrorBoundary>
 	);
 }
@@ -158,6 +177,7 @@ function VisualBody({
 	reportId,
 	pageId,
 	frameHeight,
+	expanded,
 	columnOrder,
 	pinnedColumns,
 	columnWidths,
@@ -397,7 +417,7 @@ function VisualBody({
 				? visual.config.options.html
 				: (note ?? "");
 		return (
-			<VisualFrame title={displayTitle(visual)}>
+			<VisualFrame title={displayTitle(visual)} lazy={false}>
 				<TextPanel html={content} />
 			</VisualFrame>
 		);
@@ -433,7 +453,7 @@ function VisualBody({
 
 	if (visual.visualType === "blockedNotice") {
 		return (
-			<VisualFrame title={displayTitle(visual)}>
+			<VisualFrame title={displayTitle(visual)} lazy={false}>
 				<div className={styles.state}>
 					{note ?? "This page is not available yet"}
 				</div>
@@ -460,7 +480,7 @@ function VisualBody({
 
 	if (!sourceKey || !source) {
 		return (
-			<VisualFrame title={displayTitle(visual)}>
+			<VisualFrame title={displayTitle(visual)} lazy={false}>
 				<div className={styles.state}>
 					{sourceKey
 						? `Source "${sourceKey}" is not registered yet`
@@ -619,28 +639,36 @@ function VisualBody({
 	}
 
 	if (visual.visualType === "kpiRow") {
+		// No frame of its own, so it is watched through a boundary instead.
 		return (
-			<KpiRow
-				sourceKey={sourceKey}
-				measures={measures}
-				filters={filters}
-				fields={fields}
-				style={style}
-				groups={optionValue<KpiGroup[]>(
-					visual.visualType,
-					visual.config,
-					"groups",
-				)}
-				compareTo={comparePeriod}
-				compareField={compareField}
-				sparkline={
-					optionValue<string>(
+			<LazyBoundary placeholder={<VisualLoading rows={3} />}>
+				<KpiRow
+					sourceKey={sourceKey}
+					measures={measures}
+					filters={filters}
+					fields={fields}
+					style={style}
+					groups={optionValue<KpiGroup[]>(
 						visual.visualType,
 						visual.config,
-						"sparkline",
-					) ?? null
-				}
-			/>
+						"groups",
+					)}
+					compareTo={comparePeriod}
+					compareField={compareField}
+					targets={optionValue(
+						visual.visualType,
+						visual.config,
+						"targets",
+					)}
+					sparkline={
+						optionValue<string>(
+							visual.visualType,
+							visual.config,
+							"sparkline",
+						) ?? null
+					}
+				/>
+			</LazyBoundary>
 		);
 	}
 
@@ -785,7 +813,11 @@ function VisualBody({
 							}}
 							available={Boolean(reportId && pageId)}
 						/>
-						<WatchAction visual={visual} sources={sources} />
+						<WatchAction
+							visual={visual}
+							sources={sources}
+							pageId={pageId}
+						/>
 						<ChartActions
 							getImage={getChartImage}
 							onShowTable={() => {
@@ -798,6 +830,7 @@ function VisualBody({
 				title={displayTitle(visual)}
 				notice={driftNote}
 				note={note}
+				placeholderHeight={frameHeight ? undefined : chartHeight}
 				onZoomOut={
 					crossFilter?.sourceVisualId === visual.visualId &&
 					crossFilter.zoomSource
@@ -818,7 +851,15 @@ function VisualBody({
 				<Chart
 					visualType={visual.visualType}
 					sourceKey={sourceKey}
-					options={visual.config.options}
+					options={
+						expanded
+							? {
+									...visual.config.options,
+									zoomSlider: true,
+									largeText: true,
+								}
+							: visual.config.options
+					}
 					dimensions={activeDimensions}
 					measures={measures}
 					filters={filters}
@@ -970,7 +1011,11 @@ function VisualBody({
 				visualId={visual.visualId}
 				actions={
 					<>
-						<WatchAction visual={visual} sources={sources} />
+						<WatchAction
+							visual={visual}
+							sources={sources}
+							pageId={pageId}
+						/>
 						<NotesAction
 							count={notes.length}
 							onOpen={() => {
@@ -985,6 +1030,7 @@ function VisualBody({
 				flush
 				notice={driftNote}
 				note={note}
+				placeholderHeight={frameHeight ? undefined : gridHeight}
 			>
 				{showingNotes && reportId && pageId && (
 					<VisualNotes
@@ -1043,7 +1089,7 @@ function VisualBody({
 	}
 
 	return (
-		<VisualFrame title={displayTitle(visual)}>
+		<VisualFrame title={displayTitle(visual)} lazy={false}>
 			<div className={styles.state}>
 				Visual type &quot;{visual.visualType}&quot; is not supported in
 				this version

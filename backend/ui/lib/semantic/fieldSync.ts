@@ -1,8 +1,15 @@
 import { sql } from "../data/lakebase";
 import type { Identity } from "../auth/identity";
 import { parseMetricViewFields } from "./metricViewDefinition";
+import { parseMetricViewCalculations } from "./metricViewCalculations";
 import { readColumns, runCatalogQuery } from "./ucMetadata";
 import { quotedRef } from "./types";
+import {
+	detectRenames,
+	type FieldPrint,
+	type RenameCandidate,
+} from "./renames";
+import { refreshProtection, type ProtectionResult } from "./detectProtection";
 
 // Discovers fields a source publishes and registers the ones the app does not
 // know about yet.
@@ -18,9 +25,17 @@ import { quotedRef } from "./types";
 // split, and SHOW CREATE TABLE returns that definition, so it is read from
 // there.
 //
-// Nothing is deleted. A field the source no longer publishes is reported so an
-// admin can decide, because a report may still reference it and removing the
-// registration silently would change what that report shows.
+// Nothing is deleted. A field the source no longer publishes is marked missing,
+// which keeps its labels and takes it out of the pickers and the query builder,
+// and is reported so an admin can decide what to do with the items naming it.
+// If it comes back it is simply active again.
+//
+// What each field looked like is kept as a fingerprint, so when one field goes
+// and another arrives in the same sync the pair can be offered as a rename.
+// See renames.ts. Nothing is renamed without somebody confirming it.
+//
+// Every sync also asks the catalogue whether the source carries a row filter
+// or a column mask. See detectProtection.ts.
 
 export interface FieldSyncResult {
 	sourceKey: string;
@@ -31,8 +46,16 @@ export interface FieldSyncResult {
 	// Registered as one kind, published as the other. Corrected, because the
 	// query it produces would otherwise be wrong rather than merely stale.
 	reclassified: string[];
-	// Registered here but no longer published. Left in place, reported.
+	// Registered here but no longer published, whether this sync or an
+	// earlier one found it gone. Kept, marked missing, reported.
 	missing: string[];
+	// Found missing by this sync.
+	newlyMissing: string[];
+	// Missing before and published again now.
+	returned: string[];
+	// Likely renames among what went missing and what arrived.
+	renames: RenameCandidate[];
+	protection: ProtectionResult | null;
 	error?: string;
 }
 
@@ -42,6 +65,17 @@ interface DiscoveredField {
 	dataType: string | null;
 	description: string | null;
 	sortOrder: number;
+	// The metric view expression, where there is one.
+	expression: string | null;
+}
+
+// What a sync keeps of a field to recognise it by after its name changes.
+interface Fingerprint {
+	kind: "dimension" | "measure";
+	dataType: string | null;
+	comment: string | null;
+	ordinal: number;
+	expression: string | null;
 }
 
 // A display hint so a measure renders as currency rather than a bare number.
@@ -119,6 +153,7 @@ async function discoverFields(
 				dataType: column.dataType,
 				description: column.comment,
 				sortOrder: index,
+				expression: null,
 			};
 		});
 	}
@@ -132,6 +167,15 @@ async function discoverFields(
 
 	if (dimensions.length === 0 && measures.length === 0) {
 		throw new Error("The view definition listed no dimensions or measures");
+	}
+
+	// Expressions are evidence for recognising a rename and nothing else, so
+	// a definition they cannot be read from still syncs its fields.
+	let expressions = new Map<string, { expr: string }>();
+	try {
+		expressions = parseMetricViewCalculations(statement).fields;
+	} catch {
+		// Renames on this view are judged without the expression.
 	}
 
 	// The definition decides the order as well as the kind: it is the order an
@@ -151,10 +195,70 @@ async function discoverFields(
 				dataType: column?.dataType ?? null,
 				description: column?.comment ?? null,
 				sortOrder: sortOrder++,
+				expression: expressions.get(name)?.expr ?? null,
 			});
 		}
 	}
 	return fields;
+}
+
+function emptyResult(
+	sourceKey: string,
+	kind: string,
+	error: string,
+	protection: ProtectionResult | null = null,
+): FieldSyncResult {
+	return {
+		sourceKey,
+		kind,
+		discovered: 0,
+		added: [],
+		reclassified: [],
+		missing: [],
+		newlyMissing: [],
+		returned: [],
+		renames: [],
+		protection,
+		error,
+	};
+}
+
+interface ExistingRow {
+	field_name: string;
+	field_kind: string;
+	status: string;
+	data_type: string | null;
+	description: string | null;
+	sort_order: number;
+	fingerprint: Partial<Fingerprint> | null;
+	renamed_to: string | null;
+}
+
+// What a field looked like before it went missing. Rows registered before
+// fingerprints were kept fall back to their own columns, which say less but
+// are what there is.
+function printOfExisting(row: ExistingRow): FieldPrint {
+	const held = row.fingerprint ?? {};
+	return {
+		name: row.field_name,
+		kind: row.field_kind === "measure" ? "measure" : "dimension",
+		dataType: held.dataType ?? row.data_type,
+		comment: held.comment ?? row.description,
+		ordinal:
+			typeof held.ordinal === "number" ? held.ordinal : row.sort_order,
+		expression: held.expression ?? null,
+	};
+}
+
+function printOfDiscovered(field: DiscoveredField): FieldPrint {
+	return {
+		name: field.name,
+		kind: field.kind,
+		dataType: field.dataType,
+		comment: field.description,
+		ordinal: field.sortOrder,
+		expression: field.expression,
+	};
 }
 
 export async function syncSourceFields(
@@ -173,16 +277,17 @@ export async function syncSourceFields(
 	);
 	const source = sources[0];
 	if (!source) {
-		return {
-			sourceKey,
-			kind: "unknown",
-			discovered: 0,
-			added: [],
-			reclassified: [],
-			missing: [],
-			error: "Source is not registered",
-		};
+		return emptyResult(sourceKey, "unknown", "Source is not registered");
 	}
+
+	// Asked whether or not the fields can be read, since a source whose
+	// columns are hidden from this reader can still show a filter or mask.
+	const protection = await refreshProtection(identity, sourceKey).catch(
+		(error) => {
+			console.warn(`Protection check failed for ${sourceKey}:`, error);
+			return null;
+		},
+	);
 
 	let fields: DiscoveredField[];
 	try {
@@ -194,30 +299,37 @@ export async function syncSourceFields(
 			source.kind,
 		);
 	} catch (error) {
-		return {
+		return emptyResult(
 			sourceKey,
-			kind: source.kind,
-			discovered: 0,
-			added: [],
-			reclassified: [],
-			missing: [],
-			error:
-				error instanceof Error
-					? error.message
-					: "Field discovery failed",
-		};
+			source.kind,
+			error instanceof Error ? error.message : "Field discovery failed",
+			protection,
+		);
 	}
 
-	const existing = await sql<{ field_name: string; field_kind: string }>(
-		`SELECT field_name, field_kind FROM source_fields WHERE source_key = $1`,
+	// No columns at all is what a reader without access to the object sees,
+	// not a description of the object. Taking it at its word would mark every
+	// field missing.
+	if (fields.length === 0) {
+		return emptyResult(
+			sourceKey,
+			source.kind,
+			"The source listed no fields. The reader may not have access to it.",
+			protection,
+		);
+	}
+
+	const existing = await sql<ExistingRow>(
+		`SELECT field_name, field_kind, status, data_type, description,
+		        sort_order, fingerprint, renamed_to
+		 FROM source_fields WHERE source_key = $1`,
 		[sourceKey],
 	);
-	const existingByName = new Map(
-		existing.map((f) => [f.field_name, f.field_kind]),
-	);
+	const existingByName = new Map(existing.map((f) => [f.field_name, f]));
 
 	const added: string[] = [];
 	const reclassified: string[] = [];
+	const returned: string[] = [];
 
 	for (const field of fields) {
 		const known = existingByName.get(field.name);
@@ -252,7 +364,7 @@ export async function syncSourceFields(
 			continue;
 		}
 
-		if (known !== field.kind) {
+		if (known.field_kind !== field.kind) {
 			await sql(
 				`UPDATE source_fields SET field_kind = $3, modified_on = now()
 				 WHERE source_key = $1 AND field_name = $2`,
@@ -260,12 +372,87 @@ export async function syncSourceFields(
 			);
 			reclassified.push(field.name);
 		}
+
+		if (known.status === "missing") returned.push(field.name);
 	}
 
+	// A field that came back is an ordinary field again. Whatever was said
+	// about it while it was gone no longer applies.
+	if (returned.length > 0) {
+		await sql(
+			`UPDATE source_fields
+			 SET status = 'active', missing_since = NULL, renamed_to = NULL,
+			     rename_candidate = NULL, rename_confidence = NULL,
+			     announced_on = NULL, modified_on = now()
+			 WHERE source_key = $1 AND field_name = ANY($2::text[])`,
+			[sourceKey, returned],
+		);
+	}
+
+	// What every published field looks like now, in one statement. Only
+	// published fields are written, so a missing field keeps the fingerprint
+	// it had when it was last seen, which is what a rename is judged by.
+	await sql(
+		`UPDATE source_fields AS f
+		 SET fingerprint = x.fp
+		 FROM jsonb_to_recordset($2::jsonb) AS x(name text, fp jsonb)
+		 WHERE f.source_key = $1 AND f.field_name = x.name
+		   AND f.fingerprint IS DISTINCT FROM x.fp`,
+		[
+			sourceKey,
+			JSON.stringify(
+				fields.map((field) => ({
+					name: field.name,
+					fp: {
+						kind: field.kind,
+						dataType: field.dataType,
+						comment: field.description,
+						ordinal: field.sortOrder,
+						expression: field.expression,
+					} satisfies Fingerprint,
+				})),
+			),
+		],
+	);
+
 	const published = new Set(fields.map((f) => f.name));
-	const missing = existing
-		.map((f) => f.field_name)
-		.filter((name) => !published.has(name));
+	const gone = existing.filter((f) => !published.has(f.field_name));
+	const newlyMissing = gone
+		.filter((f) => f.status !== "missing")
+		.map((f) => f.field_name);
+
+	if (newlyMissing.length > 0) {
+		await sql(
+			`UPDATE source_fields
+			 SET status = 'missing', missing_since = now(), modified_on = now()
+			 WHERE source_key = $1 AND field_name = ANY($2::text[])`,
+			[sourceKey, newlyMissing],
+		);
+	}
+
+	// Offered, never applied. A field already remapped by an administrator
+	// has its answer.
+	const byName = new Map(fields.map((f) => [f.name, f]));
+	const renames = detectRenames(
+		gone.filter((f) => !f.renamed_to).map(printOfExisting),
+		added
+			.map((name) => byName.get(name))
+			.filter((f): f is DiscoveredField => Boolean(f))
+			.map(printOfDiscovered),
+	);
+	for (const rename of renames) {
+		await sql(
+			`UPDATE source_fields
+			 SET rename_candidate = $3, rename_confidence = $4
+			 WHERE source_key = $1 AND field_name = $2`,
+			[sourceKey, rename.from, rename.to, rename.confidence],
+		);
+	}
+
+	await sql(
+		`UPDATE data_sources SET fields_synced_on = now() WHERE source_key = $1`,
+		[sourceKey],
+	);
 
 	// A sync never changes whether a source is active. An inactive source is
 	// one somebody unregistered, and registering it again is what restores it.
@@ -276,7 +463,11 @@ export async function syncSourceFields(
 		discovered: fields.length,
 		added,
 		reclassified,
-		missing,
+		missing: gone.map((f) => f.field_name),
+		newlyMissing,
+		returned,
+		renames,
+		protection,
 	};
 }
 

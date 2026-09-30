@@ -628,6 +628,13 @@ export async function removeReport(
 			 RETURNING slug, title`,
 			[reportId, identity.email],
 		);
+		// Every page alert on it stops with it.
+		await client.query(
+			`UPDATE page_alerts SET is_active = FALSE,
+			   modified_by = $2, modified_on = now()
+			 WHERE report_id = $1 AND is_active`,
+			[reportId, identity.email],
+		);
 		return updated.rows;
 	});
 	if (rows.length === 0) throw new AuthoringError("That report is gone.");

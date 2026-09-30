@@ -127,9 +127,10 @@ export interface RegisterInput {
 	title: string;
 	description?: string | null;
 	sourceKey?: string;
-	// Whether Unity Catalog applies a row filter or column mask. Decides
-	// whether an answer may be shared beyond one policy class, so it is asked
-	// rather than assumed.
+	// Protection asked for by hand. Detection turns protection on by itself
+	// when the catalogue shows a row filter or column mask, so this is only
+	// for forcing it on where detection cannot see one. See
+	// lib/semantic/protection.
 	hasRowFilter?: boolean;
 	// How long an answer from this source may be held. Zero, the default,
 	// means the platform setting decides. Only a source that genuinely differs
@@ -188,9 +189,9 @@ export async function registerSource(
 	await sql(
 		`INSERT INTO data_sources
 		   (source_key, title, description, catalog_name, schema_name,
-		    object_name, kind, access_mode, has_row_filter, cache_ttl_seconds,
-		    created_by, modified_by)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,'direct',$8,$9,$10,$10)
+		    object_name, kind, access_mode, has_row_filter, row_filter_forced,
+		    cache_ttl_seconds, created_by, modified_by)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,'direct',$8,$8,$9,$10,$10)
 		 ON CONFLICT (source_key) DO UPDATE SET
 		   title = EXCLUDED.title,
 		   description = EXCLUDED.description,
@@ -198,7 +199,11 @@ export async function registerSource(
 		   schema_name = EXCLUDED.schema_name,
 		   object_name = EXCLUDED.object_name,
 		   kind = EXCLUDED.kind,
-		   has_row_filter = EXCLUDED.has_row_filter,
+		   -- Registering again never lowers protection. Only detection
+		   -- confirming there is nothing to protect does that.
+		   has_row_filter = data_sources.has_row_filter
+		                    OR EXCLUDED.has_row_filter,
+		   row_filter_forced = EXCLUDED.row_filter_forced,
 		   cache_ttl_seconds = EXCLUDED.cache_ttl_seconds,
 		   is_active = TRUE,
 		   modified_by = EXCLUDED.modified_by,
@@ -222,6 +227,8 @@ export async function registerSource(
 
 	// Under the caller's token, so the columns discovered are the ones they can
 	// see. A table they cannot read registers with nothing in it and says so.
+	// The same pass asks the catalogue for row filters and column masks, so
+	// protection is on before the first answer is cached.
 	const fields = await syncSourceFields(identity, sourceKey);
 	await syncSourceMetadata(identity, sourceKey).catch(() => {
 		// Descriptions and tags are decoration. A source without them is
@@ -246,7 +253,7 @@ export async function registerSource(
 	const stored = await sql<{ field_kind: string; count: string }>(
 		`SELECT field_kind, count(*)::text AS count
 		 FROM source_fields
-		 WHERE source_key = $1 AND is_active = TRUE
+		 WHERE source_key = $1 AND is_active = TRUE AND status = 'active'
 		 GROUP BY field_kind`,
 		[sourceKey],
 	);
@@ -339,7 +346,7 @@ export async function updateSource(
 		const field = await sql<{ field_name: string }>(
 			`SELECT field_name FROM source_fields
 			 WHERE source_key = $1 AND field_name = $2
-			   AND field_kind = 'dimension'`,
+			   AND field_kind = 'dimension' AND status = 'active'`,
 			[sourceKey, input.defaultTimeField],
 		);
 		if (field.length === 0) {

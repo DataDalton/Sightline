@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { compileDistinctValues, compileQuery } from "./builder";
+import {
+	assertFieldsPresent,
+	compileDistinctValues,
+	compileQuery,
+	MissingFieldError,
+} from "./builder";
 import { distributionColumns } from "./visualSpec";
 import { QuerySpecError, type QuerySpec } from "./spec";
 import type { SemanticField, SemanticSource } from "../semantic/types";
@@ -680,5 +685,108 @@ test("distinct values are read as text, grouped and bounded", () => {
 	assert.equal(
 		compiled.sql,
 		"SELECT CAST(`Category` AS STRING) AS v0, CAST(`Month` AS STRING) AS v1\nFROM cat.sch.orders\nGROUP BY `Category`, `Month`\nLIMIT 501",
+	);
+});
+
+// --- Fields the source stopped publishing ----------------------------------
+
+const withMissing: SemanticSource = {
+	...source,
+	missingFields: new Map([
+		[
+			"Net Sales",
+			{
+				name: "Net Sales",
+				kind: "measure",
+				missingSince: null,
+				renamedTo: null,
+				renameCandidate: "Revenue",
+			},
+		],
+		[
+			"Channel",
+			{
+				name: "Channel",
+				kind: "dimension",
+				missingSince: null,
+				renamedTo: "Sales Channel",
+				renameCandidate: null,
+			},
+		],
+	]),
+};
+
+test("a missing field is named as missing rather than unknown", () => {
+	assert.throws(
+		() => compileQuery(withMissing, spec({ measures: ["Net Sales"] })),
+		(error: unknown) =>
+			error instanceof MissingFieldError &&
+			error instanceof QuerySpecError &&
+			error.field === "Net Sales" &&
+			error.renamedTo === null &&
+			/no longer in the Orders dataset/.test(error.message) &&
+			/renamed to "Revenue"/.test(error.message),
+	);
+});
+
+test("a confirmed rename is carried on the error", () => {
+	assert.throws(
+		() =>
+			compileQuery(
+				withMissing,
+				spec({
+					measures: ["Revenue"],
+					filters: [{ field: "Channel", op: "eq", value: "Web" }],
+				}),
+			),
+		(error: unknown) =>
+			error instanceof MissingFieldError &&
+			error.renamedTo === "Sales Channel",
+	);
+});
+
+test("a missing field anywhere in the spec is caught before compiling", () => {
+	assert.throws(
+		() =>
+			assertFieldsPresent(
+				withMissing,
+				spec({
+					measures: ["Revenue"],
+					where: {
+						not: { field: "Channel", op: "eq", value: "Web" },
+					},
+				}),
+			),
+		MissingFieldError,
+	);
+	assert.throws(
+		() =>
+			assertFieldsPresent(
+				withMissing,
+				spec({
+					measures: ["Revenue"],
+					sort: [{ field: "Net Sales", direction: "desc" }],
+				}),
+			),
+		MissingFieldError,
+	);
+	assert.doesNotThrow(() =>
+		assertFieldsPresent(withMissing, spec({ measures: ["Revenue"] })),
+	);
+});
+
+test("a name the source never had is still an unknown field", () => {
+	assert.throws(
+		() => compileQuery(withMissing, spec({ measures: ["Nope"] })),
+		(error: unknown) =>
+			error instanceof QuerySpecError &&
+			!(error instanceof MissingFieldError),
+	);
+});
+
+test("distinct values name a missing dimension as missing", () => {
+	assert.throws(
+		() => compileDistinctValues(withMissing, ["Channel"], 10),
+		MissingFieldError,
 	);
 });

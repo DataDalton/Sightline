@@ -46,6 +46,7 @@ import {
 import { noteUse } from "../hooks/noteUse";
 import { ReportUsage } from "./ReportUsage";
 import { ScheduleButton } from "../deliveries/ScheduleButton";
+import { PageAlertsButton } from "../alerts/PageAlerts";
 import styles from "./ReportView.module.css";
 
 interface StoredVisual extends VisualSpec {
@@ -762,6 +763,17 @@ export default function ReportView({
 									reportSlug={report.slug}
 									pageId={page.pageId}
 									pageTitle={page.title}
+									className={styles.button}
+								/>
+							)}
+
+							{/* The alerts this page's editors set up, for a
+							    reader to follow. Absent on a page without any. */}
+							{page && (
+								<PageAlertsButton
+									pageId={page.pageId}
+									pageTitle={page.title}
+									sources={Object.values(sources)}
 									className={styles.button}
 								/>
 							)}

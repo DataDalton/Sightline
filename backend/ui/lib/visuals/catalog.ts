@@ -131,6 +131,11 @@ export interface VisualTypeDefinition {
 	// Settings particular to this type, offered in the properties panel in the
 	// order they are declared.
 	options?: VisualOption[];
+	// A target per measure, stored in config.options under this key as a map
+	// of measure name to { value, direction }. Declared apart from options
+	// because the value is keyed by the visual's own measures, so the panel
+	// draws one row per encoded measure rather than a single control.
+	measureTargets?: { key: string; label: string; help?: string };
 	// Options a new visual of this type starts with when its page has a date
 	// range filter, for settings that only mean something against one.
 	datedDefaults?: Record<string, unknown>;
@@ -158,6 +163,27 @@ export function optionValue<T = unknown>(
 		| T
 		| undefined;
 }
+
+// A forecast past the last date, for the chart types drawn across periods.
+// Shared so every type offers the same two controls with the same limits.
+const forecastOptions: VisualOption[] = [
+	{
+		key: "forecast",
+		label: "Forecast ahead",
+		kind: "toggle",
+		fallback: false,
+		help: "Continues each measure past the last date as a dashed line with a shaded range. Only when the first field is a date, and worked out from the figures already on the chart.",
+	},
+	{
+		key: "forecastPeriods",
+		label: "Periods to forecast",
+		kind: "number",
+		min: 1,
+		max: 180,
+		step: 1,
+		help: "Left empty it forecasts 90 days, 13 weeks, 12 months or 4 quarters ahead, fewer where the chart shows a short history. Capped per unit, at 180 days or 36 months.",
+	},
+];
 
 export const visualCatalog: VisualTypeDefinition[] = [
 	// --- Summary -----------------------------------------------------------
@@ -222,6 +248,11 @@ export const visualCatalog: VisualTypeDefinition[] = [
 				help: "Splits the tiles into labelled rows. Each band takes the next few measures in order, and anything left over becomes a final unlabelled row.",
 			},
 		],
+		measureTargets: {
+			key: "targets",
+			label: "Targets",
+			help: "Shows how far each figure is from its target, as a bar and in words. A target is a fixed figure, the same window of an earlier period, or another measure such as a budget, and an earlier period or measure can be moved by a percentage or an amount, such as last year +10%. Choose whether higher or lower is better, since a cost under budget and sales under plan are opposite answers. Percentage measures are in percentage points.",
+		},
 		defaultLayout: { w: 12, h: 2 },
 	},
 	{
@@ -344,6 +375,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 				fallback: false,
 				help: "Worth it for a handful of bars a reader will quote. Past that the axis says it more quietly.",
 			},
+			...forecastOptions,
 		],
 		defaultLayout: { w: 6, h: 5 },
 	},
@@ -457,6 +489,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 				scope: "measure",
 				help: "Defaults to the first measure.",
 			},
+			...forecastOptions,
 		],
 		defaultLayout: { w: 6, h: 5 },
 	},
@@ -500,6 +533,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 				fallback: "gap",
 				help: "Joining across a gap draws a line through data nobody has, which reads as a trend that was never measured.",
 			},
+			...forecastOptions,
 		],
 		defaultLayout: { w: 6, h: 5 },
 	},
@@ -540,6 +574,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 				],
 				fallback: "gap",
 			},
+			...forecastOptions,
 		],
 		defaultLayout: { w: 6, h: 5 },
 	},

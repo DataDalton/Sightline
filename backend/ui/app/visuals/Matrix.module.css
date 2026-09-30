@@ -140,6 +140,89 @@
 	color: var(--text-muted);
 }
 
+/* A pivoted column heading that filters the page when clicked. Drawn like
+   the row labels, plain until hovered. */
+.columnButton {
+	padding: 0;
+	border: 0;
+	background: none;
+	font: inherit;
+	color: inherit;
+	cursor: pointer;
+}
+
+.columnButton:hover {
+	text-decoration: underline;
+}
+
+.columnButton:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: 2px;
+	border-radius: var(--radius-sm);
+}
+
+/* The column a selection made here covers, and the rest, faded through the
+   text colour for the same reason as the rows. */
+.groupHeader th.columnChosen {
+	background: var(--state-selected);
+	color: var(--text-primary);
+}
+
+.groupHeader th.columnDimmed,
+.measureHeader th.columnDimmed,
+.row .cell.cellDimmed {
+	color: var(--text-muted);
+}
+
+/* Stands in for the rows above and below the rendered window. */
+.spacerRow td {
+	padding: 0;
+	border: 0;
+}
+
+/* A row focused by the arrow keys when it has no control of its own. */
+.row:focus-visible,
+.moreRow:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: -2px;
+}
+
+/* The line that reveals the next batch of an expanded node's children. */
+.moreRow td {
+	border-bottom: 1px solid var(--border-subtle);
+}
+
+.moreButton {
+	padding: 0;
+	border: 0;
+	background: none;
+	font: inherit;
+	font-size: var(--text-xs);
+	font-weight: 600;
+	color: var(--text-link);
+	cursor: pointer;
+}
+
+.moreButton:hover {
+	text-decoration: underline;
+}
+
+.moreButton:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: 2px;
+	border-radius: var(--radius-sm);
+}
+
+.moreCount {
+	margin-left: var(--space-2);
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+}
+
+.moreFill {
+	background: var(--surface-raised);
+}
+
 /* Depth is carried by indentation and by weight, so the hierarchy is readable
    without relying on colour. */
 .level0 .labelCell {

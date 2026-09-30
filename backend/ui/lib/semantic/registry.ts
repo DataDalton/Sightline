@@ -5,6 +5,7 @@ import type {
 	AccessMode,
 	FieldKind,
 	FormatHint,
+	MissingField,
 	SemanticField,
 	SemanticSource,
 } from "./types";
@@ -42,6 +43,10 @@ interface FieldRow {
 	folder: string | null;
 	sort_order: number;
 	is_default: boolean;
+	status: string;
+	missing_since: string | null;
+	renamed_to: string | null;
+	rename_candidate: string | null;
 }
 
 let sources = new Map<string, SemanticSource>();
@@ -101,7 +106,9 @@ export async function loadRegistry(force = false): Promise<void> {
 				sql<FieldRow>(
 					`SELECT field_id, source_key, field_name, display_name, field_kind,
 					        sql_expr, data_type, description, format_hint, tags,
-					        folder, sort_order, is_default
+					        folder, sort_order, is_default, status,
+					        missing_since::text AS missing_since, renamed_to,
+					        rename_candidate
 					 FROM source_fields
 					 WHERE is_active = TRUE
 					 ORDER BY sort_order, field_name`,
@@ -128,9 +135,32 @@ export async function loadRegistry(force = false): Promise<void> {
 				});
 			}
 
+			const missingBySource = new Map<
+				string,
+				Map<string, MissingField>
+			>();
 			for (const row of fieldRows) {
 				const source = byKey.get(row.source_key);
 				if (!source) continue;
+				// A field the source stopped publishing is kept out of the
+				// pickers and the query builder, and remembered so a query
+				// naming it can say what happened.
+				if (row.status === "missing") {
+					let missing = missingBySource.get(row.source_key);
+					if (!missing) {
+						missing = new Map();
+						missingBySource.set(row.source_key, missing);
+						source.missingFields = missing;
+					}
+					missing.set(row.field_name, {
+						name: row.field_name,
+						kind: row.field_kind as FieldKind,
+						missingSince: row.missing_since,
+						renamedTo: row.renamed_to,
+						renameCandidate: row.rename_candidate,
+					});
+					continue;
+				}
 				const field = toField(row);
 				if (field.kind === "measure") source.measures.push(field);
 				else source.dimensions.push(field);

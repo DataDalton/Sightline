@@ -227,7 +227,7 @@ export function partsFromClauses(clauses: unknown[]): SelectionPart[] {
 
 // One value as a reader expects to see it in the filter bar. A date is shown
 // the way the rest of the app shows dates, and a blank by name.
-function describeValue(value: string): string {
+export function describeValue(value: string): string {
 	if (value === "") return blankLabel;
 	if (plainDate.test(value)) return formatDate(value);
 	return value;

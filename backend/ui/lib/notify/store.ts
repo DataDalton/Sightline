@@ -1,3 +1,4 @@
+import type { PoolClient } from "pg";
 import { sql } from "../data/lakebase";
 import { deliverPush } from "./push";
 
@@ -14,6 +15,7 @@ export type NotificationKind =
 	| "message"
 	| "delivery"
 	| "data"
+	| "schema"
 	| "system";
 
 export const notificationKinds: NotificationKind[] = [
@@ -22,6 +24,7 @@ export const notificationKinds: NotificationKind[] = [
 	"message",
 	"delivery",
 	"data",
+	"schema",
 	"system",
 ];
 
@@ -31,6 +34,7 @@ export const kindLabel: Record<NotificationKind, string> = {
 	message: "Conversations",
 	delivery: "Scheduled pages",
 	data: "Late data",
+	schema: "Changed fields",
 	system: "Announcements",
 };
 
@@ -87,33 +91,60 @@ export interface NewNotification {
 	data?: Record<string, unknown>;
 }
 
+const insertStatement = `INSERT INTO notifications (owner_email, kind, title, body, link, data)
+	 VALUES ($1, $2, $3, $4, $5, $6)
+	 RETURNING notification_id::text, kind, title, body, link, data,
+	           created_on::text, read_on::text`;
+
+function insertParams(ownerEmail: string, input: NewNotification): unknown[] {
+	return [
+		ownerEmail.toLowerCase(),
+		input.kind,
+		input.title.slice(0, maxTitle),
+		(input.body ?? "").slice(0, maxBody),
+		safeLink(input.link),
+		JSON.stringify(input.data ?? {}),
+	];
+}
+
+// Starts the push for an entry already stored. Not waited for, and a push
+// that fails is recorded against the device rather than against the
+// notification.
+export function pushNotification(ownerEmail: string, item: InboxItem): void {
+	void deliverPush(ownerEmail.toLowerCase(), item).catch((error) => {
+		console.warn("Push delivery failed:", error);
+	});
+}
+
+// Writes one entry inside the caller's transaction and sends nothing. The
+// entry then commits or rolls back with whatever the caller wrote beside
+// it, so a crash cannot leave the one without the other. The caller passes
+// the returned item to pushNotification once the transaction has committed,
+// since a push sent earlier could announce an entry that never lands.
+export async function notifyInTransaction(
+	client: PoolClient,
+	ownerEmail: string,
+	input: NewNotification,
+): Promise<InboxItem> {
+	const result = await client.query<Row>(
+		insertStatement,
+		insertParams(ownerEmail, input),
+	);
+	return toItem(result.rows[0]);
+}
+
 // Writes one entry and starts the push behind it. Resolves once the entry is
-// stored. The push is not waited for, and a push that fails is recorded
-// against the device rather than against the notification.
+// stored. The push is not waited for.
 export async function notify(
 	ownerEmail: string,
 	input: NewNotification,
 ): Promise<InboxItem> {
 	const rows = await sql<Row>(
-		`INSERT INTO notifications (owner_email, kind, title, body, link, data)
-		 VALUES ($1, $2, $3, $4, $5, $6)
-		 RETURNING notification_id::text, kind, title, body, link, data,
-		           created_on::text, read_on::text`,
-		[
-			ownerEmail.toLowerCase(),
-			input.kind,
-			input.title.slice(0, maxTitle),
-			(input.body ?? "").slice(0, maxBody),
-			safeLink(input.link),
-			JSON.stringify(input.data ?? {}),
-		],
+		insertStatement,
+		insertParams(ownerEmail, input),
 	);
 	const item = toItem(rows[0]);
-
-	void deliverPush(ownerEmail.toLowerCase(), item).catch((error) => {
-		console.warn("Push delivery failed:", error);
-	});
-
+	pushNotification(ownerEmail, item);
 	return item;
 }
 

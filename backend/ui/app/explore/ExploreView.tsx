@@ -148,7 +148,23 @@ export default function ExploreView() {
 		() => new Set(source?.measures.map((m) => m.name) ?? []),
 		[source],
 	);
-	const dimensions = columns.filter((c) => !measureNames.has(c));
+	const publishedNames = useMemo(
+		() =>
+			new Set([
+				...(source?.dimensions ?? []).map((f) => f.name),
+				...(source?.measures ?? []).map((f) => f.name),
+			]),
+		[source],
+	);
+	// Columns the dataset no longer publishes, such as one kept in a saved
+	// exploration from before it was removed upstream. Left out of the query
+	// and named, rather than sent to fail in the warehouse.
+	const missingColumns = source
+		? columns.filter((c) => !publishedNames.has(c))
+		: [];
+	const dimensions = columns.filter(
+		(c) => !measureNames.has(c) && !missingColumns.includes(c),
+	);
 	const measures = columns.filter((c) => measureNames.has(c));
 
 	const kinds = useMemo(
@@ -426,6 +442,33 @@ export default function ExploreView() {
 
 			{logic.problem && <p className={styles.problem}>{logic.problem}</p>}
 
+			{source && missingColumns.length > 0 && (
+				<div className={styles.alertBanner} role="status">
+					<span>
+						{missingColumns.join(", ")}{" "}
+						{missingColumns.length === 1 ? "is" : "are"} no longer
+						in {source.title}, so{" "}
+						{missingColumns.length === 1 ? "it is" : "they are"}{" "}
+						left out.
+					</span>
+					<span className={styles.alertBannerActions}>
+						<button
+							type="button"
+							className={styles.alertBannerButton}
+							onClick={() =>
+								setColumns(
+									columns.filter(
+										(c) => !missingColumns.includes(c),
+									),
+								)
+							}
+						>
+							Remove {missingColumns.length === 1 ? "it" : "them"}
+						</button>
+					</span>
+				</div>
+			)}
+
 			{!isLoading && !source && (
 				<div className={styles.state}>
 					Start by typing the name of a dataset, or of a field you
@@ -439,22 +482,24 @@ export default function ExploreView() {
 				</div>
 			)}
 
-			{source && columns.length > 0 && !logic.problem && (
-				<DataGrid
-					// A different dataset is a different table, not the same
-					// one with new columns.
-					key={source.sourceKey}
-					sourceKey={source.sourceKey}
-					dimensions={dimensions}
-					measures={measures}
-					baseFilters={logic.filters}
-					anyOf={logic.anyOf}
-					where={logic.where}
-					fields={fields}
-					height="calc(100vh - var(--header-height) - 300px)"
-					showTotals={measures.length > 0}
-				/>
-			)}
+			{source &&
+				dimensions.length + measures.length > 0 &&
+				!logic.problem && (
+					<DataGrid
+						// A different dataset is a different table, not the same
+						// one with new columns.
+						key={source.sourceKey}
+						sourceKey={source.sourceKey}
+						dimensions={dimensions}
+						measures={measures}
+						baseFilters={logic.filters}
+						anyOf={logic.anyOf}
+						where={logic.where}
+						fields={fields}
+						height="calc(100vh - var(--header-height) - 300px)"
+						showTotals={measures.length > 0}
+					/>
+				)}
 		</div>
 	);
 }

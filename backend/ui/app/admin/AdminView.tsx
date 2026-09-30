@@ -2308,6 +2308,267 @@ function SyncSources({
 	);
 }
 
+interface MissingFieldRow {
+	name: string;
+	kind: string;
+	missingSince: string | null;
+	renamedTo: string | null;
+	candidate: string | null;
+	confidence: number | null;
+	announced: boolean;
+	dependents: number;
+	uses: Record<string, number>;
+	choices: string[];
+}
+
+interface MissingFieldSource {
+	sourceKey: string;
+	title: string;
+	fields: MissingFieldRow[];
+}
+
+// Items that name a field, in words, singular and plural.
+const dependentWords: Record<string, [string, string]> = {
+	visual: ["visual", "visuals"],
+	pageFreshness: ["page date stamp", "page date stamps"],
+	savedView: ["saved view", "saved views"],
+	exploration: ["exploration", "explorations"],
+	exploreView: ["saved exploration", "saved explorations"],
+	alert: ["alert", "alerts"],
+	pageAlert: ["page alert", "page alerts"],
+	delivery: ["scheduled page", "scheduled pages"],
+	sheet: ["sheet", "sheets"],
+	sourceDefaultTime: ["default time field", "default time field"],
+};
+
+function describeUses(uses: Record<string, number>): string {
+	const parts = Object.entries(uses)
+		.filter(([, n]) => n > 0)
+		.map(([kind, n]) => {
+			const words = dependentWords[kind] ?? [kind, kind];
+			return kind === "sourceDefaultTime"
+				? `the ${words[0]}`
+				: `${n} ${n === 1 ? words[0] : words[1]}`;
+		});
+	return parts.length > 0 ? parts.join(", ") : "Nothing";
+}
+
+// Fields a source stopped publishing, what still names each one, and the
+// rename the sync offered for it.
+//
+// A total under the sync button told an administrator something had gone and
+// nothing about what to do: which field, whether anything used it, and whether
+// it had merely been renamed. A rename is repaired from here in one step, which
+// rewrites every item naming the old name.
+function FieldChanges({ refreshKey }: { refreshKey: string }) {
+	const { data, error, mutate } = useSWR<{ sources: MissingFieldSource[] }>(
+		`/api/admin/fields?after=${encodeURIComponent(refreshKey)}`,
+	);
+	// The replacement picked for each field, where it differs from the one
+	// the sync offered.
+	const [chosen, setChosen] = useState<Record<string, string>>({});
+	const [confirming, setConfirming] = useState<{
+		sourceKey: string;
+		title: string;
+		from: string;
+		to: string;
+		dependents: number;
+	} | null>(null);
+	const [busy, setBusy] = useState(false);
+	const [result, setResult] = useState<string | null>(null);
+	const [failure, setFailure] = useState<string | null>(null);
+
+	if (error) {
+		return (
+			<div className={styles.saveError}>
+				{describeFetchError(error, "missing fields")}
+			</div>
+		);
+	}
+	const sources = data?.sources ?? [];
+	if (sources.length === 0 && !result) return null;
+
+	const remap = async () => {
+		if (!confirming) return;
+		setBusy(true);
+		setFailure(null);
+		try {
+			const response = await fetch("/api/admin/fields/remap", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					sourceKey: confirming.sourceKey,
+					from: confirming.from,
+					to: confirming.to,
+				}),
+			});
+			const detail = await response.json().catch(() => null);
+			if (!response.ok) {
+				setFailure(
+					detail?.error ?? `The remap failed (${response.status})`,
+				);
+				return;
+			}
+			const changed = Object.values(
+				(detail?.changed ?? {}) as Record<string, number>,
+			).reduce((sum, n) => sum + n, 0);
+			setResult(
+				`${confirming.from} now reads as ${confirming.to}. ` +
+					`${changed} ${changed === 1 ? "item was" : "items were"} updated.`,
+			);
+			setConfirming(null);
+			await mutate();
+		} catch (failed) {
+			setFailure(
+				failed instanceof Error ? failed.message : "The remap failed",
+			);
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	return (
+		<>
+			{sources.length > 0 && (
+				<div className={styles.notice}>
+					<div>
+						<div className={styles.noticeTitle}>
+							Fields no longer published
+						</div>
+						<p className={styles.noticeBody}>
+							Items that name one of these show an error until
+							they are changed. A renamed field can be remapped,
+							which points every item at the new name in one step.
+						</p>
+					</div>
+				</div>
+			)}
+			{sources.length > 0 && (
+				<div className={styles.tableWrap}>
+					<table className={styles.table}>
+						<thead>
+							<tr>
+								<th>Source</th>
+								<th>Field</th>
+								<th>Used by</th>
+								<th>Replace with</th>
+								<th />
+							</tr>
+						</thead>
+						<tbody>
+							{sources.flatMap((source) =>
+								source.fields.map((field) => {
+									const key = `${source.sourceKey}/${field.name}`;
+									const target =
+										chosen[key] ??
+										field.candidate ??
+										field.renamedTo ??
+										"";
+									return (
+										<tr key={key}>
+											<td>{source.title}</td>
+											<td>
+												<span className={styles.mono}>
+													{field.name}
+												</span>
+												<span className={styles.muted}>
+													{" "}
+													{field.kind}
+													{field.missingSince
+														? `, gone ${ago(field.missingSince)}`
+														: ""}
+												</span>
+												{field.renamedTo && (
+													<span
+														className={styles.badge}
+													>
+														remapped to{" "}
+														{field.renamedTo}
+													</span>
+												)}
+											</td>
+											<td>{describeUses(field.uses)}</td>
+											<td>
+												{field.choices.length > 0 ? (
+													<Select
+														value={target}
+														onChange={(v) =>
+															setChosen((c) => ({
+																...c,
+																[key]: v,
+															}))
+														}
+														options={[
+															{
+																value: "",
+																label: "Choose a field",
+															},
+															...field.choices.map(
+																(name) => ({
+																	value: name,
+																	label:
+																		name ===
+																		field.candidate
+																			? `${name} (likely, ${Math.round((field.confidence ?? 0) * 100)}%)`
+																			: name,
+																}),
+															),
+														]}
+													/>
+												) : (
+													<span
+														className={styles.muted}
+													>
+														No field of this kind
+													</span>
+												)}
+											</td>
+											<td>
+												<button
+													type="button"
+													className={
+														styles.linkButton
+													}
+													disabled={!target || busy}
+													onClick={() =>
+														setConfirming({
+															sourceKey:
+																source.sourceKey,
+															title: source.title,
+															from: field.name,
+															to: target,
+															dependents:
+																field.dependents,
+														})
+													}
+												>
+													Remap
+												</button>
+											</td>
+										</tr>
+									);
+								}),
+							)}
+						</tbody>
+					</table>
+				</div>
+			)}
+			{result && <p className={styles.paneNote}>{result}</p>}
+			{failure && <div className={styles.saveError}>{failure}</div>}
+			{confirming && (
+				<ConfirmDialog
+					title={`Remap ${confirming.from} to ${confirming.to}?`}
+					body={`Every item on ${confirming.title} that names ${confirming.from}, ${confirming.dependents} now, is changed to use ${confirming.to}. Reports get a new version, so the change can be seen in their history.`}
+					confirmLabel="Remap"
+					busy={busy}
+					onConfirm={remap}
+					onCancel={() => setConfirming(null)}
+				/>
+			)}
+		</>
+	);
+}
+
 // Counters arrive nested, one object per subsystem. Flattened to one label per
 // number, because a tile reading {"entries":1,"degraded":0} is a value somebody
 // has to parse rather than read.
@@ -2439,6 +2700,9 @@ function PlatformSection({
 					</div>
 
 					<SyncFreshness run={data.lastSync ?? null} />
+					<FieldChanges
+						refreshKey={data.lastSync?.finishedOn ?? ""}
+					/>
 					<div className={styles.tableWrap}>
 						<table className={styles.table}>
 							<thead>

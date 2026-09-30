@@ -88,6 +88,9 @@ interface ReportGridProps {
 	onOpen?: (visualId: string) => void;
 }
 
+// The gap left around an opened visual, matching --space-4 in the stylesheet.
+const expandMargin = 18;
+
 export function ReportGrid({
 	visuals,
 	sources,
@@ -396,10 +399,16 @@ export function ReportGrid({
 	useEffect(() => {
 		if (!expandedId) return;
 		const measure = () =>
-			// The box is 88 percent of the window, less the visual's own
-			// header and the padding around it.
+			// The box is the window below the app's header less its margin
+			// on both sides, and the visual's own header comes out of that.
 			setExpandHeight(
-				Math.max(240, Math.round(window.innerHeight * 0.88) - 56),
+				Math.max(
+					240,
+					window.innerHeight -
+						(document.querySelector("header")?.offsetHeight ?? 0) -
+						2 * expandMargin -
+						56,
+				),
 			);
 		measure();
 		window.addEventListener("resize", measure);
@@ -434,6 +443,7 @@ export function ReportGrid({
 							reportId={reportId}
 							pageId={pageId}
 							frameHeight={expandHeight}
+							expanded
 							columnOrder={columnOrder}
 							pinnedColumns={pinnedColumns}
 							columnWidths={columnWidths}

@@ -104,6 +104,11 @@ export interface ReportSeed {
 	description: string;
 	sourceKey: string;
 	pages: PageSeed[];
+	// Shows a forecast on its trend lines over a date, so the demo carries
+	// an example of one.
+	forecast?: boolean;
+	// Targets for the headline tiles on its first page, keyed by measure.
+	targets?: Record<string, unknown>;
 }
 
 export interface CategorySeed {
@@ -122,9 +127,16 @@ export const categories: CategorySeed[] = [
 		icon: "sales",
 		description:
 			"Revenue, margin and targets across regions, channels and products.",
+		// More maintainers than the panel shows at first, so the category page
+		// carries an example of the expanded list.
 		maintainers: [
 			{ type: "user", id: "jamie.carter@example.com" },
 			{ type: "group", id: groups.sales },
+			{ type: "user", id: "casey.nguyen@example.com" },
+			{ type: "user", id: "jordan.reyes@example.com" },
+			{ type: "user", id: "morgan.ellis@example.com" },
+			{ type: "user", id: "taylor.brooks@example.com" },
+			{ type: "group", id: groups.finance },
 		],
 		reports: [
 			{
@@ -132,6 +144,23 @@ export const categories: CategorySeed[] = [
 				description:
 					"Where revenue and margin stand, and how they got there.",
 				sourceKey: "sales_orders",
+				forecast: true,
+				// One target taken from another measure and one fixed figure,
+				// so both show without a date range on the page.
+				targets: {
+					Revenue: {
+						kind: "measure",
+						measure: "Revenue Target",
+						change: 0,
+						changeUnit: "percent",
+						direction: "higher",
+					},
+					"Gross Margin": {
+						kind: "fixed",
+						value: 5_000_000,
+						direction: "higher",
+					},
+				},
 				pages: [
 					{
 						title: "Overview",
@@ -770,6 +799,7 @@ export const categories: CategorySeed[] = [
 				title: "Headcount",
 				description: "How big each team is and how it has grown.",
 				sourceKey: "people_headcount",
+				forecast: true,
 				pages: [
 					{
 						title: "Overview",

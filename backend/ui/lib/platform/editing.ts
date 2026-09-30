@@ -719,6 +719,16 @@ export async function applyEdits(
 						 WHERE page_id = $2 AND report_id = $1`,
 						[request.reportId, op.pageId],
 					);
+					// Its alerts stop with it. They stay deactivated if the
+					// page is restored, since their subscribers were told
+					// nothing while it was gone and an editor decides whether
+					// the page still wants them.
+					await client.query(
+						`UPDATE page_alerts SET is_active = FALSE,
+						   modified_by = $3, modified_on = now()
+						 WHERE page_id = $2 AND report_id = $1 AND is_active`,
+						[request.reportId, op.pageId, email],
+					);
 					break;
 
 				case "updatePage":

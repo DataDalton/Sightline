@@ -26,6 +26,7 @@ export async function register() {
 		await import("@/lib/telemetry/usage");
 	const { pruneOps } = await import("@/lib/platform/editing");
 	const { rollupUsage } = await import("@/lib/telemetry/rollup");
+	const { runDailyFieldSync } = await import("@/lib/semantic/fieldWatch");
 	const { closePool, tryAdvisoryLock } = await import("@/lib/data/lakebase");
 	// Identifies the sweep lock, so one replica sweeps at a time.
 	const sweepLockKey = 8577411;
@@ -147,6 +148,16 @@ export async function register() {
 	}, 30 * 1000);
 	firstRollup.unref?.();
 
+	// Each source's fields compared with the catalogue once a day, so a field
+	// dropped or renamed upstream is noticed and its dependents told without
+	// anybody running a sync. Each source is skipped until a day has passed,
+	// so an hourly tick only does the work that is due.
+	const fieldSyncTimer = setInterval(
+		() => void runDailyFieldSync(),
+		60 * 60 * 1000,
+	);
+	fieldSyncTimer.unref?.();
+
 	// Alerts that can run while their owners are away.
 	//
 	// Every minute, though an alert is only ever due on the hour: an alert
@@ -195,6 +206,7 @@ export async function register() {
 		stopMarksPolling();
 		clearInterval(sweepTimer);
 		clearInterval(rollupTimer);
+		clearInterval(fieldSyncTimer);
 		clearInterval(alertTimer);
 		clearTimeout(firstRollup);
 		stopSettingsPolling();

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
 	canSelect,
+	describeValue,
 	matchesSelection,
 	partsFromClauses,
 	selectionClauses,
@@ -341,4 +342,10 @@ test("a selection on a field the visual does not draw covers nothing", () => {
 		selectionCovers([{ field: "Region", values: ["North"] }], ["Region"]),
 		true,
 	);
+});
+
+test("a value is described the way the filter bar shows it", () => {
+	assert.equal(describeValue("North"), "North");
+	assert.equal(describeValue(""), "(blank)");
+	assert.notEqual(describeValue("2026-01-05"), "2026-01-05");
 });

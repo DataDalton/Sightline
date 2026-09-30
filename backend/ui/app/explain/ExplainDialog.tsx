@@ -118,6 +118,7 @@ export function ExplainDialog({
 			onClose={onClose}
 			title={`Why ${measure} changed`}
 			width="720px"
+			fullHeightOnPhone
 		>
 			<div className={styles.body}>
 				<div className={styles.summary}>

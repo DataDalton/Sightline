@@ -50,9 +50,21 @@ import {
 import { describeChart } from "../../lib/visuals/chartSummary";
 import { matchCountry } from "../../lib/visuals/countryNames";
 import { checkEncoding } from "../../lib/visuals/catalog";
+import {
+	describeForecast,
+	forecastRows,
+	localToday,
+	looksAdditive,
+} from "../../lib/visuals/forecast";
 import { indicesToValues, rangeToIndices } from "../../lib/visuals/brush";
 import {
+	keyboardMarks,
+	stepMark,
+	type KeyMark,
+} from "../../lib/visuals/chartKeys";
+import {
 	canSelect,
+	describeValue,
 	selectionFromClick,
 	selectionValue,
 	type MarkClick,
@@ -80,6 +92,7 @@ import {
 	buildTimeline,
 	buildTreemap,
 	buildWaterfall,
+	forecastSeriesPrefix,
 	type ChartContext,
 } from "./chartOptions";
 import { VisualEmpty, VisualError, VisualLoading } from "./VisualFrame";
@@ -101,6 +114,15 @@ const periodCharts = new Set([
 	"areaChart",
 	"comboChart",
 	"stackedBarChart",
+]);
+
+// Charts that can carry a forecast past their last period, when their first
+// dimension is a date.
+const forecastCharts = new Set([
+	"barChart",
+	"lineChart",
+	"areaChart",
+	"comboChart",
 ]);
 
 // Charts whose marks are each one value of a dimension, such as a bar for a
@@ -186,6 +208,23 @@ const columnPickCharts = new Set(["lineChart", "areaChart"]);
 // a click. Further than this was a drag, such as a brushed range or a panned
 // map, and the release is not a choice of mark.
 const clickSlop = 4;
+
+// Draws one mark as hovered, with its tooltip, or clears both. The library's
+// own hover state, so it looks the same as a pointer resting on the mark.
+function paintFocus(chart: echarts.ECharts, mark: KeyMark | undefined): void {
+	chart.dispatchAction({ type: "downplay" });
+	if (!mark) {
+		chart.dispatchAction({ type: "hideTip" });
+		return;
+	}
+	const target = {
+		seriesIndex: mark.seriesIndex,
+		dataIndex: mark.dataIndex,
+		name: mark.name,
+	};
+	chart.dispatchAction({ type: "highlight", ...target });
+	chart.dispatchAction({ type: "showTip", ...target });
+}
 
 interface ChartProps {
 	visualType: string;
@@ -434,6 +473,51 @@ export function Chart({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 		[visualType, compareField, filterKey],
 	);
+	// Forecasts of each measure past the last period, from the rows already
+	// here. Held by the rows and the two settings, so a redraw for any other
+	// reason does not fit the models again. Today is part of the key because
+	// it decides which period is still unfinished.
+	const today = localToday();
+	const forecastOn =
+		forecastCharts.has(visualType) &&
+		periodField !== null &&
+		dimensions.length === 1 &&
+		options?.forecast === true;
+	const forecastPeriods =
+		typeof options?.forecastPeriods === "number"
+			? options.forecastPeriods
+			: null;
+	// Whether each measure adds up across periods, which decides whether the
+	// caption speaks of the period total or its average. Kept as a string so
+	// the memo below sees a change only when the answer changes.
+	const additiveKey = measures
+		.map((m) => (looksAdditive(m, fields.get(m)?.formatHint) ? "1" : "0"))
+		.join("");
+	const forecast = useMemo(
+		() =>
+			forecastOn && periodField
+				? forecastRows(rows, periodField, measures, {
+						horizon: forecastPeriods,
+						today,
+						additive: Object.fromEntries(
+							measures.map((m, i) => [m, additiveKey[i] === "1"]),
+						),
+					})
+				: null,
+		// The measures by content, since the page hands over a new array on
+		// every render and each fit is a search over a grid of parameter sets.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[
+			forecastOn,
+			rows,
+			periodField,
+			JSON.stringify(measures),
+			forecastPeriods,
+			today,
+			additiveKey,
+		],
+	);
+
 	const explainable = Boolean(periodField || previousWindow);
 	const [pointed, setPointed] = useState<Pointed | null>(null);
 	const [explaining, setExplaining] = useState<Pointed | null>(null);
@@ -510,6 +594,7 @@ export function Chart({
 			// The same visual over the earlier window, for a chart whose shape
 			// is a change. Null when the page has no window to move.
 			comparisonRows: comparisonFilters ? comparison.rows : null,
+			forecast,
 		};
 
 		// The chart that produced a selection marks it, so the reader can see
@@ -604,11 +689,30 @@ export function Chart({
 		interactive,
 		comparison.rows,
 		comparisonFilters,
+		forecast,
 		countries,
 		// The palette is read off the document when the option is built, so
 		// a theme change has to build it again.
 		resolved,
 	]);
+
+	// Whether the built chart carries forecast marks. Read back off the option,
+	// because the builder leaves them off a chart whose categories the
+	// forecast cannot line up with, and the caption has to agree with what was
+	// drawn.
+	const forecastShown = useMemo(() => {
+		const series = (option as { series?: unknown } | null)?.series;
+		return (
+			Array.isArray(series) &&
+			series.some((entry) =>
+				String((entry as { id?: unknown }).id ?? "").startsWith(
+					forecastSeriesPrefix,
+				),
+			)
+		);
+	}, [option]);
+	const forecastCaption =
+		forecastShown && forecast ? describeForecast(forecast) : null;
 
 	// The categories along the axis in the order the chart drew them, as rows
 	// a brushed range can be read from. Taken from the built option, so a
@@ -625,10 +729,32 @@ export function Chart({
 			(axis) => axis?.type === "category" && Array.isArray(axis.data),
 		);
 		if (!category?.data) return rows;
-		return category.data.map((value) => ({ [field]: value }));
-	}, [option, rows, dimensions]);
+		// Forecast periods appended to the axis are not rows, so a range
+		// drawn over them selects only the measured periods.
+		const measured = forecastShown
+			? category.data.slice(0, rows.length)
+			: category.data;
+		return measured.map((value) => ({ [field]: value }));
+	}, [option, rows, dimensions, forecastShown]);
 	const brushRowsRef = useRef(brushRows);
 	brushRowsRef.current = brushRows;
+
+	// The marks a reader can step through from the keyboard, in drawn order,
+	// and which one is focused. Offered where a click selects, so a key does
+	// what a click would and nothing a click would not.
+	const marks = useMemo(
+		() => (selectable && option ? keyboardMarks(visualType, option) : []),
+		[selectable, option, visualType],
+	);
+	const [focusIndex, setFocusIndex] = useState(-1);
+	// Spoken as the focus moves, since the canvas has nothing a screen reader
+	// can read out.
+	const [announcement, setAnnouncement] = useState("");
+	const focused = focusIndex >= 0 ? marks[focusIndex] : undefined;
+
+	// Under other filters the marks are different ones, so the focus starts
+	// again rather than landing on whatever now sits at the same position.
+	useEffect(() => setFocusIndex(-1), [filterKey, dimensions]);
 
 	// How many marks the axis bounds leave off the chart.
 	//
@@ -948,6 +1074,9 @@ export function Chart({
 						const index = Math.round(
 							Array.isArray(at) ? Number(at[0]) : Number(at),
 						);
+						// A forecast period has nothing measured to select
+						// or explain, and is not empty space either.
+						if (index >= brushRowsRef.current.length) return;
 						const field = live.dimensions[0];
 						const row = brushRowsRef.current[index];
 						if (field && row && Number.isFinite(index)) {
@@ -973,6 +1102,18 @@ export function Chart({
 		// a fresh callback from the page is not a reason to rebuild the chart
 		// and throw away whatever the reader was doing in it.
 	}, [option, resolved, supportsBrush, container]);
+
+	// The focused mark drawn as hovered, with its tooltip. Applied again after
+	// every redraw, because replacing the option clears the library's own
+	// highlight, and only while the chart holds focus so a pointer elsewhere
+	// is not fought over.
+	useEffect(() => {
+		const chart = chartRef.current;
+		if (!chart || !container || document.activeElement !== container) {
+			return;
+		}
+		paintFocus(chart, focused);
+	}, [focused, option, container]);
 
 	// The observer attaches to the element itself rather than on mount.
 	//
@@ -1013,6 +1154,74 @@ export function Chart({
 			chartRef.current = null;
 		};
 	}, []);
+
+	// What a focused mark is read out as, such as "North, Revenue $1.2M, 2 of
+	// 8".
+	const describeMark = (mark: KeyMark, index: number): string => {
+		const measure =
+			mark.click.seriesName && measures.includes(mark.click.seriesName)
+				? mark.click.seriesName
+				: measures[0];
+		const figure =
+			typeof mark.value === "number" ||
+			(typeof mark.value === "string" && mark.value.trim() !== "")
+				? formatValue(
+						mark.value,
+						(fields.get(measure ?? "")?.formatHint as FormatHint) ??
+							"decimal",
+					)
+				: null;
+		const measureName = measure
+			? fields.get(measure)?.displayName || measure
+			: "";
+		const label = describeValue(selectionValue(mark.label));
+		return [
+			label,
+			figure ? `${measureName} ${figure}`.trim() : null,
+			`${index + 1} of ${marks.length}`,
+		]
+			.filter(Boolean)
+			.join(", ");
+	};
+
+	// Arrows move between marks, Enter or Space chooses the focused one the
+	// way a click on it would, and Escape lets go of what this chart selected.
+	const onChartKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
+		if (marks.length === 0) return;
+		if (event.key === "Escape") {
+			if (focusIndex < 0 && !(selection && selection.length > 0)) return;
+			event.preventDefault();
+			event.stopPropagation();
+			setFocusIndex(-1);
+			if (selection && selection.length > 0) {
+				onClearSelection?.();
+				setAnnouncement("Selection cleared");
+			} else {
+				setAnnouncement("");
+			}
+			return;
+		}
+		if (event.key === "Enter" || event.key === " ") {
+			if (!focused) return;
+			event.preventDefault();
+			pickRef.current?.(focused.click);
+			return;
+		}
+		const next = stepMark(focusIndex, marks.length, event.key);
+		if (next === null) return;
+		event.preventDefault();
+		setFocusIndex(next);
+		setAnnouncement(describeMark(marks[next], next));
+	};
+
+	// Leaving the chart puts the tooltip away, and the focused mark is kept
+	// so coming back resumes where the reader was.
+	const onChartBlur = () => {
+		if (chartRef.current) paintFocus(chartRef.current, undefined);
+	};
+	const onChartFocus = () => {
+		if (chartRef.current && focused) paintFocus(chartRef.current, focused);
+	};
 
 	if (problem) return <VisualEmpty message={problem.message} />;
 	if (error) return <VisualError error={error} />;
@@ -1074,19 +1283,43 @@ export function Chart({
 			<div
 				ref={attachContainer}
 				className={styles.chartCanvas}
-				role="img"
-				aria-label={describeChart(
-					visualType,
-					rows,
-					dimensions,
-					measures,
-					title,
-				)}
+				// A chart whose marks can be chosen takes focus and handles
+				// its own arrow keys, which is what the application role tells
+				// a screen reader to let through. Anything else is a picture.
+				{...(marks.length > 0
+					? {
+							tabIndex: 0,
+							role: "application",
+							"aria-roledescription": "chart",
+							"aria-label": `${describeChart(
+								visualType,
+								rows,
+								dimensions,
+								measures,
+								title,
+							)}${forecastCaption ? ` ${forecastCaption}` : ""} Arrow keys move between marks, Enter selects one, Escape clears the selection.`,
+							onKeyDown: onChartKey,
+							onFocus: onChartFocus,
+							onBlur: onChartBlur,
+						}
+					: {
+							role: "img",
+							"aria-label": `${describeChart(
+								visualType,
+								rows,
+								dimensions,
+								measures,
+								title,
+							)}${forecastCaption ? ` ${forecastCaption}` : ""}`,
+						})}
 				// No cursor of its own. The library sets one per element as
 				// the pointer moves, a pointer over a mark that does something
 				// and the plain arrow everywhere else, and a pointer set here
 				// would claim the whole box was clickable.
 			/>
+			<div className="sr-only" aria-live="polite" aria-atomic="true">
+				{announcement}
+			</div>
 			{pointed && (
 				<div className={styles.chartWhy}>
 					<button
@@ -1131,6 +1364,9 @@ export function Chart({
 					against={explaining.against}
 					onClose={() => setExplaining(null)}
 				/>
+			)}
+			{forecastCaption && (
+				<p className={styles.chartFootnote}>{forecastCaption}</p>
 			)}
 			{clipped > 0 && (
 				<p className={styles.chartFootnote} role="status">
