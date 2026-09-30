@@ -40,9 +40,12 @@ export function AssistantPreferences() {
 	);
 	const [failure, setFailure] = useState<string | null>(null);
 
+	// Follows the saved instructions only, so forgetting a memory does not
+	// wipe instructions typed but not yet saved.
+	const savedInstructions = data?.instructions;
 	useEffect(() => {
-		if (data) setInstructions(data.instructions);
-	}, [data]);
+		if (savedInstructions !== undefined) setInstructions(savedInstructions);
+	}, [savedInstructions]);
 
 	const save = async (next: Profile) => {
 		setSaving(true);
@@ -131,6 +134,7 @@ export function AssistantPreferences() {
 								className={styles.iconButton}
 								title="Forget this"
 								aria-label={`Forget: ${m.text}`}
+								disabled={saving}
 								onClick={() =>
 									void save({
 										...data,

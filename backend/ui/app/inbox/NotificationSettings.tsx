@@ -73,38 +73,54 @@ export function NotificationSettings() {
 		if (!data) return;
 		const preferences = { ...data.preferences, [kind]: on };
 		void mutate({ ...data, preferences }, false);
-		await fetch(pushKey, {
-			method: "PUT",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ preferences }),
-		});
-		void mutate();
+		// Revalidated whatever the outcome, so a refused or failed save puts
+		// the toggle back to what the server holds.
+		try {
+			await fetch(pushKey, {
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ preferences }),
+			});
+		} catch {
+			// The revalidation below restores the stored value.
+		} finally {
+			void mutate();
+		}
 	};
 
 	const removeDevice = async (endpoint: string) => {
-		await fetch(pushKey, {
-			method: "DELETE",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ endpoint }),
-		});
-		if (endpoint === thisEndpoint) await notify.turnOffPush();
-		void mutate();
+		try {
+			await fetch(pushKey, {
+				method: "DELETE",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ endpoint }),
+			});
+			if (endpoint === thisEndpoint) await notify.turnOffPush();
+		} catch {
+			// The revalidation below shows whether the device is still listed.
+		} finally {
+			void mutate();
+		}
 	};
 
 	const sendTest = async () => {
 		setTestState("Sending");
-		const response = await fetch(`${pushKey}/test`, { method: "POST" });
-		const outcome = (await response.json().catch(() => null)) as {
-			sent: number;
-			failed: number;
-		} | null;
-		setTestState(
-			!outcome
-				? "Could not send."
-				: outcome.sent > 0
-					? `Sent to ${outcome.sent} ${outcome.sent === 1 ? "device" : "devices"}.`
-					: "No device accepted it. Turn notifications off and on again on the device.",
-		);
+		try {
+			const response = await fetch(`${pushKey}/test`, { method: "POST" });
+			const outcome = (await response.json().catch(() => null)) as {
+				sent?: unknown;
+			} | null;
+			const sent = response.ok ? outcome?.sent : undefined;
+			setTestState(
+				typeof sent !== "number"
+					? "Could not send."
+					: sent > 0
+						? `Sent to ${sent} ${sent === 1 ? "device" : "devices"}.`
+						: "No device accepted it. Turn notifications off and on again on the device.",
+			);
+		} catch {
+			setTestState("Could not send.");
+		}
 		void mutate();
 	};
 

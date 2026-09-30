@@ -19,6 +19,31 @@ interface Values {
 	adminGroups: string[];
 }
 
+type GroupKey = "editorGroups" | "adminGroups";
+
+// Only the keys this pane owns, and only those that differ from what was
+// loaded. The settings endpoint takes a partial body, so sending the whole
+// loaded object would write back every other setting as it was when this pane
+// opened and undo a change saved from elsewhere in the meantime.
+function changedKeys(draft: Values, base: Values | undefined) {
+	const changes: Partial<Values> = {};
+	if (draft.accessModel !== base?.accessModel) {
+		changes.accessModel = draft.accessModel;
+	}
+	for (const key of ["editorGroups", "adminGroups"] as const) {
+		if (JSON.stringify(draft[key]) !== JSON.stringify(base?.[key] ?? [])) {
+			changes[key] = draft[key];
+		}
+	}
+	return changes;
+}
+
+const splitGroups = (text: string) =>
+	text
+		.split(",")
+		.map((g) => g.trim())
+		.filter(Boolean);
+
 export function AccessSettings() {
 	const { data, mutate } = useSWR<{ settings: Values }>(
 		"/api/admin/settings",
@@ -27,6 +52,12 @@ export function AccessSettings() {
 	const [saving, setSaving] = useState(false);
 	const [failure, setFailure] = useState<string | null>(null);
 	const [saved, setSaved] = useState(false);
+	// What is typed into each group field, held as text. Parsing it into a list
+	// on every keystroke and joining it back dropped a trailing comma the moment
+	// it was typed, so a second group could not be entered.
+	const [groupText, setGroupText] = useState<
+		Partial<Record<GroupKey, string>>
+	>({});
 
 	const values = draft ?? data?.settings ?? null;
 	const dirty = draft !== null;
@@ -37,38 +68,45 @@ export function AccessSettings() {
 		setDraft({ ...values, ...patch });
 	};
 
-	const groups = (key: "editorGroups" | "adminGroups") => (
+	const groups = (key: GroupKey) => (
 		<input
 			className={admin.input}
 			placeholder="None set"
-			value={(values?.[key] ?? []).join(", ")}
-			onChange={(e) =>
-				set({
-					[key]: e.target.value
-						.split(",")
-						.map((g) => g.trim())
-						.filter(Boolean),
-				} as Partial<Values>)
-			}
+			value={groupText[key] ?? (values?.[key] ?? []).join(", ")}
+			onChange={(e) => {
+				const text = e.target.value;
+				setGroupText((prev) => ({ ...prev, [key]: text }));
+				set({ [key]: splitGroups(text) } as Partial<Values>);
+			}}
 		/>
 	);
 
+	const discard = () => {
+		setDraft(null);
+		setGroupText({});
+	};
+
 	const save = async () => {
 		if (!draft) return;
+		const changes = changedKeys(draft, data?.settings);
+		if (Object.keys(changes).length === 0) {
+			discard();
+			return;
+		}
 		setSaving(true);
 		setFailure(null);
 		try {
 			const response = await fetch("/api/admin/settings", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(draft),
+				body: JSON.stringify(changes),
 			});
 			if (!response.ok) {
 				const detail = await response.json().catch(() => null);
 				setFailure(detail?.error ?? "Could not save.");
 				return;
 			}
-			setDraft(null);
+			discard();
 			setSaved(true);
 			await mutate();
 		} catch (error) {
@@ -144,7 +182,7 @@ export function AccessSettings() {
 							<button
 								type="button"
 								className={admin.linkButton}
-								onClick={() => setDraft(null)}
+								onClick={discard}
 							>
 								Discard
 							</button>

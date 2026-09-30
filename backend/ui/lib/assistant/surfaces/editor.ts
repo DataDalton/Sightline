@@ -346,9 +346,21 @@ function buildVisual(
 	}
 	config.sort ??= [];
 
+	// Only settings the visual declares. The shared validation lets an unknown
+	// key through with a warning, which would let the model write keys no
+	// control sets, such as a text panel's markup around the escaping below.
+	const declared = new Set([
+		...(definition.options ?? []).map((o) => o.key),
+		...(definition.measureTargets ? [definition.measureTargets.key] : []),
+	]);
+	const asked = Object.fromEntries(
+		Object.entries(asRecord(args.options)).filter(([key]) =>
+			declared.has(key),
+		),
+	);
 	const options: Record<string, unknown> = {
 		...asRecord(config.options),
-		...asRecord(args.options),
+		...asked,
 	};
 	if (visualType === "textPanel" && typeof args.text === "string") {
 		options.html = textToHtml(args.text.slice(0, 4000));

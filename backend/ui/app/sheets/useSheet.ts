@@ -70,8 +70,30 @@ export function useSheet(id: string): SheetState {
 		title?: string;
 	} | null>(null);
 	const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const versionRef = useRef<number>(0);
-	versionRef.current = sheet?.version ?? versionRef.current;
+	// The newest version this page knows of. A note written here raises it
+	// before the sheet is read again, so a render with the older copy keeps
+	// the higher number rather than sending a save that conflicts with this
+	// person's own note.
+	const versionRef = useRef<{ id: string; version: number }>({
+		id,
+		version: 0,
+	});
+	if (versionRef.current.id !== id) versionRef.current = { id, version: 0 };
+	if (sheet && sheet.id === id && sheet.version > versionRef.current.version)
+		versionRef.current.version = sheet.version;
+	// The layout this page's edits are made on top of, which a save names as
+	// its base. Notes leave it alone, so only another layout save conflicts.
+	const layoutRef = useRef<{ id: string; version: number }>({
+		id,
+		version: 0,
+	});
+	if (layoutRef.current.id !== id) layoutRef.current = { id, version: 0 };
+	if (
+		sheet &&
+		sheet.id === id &&
+		sheet.layoutVersion > layoutRef.current.version
+	)
+		layoutRef.current.version = sheet.layoutVersion;
 
 	const editable =
 		sheet?.permission === "owner" || sheet?.permission === "edit";
@@ -110,14 +132,15 @@ export function useSheet(id: string): SheetState {
 					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({
 						...change,
-						baseVersion: versionRef.current,
+						baseVersion: layoutRef.current.version,
 					}),
 					keepalive,
 				});
 				const body = await response.json().catch(() => null);
-				if (response.status === 409) {
-					// Anything made on top of the discarded draft goes with it,
-					// so it cannot overwrite the other person's change later.
+				if (!response.ok) {
+					// Anything made on top of the refused draft goes with it,
+					// so it cannot overwrite somebody else's change later. The
+					// sheet is read again so the page shows what is saved.
 					pending.current = null;
 					if (timer.current) {
 						clearTimeout(timer.current);
@@ -126,16 +149,15 @@ export function useSheet(id: string): SheetState {
 					setDraft(null);
 					setNotice(
 						body?.error ??
-							"Somebody else changed this sheet. It has been reloaded.",
+							(response.status === 409
+								? "Somebody else changed this sheet. It has been reloaded."
+								: "The change could not be saved."),
 					);
 					await mutateSheet();
 					return;
 				}
-				if (!response.ok) {
-					setNotice(body?.error ?? "The change could not be saved.");
-					return;
-				}
-				versionRef.current = body.sheet.version;
+				versionRef.current.version = body.sheet.version;
+				layoutRef.current.version = body.sheet.layoutVersion;
 				await mutateSheet({ sheet: body.sheet }, false);
 				saved = true;
 				// Kept only if something else was changed while this saved.
@@ -198,7 +220,10 @@ export function useSheet(id: string): SheetState {
 		window.addEventListener("pagehide", onHide);
 		return () => {
 			window.removeEventListener("pagehide", onHide);
+			// Cleared as well as cancelled, so a save still in flight sends
+			// what is pending once it lands.
 			if (timer.current) clearTimeout(timer.current);
+			timer.current = null;
 			if (pending.current) void flush();
 		};
 	}, [flush]);
@@ -235,7 +260,7 @@ export function useSheet(id: string): SheetState {
 				// Somebody else saved. Taken when nothing of this person's is
 				// waiting to go, so their own change is never overwritten here.
 				if (
-					body.version > versionRef.current &&
+					body.version > versionRef.current.version &&
 					!pending.current &&
 					!timer.current
 				) {
@@ -277,7 +302,10 @@ export function useSheet(id: string): SheetState {
 			const body = await response.json().catch(() => null);
 			if (!response.ok)
 				return body?.error ?? "The note could not be saved.";
-			versionRef.current = body.version;
+			versionRef.current.version = Math.max(
+				versionRef.current.version,
+				body.version,
+			);
 			void mutateSheet();
 			return null;
 		},

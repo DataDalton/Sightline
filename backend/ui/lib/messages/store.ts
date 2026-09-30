@@ -1,6 +1,11 @@
+import type { PoolClient } from "pg";
 import { displayNameFromEmail } from "../auth/names";
 import { sql, transaction } from "../data/lakebase";
-import { notify } from "../notify/store";
+import {
+	notifyInTransaction,
+	pushNotification,
+	type InboxItem,
+} from "../notify/store";
 import { canSee, limits, peopleToTell, type Member } from "./rules";
 
 // Conversations with the people who maintain a category.
@@ -110,41 +115,48 @@ export async function knownMembers(
 	return out;
 }
 
-// Telling people is not part of sending. The message is stored before this
-// runs, so a failure here is logged and the sender is not told it failed,
-// since it did not.
-async function tell(
+// Who is told of a message, everyone named in the conversation apart from
+// its author. Resolved before the message is written, so the inbox entries
+// can be written in the same transaction as the message.
+async function peopleFor(members: Member[], author: string): Promise<string[]> {
+	const groups = members.filter((m) => m.type === "group").map((m) => m.id);
+	return peopleToTell(members, await knownMembers(groups), author);
+}
+
+interface Written {
+	email: string;
+	item: InboxItem;
+}
+
+// Writes an inbox entry for each person inside the caller's transaction, so
+// the entries commit or roll back with the message they announce.
+async function writeNotices(
+	client: PoolClient,
+	people: string[],
 	threadId: string,
-	members: Member[],
-	author: string,
 	title: string,
 	body: string,
-): Promise<void> {
-	try {
-		const groups = members
-			.filter((m) => m.type === "group")
-			.map((m) => m.id);
-		const people = peopleToTell(
-			members,
-			await knownMembers(groups),
-			author,
-		);
-		await Promise.all(
-			people.map((email) =>
-				notify(email, {
-					kind: "message",
-					title,
-					body: body.slice(0, 300),
-					link: linkTo(threadId),
-					data: { threadId },
-				}).catch((error) => {
-					console.warn("Message notification failed:", error);
-				}),
-			),
-		);
-	} catch (error) {
-		console.warn("Message recipients could not be resolved:", error);
+): Promise<Written[]> {
+	const written: Written[] = [];
+	for (const email of people) {
+		written.push({
+			email,
+			item: await notifyInTransaction(client, email, {
+				kind: "message",
+				title,
+				body: body.slice(0, 300),
+				link: linkTo(threadId),
+				data: { threadId },
+			}),
+		});
 	}
+	return written;
+}
+
+// Pushed once the transaction has committed, so no device hears of a
+// message that rolled back.
+function pushAll(written: Written[]): void {
+	for (const { email, item } of written) pushNotification(email, item);
 }
 
 export async function startThread(input: {
@@ -192,7 +204,10 @@ export async function startThread(input: {
 		),
 	];
 
-	const threadId = await transaction(async (client) => {
+	const people = await peopleFor(members, author);
+	const title = `${displayNameFromEmail(author)} asked: ${input.subject}`;
+
+	const { threadId, written } = await transaction(async (client) => {
 		const created = await client.query<{ thread_id: string }>(
 			`INSERT INTO threads (subject, category_id, report_slug, created_by)
 			 VALUES ($1, $2, $3, $4) RETURNING thread_id::text`,
@@ -215,16 +230,13 @@ export async function startThread(input: {
 			`INSERT INTO thread_reads (thread_id, user_email) VALUES ($1, $2)`,
 			[id, author],
 		);
-		return id;
+		return {
+			threadId: id,
+			written: await writeNotices(client, people, id, title, input.body),
+		};
 	});
 
-	await tell(
-		threadId,
-		members,
-		author,
-		`${displayNameFromEmail(author)} asked: ${input.subject}`,
-		input.body,
-	);
+	pushAll(written);
 	return threadId;
 }
 
@@ -368,7 +380,8 @@ export async function reply(
 	if (!canSee(members, me, groups)) {
 		throw new MessageError("Conversation not found", 404);
 	}
-	const subject = await transaction(async (client) => {
+	const people = await peopleFor(members, me);
+	const written = await transaction(async (client) => {
 		await client.query(
 			`INSERT INTO thread_messages (thread_id, author_email, body)
 			 VALUES ($1, $2, $3)`,
@@ -384,14 +397,15 @@ export async function reply(
 			 ON CONFLICT (thread_id, user_email) DO UPDATE SET read_on = now()`,
 			[threadId, me],
 		);
-		return updated.rows[0]?.subject ?? "";
+		const subject = updated.rows[0]?.subject ?? "";
+		return writeNotices(
+			client,
+			people,
+			threadId,
+			`${displayNameFromEmail(me)} replied: ${subject}`,
+			body,
+		);
 	});
 
-	await tell(
-		threadId,
-		members,
-		me,
-		`${displayNameFromEmail(me)} replied: ${subject}`,
-		body,
-	);
+	pushAll(written);
 }

@@ -1,6 +1,11 @@
-import { sql, tryAdvisoryLock } from "../data/lakebase";
+import { sql, transaction, tryAdvisoryLock } from "../data/lakebase";
 import { knownMembers } from "../messages/store";
-import { notify } from "../notify/store";
+import {
+	notifyInTransaction,
+	pushNotification,
+	type InboxItem,
+	type NewNotification,
+} from "../notify/store";
 import { categoryRoleId } from "../platform/roles";
 import {
 	describePattern,
@@ -21,7 +26,7 @@ import { lateSubscribers } from "./status";
 // so it needs no warehouse and runs on every replica. A source reading several
 // tables is as late as the latest of them. The first replica to see a source
 // go late is the one that tells people, since the change of state is claimed
-// in the same statement that writes it.
+// in the same transaction that writes the notices.
 
 // How late a state is, so a source reading several tables takes the worst.
 const rank: Record<LateState | "unwatched", number> = {
@@ -164,24 +169,23 @@ async function evaluate(now: number): Promise<void> {
 			pattern ? JSON.stringify(pattern) : null,
 		];
 
-		if (state === "late") {
-			// Claimed and written together, so only the replica that moved it
-			// to late tells anyone, and only once per late load.
-			const moved = await sql<{ source_key: string }>(
-				`UPDATE data_sources SET late_state = $2, expected_by = $3,
-				   last_arrival = $4, arrival_pattern = $5
-				 WHERE source_key = $1 AND late_state IS DISTINCT FROM 'late'
-				 RETURNING source_key`,
+		// Newly late. The move to late and every notice about it are written
+		// in one transaction, and only by the replica whose update moved it,
+		// so a crash between the two can neither lose the notices nor send
+		// them twice. When the notice cannot be put together the source is
+		// left as it was and tried again on the next evaluation.
+		if (state === "late" && source.late_state !== "late" && pattern) {
+			const moved = await moveToLate(
+				source,
 				values,
-			);
-			if (moved.length > 0 && pattern) {
-				await tellLookAfters(source, pattern, lastArrival, now).catch(
-					(error) => {
-						console.warn("Late data notice was not sent:", error);
-					},
-				);
-			}
-			if (moved.length > 0) continue;
+				pattern,
+				lastArrival,
+				now,
+			).catch((error) => {
+				console.warn("Late data notice was not sent:", error);
+				return null;
+			});
+			if (moved !== false) continue;
 		}
 
 		settled.push(values);
@@ -257,18 +261,58 @@ async function lookAfters(sourceKey: string): Promise<{
 	};
 }
 
-async function tellLookAfters(
+// Moves a source to late and tells the people who look after it, together.
+// Returns false when another replica or an earlier evaluation had already
+// moved it, so the caller settles it with the rest.
+async function moveToLate(
+	source: SourceRow,
+	values: (string | null)[],
+	pattern: StoredPattern,
+	lastArrival: number | null,
+	now: number,
+): Promise<boolean> {
+	const notice = await lateNotice(source, pattern, lastArrival, now);
+	const written = await transaction(async (client) => {
+		const moved = await client.query(
+			`UPDATE data_sources SET late_state = $2, expected_by = $3,
+			   last_arrival = $4, arrival_pattern = $5
+			 WHERE source_key = $1 AND late_state IS DISTINCT FROM 'late'
+			 RETURNING source_key`,
+			values,
+		);
+		if (!moved.rowCount) return null;
+		const items: { email: string; item: InboxItem }[] = [];
+		for (const email of notice.people) {
+			items.push({
+				email,
+				item: await notifyInTransaction(client, email, notice.input),
+			});
+		}
+		return items;
+	});
+	if (written === null) return false;
+	// Pushed once the entries are committed, so no device hears of one that
+	// rolled back.
+	for (const { email, item } of written) pushNotification(email, item);
+	return true;
+}
+
+async function lateNotice(
 	source: SourceRow,
 	pattern: StoredPattern,
 	lastArrival: number | null,
 	now: number,
-): Promise<void> {
+): Promise<{ people: string[]; input: NewNotification }> {
 	const [{ people: lookAfterPeople, link }, subscribers] = await Promise.all([
 		lookAfters(source.source_key),
 		lateSubscribers(source.source_key),
 	]);
-	const people = [...new Set([...lookAfterPeople, ...subscribers])];
-	if (people.length === 0) return;
+	const people = [
+		...new Set([
+			...lookAfterPeople,
+			...subscribers.map((email) => email.toLowerCase()),
+		]),
+	];
 	const since = lastArrival
 		? `The last load was ${describeSpan(now - lastArrival)} ago.`
 		: "";
@@ -277,18 +321,16 @@ async function tellLookAfters(
 		/ (AM|PM)\.$/,
 		" $1 UTC.",
 	);
-	const body = `${usual} ${since}`.trim();
-	await Promise.all(
-		people.map((email) =>
-			notify(email, {
-				kind: "data",
-				title: `${source.title} has not updated`,
-				body,
-				link,
-				data: { sourceKey: source.source_key },
-			}),
-		),
-	);
+	return {
+		people,
+		input: {
+			kind: "data",
+			title: `${source.title} has not updated`,
+			body: `${usual} ${since}`.trim(),
+			link,
+			data: { sourceKey: source.source_key },
+		},
+	};
 }
 
 export interface LateSource {

@@ -8,7 +8,11 @@ import {
 } from "./builder";
 import { distributionColumns } from "./visualSpec";
 import { QuerySpecError, type QuerySpec } from "./spec";
-import type { SemanticField, SemanticSource } from "../semantic/types";
+import {
+	defaultTableExpr,
+	type SemanticField,
+	type SemanticSource,
+} from "../semantic/types";
 
 // The builder turns client input into SQL, so these tests exist to prove two
 // properties hold: an unknown field name never reaches the output, and a
@@ -789,4 +793,25 @@ test("distinct values name a missing dimension as missing", () => {
 		() => compileDistinctValues(withMissing, ["Channel"], 10),
 		MissingFieldError,
 	);
+});
+
+// A table field's registered expression quotes its column, so a column whose
+// name holds a backtick stays one identifier in the compiled statement.
+test("a registered table expression doubles backticks in the column name", () => {
+	const name = "a` FROM x; --";
+	assert.equal(defaultTableExpr(name, "dimension"), "`a`` FROM x; --`");
+	assert.equal(defaultTableExpr(name, "measure"), "SUM(`a`` FROM x; --`)");
+
+	const odd: SemanticSource = {
+		...tableSource,
+		dimensions: [
+			field("Odd", "dimension", defaultTableExpr(name, "dimension")),
+		],
+		measures: [],
+	};
+	const compiled = compileQuery(
+		odd,
+		spec({ sourceKey: odd.sourceKey, dimensions: ["Odd"] }),
+	);
+	assert.match(compiled.sql, /^SELECT `a`` FROM x; --` AS `Odd`$/m);
 });

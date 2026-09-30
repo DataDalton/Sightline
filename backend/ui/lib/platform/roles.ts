@@ -184,11 +184,6 @@ export async function syncBuiltinRoles(): Promise<void> {
 // keys stay readable so a fresh install still has somebody who can configure
 // it before any assignment has been made.
 export async function bootstrapRoleAssignments(): Promise<boolean> {
-	const existing = await sql<{ count: string }>(
-		`SELECT count(*)::text AS count FROM role_assignments`,
-	);
-	if (Number(existing[0]?.count ?? 0) > 0) return false;
-
 	const pairs: { roleId: string; group: string }[] = [
 		...effectiveAdminGroups().map((group) => ({ roleId: "admin", group })),
 		...settings().editorGroups.map((group) => ({
@@ -199,14 +194,29 @@ export async function bootstrapRoleAssignments(): Promise<boolean> {
 
 	if (pairs.length === 0) return false;
 
-	for (const pair of pairs) {
-		await sql(
-			`INSERT INTO role_assignments
-			   (role_id, subject_type, subject_id, scope_type, scope_id, granted_by)
-			 VALUES ($1, 'group', $2, 'global', NULL, 'bootstrap')`,
-			[pair.roleId, pair.group.trim()],
+	// Checked and written under the same transaction lock assignRole takes, so
+	// two replicas starting together cannot both find the table empty and
+	// both seed it.
+	const seeded = await transaction(async (client) => {
+		await client.query(
+			`SELECT pg_advisory_xact_lock(hashtext('role_assignments'))`,
 		);
-	}
+		const existing = await client.query<{ count: string }>(
+			`SELECT count(*)::text AS count FROM role_assignments`,
+		);
+		if (Number(existing.rows[0]?.count ?? 0) > 0) return false;
+
+		for (const pair of pairs) {
+			await client.query(
+				`INSERT INTO role_assignments
+				   (role_id, subject_type, subject_id, scope_type, scope_id, granted_by)
+				 VALUES ($1, 'group', $2, 'global', NULL, 'bootstrap')`,
+				[pair.roleId, pair.group.trim()],
+			);
+		}
+		return true;
+	});
+	if (!seeded) return false;
 
 	console.log(
 		`Seeded ${pairs.length} role assignments from the configured admin and editor groups.`,
@@ -243,11 +253,14 @@ export async function loadAssignments(
 		 LEFT JOIN role_capabilities rc ON rc.role_id = ra.role_id
 		 WHERE ra.is_active = TRUE
 		   AND (
-		     (ra.subject_type = 'group' AND ra.subject_id = ANY($1))
+		     (ra.subject_type = 'group' AND lower(ra.subject_id) = ANY($1))
 		     OR (ra.subject_type = 'user' AND lower(ra.subject_id) = $2)
 		   )
 		 GROUP BY ra.assignment_id, r.permission, ra.scope_type, ra.scope_id`,
-		[policy.grants, email.toLowerCase()],
+		// Group names compared without case. The tracked list keeps the first
+		// spelling it met, which can be a filter's rather than the one an
+		// assignment was written with, and the directory itself ignores case.
+		[policy.grants.map((g) => g.toLowerCase()), email.toLowerCase()],
 	);
 
 	return rows.map((row) => ({
@@ -361,7 +374,8 @@ export async function saveRole(
 			 ON CONFLICT (role_id) DO UPDATE SET
 			   name = EXCLUDED.name,
 			   description = EXCLUDED.description,
-			   permission = EXCLUDED.permission`,
+			   permission = EXCLUDED.permission,
+			   is_active = TRUE`,
 			[
 				input.roleId,
 				input.name,
@@ -428,21 +442,46 @@ export async function assignRole(
 		);
 	}
 
-	const rows = await sql<{ assignment_id: string }>(
-		`INSERT INTO role_assignments
-		   (role_id, subject_type, subject_id, scope_type, scope_id, granted_by)
-		 VALUES ($1, $2, $3, $4, $5, $6)
-		 RETURNING assignment_id`,
-		[
-			input.roleId,
-			input.subjectType,
-			input.subjectId.trim(),
-			input.scopeType,
-			scopeId,
-			actor,
-		],
-	);
-	return rows[0].assignment_id;
+	// An assignment that already stands is returned rather than written again.
+	// A duplicate outlives the revoke of its twin, so revoking what the page
+	// shows would leave the access in place. Serialised on a transaction lock,
+	// since two requests could otherwise both find nothing and both insert.
+	return transaction(async (client) => {
+		await client.query(
+			`SELECT pg_advisory_xact_lock(hashtext('role_assignments'))`,
+		);
+		const existing = await client.query<{ assignment_id: string }>(
+			`SELECT assignment_id FROM role_assignments
+			 WHERE is_active = TRUE AND role_id = $1 AND subject_type = $2
+			   AND lower(subject_id) = lower($3) AND scope_type = $4
+			   AND scope_id IS NOT DISTINCT FROM $5
+			 LIMIT 1`,
+			[
+				input.roleId,
+				input.subjectType,
+				input.subjectId.trim(),
+				input.scopeType,
+				scopeId,
+			],
+		);
+		if (existing.rows[0]) return existing.rows[0].assignment_id;
+
+		const rows = await client.query<{ assignment_id: string }>(
+			`INSERT INTO role_assignments
+			   (role_id, subject_type, subject_id, scope_type, scope_id, granted_by)
+			 VALUES ($1, $2, $3, $4, $5, $6)
+			 RETURNING assignment_id`,
+			[
+				input.roleId,
+				input.subjectType,
+				input.subjectId.trim(),
+				input.scopeType,
+				scopeId,
+				actor,
+			],
+		);
+		return rows.rows[0].assignment_id;
+	});
 }
 
 export async function revokeAssignment(assignmentId: string): Promise<boolean> {

@@ -5,6 +5,7 @@ import { parseQuerySpec, QuerySpecError } from "@/lib/query/spec";
 import { QueryAccessError } from "@/lib/query/execute";
 import { getExportJob, listExportJobs, startExport } from "@/lib/query/export";
 import { checkWriteRateLimit } from "@/lib/rateLimit";
+import { isUuid } from "@/lib/alerts/store";
 
 // Starting an export, and asking how one is going.
 //
@@ -79,7 +80,9 @@ export async function GET(request: NextRequest) {
 
 	try {
 		if (jobId) {
-			const job = await getExportJob(identity, jobId);
+			const job = isUuid(jobId)
+				? await getExportJob(identity, jobId)
+				: null;
 			if (!job) {
 				return NextResponse.json(
 					{ error: "Not found" },

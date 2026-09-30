@@ -136,6 +136,26 @@ export function spacingDays(keys: string[]): number {
 	return steps[Math.floor(steps.length / 2)];
 }
 
+// Average days in a month, for telling how many months a spacing spans.
+const monthDays = 365.25 / 12;
+
+// The first day after the period starting on key. A spacing of four weeks or
+// more is a whole number of calendar months, so a month ends where the next
+// begins whatever its length. Counted in days instead, a month learned as
+// thirty days apart would read the thirty-first of a long month as finished
+// on its last day, and judge it with a day still to come.
+export function periodEnd(key: string, spacing: number): number {
+	const start = toTime(key);
+	if (spacing < 28) return start + spacing * day;
+	const months = Math.max(1, Math.round(spacing / monthDays));
+	const at = new Date(start);
+	const year = at.getUTCFullYear();
+	const month = at.getUTCMonth() + months;
+	// The same day of the month, or the last day of a shorter month.
+	const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+	return Date.UTC(year, month, Math.min(at.getUTCDate(), lastDay));
+}
+
 // The latest period that has finished by today, which is the one judged.
 export function targetPeriod(
 	keys: string[],
@@ -144,7 +164,7 @@ export function targetPeriod(
 ): string | null {
 	const todayTime = toTime(today);
 	const done = [...new Set(keys)]
-		.filter((k) => toTime(k) + spacing * day <= todayTime)
+		.filter((k) => periodEnd(k, spacing) <= todayTime)
 		.sort();
 	return done.length ? done[done.length - 1] : null;
 }

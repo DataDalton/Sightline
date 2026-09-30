@@ -219,6 +219,9 @@ export function PageAlertsButton({
 	const [open, setOpen] = useState(false);
 	const { data, mutate } = useSWR<PageAlertList>(
 		alertsEnabled ? pageAlertsKey(pageId) : null,
+		// The button stays mounted from one page to the next, so another
+		// page's alerts are not shown or written back under this page's key.
+		{ keepPreviousData: false },
 	);
 	const count = data?.alerts.length ?? 0;
 	if (!alertsEnabled || count === 0) return null;
@@ -252,8 +255,11 @@ export function PageAlertsButton({
 					pageTitle={pageTitle}
 					list={data}
 					sources={sources}
-					onChange={(next) =>
-						void mutate(next, { revalidate: false })
+					onChange={(update) =>
+						void mutate(
+							(current) => (current ? update(current) : current),
+							{ revalidate: false },
+						)
 					}
 					onRefresh={() => void mutate()}
 					onClose={() => setOpen(false)}
@@ -276,7 +282,9 @@ function PageAlertsDialog({
 	pageTitle: string;
 	list: PageAlertList;
 	sources: SourceMeta[];
-	onChange: (list: PageAlertList) => void;
+	// Applied to the list as it stands when a change lands, so two changes
+	// finishing close together both keep their result.
+	onChange: (update: (list: PageAlertList) => PageAlertList) => void;
 	// Reads the list again, after a copy that may have left an alert.
 	onRefresh: () => void;
 	onClose: () => void;
@@ -289,10 +297,10 @@ function PageAlertsDialog({
 	const missing = list.alerts.filter((a) => !a.subscribed).length;
 
 	const replace = (alert: PageAlertRecord) =>
-		onChange({
-			...list,
-			alerts: list.alerts.map((a) => (a.id === alert.id ? alert : a)),
-		});
+		onChange((current) => ({
+			...current,
+			alerts: current.alerts.map((a) => (a.id === alert.id ? alert : a)),
+		}));
 
 	const subscribeAll = async () => {
 		setBusy(true);
@@ -307,7 +315,8 @@ function PageAlertsDialog({
 			setFailure(sent.body.error ?? "That did not save. Try again.");
 			return;
 		}
-		onChange(sent.body);
+		const next = sent.body;
+		onChange(() => next);
 	};
 
 	return (

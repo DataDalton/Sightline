@@ -494,10 +494,27 @@ export async function updatePageAlert(
 		JSON.stringify(row.definition.schedule) !==
 		JSON.stringify(definition.schedule);
 
+	// Each follower's confirmation was of the dataset the alert used to read.
+	// On a new one it says nothing, and the timer would otherwise read the
+	// new dataset for followers who cannot see it until the confirmation ran
+	// out. Each is confirmed again on their next visit, and the editor, who
+	// was just checked against it, straight away.
+	const sourceChanged = row.definition.sourceKey !== definition.sourceKey;
+	const editorConfirmable = sourceChanged
+		? await confirmableSources(identity)
+		: null;
+	const editorConfirmed =
+		!editorConfirmable || editorConfirmable.has(definition.sourceKey);
+
 	const email = identity.email.toLowerCase();
 	await sql(
 		`WITH cleared AS (
 		   DELETE FROM page_alert_state WHERE alert_id = $1::uuid AND $5
+		 ),
+		 unconfirmed AS (
+		   UPDATE page_alert_subscriptions SET access_confirmed_on =
+		     CASE WHEN email = $7 AND $9 THEN now() END
+		   WHERE alert_id = $1::uuid AND $8
 		 ),
 		 -- A new schedule applies to every scope from now, so each is due
 		 -- straight away rather than at the slot the old schedule set.
@@ -518,6 +535,8 @@ export async function updatePageAlert(
 			reset,
 			rescheduled,
 			email,
+			sourceChanged,
+			editorConfirmed,
 		],
 	);
 	logChange(

@@ -79,7 +79,9 @@ export interface QuerySpec {
 	// Figures worked out from the answer rather than asked of the warehouse.
 	// Applied after the rows come back and before they are cached, so a hit
 	// serves them too. Part of the cache key, since two specs differing only
-	// in these are two different answers.
+	// in these are two different answers. Those that read every row are
+	// worked out over the whole answer even when this spec asks for one page
+	// of it. See lib/query/paging.
 	transforms: QueryTransform[];
 	// Set only by the distribution charts. Changes the shape of the answer
 	// entirely, so it is compiled by its own branch rather than by adding

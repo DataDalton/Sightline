@@ -1,6 +1,7 @@
 import { sql } from "../data/lakebase";
 import { settings } from "../settings";
 import {
+	fitPayload,
 	generateVapidKeys,
 	isPushEndpoint,
 	send,
@@ -229,13 +230,13 @@ const maxFailures = 10;
 function payloadFor(
 	item: Pick<InboxItem, "id" | "kind" | "title" | "body" | "link">,
 ) {
-	return {
+	return fitPayload({
 		id: item.id,
 		kind: item.kind,
-		title: item.title.slice(0, 120),
-		body: item.body.slice(0, 400),
+		title: item.title,
+		body: item.body,
 		link: item.link ?? "/inbox/",
-	};
+	});
 }
 
 export async function deliverPush(

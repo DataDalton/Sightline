@@ -25,6 +25,10 @@ interface Entry {
 const entries = new Map<string, Entry>();
 const inflight = new Map<string, Promise<unknown>>();
 
+// Counts invalidations. A load that started before one may have read the rows
+// the write replaced, so it answers its own callers but is not kept.
+let generation = 0;
+
 // An expired entry is never read, but it is still held: the map only ever grew,
 // one slot per report the installation has, each holding a full definition.
 // Swept on write rather than on a timer, so a module instance that stops being
@@ -83,15 +87,16 @@ export async function cachedDefinition<T>(
 	const existing = inflight.get(key);
 	if (existing) return existing as Promise<T>;
 
+	const startedIn = generation;
 	const pending = (async () => {
-		try {
-			const value = await load();
+		const value = await load();
+		if (generation === startedIn) {
 			entries.set(key, { value, expiresAt: Date.now() + ttlMs });
-			return value;
-		} finally {
-			inflight.delete(key);
 		}
-	})();
+		return value;
+	})().finally(() => {
+		if (inflight.get(key) === pending) inflight.delete(key);
+	});
 
 	inflight.set(key, pending);
 	return pending as Promise<T>;
@@ -99,13 +104,22 @@ export async function cachedDefinition<T>(
 
 // Called on the write path. Takes a prefix so one edit can drop everything
 // derived from the thing that changed.
+//
+// A load already running is dropped from the in-flight map as well, so a
+// request after the edit starts a fresh read rather than joining one that may
+// have read the rows before it.
 export function invalidateDefinitions(prefix?: string): void {
+	generation++;
 	if (!prefix) {
 		entries.clear();
+		inflight.clear();
 		return;
 	}
 	for (const key of entries.keys()) {
 		if (key.startsWith(prefix)) entries.delete(key);
+	}
+	for (const key of inflight.keys()) {
+		if (key.startsWith(prefix)) inflight.delete(key);
 	}
 }
 

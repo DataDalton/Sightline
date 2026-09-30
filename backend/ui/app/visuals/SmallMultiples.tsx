@@ -5,6 +5,7 @@ import { useVisualQuery } from "../hooks/useVisualQuery";
 import { queryForVisual } from "../../lib/query/visualSpec";
 import { formatCompact, toNumber, type FormatHint } from "../../lib/format";
 import { readThemeColors } from "./colors";
+import { useTheme } from "../context/ThemeContext";
 import { Sparkline } from "./Sparkline";
 import { VisualError, VisualEmpty } from "./VisualFrame";
 import { VisualLoadingState } from "./LoadingState";
@@ -80,9 +81,13 @@ export function SmallMultiples({
 		}),
 	);
 
+	const { resolved: resolvedTheme } = useTheme();
 	const colors = useMemo(
 		() => (typeof window === "undefined" ? null : readThemeColors()),
-		[rows.length, isLoading],
+		// Read again when the theme switches, since the palette is read off the
+		// document.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[rows.length, isLoading, resolvedTheme],
 	);
 
 	const panels = useMemo(() => {

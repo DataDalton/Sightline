@@ -31,6 +31,7 @@ import {
 	type SelectionPart,
 } from "../../lib/visuals/selection";
 import { readThemeColors, mix, withAlpha } from "./colors";
+import { useTheme } from "../context/ThemeContext";
 import { ColumnFilter } from "./ColumnFilter";
 import {
 	FilteredEmptyState,
@@ -196,12 +197,10 @@ export function DataGrid({
 
 	// The fields the query can sort and filter on. A breakdown switch can take
 	// away the column a sort or a column filter names, and sending it anyway
-	// fails the query, so both are read through this set.
-	const queryFieldKey = [
-		...dimensions,
-		...measures,
-		...(transforms ?? []).map((t) => t.as),
-	].join("\u001f");
+	// fails the query, so both are read through this set. A transform's column
+	// is worked out after the warehouse answers, so the warehouse cannot order
+	// or filter by it and it is left out.
+	const queryFieldKey = [...dimensions, ...measures].join("\u001f");
 	const queryFields = useMemo(
 		() => new Set(queryFieldKey.split("\u001f")),
 		[queryFieldKey],
@@ -450,11 +449,12 @@ export function DataGrid({
 				if (token !== requestRef.current) return;
 
 				setColumns(data.columns ?? []);
+				const pageRows = data.rows ?? [];
 				setRows((prev) =>
-					replace ? data.rows : [...prev, ...data.rows],
+					replace ? pageRows : [...prev, ...pageRows],
 				);
 				// A short page means the end of the result.
-				const more = (data.rows?.length ?? 0) >= pageSize;
+				const more = pageRows.length >= pageSize;
 				setHasMore(more);
 
 				if (replace) {
@@ -716,11 +716,12 @@ export function DataGrid({
 		return stats;
 	}, [rows, style]);
 
+	const { resolved: resolvedTheme } = useTheme();
 	const themeColors = useMemo(
 		() => (typeof window === "undefined" ? null : readThemeColors()),
-		// Recomputed as loaded rows change, which picks up a theme switch
-		// without having to observe one directly.
-		[rows.length],
+		// The palette is read off the document, so a theme switch reads it again.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[rows.length, resolvedTheme],
 	);
 
 	// Display order: pinned columns first in the order they were pinned, then
@@ -1042,6 +1043,8 @@ export function DataGrid({
 			draggedRef.current = false;
 			return;
 		}
+		// A transform's column has no field in the warehouse to order by.
+		if (!queryFields.has(field)) return;
 		setSort((prev) => {
 			if (!prev || prev.field !== field)
 				return { field, direction: "asc" };
@@ -1067,6 +1070,7 @@ export function DataGrid({
 					? [{ field: sort.field, direction: sort.direction }]
 					: [],
 				limit: maxExportRows,
+				...(transforms?.length ? { transforms } : {}),
 			},
 			reportId,
 			pageId,

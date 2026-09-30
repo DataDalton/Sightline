@@ -40,7 +40,9 @@ function cells(line: string): string[] {
 }
 
 export function Markdown({ text }: { text: string }) {
-	const lines = text.replace(/\r\n/g, "\n").split("\n");
+	// Every line break a model can write becomes a newline, so no line holds a
+	// break that the patterns below read as the end of the text.
+	const lines = text.replace(/\r\n?|[\u2028\u2029]/g, "\n").split("\n");
 	const blocks: ReactNode[] = [];
 	let i = 0;
 	let key = 0;
@@ -135,6 +137,12 @@ export function Markdown({ text }: { text: string }) {
 			!bullet.test(lines[i]) &&
 			!numbered.test(lines[i])
 		) {
+			paragraph.push(lines[i]);
+			i++;
+		}
+		// A line no block above took is kept as its own paragraph, so the loop
+		// always moves forward.
+		if (paragraph.length === 0) {
 			paragraph.push(lines[i]);
 			i++;
 		}

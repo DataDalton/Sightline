@@ -272,6 +272,20 @@ export default function ReportView({
 	// rows of tabs and an index into a flat list cannot say which one is on.
 	const [activePageId, setActivePageId] = useState<string | null>(null);
 
+	// The page a followed link named, read against the pages alone. Worked out
+	// above the early returns so the views request, the address bar and the
+	// usage record all follow the page on screen before anybody clicks a tab.
+	const namedPageId =
+		data && arrivedWith
+			? (decodeShareParams(
+					arrivedWith,
+					shareContextOf(data.report, undefined, noViews),
+				)?.page ?? null)
+			: null;
+	const shownPageId = data
+		? (pageOf(data.report, activePageId, namedPageId)?.pageId ?? null)
+		: null;
+
 	// The saved views for the open page, so a link can name one.
 	//
 	// The same key the picker uses, so SWR shares one request between them
@@ -279,8 +293,8 @@ export default function ReportView({
 	const { data: viewList } = useSWR<{
 		views: { viewId: string; name: string }[];
 	}>(
-		activePageId
-			? `/api/views?pageId=${encodeURIComponent(activePageId)}`
+		shownPageId
+			? `/api/views?pageId=${encodeURIComponent(shownPageId)}`
 			: null,
 	);
 	const savedViews = viewList?.views ?? noViews;
@@ -348,11 +362,11 @@ export default function ReportView({
 		// replace.
 		if (!arrivedWith || !data) return;
 
-		const page = pageOf(data.report, activePageId, null);
+		const page = pageOf(data.report, activePageId, namedPageId);
 		const next = encodeShareParams(
 			{
 				...pageState,
-				page: activePageId ?? undefined,
+				page: page?.pageId,
 				view: activeViewId ?? undefined,
 			},
 			shareContextOf(data.report, page, savedViews),
@@ -371,7 +385,15 @@ export default function ReportView({
 		if (url.toString() !== window.location.href) {
 			window.history.replaceState(window.history.state, "", url);
 		}
-	}, [arrivedWith, data, pageState, activePageId, activeViewId, savedViews]);
+	}, [
+		arrivedWith,
+		data,
+		pageState,
+		activePageId,
+		namedPageId,
+		activeViewId,
+		savedViews,
+	]);
 
 	// Which page a reader is looking at, for the report's maintainers. Above
 	// the early returns for the reason given for the effect before it. Not
@@ -379,11 +401,11 @@ export default function ReportView({
 	const loadedReport = data?.report;
 	useEffect(() => {
 		if (!loadedReport || editing) return;
-		const shown = pageOf(loadedReport, activePageId, null);
+		const shown = pageOf(loadedReport, activePageId, namedPageId);
 		if (shown) {
 			noteUse({ reportId: loadedReport.reportId, pageId: shown.pageId });
 		}
-	}, [loadedReport, activePageId, editing]);
+	}, [loadedReport, activePageId, namedPageId, editing]);
 
 	if (error) {
 		return (
@@ -415,18 +437,7 @@ export default function ReportView({
 
 	const { report, sources } = data;
 
-	// Which page a link named, read against the pages alone: every other
-	// parameter is read against the controls that page carries, so the page
-	// has to be settled first.
-	const namedPage =
-		(arrivedWith &&
-			decodeShareParams(
-				arrivedWith,
-				shareContextOf(report, undefined, noViews),
-			)?.page) ||
-		null;
-
-	const page = pageOf(report, activePageId, namedPage);
+	const page = pageOf(report, activePageId, namedPageId);
 
 	// What the link this reader followed asked the page to open on.
 	const shared = arrivedWith

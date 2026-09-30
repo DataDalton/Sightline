@@ -24,10 +24,30 @@ export class AssistantFailed extends Error {}
 // page together.
 export function assistantConfigured(): boolean {
 	const { assistantEndpoint, assistantEndpointUrl } = settings();
-	return (
-		assistantEndpoint.trim().length > 0 ||
-		assistantEndpointUrl.trim().length > 0
-	);
+	// An address takes precedence over a name, as in endpointUrl, so one that
+	// is refused leaves the feature off rather than half on.
+	const explicit = assistantEndpointUrl.trim();
+	if (explicit) return secureAddress(explicit).length > 0;
+	return assistantEndpoint.trim().length > 0;
+}
+
+// An address a bearer token may be sent to. Every call carries the caller's
+// token, so plain http anywhere but this machine would put a
+// workspace credential on the network in clear text. Anything else reads as
+// no endpoint, which turns the assistant off rather than leaking a token.
+export function secureAddress(address: string): string {
+	let url: URL;
+	try {
+		url = new URL(address);
+	} catch {
+		return "";
+	}
+	if (url.protocol === "https:") return url.toString();
+	const local =
+		url.hostname === "localhost" ||
+		url.hostname === "127.0.0.1" ||
+		url.hostname === "[::1]";
+	return url.protocol === "http:" && local ? url.toString() : "";
 }
 
 // A serving endpoint on the workspace this app is already connected to needs
@@ -36,31 +56,11 @@ export function endpointUrl(): string {
 	const { assistantEndpoint, assistantEndpointUrl } = settings();
 
 	const explicit = assistantEndpointUrl.trim();
-	if (explicit) return explicit;
+	if (explicit) return secureAddress(explicit);
 
 	const name = assistantEndpoint.trim();
 	if (!name || !workspaceHost) return "";
 	return `${workspaceHost}/serving-endpoints/${encodeURIComponent(name)}/invocations`;
-}
-
-// The app's own credential, for the case where the caller's token cannot be
-// used. The SDK writes the header rather than handing back a token, so the
-// header it produces is what travels rather than a scheme this code assumed.
-async function appHeader(): Promise<string | null> {
-	try {
-		const { WorkspaceClient } =
-			await import("@databricks/sdk-experimental");
-		const workspace = new WorkspaceClient({});
-		const headers = new Headers();
-		await workspace.config.authenticate(headers);
-		return headers.get("Authorization");
-	} catch (error) {
-		console.warn(
-			"Could not authenticate the app for the assistant:",
-			error,
-		);
-		return null;
-	}
 }
 
 // The chat shape every llm/v1/chat serving endpoint accepts, including the
@@ -83,8 +83,8 @@ export interface ToolDefinition {
 export interface Turn {
 	content: string | null;
 	toolCalls: ToolCall[];
-	// Which credential the call went out under, so a deployment can see
-	// whether it is running on behalf of its callers yet.
+	// Which credential the call went out under. Always the caller's. The
+	// "app" value is read from conversations saved before that was so.
 	as: "caller" | "app";
 }
 
@@ -172,14 +172,13 @@ async function post(
 	return turn;
 }
 
-// Sent under the caller's own token where that token can reach a serving
-// endpoint, and under the app's where it cannot.
+// Sent under the caller's own token, and only that. A token that cannot
+// reach the endpoint is a refusal to the person asking, never a reason to ask
+// again as the app, which would reach an endpoint that person has no right to.
 //
 // A Databricks App forwards a token carrying only the scopes granted under user
-// authorization. With model-serving granted, every call below goes
-// out as the person asking. Without it the app's service principal carries the
-// call, and the data inside it is still only what that person's own queries
-// returned.
+// authorization, so model-serving has to be among them for the assistant to
+// answer.
 export async function converse(
 	callerToken: string | null,
 	messages: ChatMessage[],
@@ -190,44 +189,20 @@ export async function converse(
 	const url = endpointUrl();
 	if (!url) throw new AssistantOff();
 
-	if (callerToken) {
-		try {
-			return {
-				...(await post(
-					url,
-					`Bearer ${callerToken}`,
-					messages,
-					tools,
-					maxTokens,
-					handlers,
-				)),
-				as: "caller",
-			};
-		} catch (error) {
-			// Only a refusal falls through, and a refusal arrives before any
-			// text, so nothing has been streamed that would be streamed twice.
-			const refused =
-				error instanceof AssistantFailed &&
-				/answered 40[13]/.test(error.message);
-			if (!refused) throw error;
-		}
-	}
-
-	const authorization = await appHeader();
-	if (!authorization) {
+	if (!callerToken) {
 		throw new AssistantFailed(
-			"The assistant could not authenticate against the model endpoint",
+			"The assistant needs the signed-in person's own token and none was forwarded",
 		);
 	}
 	return {
 		...(await post(
 			url,
-			authorization,
+			`Bearer ${callerToken}`,
 			messages,
 			tools,
 			maxTokens,
 			handlers,
 		)),
-		as: "app",
+		as: "caller",
 	};
 }

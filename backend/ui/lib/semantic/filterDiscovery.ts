@@ -3,6 +3,7 @@ import type { Identity } from "../auth/identity";
 import {
 	extractFilterGroups,
 	mergeFilterGroups,
+	metricViewSourcesComplete,
 	parseMetricViewTables,
 	type FilterGroups,
 } from "./rowFilterGroups";
@@ -57,6 +58,8 @@ const ttlMs = 60 * 60 * 1000;
 
 // The walk in progress, shared by everyone who asks while it runs.
 let walking: Promise<DiscoveredGroups> | null = null;
+// A forced walk waiting for the running one to finish.
+let queuedWalk: Promise<DiscoveredGroups> | null = null;
 
 export function lastDiscovery(): {
 	groups: DiscoveredGroups | null;
@@ -75,6 +78,19 @@ export function filterDiscoveryComplete(): boolean {
 	return cached !== null && cached.unreadableSources.length === 0;
 }
 
+// Sources the last finished walk read the filters of.
+//
+// The walk reads only sources marked as filtered when it starts. A source whose
+// protection is switched on afterwards has groups no policy class is built
+// from yet, so a complete walk still says nothing about it.
+let covered = new Set<string>();
+
+// Whether the group list partitions a cache correctly for this one source.
+// True only when the last walk finished cleanly and read this source.
+export function filterDiscoveryCovers(sourceKey: string): boolean {
+	return filterDiscoveryComplete() && covered.has(sourceKey);
+}
+
 async function tablesBehind(
 	identity: Identity | null,
 	catalog: string,
@@ -82,18 +98,21 @@ async function tablesBehind(
 	object: string,
 	kind: string,
 	recorded: string[] | null,
-): Promise<string[]> {
+): Promise<{ tables: string[]; complete: boolean }> {
 	const self = `${catalog}.${schema}.${object}`;
 
 	// A plain table is its own base. A view is not: the filter is on what it
 	// reads, so the definition has to be opened to find out what that is.
-	if (kind !== "metric_view") return [self];
+	if (kind !== "metric_view") return { tables: [self], complete: true };
 
 	// Written down by the last sync, which ran under somebody holding SELECT on
 	// the view. Reading it back costs nothing, where opening the definition
 	// again costs a few hundred milliseconds and up to 110KB of YAML for a list
-	// that only changes when the view does.
-	if (recorded && recorded.length > 0) return [self, ...recorded];
+	// that only changes when the view does. Only a list read from a view whose
+	// every source was a table is ever written down.
+	if (recorded && recorded.length > 0) {
+		return { tables: [self, ...recorded], complete: true };
+	}
 
 	const rows = await runCatalogQuery(
 		identity,
@@ -104,20 +123,59 @@ async function tablesBehind(
 
 	// The view itself is included: a filter can be attached to it directly,
 	// and a deployment that does that should not be missed.
-	return [self, ...referenced];
+	return {
+		tables: [self, ...referenced],
+		complete: metricViewSourcesComplete(statement),
+	};
+}
+
+// The groups one filter or mask routine names, or null when its definition
+// could not be read. The routine can live in another catalogue than the table
+// it is attached to, so the catalogue is taken from its own qualified name.
+async function routineGroups(
+	identity: Identity | null,
+	tableCatalog: string,
+	qualified: string,
+): Promise<FilterGroups | null> {
+	const segments = qualified.split(".");
+	const routineName = segments[segments.length - 1];
+	const routineSchema = segments[segments.length - 2];
+	const routineCatalog = segments[segments.length - 3] || tableCatalog;
+	if (!routineSchema || !routineName) return null;
+
+	const definitions = await runCatalogQuery(
+		identity,
+		`SELECT routine_definition
+		 FROM ${quoteName(routineCatalog)}.information_schema.routines
+		 WHERE routine_schema = :schema AND routine_name = :name`,
+		{ schema: routineSchema, name: routineName },
+	);
+	// No definition is not a definition naming nobody. The groups it tests
+	// are unknown, which is not the same as there being none.
+	if (definitions.length === 0) return null;
+
+	return mergeFilterGroups(
+		definitions.map((definition) =>
+			extractFilterGroups(String(definition.routine_definition ?? "")),
+		),
+	);
 }
 
 // Walks one source and returns the groups its filters name.
-//
-// Called by a sync, under the identity of whoever asked for it. That identity
-// can see information_schema rows the application cannot, which is the whole
-// reason this happens at sync time rather than on a timer.
-// The groups the filters on one source name.
 //
 // Runs under whatever identity is given. The walk passes none, which means the
 // application itself: this list decides how cached answers are partitioned, so
 // it has to be the same whoever is browsing, and it has to be maintained
 // without anybody remembering to ask for it.
+//
+// Masks are read the same way filters are. A mask that shows a column to one
+// group and hides it from another splits readers exactly as a filter does, so
+// the groups it tests are part of the policy class too.
+//
+// complete is false when anything that could decide what a reader sees was
+// not read: a view source that is not a table, a table name that is not fully
+// qualified, or a routine whose definition could not be found. Such a source
+// is not covered by the group list, so nothing from it is shared.
 export async function discoverSourceGroups(
 	identity: Identity | null,
 	source: {
@@ -132,8 +190,9 @@ export async function discoverSourceGroups(
 	tables: string[];
 	filters: FoundFilter[];
 	masked: boolean;
+	complete: boolean;
 }> {
-	const tables = await tablesBehind(
+	const behind = await tablesBehind(
 		identity,
 		source.catalog_name,
 		source.schema_name,
@@ -141,13 +200,18 @@ export async function discoverSourceGroups(
 		source.kind,
 		source.base_tables,
 	);
+	const tables = behind.tables;
+	let complete = behind.complete;
 
 	const parts: FilterGroups[] = [];
 	const found: FoundFilter[] = [];
 	let masked = false;
 	for (const table of tables) {
 		const [catalog, schema, name] = table.split(".");
-		if (!catalog || !schema || !name) continue;
+		if (!catalog || !schema || !name) {
+			complete = false;
+			continue;
+		}
 
 		const filters = await runCatalogQuery(
 			identity,
@@ -161,44 +225,45 @@ export async function discoverSourceGroups(
 		// restriction on rows can reproduce.
 		const masks = await runCatalogQuery(
 			identity,
-			`SELECT count(*) AS n
+			`SELECT mask_name
 			 FROM ${quoteName(catalog)}.information_schema.column_masks
 			 WHERE table_schema = :schema AND table_name = :name`,
 			{ schema, name },
 		);
-		if (Number(masks[0]?.n ?? 0) > 0) masked = true;
+		if (masks.length > 0) masked = true;
 
 		for (const row of filters) {
 			found.push({
 				table,
 				columns: filterColumns(String(row.target_columns ?? "")),
 			});
-
-			const qualified = String(row.filter_name ?? "");
-			const segments = qualified.split(".");
-			const routineSchema = segments[segments.length - 2];
-			const routineName = segments[segments.length - 1];
-			if (!routineSchema || !routineName) continue;
-
-			const definitions = await runCatalogQuery(
+			const groups = await routineGroups(
 				identity,
-				`SELECT routine_definition
-				 FROM ${quoteName(catalog)}.information_schema.routines
-				 WHERE routine_schema = :schema AND routine_name = :name`,
-				{ schema: routineSchema, name: routineName },
+				catalog,
+				String(row.filter_name ?? ""),
 			);
+			if (groups) parts.push(groups);
+			else complete = false;
+		}
 
-			for (const definition of definitions) {
-				parts.push(
-					extractFilterGroups(
-						String(definition.routine_definition ?? ""),
-					),
-				);
-			}
+		for (const row of masks) {
+			const groups = await routineGroups(
+				identity,
+				catalog,
+				String(row.mask_name ?? ""),
+			);
+			if (groups) parts.push(groups);
+			else complete = false;
 		}
 	}
 
-	return { groups: mergeFilterGroups(parts), tables, filters: found, masked };
+	return {
+		groups: mergeFilterGroups(parts),
+		tables,
+		filters: found,
+		masked,
+		complete,
+	};
 }
 
 // Which fields hold what a source's filters decide on, for alerts checked
@@ -271,10 +336,23 @@ export async function discoverFilterGroups(
 	// every poll that lands mid-walk starts another one, on every replica, each
 	// issuing the same statements against the same warehouse.
 	//
-	// A forced walk joins an in-flight one rather than starting a second. The
-	// running walk is already reading the catalogue as it stands now, which is
-	// what the caller asked for.
-	if (walking) return walking;
+	// A forced walk queues one more walk behind the running one rather than
+	// joining it. The running walk chose its sources when it started, so a
+	// source switched to filtered since then is not in it, and joining would
+	// leave that source uncovered until the next scheduled walk. Every forced
+	// caller arriving during one walk shares the same queued walk.
+	if (walking) {
+		if (!force) return walking;
+		if (!queuedWalk) {
+			queuedWalk = walking
+				.catch(() => undefined)
+				.then(() => {
+					queuedWalk = null;
+					return discoverFilterGroups(identity, true);
+				});
+		}
+		return queuedWalk;
+	}
 
 	walking = runWalk(identity).finally(() => {
 		walking = null;
@@ -299,13 +377,19 @@ async function runWalk(identity: Identity | null): Promise<DiscoveredGroups> {
 
 	const parts: FilterGroups[] = [];
 	const unreadable: string[] = [];
+	const read = new Set<string>();
 	let failureReason: string | null = null;
 
 	for (const source of sources) {
 		try {
-			const { groups, tables, filters, masked } =
+			const { groups, tables, filters, masked, complete } =
 				await discoverSourceGroups(identity, source);
 			parts.push(groups);
+			// Covered only when its groups are the whole story. A source
+			// whose filter decides per reader, or whose filters were not all
+			// read, is left out, so it is never shared while every other
+			// source still is.
+			if (complete && !groups.perReader) read.add(source.source_key);
 
 			// Cleared first, so a walk that fails to map a source leaves it
 			// on signed-in checks rather than on the last mapping.
@@ -325,8 +409,14 @@ async function runWalk(identity: Identity | null): Promise<DiscoveredGroups> {
 				],
 			).catch(() => {});
 
-			// Derived rather than read, so keep it for next time.
-			if (!source.base_tables && source.kind === "metric_view") {
+			// Derived rather than read, so keep it for next time. Only when
+			// every source of the view was a table, or the next walk would
+			// take a partial list as the whole of it.
+			if (
+				complete &&
+				!source.base_tables &&
+				source.kind === "metric_view"
+			) {
 				const derived = tables.filter(
 					(t) =>
 						t !==
@@ -358,6 +448,7 @@ async function runWalk(identity: Identity | null): Promise<DiscoveredGroups> {
 		unreadableSources: unreadable,
 		failureReason,
 	};
+	covered = read;
 	cachedAt = Date.now();
 
 	if (failureReason) {

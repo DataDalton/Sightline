@@ -96,16 +96,22 @@ export function AlertCard({
 			const response = await fetch(`${alertsKey}/${alert.id}/check`, {
 				method: "POST",
 			});
-			const body = await response.json();
-			if (!response.ok) setMessage(body?.error ?? "Could not check.");
-			else if (body.error) setMessage(body.error);
+			const body = (await response.json().catch(() => null)) as {
+				error?: string;
+				fired?: number;
+			} | null;
+			if (!response.ok || !body) {
+				setMessage(body?.error ?? "Could not check.");
+			} else if (body.error) setMessage(body.error);
 			else
 				setMessage(
-					body.fired > 0
+					(body.fired ?? 0) > 0
 						? "It fired. The message is in your inbox."
 						: "Checked. Nothing to report.",
 				);
 			onChanged();
+		} catch {
+			setMessage("Could not check.");
 		} finally {
 			setBusy(false);
 		}

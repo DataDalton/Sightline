@@ -72,10 +72,14 @@ function AddSourceDialog({
 	const catalogs = useSWR<{ catalogs: string[]; error?: string }>(
 		"/api/admin/sources",
 	);
+	// The schema and table lists belong to the catalog and schema picked above
+	// them. Held over from the previous pick, a name chosen from the old list
+	// would be registered under the new catalog or schema.
 	const schemas = useSWR<{ schemas: string[]; error?: string }>(
 		catalog
 			? `/api/admin/sources?catalog=${encodeURIComponent(catalog)}`
 			: null,
+		{ keepPreviousData: false },
 	);
 	const objects = useSWR<{ objects: CatalogObject[]; error?: string }>(
 		catalog && schema
@@ -83,6 +87,7 @@ function AddSourceDialog({
 					catalog,
 				)}&schema=${encodeURIComponent(schema)}`
 			: null,
+		{ keepPreviousData: false },
 	);
 
 	// The name defaults to the table's, which is right often enough that

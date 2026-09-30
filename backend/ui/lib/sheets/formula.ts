@@ -296,6 +296,21 @@ function truthy(v: Value): boolean | FormulaError {
 	return isError(n) ? true : n !== 0;
 }
 
+// The longest text a formula may produce, which is the most one spreadsheet
+// cell holds. Joining is the only way text grows, and formulas can join
+// formulas that join, so without a ceiling a handful of short formulas
+// multiply into text too large for the server to hold.
+export const maxTextLength = 32767;
+
+function joined(text: string): string | FormulaError {
+	return text.length > maxTextLength
+		? new FormulaError(
+				"#VALUE!",
+				`the text is longer than ${maxTextLength} characters`,
+			)
+		: text;
+}
+
 function toDate(v: Value): Date | FormulaError {
 	if (isError(v)) return v;
 	if (v === null || v === "") return new FormulaError("#VALUE!", "no date");
@@ -392,6 +407,81 @@ function columnOf(
 	}
 	const col = ctx.column(node.name);
 	return col ?? new FormulaError("#REF!", `no column named ${node.name}`);
+}
+
+// Figures about a whole column, worked out once per column rather than once
+// per row. A column is the same array for every row of one formula, so it is
+// the key, and a column computed again for a later formula is a new array.
+interface ColumnStats {
+	total?: number | FormulaError;
+	// Running total at each row, or the first error met on the way down.
+	running?: (number | FormulaError)[];
+	// Every numeric value in the column, smallest first, for RANK.
+	sorted?: number[];
+}
+
+const columnStats = new WeakMap<Value[], ColumnStats>();
+
+function statsFor(col: Value[]): ColumnStats {
+	let stats = columnStats.get(col);
+	if (!stats) {
+		stats = {};
+		columnStats.set(col, stats);
+	}
+	return stats;
+}
+
+function columnTotal(col: Value[]): number | FormulaError {
+	const stats = statsFor(col);
+	if (stats.total === undefined) {
+		const ns = numeric(col.filter((v) => !isError(v)));
+		stats.total = isError(ns) ? ns : ns.reduce((a, b) => a + b, 0);
+	}
+	return stats.total;
+}
+
+function runningTotals(col: Value[]): (number | FormulaError)[] {
+	const stats = statsFor(col);
+	if (!stats.running) {
+		const out: (number | FormulaError)[] = [];
+		let sum: number | FormulaError = 0;
+		for (const v of col) {
+			if (!isError(sum)) {
+				const n = toNum(v);
+				sum = isError(n) ? n : sum + n;
+			}
+			out.push(sum);
+		}
+		stats.running = out;
+	}
+	return stats.running;
+}
+
+function sortedNumbers(col: Value[]): number[] {
+	const stats = statsFor(col);
+	if (!stats.sorted) {
+		const out: number[] = [];
+		for (const other of col) {
+			if (other === null) continue;
+			const n = toNum(other);
+			if (isError(n) || Number.isNaN(n)) continue;
+			out.push(n);
+		}
+		stats.sorted = out.sort((a, b) => a - b);
+	}
+	return stats.sorted;
+}
+
+// How many entries of a sorted list are below v, or at most v when inclusive.
+function countBelow(sorted: number[], v: number, inclusive: boolean): number {
+	let lo = 0;
+	let hi = sorted.length;
+	while (lo < hi) {
+		const mid = (lo + hi) >>> 1;
+		if (inclusive ? sorted[mid] <= v : sorted[mid] < v) lo = mid + 1;
+		else hi = mid;
+	}
+	return lo;
 }
 
 const math =
@@ -564,7 +654,7 @@ const functions: Record<string, Fn> = {
 	},
 	CONCAT: (args, ctx) => {
 		const vs = evalArgs(args, ctx);
-		return firstError(vs) ?? vs.map(toText).join("");
+		return firstError(vs) ?? joined(vs.map(toText).join(""));
 	},
 	CONTAINS: (args, ctx) => {
 		const bad = arity("CONTAINS", args, 2);
@@ -613,8 +703,7 @@ const functions: Record<string, Fn> = {
 		if (bad) return bad;
 		const col = columnOf("TOTAL", args[0], ctx);
 		if (isError(col)) return col;
-		const ns = numeric(col.filter((v) => !isError(v)));
-		return isError(ns) ? ns : ns.reduce((a, b) => a + b, 0);
+		return columnTotal(col);
 	},
 	// Share of the column's total, as a fraction: [Revenue] / TOTAL([Revenue]).
 	SHARE: (args, ctx) => {
@@ -638,12 +727,11 @@ const functions: Record<string, Fn> = {
 		if (isError(ascending)) return ascending;
 		const v = toNum(evaluate(args[0], ctx));
 		if (isError(v)) return v;
-		let above = 0;
-		for (const other of col) {
-			const n = toNum(other);
-			if (isError(n) || other === null) continue;
-			if (ascending ? n < v : n > v) above++;
-		}
+		if (Number.isNaN(v)) return 1;
+		const sorted = sortedNumbers(col);
+		const above = ascending
+			? countBelow(sorted, v, false)
+			: sorted.length - countBelow(sorted, v, true);
 		return above + 1;
 	},
 	// The value in the row above, in the order shown, or blank on the first.
@@ -660,13 +748,9 @@ const functions: Record<string, Fn> = {
 		if (bad) return bad;
 		const col = columnOf("RUNNING", args[0], ctx);
 		if (isError(col)) return col;
-		let sum = 0;
-		for (let i = 0; i <= ctx.index && i < col.length; i++) {
-			const n = toNum(col[i]);
-			if (isError(n)) return n;
-			sum += n;
-		}
-		return sum;
+		if (col.length === 0) return 0;
+		const running = runningTotals(col);
+		return running[Math.min(ctx.index, col.length - 1)];
 	},
 };
 
@@ -692,7 +776,7 @@ export function evaluate(node: Node, ctx: Context): Value {
 			const b = evaluate(node.b, ctx);
 			const e = firstError([a, b]);
 			if (e) return e;
-			if (node.op === "&") return toText(a) + toText(b);
+			if (node.op === "&") return joined(toText(a) + toText(b));
 			if (["=", "<>", "<", ">", "<=", ">="].includes(node.op)) {
 				const c = compare(a, b);
 				switch (node.op) {

@@ -132,19 +132,29 @@
 	border-color: var(--brand-strong);
 }
 
+/* A report with more pages than fit across a phone scrolls its tabs sideways
+   inside the strip, rather than widening the page and dragging every visual
+   under it sideways too. */
 .tabs {
 	display: flex;
 	gap: var(--space-1);
-	border-bottom: 1px solid var(--border-subtle);
+	/* The rule under the tabs is an inset shadow rather than a border, so the
+	   active tab's underline paints over it inside the scroll box instead of
+	   being clipped by it. */
+	box-shadow: inset 0 -1px 0 var(--border-subtle);
 	margin-bottom: var(--space-5);
+	overflow-x: auto;
+	overflow-y: hidden;
+	scrollbar-width: none;
 }
 
 .tab {
+	flex-shrink: 0;
+	white-space: nowrap;
 	padding: var(--space-2) var(--space-3);
 	font-size: var(--text-md);
 	color: var(--text-secondary);
 	border-bottom: 2px solid transparent;
-	margin-bottom: -1px;
 }
 
 .tab:hover {

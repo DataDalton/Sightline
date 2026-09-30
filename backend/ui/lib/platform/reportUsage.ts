@@ -116,12 +116,18 @@ export async function reportUsage(
 	const report = await getReport(policy, identity, slug);
 	if (!report) throw new UsageError("Not found", 404);
 	if (report.permission === "view") {
-		throw new UsageError("Only the people who maintain a report see this.", 403);
+		throw new UsageError(
+			"Only the people who maintain a report see this.",
+			403,
+		);
 	}
 
 	const window = Math.min(Math.max(Math.floor(days) || 30, 1), 365);
 	const params = [report.reportId, window];
-	const since = `occurred_on > now() - make_interval(days => $2::int)`;
+	// The same calendar days the daily bars cover, so the totals are the sum
+	// of the bars. A rolling window reaches into one more day than the bars
+	// show.
+	const since = `occurred_on >= current_date - ($2::int - 1)`;
 
 	const [totals, byDay, people, pages, visuals] = await Promise.all([
 		sql<{ opens: string; readers: string }>(

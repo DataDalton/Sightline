@@ -60,6 +60,7 @@ interface CategoryRow {
 
 interface ViewRow {
 	view_id: string;
+	report_id: string | null;
 	name: string;
 	report_slug: string | null;
 	page_id: string;
@@ -191,6 +192,9 @@ async function buildTargets(
 		});
 	}
 
+	// Reports this reader can open, which decides the saved views below.
+	const openable = new Set<string>();
+
 	for (const row of reports) {
 		const check = resolveReportAccess(
 			context.grants,
@@ -205,6 +209,7 @@ async function buildTargets(
 			context.baseline,
 		);
 		if (!check.allowed) continue;
+		openable.add(row.report_id);
 
 		// A personal page reached by an administrator is not one of their
 		// things, and listing it beside their own would say it was. It stays
@@ -228,7 +233,8 @@ async function buildTargets(
 	// Saved views are a destination people name themselves, which makes them
 	// the thing most often searched for by a word that appears nowhere else.
 	const views = await sql<ViewRow>(
-		`SELECT v.view_id::text AS view_id, v.name, v.page_id::text AS page_id,
+		`SELECT v.view_id::text AS view_id, v.report_id::text AS report_id,
+		        v.name, v.page_id::text AS page_id,
 		        r.slug AS report_slug, r.title AS report_title
 		 FROM saved_views v
 		 LEFT JOIN reports r ON r.report_id = v.report_id
@@ -238,8 +244,13 @@ async function buildTargets(
 		[email, policy.grants],
 	).catch(() => [] as ViewRow[]);
 
+	// A view shared with a group reaches members who may not hold the report
+	// it sits on. Listing it would hand them the title and address of a report
+	// they cannot open, a personal page included, so only views on reports
+	// this reader can open are offered.
 	for (const row of views) {
-		if (!row.report_slug) continue;
+		if (!row.report_slug || !row.report_id) continue;
+		if (!openable.has(row.report_id)) continue;
 		targets.push({
 			id: `view:${row.view_id}`,
 			kind: "view",

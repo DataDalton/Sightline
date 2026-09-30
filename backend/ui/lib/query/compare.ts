@@ -125,8 +125,13 @@ export function shiftDateFilters(
 		const span = daysBetween(from.value, to.value);
 		if (span === null || span < 0) return null;
 		// The window immediately before this one, with no day counted twice
-		// and none skipped between them.
-		const back = span + 1;
+		// and none skipped between them. The shift is the number of days the
+		// window holds, which counts both ends only when both are inclusive.
+		// An exclusive end, as in "before the first of next month", is not a
+		// day of the window.
+		const back =
+			span + (to.op === "lte" ? 1 : 0) - (from.op === "gt" ? 1 : 0);
+		if (back <= 0) return null;
 		shift = (value) => subtractDays(value, back);
 	} else {
 		const months = period === "year" ? 12 : period === "quarter" ? 3 : 1;

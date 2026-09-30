@@ -53,6 +53,9 @@ export type Message =
 			status: "streaming" | "done" | "stopped" | "error";
 			error?: string;
 			ranAs?: "caller" | "app";
+			// Drafts written for a screen that was no longer open when they
+			// arrived. Kept with the answer rather than applied elsewhere.
+			heldDrafts?: { kind: string; draft: unknown }[];
 			startedAt: number;
 			finishedAt?: number;
 	  };

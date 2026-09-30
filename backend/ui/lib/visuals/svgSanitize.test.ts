@@ -16,8 +16,10 @@ test("an ordinary mark survives with its shapes intact", () => {
 	assert.ok(result);
 	assert.ok(result.markup.includes("<path"));
 	assert.ok(result.markup.includes("<circle"));
-	assert.ok(result.markup.includes('viewBox="0 0 24 24"'.toLowerCase()) ||
-		result.markup.includes('viewbox="0 0 24 24"'));
+	assert.ok(
+		result.markup.includes('viewBox="0 0 24 24"'.toLowerCase()) ||
+			result.markup.includes('viewbox="0 0 24 24"'),
+	);
 });
 
 test("a script is removed along with everything inside it", () => {
@@ -97,4 +99,30 @@ test("something that is not an SVG is refused rather than repaired", () => {
 	assert.equal(sanitizeSvg("<html><body>hello</body></html>"), null);
 	assert.equal(sanitizeSvg(""), null);
 	assert.equal(sanitizeSvg("not markup at all"), null);
+});
+
+test("the words of a text element survive as text", () => {
+	const result = sanitizeSvg(
+		`<svg viewBox="0 0 10 10"><text x="0" y="8">Acme &amp; Co</text></svg>`,
+	);
+	assert.ok(result);
+	assert.ok(result.markup.includes(">Acme &amp; Co</text>"));
+});
+
+test("text inside a removed element goes with it", () => {
+	const result = sanitizeSvg(
+		`<svg viewBox="0 0 10 10"><script>steal()</script><text>kept</text></svg>`,
+	);
+	assert.ok(result);
+	assert.ok(!result.markup.includes("steal"));
+	assert.ok(result.markup.includes("kept"));
+});
+
+test("a bracket in text cannot open a tag", () => {
+	const result = sanitizeSvg(
+		`<svg viewBox="0 0 10 10"><text>a > b</text></svg>`,
+	);
+	assert.ok(result);
+	assert.ok(result.markup.includes("a &gt; b"));
+	assert.ok(!result.markup.includes("a > b"));
 });

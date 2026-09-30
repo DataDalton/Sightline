@@ -183,16 +183,25 @@ export async function transaction<T>(
 ): Promise<T> {
 	const pool = await getPool();
 	const client = await pool.connect();
+	// Set when the connection cannot be trusted with the next caller's work,
+	// so it is closed rather than returned to the pool.
+	let broken: Error | undefined;
 	try {
 		await client.query("BEGIN");
 		const result = await fn(client);
 		await client.query("COMMIT");
 		return result;
 	} catch (error) {
-		await client.query("ROLLBACK").catch(() => {});
+		// A rollback that fails leaves the session inside an aborted
+		// transaction, and every statement the next borrower sends would be
+		// refused until it ended.
+		await client.query("ROLLBACK").catch((failure: unknown) => {
+			broken =
+				failure instanceof Error ? failure : new Error(String(failure));
+		});
 		throw error;
 	} finally {
-		client.release();
+		client.release(broken);
 	}
 }
 
@@ -212,16 +221,20 @@ export async function withAdvisoryLock<T>(
 ): Promise<T> {
 	const pool = await getPool();
 	const client = await pool.connect();
+	let broken: Error | undefined;
 	try {
 		await client.query("SELECT pg_advisory_lock($1)", [key]);
 		return await fn();
 	} finally {
 		try {
 			await client.query("SELECT pg_advisory_unlock($1)", [key]);
-		} catch {
-			// The session is already gone, which drops the lock anyway.
+		} catch (failure) {
+			// The session may still be open and still hold the lock, so it is
+			// closed rather than pooled. Closing it is what releases the lock.
+			broken =
+				failure instanceof Error ? failure : new Error(String(failure));
 		}
-		client.release();
+		client.release(broken);
 	}
 }
 
@@ -235,6 +248,7 @@ export async function tryAdvisoryLock(
 ): Promise<boolean> {
 	const pool = await getPool();
 	const client = await pool.connect();
+	let broken: Error | undefined;
 	try {
 		const taken = await client.query<{ taken: boolean }>(
 			"SELECT pg_try_advisory_lock($1) AS taken",
@@ -247,12 +261,18 @@ export async function tryAdvisoryLock(
 		} finally {
 			try {
 				await client.query("SELECT pg_advisory_unlock($1)", [key]);
-			} catch {
-				// The session is already gone, which drops the lock anyway.
+			} catch (failure) {
+				// The session may still be open and still hold the lock, so
+				// it is closed rather than pooled. Closing it is what
+				// releases the lock.
+				broken =
+					failure instanceof Error
+						? failure
+						: new Error(String(failure));
 			}
 		}
 	} finally {
-		client.release();
+		client.release(broken);
 	}
 }
 

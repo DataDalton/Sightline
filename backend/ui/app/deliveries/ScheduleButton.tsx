@@ -141,6 +141,8 @@ function ScheduleDialog({
 			}
 			onSaved();
 			onClose();
+		} catch {
+			setFailure("The request did not reach the server. Try again.");
 		} finally {
 			setBusy(false);
 		}
@@ -196,7 +198,11 @@ function ScheduleDialog({
 					</span>
 				</label>
 
-				{failure && <p className={styles.error}>{failure}</p>}
+				{failure && (
+					<p className={styles.error} role="alert">
+						{failure}
+					</p>
+				)}
 
 				<div className={styles.actions}>
 					{existing && (

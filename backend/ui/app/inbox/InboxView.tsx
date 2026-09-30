@@ -224,7 +224,11 @@ export default function InboxView({
 	const { data, error, isLoading, mutate } = useSWR<{
 		items: InboxItem[];
 		unread: number;
-	}>(key);
+	}>(key, {
+		// Each view is a different list, so one view's entries are not shown
+		// under another's heading while it loads.
+		keepPreviousData: false,
+	});
 
 	// Older entries, fetched a page at a time below the first.
 	const [older, setOlder] = useState<InboxItem[]>([]);
@@ -278,11 +282,15 @@ export default function InboxView({
 	};
 
 	const act = async (method: "PATCH" | "DELETE", body: unknown) => {
-		await fetch("/api/notifications", {
-			method,
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(body),
-		});
+		try {
+			await fetch("/api/notifications", {
+				method,
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(body),
+			});
+		} catch {
+			// The reload below shows the list as the server holds it.
+		}
 		changed();
 	};
 

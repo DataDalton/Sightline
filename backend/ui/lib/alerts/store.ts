@@ -125,7 +125,9 @@ export function toRecord(row: AlertRow, recorded = false): AlertRecord {
 }
 
 // The query an alert runs: the measure, split by the chosen dimension, under
-// the conditions, largest first and bounded.
+// the conditions, bounded. Largest first, except for an alert on falling
+// below a line, which reads smallest first, since past the bound the groups
+// left out would be exactly the ones it is watching for.
 export function alertSpec(
 	source: SemanticSource,
 	definition: AlertDefinition,
@@ -144,7 +146,12 @@ export function alertSpec(
 		filters: logic.filters,
 		...(logic.anyOf ? { anyOf: logic.anyOf } : {}),
 		...(logic.where ? { where: logic.where } : {}),
-		sort: [{ field: definition.measure, direction: "desc" }],
+		sort: [
+			{
+				field: definition.measure,
+				direction: definition.condition === "below" ? "asc" : "desc",
+			},
+		],
 		limit: definition.groupBy ? maxGroups : 1,
 		offset: 0,
 	});
@@ -279,9 +286,19 @@ export async function updateAlert(
 	if (!existing) return null;
 
 	// What the alert watches changed, so what the last check saw no longer
-	// says anything about it.
+	// says anything about it. The condition counts too, since whether the
+	// last check met one condition says nothing about another, and a switch
+	// from above to below would otherwise stay silent while the new one
+	// already holds.
 	const watched = (d: AlertDefinition) =>
-		JSON.stringify([d.sourceKey, d.measure, d.groupBy, d.conditions]);
+		JSON.stringify([
+			d.sourceKey,
+			d.measure,
+			d.groupBy,
+			d.conditions,
+			d.condition,
+			d.anomaly,
+		]);
 	const reset = watched(existing.definition) !== watched(definition);
 	const rescheduled =
 		JSON.stringify(existing.definition.schedule) !==

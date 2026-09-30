@@ -109,6 +109,7 @@ export default function SheetEditor({ id }: { id: string }) {
 		def && s.editable
 			? {
 					kind: "sheet",
+					id,
 					state: () => ({
 						definition: def,
 						sampleRows: table?.rows.slice(0, 20) ?? [],
@@ -218,6 +219,14 @@ export default function SheetEditor({ id }: { id: string }) {
 		computed,
 		notes,
 	]);
+
+	// The rows a formula is tried on in the formula dialog, held between
+	// renders so the dialog's preview is not worked out again on every
+	// presence update.
+	const formulaSample = useMemo(
+		() => (table ? order.slice(0, 200).map((i) => table.rows[i]) : []),
+		[table, order],
+	);
 
 	const valueAt = useCallback(
 		(r: number, c: GridColumn): unknown => {
@@ -725,8 +734,8 @@ export default function SheetEditor({ id }: { id: string }) {
 									},
 								}))
 							}
-							onNote={(r, c, value) =>
-								s.writeNote(rowKeyAt(r), c.id, value)
+							onNote={(rowKey, c, value) =>
+								s.writeNote(rowKey, c.id, value)
 							}
 							onSelect={onSelect}
 						/>
@@ -739,7 +748,7 @@ export default function SheetEditor({ id }: { id: string }) {
 					editing={formulaDialog.editing}
 					columns={table.columns}
 					formulas={def.formulas}
-					sampleRows={order.slice(0, 200).map((i) => table.rows[i])}
+					sampleRows={formulaSample}
 					onClose={() => setFormulaDialog(null)}
 					onSave={(f) => {
 						setFormulaDialog(null);

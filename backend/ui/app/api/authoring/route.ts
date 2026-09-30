@@ -19,7 +19,7 @@ import {
 } from "@/lib/platform/authoring";
 import { assertCanEdit } from "@/lib/platform/editing";
 import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
-import { readableSourceList } from "@/lib/platform/sources";
+import { reachableSet, readableSourceList } from "@/lib/platform/sources";
 import { checkWriteRateLimit } from "@/lib/rateLimit";
 import { sql } from "@/lib/data/lakebase";
 import type { BuiltVisual } from "@/lib/visuals/templates";
@@ -113,6 +113,18 @@ function warmNewPage(
 	});
 }
 
+// Whether the caller may build on a source. The same filter the GET applies to
+// the list it offers, so a source left off that list cannot be named in the
+// body instead. No source at all is a blank page and needs no check.
+async function canBuildOn(
+	identity: Identity,
+	sourceKey: string | null,
+): Promise<boolean> {
+	if (!sourceKey) return true;
+	const reachable = await reachableSet(identity);
+	return !reachable || reachable.has(sourceKey);
+}
+
 // The sources this caller may build on, and the categories they may build in.
 //
 // Whether they may create anything at all is answered by the shell, which
@@ -189,6 +201,7 @@ export async function POST(request: NextRequest) {
 			}
 
 			const sourceKey = body.sourceKey ? String(body.sourceKey) : null;
+			if (!(await canBuildOn(identity, sourceKey))) return refused;
 
 			const created = await createReport(identity, {
 				title: String(body.title ?? ""),
@@ -245,7 +258,17 @@ export async function POST(request: NextRequest) {
 				return refused;
 			}
 
+			// page.create says pages may be added in the category. Editing this
+			// report is checked as well, so it does not reach another person's
+			// personal page or a report the caller cannot change.
+			try {
+				await assertCanEdit(policy, identity.email, reportId);
+			} catch {
+				return refused;
+			}
+
 			const pageSource = body.sourceKey ? String(body.sourceKey) : null;
+			if (!(await canBuildOn(identity, pageSource))) return refused;
 
 			const page = await addTemplatePage(identity, {
 				reportId,

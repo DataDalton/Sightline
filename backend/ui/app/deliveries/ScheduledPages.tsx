@@ -28,6 +28,11 @@ export function ScheduledPages() {
 		enabled: boolean;
 	}>(deliveriesKey);
 	const [busy, setBusy] = useState<string | null>(null);
+	// The delivery a send or a stop failed for, and why.
+	const [failure, setFailure] = useState<{
+		id: string;
+		message: string;
+	} | null>(null);
 
 	if (error) {
 		return (
@@ -48,9 +53,25 @@ export function ScheduledPages() {
 
 	const act = async (id: string, method: "POST" | "DELETE") => {
 		setBusy(id);
+		setFailure(null);
+		const fallback =
+			method === "POST"
+				? "It could not be sent. Try again."
+				: "It could not be stopped. Try again.";
 		try {
-			await fetch(`${deliveriesKey}/${id}/`, { method });
+			const response = await fetch(
+				`${deliveriesKey}/${encodeURIComponent(id)}/`,
+				{ method },
+			);
+			if (!response.ok) {
+				const body = (await response.json().catch(() => null)) as {
+					error?: string;
+				} | null;
+				setFailure({ id, message: body?.error ?? fallback });
+			}
 			await mutate();
+		} catch {
+			setFailure({ id, message: fallback });
 		} finally {
 			setBusy(null);
 		}
@@ -82,6 +103,11 @@ export function ScheduledPages() {
 								}
 							>
 								{d.lastError}
+							</span>
+						)}
+						{failure?.id === d.id && (
+							<span className={styles.rowError} role="alert">
+								{failure.message}
 							</span>
 						)}
 					</div>

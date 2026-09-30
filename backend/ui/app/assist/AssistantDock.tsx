@@ -174,6 +174,7 @@ export function AssistantDock() {
 			dragging.current = false;
 			window.removeEventListener("pointermove", move);
 			window.removeEventListener("pointerup", up);
+			window.removeEventListener("pointercancel", up);
 			document.body.style.userSelect = "";
 			setWidth((w) => {
 				try {
@@ -187,6 +188,8 @@ export function AssistantDock() {
 		document.body.style.userSelect = "none";
 		window.addEventListener("pointermove", move);
 		window.addEventListener("pointerup", up);
+		// A touch taken over by the browser ends with a cancel, not a release.
+		window.addEventListener("pointercancel", up);
 	};
 
 	if (!user?.assistant) return null;

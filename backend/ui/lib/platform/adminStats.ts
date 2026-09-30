@@ -53,8 +53,16 @@ export interface ExportRecord {
 	notes: string | null;
 }
 
+// A whole number of days between one and a year. Written into the statement
+// rather than bound, so anything else is refused here. A fraction is an error
+// against a date, and a value that is not a number is not written at all.
+function windowDays(days: number): number {
+	const whole = Math.trunc(Number(days));
+	return Number.isFinite(whole) ? Math.max(1, Math.min(whole, 365)) : 7;
+}
+
 function windowClause(days: number): string {
-	return `occurred_on > now() - interval '${Math.max(1, Math.min(days, 365))} days'`;
+	return `occurred_on > now() - interval '${windowDays(days)} days'`;
 }
 
 // The same window against the daily rollup.
@@ -64,7 +72,7 @@ function windowClause(days: number): string {
 // meaning seven calendar days rather than the last hundred and sixty eight
 // hours is what somebody choosing 7 expects to see.
 function rolledWindow(days: number): string {
-	return `day > current_date - ${Math.max(1, Math.min(days, 365))}`;
+	return `day > current_date - ${windowDays(days)}`;
 }
 
 export async function getUsageSummary(days = 7): Promise<UsageSummary> {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getIdentity } from "@/lib/auth/identity";
 import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
+import { isUuid } from "@/lib/alerts/store";
 import {
 	getExportJob,
 	readExportChunks,
@@ -27,6 +28,11 @@ export async function GET(
 	}
 
 	const { jobId } = await params;
+	// The id column is a uuid, which rejects anything else with an error
+	// rather than an empty result.
+	if (!isUuid(jobId)) {
+		return NextResponse.json({ error: "Not found" }, { status: 404 });
+	}
 
 	// Ownership is checked here as well as inside the reader, because a 404 for
 	// somebody else's job should not depend on the reader happening to be

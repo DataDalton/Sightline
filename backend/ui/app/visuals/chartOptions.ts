@@ -80,6 +80,13 @@ function escapeHtml(value: unknown): string {
 		.replace(/'/g, "&#39;");
 }
 
+// A formatted figure for tooltip markup. A measure with a text or date hint, or
+// a value that does not parse as a number, formats to the raw string, so it is
+// escaped like any other text from the data.
+function tipValue(value: unknown, hint: FormatHint): string {
+	return escapeHtml(formatValue(value, hint));
+}
+
 // Sorting a chart by its own values.
 //
 // Done on the marks rather than in the query, because the query is shared: a
@@ -504,6 +511,8 @@ function pivotSecondDimension(ctx: ChartContext): ChartContext {
 	// asked for and the stack is built the same way every render.
 	const categories: string[] = [];
 	const series: string[] = [];
+	// Looked up once per row, so held as a set beside the ordered list.
+	const seriesSeen = new Set<string>();
 	const byCategory = new Map<string, Record<string, unknown>>();
 
 	for (const row of ctx.rows) {
@@ -516,7 +525,10 @@ function pivotSecondDimension(ctx: ChartContext): ChartContext {
 			byCategory.set(category, entry);
 			categories.push(category);
 		}
-		if (!series.includes(name)) series.push(name);
+		if (!seriesSeen.has(name)) {
+			seriesSeen.add(name);
+			series.push(name);
+		}
 
 		// Summed rather than assigned, because the same pair can arrive twice
 		// once a third field is filtered rather than grouped.
@@ -542,7 +554,7 @@ function pivotSecondDimension(ctx: ChartContext): ChartContext {
 		// The series are values of a dimension now, so they carry no format
 		// hint of their own. They hold the measure, so they read like it.
 		hintFor: (field) =>
-			series.includes(field) ? ctx.hintFor(measure) : ctx.hintFor(field),
+			seriesSeen.has(field) ? ctx.hintFor(measure) : ctx.hintFor(field),
 		// Each pivoted row still carries its category, and each series is a
 		// value of this field, so a selected segment can be found by both.
 		seriesField,
@@ -1280,7 +1292,7 @@ export function buildPie(ctx: ChartContext, donut: boolean) {
 					percent: number;
 					marker: string;
 				};
-				return `${e.marker} ${escapeHtml(e.name)}<br/><b>${formatValue(e.value, hint)}</b> (${e.percent}%)`;
+				return `${e.marker} ${escapeHtml(e.name)}<br/><b>${tipValue(e.value, hint)}</b> (${e.percent}%)`;
 			},
 		},
 		series: [
@@ -1475,7 +1487,7 @@ export function buildTreemap(ctx: ChartContext) {
 			...tooltip(ctx, "item"),
 			formatter: (p: unknown) => {
 				const e = p as { name: string; value: number };
-				return `${escapeHtml(e.name)}<br/><b>${formatValue(e.value, hint)}</b>`;
+				return `${escapeHtml(e.name)}<br/><b>${tipValue(e.value, hint)}</b>`;
 			},
 		},
 		series: [
@@ -1532,7 +1544,7 @@ export function buildFunnel(ctx: ChartContext) {
 			...tooltip(ctx, "item"),
 			formatter: (p: unknown) => {
 				const e = p as { name: string; value: number; marker: string };
-				return `${e.marker} ${escapeHtml(e.name)}: <b>${formatValue(e.value, hint)}</b>`;
+				return `${e.marker} ${escapeHtml(e.name)}: <b>${tipValue(e.value, hint)}</b>`;
 			},
 		},
 		series: [
@@ -1580,10 +1592,14 @@ export function buildGauge(ctx: ChartContext) {
 	// A second measure is read as the target, which is the only thing that
 	// makes a gauge more informative than a number.
 	const target = measures[1] ? toNumber(row[measures[1]]) : null;
+	// The dial starts at zero, so a figure at or below it leaves the default
+	// scale rather than a maximum below the minimum.
 	const max =
 		target && target > 0
 			? Math.max(target * 1.25, value * 1.1)
-			: value * 1.5 || 100;
+			: value > 0
+				? value * 1.5
+				: 100;
 
 	return {
 		animation: false,
@@ -1638,7 +1654,10 @@ export function buildWaterfall(ctx: ChartContext) {
 
 	// A waterfall is a stacked bar where the lower stack is invisible and
 	// carries the running total. Positive and negative steps are separate
-	// series so they can be coloured independently.
+	// series so they can be coloured independently. Every value stacks onto
+	// the one below whatever its sign, because the library otherwise stacks
+	// negatives apart from positives and a running total below zero would draw
+	// its step up from zero.
 	const base: number[] = [];
 	const rising: unknown[] = [];
 	const falling: unknown[] = [];
@@ -1684,8 +1703,8 @@ export function buildWaterfall(ctx: ChartContext) {
 					.slice(0, first.dataIndex + 1)
 					.reduce((a, b) => a + b, 0);
 				return `<div style="font-weight:600">${escapeHtml(first.axisValue)}</div>
-					<div>Change: <b>${formatValue(value, hint)}</b></div>
-					<div style="opacity:.75">Running total: ${formatValue(cumulative, hint)}</div>`;
+					<div>Change: <b>${tipValue(value, hint)}</b></div>
+					<div style="opacity:.75">Running total: ${tipValue(cumulative, hint)}</div>`;
 			},
 		},
 		xAxis: categoryAxis(ctx, categories),
@@ -1695,6 +1714,7 @@ export function buildWaterfall(ctx: ChartContext) {
 				name: "base",
 				type: "bar",
 				stack: "wf",
+				stackStrategy: "all" as const,
 				itemStyle: { color: "transparent" },
 				emphasis: { itemStyle: { color: "transparent" } },
 				data: base,
@@ -1704,6 +1724,7 @@ export function buildWaterfall(ctx: ChartContext) {
 				name: "Increase",
 				type: "bar",
 				stack: "wf",
+				stackStrategy: "all" as const,
 				itemStyle: {
 					color: colors.positive,
 					borderRadius: [2, 2, 0, 0],
@@ -1714,6 +1735,7 @@ export function buildWaterfall(ctx: ChartContext) {
 				name: "Decrease",
 				type: "bar",
 				stack: "wf",
+				stackStrategy: "all" as const,
 				itemStyle: {
 					color: colors.negative,
 					borderRadius: [2, 2, 0, 0],
@@ -1824,7 +1846,7 @@ export function buildChoropleth(
 				if (typeof p.value !== "number" || Number.isNaN(p.value)) {
 					return `${escapeHtml(p.name)}<br/>No data`;
 				}
-				return `${escapeHtml(p.name)}<br/>${escapeHtml(measure)}: ${formatValue(p.value, hint)}`;
+				return `${escapeHtml(p.name)}<br/>${escapeHtml(measure)}: ${tipValue(p.value, hint)}`;
 			},
 		},
 		visualMap: {
@@ -1969,7 +1991,7 @@ export function buildTimeline(ctx: ChartContext) {
 				];
 				if (measure && bar.value !== null) {
 					lines.push(
-						`${escapeHtml(measure)}: ${formatValue(bar.value, ctx.hintFor(measure))}`,
+						`${escapeHtml(measure)}: ${tipValue(bar.value, ctx.hintFor(measure))}`,
 					);
 				}
 				return lines.join("<br/>");
@@ -2082,7 +2104,7 @@ export function buildCalendar(ctx: ChartContext) {
 			trigger: "item" as const,
 			formatter: (params: unknown) => {
 				const p = params as { value: [string, number] };
-				return `${escapeHtml(p.value[0])}<br/>${escapeHtml(measure)}: ${formatValue(p.value[1], hint)}`;
+				return `${escapeHtml(p.value[0])}<br/>${escapeHtml(measure)}: ${tipValue(p.value[1], hint)}`;
 			},
 		},
 		visualMap: {
@@ -2224,9 +2246,9 @@ export function buildSankey(ctx: ChartContext) {
 				if (p.dataType === "edge") {
 					const source = nodes.get(p.data.source ?? "") ?? "";
 					const target = nodes.get(p.data.target ?? "") ?? "";
-					return `${escapeHtml(source)} to ${escapeHtml(target)}<br/>${formatValue(p.value, hint)}`;
+					return `${escapeHtml(source)} to ${escapeHtml(target)}<br/>${tipValue(p.value, hint)}`;
 				}
-				return `${escapeHtml(nodes.get(p.name) ?? p.name)}<br/>${formatValue(p.value, hint)}`;
+				return `${escapeHtml(nodes.get(p.name) ?? p.name)}<br/>${tipValue(p.value, hint)}`;
 			},
 		},
 		series: [
@@ -2345,12 +2367,15 @@ export function buildHistogram(ctx: ChartContext) {
 
 				// The end bins hold their tail as well as their own range, so
 				// they are named for what they actually contain.
+				// A single bin is both ends at once and holds every value.
 				const range =
-					index === 0
-						? `Up to ${formatValue(bin.to, hint)}`
-						: index === bins.length - 1
-							? `${formatValue(bin.from, hint)} and above`
-							: `${formatValue(bin.from, hint)} to ${formatValue(bin.to, hint)}`;
+					bins.length === 1
+						? `${tipValue(bin.from, hint)} to ${tipValue(bin.to, hint)}`
+						: index === 0
+							? `Up to ${tipValue(bin.to, hint)}`
+							: index === bins.length - 1
+								? `${tipValue(bin.from, hint)} and above`
+								: `${tipValue(bin.from, hint)} to ${tipValue(bin.to, hint)}`;
 
 				const share = total > 0 ? (bin.count / total) * 100 : 0;
 				return [
@@ -2450,11 +2475,11 @@ export function buildBoxPlot(ctx: ChartContext) {
 				const [lo, q1, median, q3, hi] = entry.five as number[];
 				const lines = [
 					`<strong>${escapeHtml(entry.label)}</strong>`,
-					`Highest inside: ${formatValue(hi, hint)}`,
-					`Upper quartile: ${formatValue(q3, hint)}`,
-					`Median: ${formatValue(median, hint)}`,
-					`Lower quartile: ${formatValue(q1, hint)}`,
-					`Lowest inside: ${formatValue(lo, hint)}`,
+					`Highest inside: ${tipValue(hi, hint)}`,
+					`Upper quartile: ${tipValue(q3, hint)}`,
+					`Median: ${tipValue(median, hint)}`,
+					`Lower quartile: ${tipValue(q1, hint)}`,
+					`Lowest inside: ${tipValue(lo, hint)}`,
 					`Across ${entry.count.toLocaleString()} values`,
 				];
 				if (entry.outliers > 0) {
@@ -2564,7 +2589,7 @@ export function buildPareto(ctx: ChartContext) {
 				const share = toNumber(row[paretoCumulative]);
 				return [
 					`<strong>${escapeHtml(row[labelField])}</strong>`,
-					`${escapeHtml(measure)}: ${formatValue(row[measure], hint)}`,
+					`${escapeHtml(measure)}: ${tipValue(row[measure], hint)}`,
 					share === null ? "" : `Running share: ${share.toFixed(1)}%`,
 				]
 					.filter(Boolean)
@@ -2703,7 +2728,9 @@ export function buildSlope(ctx: ChartContext) {
 			show: true,
 			color: colors.textMuted,
 			fontSize: 11,
-			formatter: pair.label,
+			// A function, because a string formatter is a template and a label
+			// holding braces would be read as a placeholder.
+			formatter: () => pair.label,
 		},
 		emphasis: { focus: "series" as const },
 		data: [pair.then, pair.now],
@@ -2733,8 +2760,8 @@ export function buildSlope(ctx: ChartContext) {
 						: (pair.now - pair.then) / Math.abs(pair.then);
 				return [
 					`<strong>${escapeHtml(pair.label)}</strong>`,
-					`Before: ${formatValue(pair.then, hint)}`,
-					`After: ${formatValue(pair.now, hint)}`,
+					`Before: ${tipValue(pair.then, hint)}`,
+					`After: ${tipValue(pair.now, hint)}`,
 					change === null
 						? "No change to report against zero"
 						: `Change: ${change > 0 ? "+" : ""}${(change * 100).toFixed(1)}%`,
@@ -2849,8 +2876,8 @@ export function buildBullet(ctx: ChartContext) {
 				const target = toNumber(row[targetField]);
 				const lines = [
 					`<strong>${escapeHtml(row[labelField])}</strong>`,
-					`${escapeHtml(actualField)}: ${formatValue(actual, hint)}`,
-					`${escapeHtml(targetField)}: ${formatValue(target, ctx.hintFor(targetField))}`,
+					`${escapeHtml(actualField)}: ${tipValue(actual, hint)}`,
+					`${escapeHtml(targetField)}: ${tipValue(target, ctx.hintFor(targetField))}`,
 				];
 				// The share of target is the number the chart is actually
 				// about, and it is the one nobody can read off a bar.
@@ -3031,12 +3058,12 @@ export function buildScatter(ctx: ChartContext) {
 					value: [number, number, number];
 				};
 				const lines = [
-					`${escapeHtml(xField)}: ${formatValue(p.value[0], xHint)}`,
-					`${escapeHtml(yField)}: ${formatValue(p.value[1], yHint)}`,
+					`${escapeHtml(xField)}: ${tipValue(p.value[0], xHint)}`,
+					`${escapeHtml(yField)}: ${tipValue(p.value[1], yHint)}`,
 				];
 				if (sizeField) {
 					lines.push(
-						`${escapeHtml(sizeField)}: ${formatValue(p.value[2], ctx.hintFor(sizeField))}`,
+						`${escapeHtml(sizeField)}: ${tipValue(p.value[2], ctx.hintFor(sizeField))}`,
 					);
 				}
 				const head = p.name
@@ -3126,9 +3153,14 @@ export function buildHeatmap(ctx: ChartContext) {
 	// click reads them back without going through the axis labels.
 	const selection = activeSelection(ctx, Number.POSITIVE_INFINITY);
 
+	// Positions by value, so placing a cell is a lookup rather than a scan of
+	// every distinct value.
+	const colIndex = new Map(colValues.map((value, i) => [value, i]));
+	const rowIndex = new Map(rowValues.map((value, i) => [value, i]));
+
 	for (const row of rows) {
-		const x = colValues.indexOf(String(row[colField] ?? ""));
-		const y = rowValues.indexOf(String(row[rowField] ?? ""));
+		const x = colIndex.get(String(row[colField] ?? "")) ?? -1;
+		const y = rowIndex.get(String(row[rowField] ?? "")) ?? -1;
 		const value = toNumber(row[measure]) ?? 0;
 		if (x < 0 || y < 0) continue;
 		const opacity = markOpacity(selection, row);
@@ -3153,7 +3185,7 @@ export function buildHeatmap(ctx: ChartContext) {
 			...tooltip(ctx, "item"),
 			formatter: (p: unknown) => {
 				const e = p as { value: [number, number, number] };
-				return `${escapeHtml(rowValues[e.value[1]])} / ${escapeHtml(colValues[e.value[0]])}<br/><b>${formatValue(
+				return `${escapeHtml(rowValues[e.value[1]])} / ${escapeHtml(colValues[e.value[0]])}<br/><b>${tipValue(
 					e.value[2],
 					hint,
 				)}</b>`;

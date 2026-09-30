@@ -465,6 +465,11 @@ export async function deletePersonalPage(
 	});
 	invalidateAccessCache();
 	invalidateDefinitions("navigation:");
+	// The page itself as well, or its owner and the people it was shared with
+	// go on opening it from the cached definition after it was deleted.
+	invalidateDefinitions("report:");
+	invalidateDefinitions(`report-body:${reportId}`);
+	invalidateDefinitions("search:");
 }
 
 // --- Promotion --------------------------------------------------------------

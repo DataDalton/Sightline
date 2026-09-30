@@ -10,21 +10,24 @@ import styles from "./Notify.module.css";
 // Inbox entries, newest first. The same list in the header panel and on the
 // inbox page. The page adds the controls for each entry.
 
-async function patch(ids: string[], read: boolean) {
-	await fetch("/api/notifications", {
-		method: "PATCH",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ ids, read }),
-	});
+// Neither call throws. A failed change is followed by the same reload as a
+// successful one, which shows the list as the server holds it, and opening an
+// entry still follows its link.
+async function send(method: "PATCH" | "DELETE", body: unknown) {
+	try {
+		await fetch("/api/notifications", {
+			method,
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+		});
+	} catch {
+		// Reported by the reload that follows.
+	}
 }
 
-async function remove(ids: string[]) {
-	await fetch("/api/notifications", {
-		method: "DELETE",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ ids }),
-	});
-}
+const patch = (ids: string[], read: boolean) => send("PATCH", { ids, read });
+
+const remove = (ids: string[]) => send("DELETE", { ids });
 
 export function InboxList({
 	items,

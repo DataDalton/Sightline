@@ -10,9 +10,11 @@ import {
 import {
 	b64url,
 	encryptPayload,
+	fitPayload,
 	fromB64url,
 	generateVapidKeys,
 	isPushEndpoint,
+	payloadBudget,
 	vapidAuthorization,
 } from "./webPush";
 
@@ -158,4 +160,42 @@ test("only posts to the push services browsers use", () => {
 	assert.ok(!isPushEndpoint("https://169.254.169.254/latest"));
 	assert.ok(!isPushEndpoint("https://evilgoogleapis.com/x"));
 	assert.ok(!isPushEndpoint("not a url"));
+});
+
+test("a payload with a long link falls back to the inbox link", () => {
+	const fitted = fitPayload({
+		id: "1",
+		kind: "alert",
+		title: "Revenue",
+		body: "Revenue is above target",
+		link: `/explore/?q=${"a".repeat(6000)}`,
+	});
+	assert.equal(fitted.link, "/inbox/");
+	assert.equal(fitted.body, "Revenue is above target");
+	assert.ok(
+		Buffer.byteLength(JSON.stringify(fitted), "utf8") <= payloadBudget,
+	);
+});
+
+test("a short payload keeps its link", () => {
+	const fitted = fitPayload({
+		id: "1",
+		kind: "alert",
+		title: "Revenue",
+		body: "Revenue is above target",
+		link: "/explore/?q=abc",
+	});
+	assert.equal(fitted.link, "/explore/?q=abc");
+});
+
+test("a title is cut on a character boundary", () => {
+	const fitted = fitPayload({
+		id: "1",
+		kind: "alert",
+		title: "\u{1F600}".repeat(200),
+		body: "",
+		link: "/inbox/",
+	});
+	assert.equal(Array.from(fitted.title).length, 120);
+	assert.ok(!/[\uD800-\uDBFF]$/.test(fitted.title));
 });

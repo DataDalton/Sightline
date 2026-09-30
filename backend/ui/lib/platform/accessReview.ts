@@ -347,6 +347,43 @@ export async function explainSubjectAccess(
 		}),
 	);
 
+	// Grants made to a group on one resource. The access resolver honours
+	// these for every member, so a review leaving them out would show less
+	// than the person can reach.
+	const groupPolicies = await sql<PolicyRow>(
+		`SELECT subject_type, subject_id, resource_type, resource_id,
+		        permission, granted_by, granted_on::text AS granted_on
+		 FROM access_policies
+		 WHERE is_active = TRUE AND subject_type = 'group'`,
+	);
+	for (const row of groupPolicies) {
+		throughGroups.push({
+			group: row.subject_id,
+			via: "Direct grant",
+			permission: row.permission,
+			scope: `${row.resource_type} ${row.resource_id}`,
+		});
+	}
+
+	// Pages the person built for themselves, which they hold outright.
+	const owned = await sql<{ report_id: string; title: string }>(
+		`SELECT report_id::text AS report_id, title
+		 FROM reports
+		 WHERE is_active = TRUE AND is_personal = TRUE
+		   AND lower(owner_email) = $1`,
+		[lowered],
+	);
+	for (const row of owned) {
+		direct.push({
+			via: "Owner of a personal page",
+			permission: "admin",
+			scope: "report",
+			resource: row.title || row.report_id,
+			grantedBy: null,
+			grantedOn: null,
+		});
+	}
+
 	for (const group of settings().editorGroups) {
 		throughGroups.push({
 			group,

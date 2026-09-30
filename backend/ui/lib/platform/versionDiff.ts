@@ -90,6 +90,22 @@ function activeVisuals(snapshot: Snapshot | null): Map<string, SnapshotVisual> {
 	return map;
 }
 
+function activePages(snapshot: Snapshot | null): Map<string, SnapshotPage> {
+	const map = new Map<string, SnapshotPage>();
+	for (const page of snapshot?.pages ?? []) {
+		if (page.is_active === false) continue;
+		map.set(page.page_id, page);
+	}
+	return map;
+}
+
+// A page is named by its title, since that is what the page strip shows. One
+// with no title is still a page, so it is not left out of the sentence.
+function pageLabel(page: SnapshotPage): string {
+	const title = page.title?.trim();
+	return title ? `the page "${title}"` : "a page";
+}
+
 export function diffSnapshots(
 	previous: Snapshot | null,
 	next: Snapshot | null,
@@ -240,16 +256,36 @@ export function diffSnapshots(
 	}
 
 	// Page and report level changes.
-	const pagesBefore = new Map(
-		(previous?.pages ?? []).map((p) => [p.page_id, p]),
-	);
-	for (const page of next?.pages ?? []) {
-		const was = pagesBefore.get(page.page_id);
+	//
+	// A removed page keeps its row with is_active off, and a restore can turn
+	// it back on, so presence among the active pages is what decides whether a
+	// page was added or removed. An older snapshot that recorded no flag counts
+	// every page as active.
+	const pagesBefore = activePages(previous);
+	const pagesAfter = activePages(next);
+
+	for (const [id, page] of pagesAfter) {
+		if (!pagesBefore.has(id)) {
+			changes.push({ kind: "added", text: `Added ${pageLabel(page)}` });
+		}
+	}
+
+	for (const [id, page] of pagesBefore) {
+		if (!pagesAfter.has(id)) {
+			changes.push({
+				kind: "removed",
+				text: `Removed ${pageLabel(page)}`,
+			});
+		}
+	}
+
+	for (const [id, page] of pagesAfter) {
+		const was = pagesBefore.get(id);
 		if (!was) continue;
 		if ((was.title ?? "") !== (page.title ?? "")) {
 			changes.push({
 				kind: "renamed",
-				text: `Renamed the page to "${page.title}"`,
+				text: `Renamed ${pageLabel(was)} to "${page.title ?? ""}"`,
 			});
 		}
 		if (

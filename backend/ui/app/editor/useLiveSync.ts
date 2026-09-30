@@ -54,6 +54,10 @@ interface LiveSyncOptions {
 	// page wholesale. Rather than applying a partial version of it and letting
 	// this session drift, the session is told to load the report again.
 	onReload: (actor: string) => void;
+	// Another session added, removed, reordered or renamed a page. The canvas
+	// has nothing to apply for that, so the report is fetched again to bring
+	// the page strip up to date. Unsaved work on the canvas is kept.
+	onPagesChanged: () => void;
 	getVisuals: () => AppliedVisual[];
 	getVersion: () => number;
 }
@@ -70,6 +74,7 @@ export function useLiveSync({
 	localState,
 	onRemoteChange,
 	onReload,
+	onPagesChanged,
 	getVisuals,
 	getVersion,
 }: LiveSyncOptions) {
@@ -86,6 +91,7 @@ export function useLiveSync({
 		localState,
 		onRemoteChange,
 		onReload,
+		onPagesChanged,
 		getVisuals,
 		getVersion,
 	});
@@ -94,6 +100,7 @@ export function useLiveSync({
 		localState,
 		onRemoteChange,
 		onReload,
+		onPagesChanged,
 		getVisuals,
 		getVersion,
 	};
@@ -160,7 +167,7 @@ export function useLiveSync({
 				ops,
 				sessionId,
 				handlers.current.getVersion(),
-				{ protectedIds: handlers.current.protectedIds() },
+				{ protectedIds: handlers.current.protectedIds(), pageId },
 			);
 
 			seqRef.current = Math.max(
@@ -177,6 +184,7 @@ export function useLiveSync({
 				result.version,
 				result.actors,
 			);
+			if (result.pagesChanged) handlers.current.onPagesChanged();
 		} catch {
 			setConnected(false);
 		}

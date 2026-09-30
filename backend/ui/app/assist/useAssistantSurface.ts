@@ -18,6 +18,9 @@ export function useAssistantSurface(binding: SurfaceBinding | null): void {
 	latest.current = binding;
 
 	const kind = binding?.kind ?? null;
+	// A new id registers again, so a draft asked on the screen before is not
+	// applied to this one.
+	const id = binding?.id ?? "";
 	const placeholder = binding?.placeholder;
 	// Joined so a new array with the same questions is not a change.
 	const examples = binding?.examples?.join("\n") ?? "";
@@ -27,10 +30,11 @@ export function useAssistantSurface(binding: SurfaceBinding | null): void {
 		if (!enabled || !kind) return;
 		return registerSurface({
 			kind,
+			id,
 			placeholder,
 			examples: examples ? examples.split("\n") : undefined,
 			state: () => latest.current?.state() ?? null,
 			apply: (draft) => latest.current?.apply(draft),
 		});
-	}, [enabled, kind, placeholder, examples, registerSurface]);
+	}, [enabled, kind, id, placeholder, examples, registerSurface]);
 }

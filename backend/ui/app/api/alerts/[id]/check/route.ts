@@ -5,6 +5,9 @@ import { isUuid } from "@/lib/alerts/store";
 import { checkWriteRateLimit } from "@/lib/rateLimit";
 import { caller, privateJson } from "../../../notifications/guard";
 
+// The one refusal from the runner worded for the reader.
+const tokenRequired = "A user token is required to check an alert.";
+
 // Checks one alert now, under the caller's own token, and records it like a
 // scheduled check.
 export async function POST(
@@ -30,15 +33,12 @@ export async function POST(
 		if (error instanceof AlertDefinitionError) {
 			return privateJson({ error: error.message }, 400);
 		}
+		if (error instanceof Error && error.message === tokenRequired) {
+			return privateJson({ error: error.message }, 403);
+		}
+		// Anything else can be a warehouse error carrying the compiled SQL or
+		// schema details, so it is logged rather than returned.
 		console.error("Alert check failed:", error);
-		return privateJson(
-			{
-				error:
-					error instanceof Error
-						? error.message
-						: "Could not check the alert",
-			},
-			500,
-		);
+		return privateJson({ error: "Could not check the alert" }, 500);
 	}
 }

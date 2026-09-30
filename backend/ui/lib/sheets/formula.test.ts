@@ -170,3 +170,74 @@ test("a formula that cannot be read is reported and filled with an error", () =>
 	assert.ok(out.problems.Bad);
 	assert.ok(out.values[0].Bad instanceof FormulaError);
 });
+
+test("ranks, running totals and ties agree with a row by row count", () => {
+	const values = [5, 3, 5, null, "", 8, "x", 1];
+	const data = values.map((v) => ({ V: v }));
+	const out = computeColumns(
+		data,
+		["V"],
+		[
+			{ id: "a", name: "Down", formula: "IFERROR(RANK([V]), -1)" },
+			{ id: "b", name: "Up", formula: "IFERROR(RANK([V], TRUE), -1)" },
+			{ id: "c", name: "Run", formula: "IFERROR(RUNNING([V]), -1)" },
+		],
+	);
+	assert.deepEqual(
+		out.values.map((v) => v.Down),
+		[2, 4, 2, 6, 6, 1, -1, 5],
+		"null and blank count as zero for the row itself, and blank is ranked",
+	);
+	assert.deepEqual(
+		out.values.map((v) => v.Up),
+		[4, 3, 4, 1, 1, 6, -1, 2],
+	);
+	assert.deepEqual(
+		out.values.map((v) => v.Run),
+		[5, 8, 13, 13, 13, 21, -1, -1],
+		"a running total stops at the first value that is not a number",
+	);
+});
+
+test("whole column functions stay linear on a large sheet", () => {
+	const data = Array.from({ length: 50_000 }, (_, i) => ({ V: i % 997 }));
+	const started = Date.now();
+	const out = computeColumns(
+		data,
+		["V"],
+		[
+			{
+				id: "a",
+				name: "All",
+				formula: "RANK([V]) + RUNNING([V]) + SHARE([V]) + TOTAL([V])",
+			},
+		],
+	);
+	const elapsed = Date.now() - started;
+	assert.equal(out.values.length, 50_000);
+	assert.ok(
+		elapsed < 5000,
+		`computing took ${elapsed}ms, which suggests a pass over the column per row`,
+	);
+});
+
+test("joined text past the cell limit is an error rather than growing without end", () => {
+	const repeat = Array.from({ length: 40 }, () => "[T]").join(" & ");
+	const out = computeColumns(
+		[{ T: "x".repeat(100) }],
+		["T"],
+		[
+			{ id: "a", name: "A", formula: repeat },
+			{ id: "b", name: "B", formula: repeat.replace(/\[T\]/g, "[A]") },
+			{
+				id: "c",
+				name: "C",
+				formula: "CONCAT([A], [A], [A], [A], [A], [A], [A], [A], [A])",
+			},
+		],
+	);
+	assert.equal(out.values[0].A, "x".repeat(4000));
+	assert.ok(isError(out.values[0].B));
+	assert.equal(String(out.values[0].B), "#VALUE!");
+	assert.ok(isError(out.values[0].C));
+});

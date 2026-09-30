@@ -134,6 +134,13 @@ export async function announceMissingFields(
 				`Could not find what depends on the missing fields of ${sourceKey}:`,
 				error,
 			);
+			// Released, so the next sync that reads this source cleanly
+			// announces them. Left claimed, nobody would ever be told.
+			await sql(
+				`UPDATE source_fields SET announced_on = NULL
+				 WHERE source_key = $1 AND field_name = ANY($2::text[])`,
+				[sourceKey, [...byName.keys()]],
+			).catch(() => {});
 			continue;
 		}
 		if (dependents.length === 0) continue;

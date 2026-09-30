@@ -190,6 +190,52 @@ export function generateVapidKeys(subject: string): VapidKeys {
 	};
 }
 
+// What a push carries to the service worker.
+export interface PushPayload {
+	id: string;
+	kind: string;
+	title: string;
+	body: string;
+	link: string;
+}
+
+// The most bytes of plaintext a payload is let grow to. Push services refuse
+// a message larger than one record, and a refusal counts against the device
+// until it is dropped, so the payload is held under a byte budget rather than
+// a character count. A title or body in a script that takes several bytes a
+// character, or a link carrying a long Explore state, would otherwise pass
+// the character limits and still be refused.
+export const payloadBudget = 3000;
+
+function byteLength(value: unknown): number {
+	return Buffer.byteLength(JSON.stringify(value), "utf8");
+}
+
+// The first characters of a text, cut on a character boundary rather than
+// through a surrogate pair.
+function clip(text: string, characters: number): string {
+	return Array.from(text).slice(0, characters).join("");
+}
+
+// A payload cut to fit. The title and body are first held to lengths a lock
+// screen shows. Past the byte budget the link falls back to the inbox, which
+// holds the entry with its own link, and then the body is shortened.
+export function fitPayload(payload: PushPayload): PushPayload {
+	const out = {
+		...payload,
+		title: clip(payload.title, 120),
+		body: clip(payload.body, 400),
+	};
+	if (byteLength(out) <= payloadBudget) return out;
+	out.link = "/inbox/";
+	let characters = Array.from(out.body).length;
+	while (byteLength(out) > payloadBudget && characters > 0) {
+		characters = Math.floor(characters / 2);
+		out.body = clip(out.body, characters);
+	}
+	return out;
+}
+
 export interface PushTarget {
 	endpoint: string;
 	keys: PushSubscriptionKeys;

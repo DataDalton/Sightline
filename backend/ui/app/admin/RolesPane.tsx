@@ -3,6 +3,7 @@
 import { useState } from "react";
 import useSWR from "swr";
 import { Modal } from "../components/shared/Modal";
+import { ConfirmDialog } from "../components/shared/ConfirmDialog";
 import { Skeleton } from "../components/shared/Skeleton";
 import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { Select } from "../components/shared/Select";
@@ -145,6 +146,12 @@ export default function RolesPane({
 	const [assigning, setAssigning] = useState<{ roleId: string } | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [failure, setFailure] = useState<string | null>(null);
+	// The role a removal is being confirmed for. Removing one takes it away
+	// from everybody who holds it at once, and nothing here brings it back.
+	const [removingRole, setRemovingRole] = useState<{
+		roleId: string;
+		name: string;
+	} | null>(null);
 
 	const allRoles = data?.roles ?? [];
 	// A category's own editor role is listed with its category rather than as
@@ -274,13 +281,10 @@ export default function RolesPane({
 												className={admin.linkButton}
 												disabled={busy}
 												onClick={() =>
-													void post(
-														{
-															action: "deleteRole",
-															roleId: role.roleId,
-														},
-														"Could not remove that role",
-													)
+													setRemovingRole({
+														roleId: role.roleId,
+														name: role.name,
+													})
 												}
 											>
 												Remove
@@ -551,6 +555,32 @@ export default function RolesPane({
 						if (ok) setEditing(null);
 					}}
 					onClose={() => setEditing(null)}
+				/>
+			)}
+
+			{removingRole && (
+				<ConfirmDialog
+					title="Remove this role"
+					body={
+						<>
+							<strong>{removingRole.name}</strong> stops applying
+							to every group and person it is assigned to, and
+							they lose what it allowed straight away.
+						</>
+					}
+					confirmLabel="Remove role"
+					busy={busy}
+					onConfirm={async () => {
+						await post(
+							{
+								action: "deleteRole",
+								roleId: removingRole.roleId,
+							},
+							"Could not remove that role",
+						);
+						setRemovingRole(null);
+					}}
+					onCancel={() => setRemovingRole(null)}
 				/>
 			)}
 

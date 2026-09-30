@@ -23,6 +23,7 @@ import { VisualLoadingState } from "./LoadingState";
 import { createResultMemo, resultMaxAge } from "./resultMemo";
 import { canonical } from "../hooks/canonicalKey";
 import { runBatchedQuery } from "../hooks/queryBatch";
+import { maxLimit } from "../../lib/query/spec";
 import type { FieldMeta } from "./types";
 import styles from "./Matrix.module.css";
 
@@ -218,14 +219,18 @@ export function MatrixTable({
 	// against the previous query shape can tell its answer no longer applies.
 	const generation = useRef(0);
 
-	// Fetches one level: the children of `path`, or the top level when empty.
-	// The pivoted column values it saw come back with the rows rather than
-	// going into state here, so a caller whose request was superseded can
-	// discard both.
+	// Fetches one level completely, the children of `path` or the top level
+	// when empty. The level is read page by page until a page comes back
+	// short, so no row and no column cell is left out however many
+	// combinations the level holds. The pivoted column values it saw come
+	// back with the rows rather than going into state here, so a caller whose
+	// request was superseded can discard both. isCurrent is checked before
+	// every page after the first, so a superseded load stops asking.
 	const fetchLevel = useCallback(
 		async (
 			path: string[],
-			parentRaws: unknown[] = [],
+			parentRaws: unknown[],
+			isCurrent: () => boolean,
 		): Promise<{ rows: MatrixRow[]; columnValues: string[] }> => {
 			const depth = path.length;
 			const dimension = rowDimensions[depth];
@@ -235,57 +240,79 @@ export function MatrixTable({
 			// for business units inside it.
 			const scope: FilterClause[] = [
 				...(baseFilters as FilterClause[]),
-				...path.map((value, i) => ({
-					field: rowDimensions[i],
-					op: "eq",
-					values: [value],
-				})),
+				// A blank ancestor is a null or an empty value, which an
+				// equality on its empty label would not match.
+				...path.map((value, i): FilterClause => {
+					const raw = parentRaws[i];
+					return raw === null || raw === undefined || raw === ""
+						? { field: rowDimensions[i], op: "is_empty" }
+						: {
+								field: rowDimensions[i],
+								op: "eq",
+								values: [value],
+							};
+				}),
 			];
 
-			const data = await runBatchedQuery(
-				canonical({
-					sourceKey,
-					dimensions: columnDimension
-						? [dimension, columnDimension]
-						: [dimension],
-					measures,
-					filters: scope,
-					sort: [{ field: dimension, direction: "asc" }],
-					limit: 2000,
-				}),
-			);
-
-			const raw: Record<string, unknown>[] = data.rows ?? [];
+			// Sorted by every grouped dimension, so each combination has one
+			// fixed position and consecutive pages neither repeat nor skip one.
+			const sort: { field: string; direction: "asc" }[] = [
+				{ field: dimension, direction: "asc" },
+			];
+			if (columnDimension) {
+				sort.push({ field: columnDimension, direction: "asc" });
+			}
 
 			// Collapse the pivoted dimension into one row per row-value, with
-			// the measures spread across the column groups.
+			// the measures spread across the column groups. Both maps live
+			// across pages, so a row label whose cells straddle a page
+			// boundary is still merged into one row.
 			const byLabel = new Map<string, MatrixRow>();
 			const seenColumns = new Set<string>();
 
-			for (const record of raw) {
-				const label = String(record[dimension] ?? "");
-				const columnValue = columnDimension
-					? String(record[columnDimension] ?? "")
-					: null;
-				if (columnValue !== null) seenColumns.add(columnValue);
+			for (let offset = 0; ; offset += maxLimit) {
+				if (offset > 0 && !isCurrent()) break;
+				const data = await runBatchedQuery(
+					canonical({
+						sourceKey,
+						dimensions: columnDimension
+							? [dimension, columnDimension]
+							: [dimension],
+						measures,
+						filters: scope,
+						sort,
+						limit: maxLimit,
+						offset,
+					}),
+				);
+				const page: Record<string, unknown>[] = data.rows ?? [];
+				for (const record of page) {
+					const label = String(record[dimension] ?? "");
+					const columnValue = columnDimension
+						? String(record[columnDimension] ?? "")
+						: null;
+					if (columnValue !== null) seenColumns.add(columnValue);
 
-				let row = byLabel.get(label);
-				if (!row) {
-					row = {
-						path: [...path, label],
-						raws: [...parentRaws, record[dimension]],
-						label,
-						depth,
-						values: {},
-						// A node has children whenever another row dimension
-						// remains below it.
-						hasChildren: depth + 1 < rowDimensions.length,
-					};
-					byLabel.set(label, row);
+					let row = byLabel.get(label);
+					if (!row) {
+						row = {
+							path: [...path, label],
+							raws: [...parentRaws, record[dimension]],
+							label,
+							depth,
+							values: {},
+							// A node has children whenever another row dimension
+							// remains below it.
+							hasChildren: depth + 1 < rowDimensions.length,
+						};
+						byLabel.set(label, row);
+					}
+					for (const measure of measures) {
+						row.values[cellKey(columnValue, measure)] =
+							record[measure];
+					}
 				}
-				for (const measure of measures) {
-					row.values[cellKey(columnValue, measure)] = record[measure];
-				}
+				if (page.length < maxLimit) break;
 			}
 
 			return {
@@ -325,7 +352,7 @@ export function MatrixTable({
 		setLoading(true);
 		setColumnValues([]);
 
-		fetchLevel([])
+		fetchLevel([], [], () => !cancelled)
 			.then((top) => {
 				if (cancelled) return;
 				setRows(top.rows);
@@ -387,7 +414,11 @@ export function MatrixTable({
 		const startedIn = generation.current;
 		try {
 			const { rows: children, columnValues: childColumns } =
-				await fetchLevel(row.path, row.raws);
+				await fetchLevel(
+					row.path,
+					row.raws,
+					() => startedIn === generation.current,
+				);
 			if (startedIn !== generation.current) return;
 			// Column groups accumulate across expansions, so a child that
 			// introduces a period the parent lacked still lines up.

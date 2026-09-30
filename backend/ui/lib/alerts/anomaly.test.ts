@@ -5,6 +5,7 @@ import {
 	cleanAnomaly,
 	defaultAnomaly,
 	describeComparison,
+	periodEnd,
 	readAnomalies,
 	spacingDays,
 	targetPeriod,
@@ -66,6 +67,22 @@ test("the period judged is the latest that has finished, never today", () => {
 	assert.equal(spacingDays(months), 31);
 	// Mid September, August is the latest finished month.
 	assert.equal(targetPeriod(months, 31, "2026-09-15"), "2026-08-01");
+});
+
+test("a month is finished when the next one begins, whatever its length", () => {
+	// Months learned as thirty days apart, where September and November
+	// have thirty days and October thirty-one.
+	const months = ["2026-09-01", "2026-10-01", "2026-11-01", "2026-12-01"];
+	assert.equal(spacingDays(months), 30);
+	// On the last day of December, December is still filling up.
+	assert.equal(targetPeriod(months, 30, "2026-12-31"), "2026-11-01");
+	assert.equal(targetPeriod(months, 30, "2027-01-01"), "2026-12-01");
+	// A month starting on a day a shorter month lacks ends on its last day.
+	assert.equal(periodEnd("2026-01-31", 31), Date.UTC(2026, 1, 28));
+	// A quarter is three months.
+	assert.equal(periodEnd("2026-01-01", 90), Date.UTC(2026, 3, 1));
+	// A week is still counted in days.
+	assert.equal(periodEnd("2026-01-01", 7), Date.UTC(2026, 0, 8));
 });
 
 test("the same weekday is compared with the same weekday, and a monthly field with the months before", () => {

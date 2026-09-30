@@ -41,6 +41,9 @@ export function ShareDialog({
 			}
 			await mutate(result, false);
 			return true;
+		} catch {
+			setError("That did not work. Check the connection and try again.");
+			return false;
 		} finally {
 			setBusy(false);
 		}

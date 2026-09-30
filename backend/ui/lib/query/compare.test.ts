@@ -180,3 +180,30 @@ test("change against a negative figure is measured by its size", () => {
 	// 50 percent fall, which is what dividing by the signed value would say.
 	assert.equal(relativeChange(-50, -100), 0.5);
 });
+
+test("the period before an exclusive end is the same number of days", () => {
+	// March, written as up to but not including the first of April. The window
+	// before it ends where March begins, with no day skipped or repeated.
+	const shifted = shiftDateFilters(
+		[
+			{ field: "Order Date", op: "gte", value: "2026-03-01" },
+			{ field: "Order Date", op: "lt", value: "2026-04-01" },
+		],
+		"Order Date",
+		"previous",
+	)!;
+	assert.equal(shifted[0].value, "2026-01-29");
+	assert.equal(shifted[1].value, "2026-03-01");
+});
+
+test("an empty exclusive window has no period before it", () => {
+	const shifted = shiftDateFilters(
+		[
+			{ field: "Order Date", op: "gte", value: "2026-03-01" },
+			{ field: "Order Date", op: "lt", value: "2026-03-01" },
+		],
+		"Order Date",
+		"previous",
+	);
+	assert.equal(shifted, null);
+});

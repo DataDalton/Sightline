@@ -157,7 +157,7 @@ export function SheetGrid({
 	onSort: (column: GridColumn) => void;
 	onResize: (column: GridColumn, width: number) => void;
 	onNote: (
-		row: number,
+		rowKey: string,
 		column: GridColumn,
 		value: string,
 	) => Promise<string | null>;
@@ -166,10 +166,18 @@ export function SheetGrid({
 	const scroller = useRef<HTMLDivElement>(null);
 	const [anchor, setAnchor] = useState<CellRef | null>(null);
 	const [focus, setFocus] = useState<CellRef | null>(null);
+	// The note being typed, held by row key and column key rather than by
+	// position, so rows read again in another order while it is open do not
+	// move the text onto a different row.
 	const [editing, setEditing] = useState<{
-		cell: CellRef;
+		rowKey: string;
+		columnKey: string;
+		original: string;
 		text: string;
 	} | null>(null);
+	// Whether the open edit is still to be committed. Enter and the blur that
+	// follows the editor closing both commit, and only the first is sent.
+	const editOpen = useRef(false);
 	const [noteError, setNoteError] = useState<string | null>(null);
 	const [menu, setMenu] = useState<{
 		column: GridColumn;
@@ -298,24 +306,45 @@ export function SheetGrid({
 		const column = columns[cell.col];
 		if (!editable || column?.kind !== "note") return;
 		const current = valueAt(cell.row, column);
+		const original = typeof current === "string" ? current : "";
+		const next = {
+			rowKey: rowKeyAt(cell.row),
+			columnKey: column.key,
+			original,
+			text: initial ?? original,
+		};
 		setNoteError(null);
-		setEditing({
-			cell,
-			text: initial ?? (typeof current === "string" ? current : ""),
-		});
+		editOpen.current = true;
+		setEditing(next);
 	};
 
 	const commit = async (move: number) => {
-		if (!editing) return;
-		const { cell, text } = editing;
-		const column = columns[cell.col];
+		if (!editing || !editOpen.current) return;
+		editOpen.current = false;
+		const { rowKey, columnKey, original, text } = editing;
 		setEditing(null);
-		const before = valueAt(cell.row, column);
-		if ((before ?? "") !== text) {
-			const problem = await onNote(cell.row, column, text);
+		const column = columns.find((c) => c.key === columnKey);
+		if (column && original !== text) {
+			const problem = await onNote(rowKey, column, text);
 			setNoteError(problem);
 		}
-		if (move) select({ row: cell.row + move, col: cell.col });
+		if (move && column) {
+			let row = -1;
+			for (let r = 0; r < rowCount; r++) {
+				if (rowKeyAt(r) === rowKey) {
+					row = r;
+					break;
+				}
+			}
+			if (row >= 0)
+				select({ row: row + move, col: columns.indexOf(column) });
+		}
+		scroller.current?.focus();
+	};
+
+	const cancelEdit = () => {
+		editOpen.current = false;
+		setEditing(null);
 		scroller.current?.focus();
 	};
 
@@ -370,6 +399,14 @@ export function SheetGrid({
 			case "ArrowLeft":
 				return step(0, -1);
 			case "Tab":
+				// At either end of a row, Tab leaves the grid as it does
+				// anywhere else on the page.
+				if (
+					e.shiftKey
+						? focus.col === 0
+						: focus.col >= columns.length - 1
+				)
+					return;
 				return step(0, e.shiftKey ? -1 : 1);
 			case "PageDown":
 				return step(20, 0);
@@ -388,9 +425,11 @@ export function SheetGrid({
 			case "Backspace":
 				if (columns[focus.col]?.kind === "note" && editable) {
 					e.preventDefault();
-					void onNote(focus.row, columns[focus.col], "").then(
-						setNoteError,
-					);
+					void onNote(
+						rowKeyAt(focus.row),
+						columns[focus.col],
+						"",
+					).then(setNoteError);
 				}
 				return;
 		}
@@ -449,14 +488,21 @@ export function SheetGrid({
 		setWidths({});
 	}, [columns]);
 
+	// Closed by a press outside it, by Escape, or by focus moving out of it,
+	// so its items can be reached with Tab and the arrow keys.
 	useEffect(() => {
 		if (!menu) return;
 		const close = () => setMenu(null);
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key !== "Escape") return;
+			setMenu(null);
+			scroller.current?.focus();
+		};
 		window.addEventListener("pointerdown", close);
-		window.addEventListener("keydown", close);
+		window.addEventListener("keydown", onKey);
 		return () => {
 			window.removeEventListener("pointerdown", close);
-			window.removeEventListener("keydown", close);
+			window.removeEventListener("keydown", onKey);
 		};
 	}, [menu]);
 
@@ -658,8 +704,8 @@ export function SheetGrid({
 											c.hint !== "text";
 										if (
 											editing &&
-											editing.cell.row === r &&
-											editing.cell.col === i
+											editing.rowKey === key &&
+											editing.columnKey === c.key
 										) {
 											return (
 												<div
@@ -700,10 +746,7 @@ export function SheetGrid({
 																"Escape"
 															) {
 																e.preventDefault();
-																setEditing(
-																	null,
-																);
-																scroller.current?.focus();
+																cancelEdit();
 															} else if (
 																e.key === "Tab"
 															) {
@@ -857,6 +900,29 @@ export function SheetGrid({
 					role="menu"
 					style={{ top: menu.y + 4, left: Math.max(8, menu.x - 220) }}
 					onPointerDown={(e) => e.stopPropagation()}
+					onBlur={(e) => {
+						if (
+							!e.currentTarget.contains(
+								e.relatedTarget as Node | null,
+							)
+						)
+							setMenu(null);
+					}}
+					onKeyDown={(e) => {
+						if (e.key !== "ArrowDown" && e.key !== "ArrowUp")
+							return;
+						e.preventDefault();
+						const items = [
+							...e.currentTarget.querySelectorAll<HTMLElement>(
+								'[role="menuitem"]',
+							),
+						];
+						const at = items.indexOf(
+							document.activeElement as HTMLElement,
+						);
+						const by = e.key === "ArrowDown" ? 1 : -1;
+						items[(at + by + items.length) % items.length]?.focus();
+					}}
 				>
 					{menuFor(menu.column).map((a, i) =>
 						a.separator ? (
@@ -870,6 +936,7 @@ export function SheetGrid({
 								key={a.label}
 								type="button"
 								role="menuitem"
+								autoFocus={i === 0}
 								className={`${styles.menuItem} ${a.danger ? styles.menuDanger : ""}`}
 								onClick={() => {
 									setMenu(null);

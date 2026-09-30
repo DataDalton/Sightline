@@ -2,6 +2,9 @@ import { DBSQLClient } from "@databricks/sql";
 import type IDBSQLSession from "@databricks/sql/dist/contracts/IDBSQLSession";
 import type IOperation from "@databricks/sql/dist/contracts/IOperation";
 import type { DBSQLParameterValue } from "@databricks/sql/dist/DBSQLParameter";
+import OperationStateError, {
+	OperationStateErrorCode,
+} from "@databricks/sql/dist/errors/OperationStateError";
 import { resolveWarehousePath, serverHostname } from "../runtime";
 import type { QueryParams, Row } from "./types";
 
@@ -50,8 +53,12 @@ const warmHeadroom = 0.75;
 // is_member against, so nothing about whose rows come back changes. The key
 // never leaves this module and is never logged.
 
+// Removes the key only while it still holds this entry. A query that fails on
+// a session already replaced would otherwise drop the replacement from the
+// pool without closing it, leaving its warehouse connection open with nothing
+// left to close it.
 async function closeEntry(key: string, entry: PooledSession): Promise<void> {
-	pool.delete(key);
+	if (pool.get(key) === entry) pool.delete(key);
 	try {
 		const session = await entry.session;
 		await session.close();
@@ -149,6 +156,16 @@ function openSession(token: string): PooledSession {
 	return { session, client, lastUsed: Date.now() };
 }
 
+// Whether an error is the statement itself failing, such as a query the
+// warehouse refused, rather than the session or its token. The driver reports
+// a statement that ran and ended in error with the ERROR operation state.
+function statementFailed(error: unknown): boolean {
+	return (
+		error instanceof OperationStateError &&
+		error.errorCode === OperationStateErrorCode.Error
+	);
+}
+
 // Runs a query as the given user. The token is passed per call rather than
 // captured once, because a forwarded token goes stale across long-lived
 // connections and websocket reconnects.
@@ -182,8 +199,10 @@ export async function queryAsUser(
 	} catch (error) {
 		// Drop the pooled session so the next call reconnects with a fresh
 		// token. An expired token surfaces here and must not be retried
-		// against the same dead session.
-		void closeEntry(key, entry);
+		// against the same dead session. A statement the warehouse ran and
+		// refused leaves the session healthy, and closing it would fail every
+		// other query the same reader has running on it.
+		if (!statementFailed(error)) void closeEntry(key, entry);
 		throw error;
 	} finally {
 		if (operation) {
@@ -241,7 +260,7 @@ export async function queryAsUserBatches(
 
 		return total;
 	} catch (error) {
-		void closeEntry(key, entry);
+		if (!statementFailed(error)) void closeEntry(key, entry);
 		throw error;
 	} finally {
 		if (operation) {

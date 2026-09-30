@@ -47,5 +47,7 @@ export const valuelessOperators = new Set<SearchOperator>([
 ]);
 
 export function isValidOperator(op: string): op is SearchOperator {
-	return op in operatorLabels;
+	// Own keys only. The in operator also finds names on the prototype, so
+	// "constructor" and "toString" would pass as operators.
+	return Object.hasOwn(operatorLabels, op);
 }

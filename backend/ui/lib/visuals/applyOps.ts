@@ -60,7 +60,16 @@ export type RemoteOperation =
 			pageId: string;
 			title?: string;
 			config?: Record<string, unknown>;
-	  };
+	  }
+	| {
+			type: "addPage";
+			pageId: string;
+			title: string;
+			slug: string;
+			sourceKey?: string | null;
+	  }
+	| { type: "removePage"; pageId: string }
+	| { type: "reorderPages"; pageIds: string[] };
 
 export interface ApplyOptions {
 	// Visuals the local editor is actively manipulating. A remote change to
@@ -68,6 +77,33 @@ export interface ApplyOptions {
 	// out from under someone mid-drag is worse than being briefly out of date.
 	// The next op after the gesture ends brings them back in line.
 	protectedIds?: Set<string>;
+	// The page this canvas shows. An insert or a reorder naming another page
+	// is left alone, since its visuals belong on that page rather than here.
+	pageId?: string;
+}
+
+// Whether an operation names a page other than the one on the canvas. Ids are
+// compared without case, since the server stores them in lower case and a
+// client may have sent them in either.
+function onOtherPage(operationPageId: string, options: ApplyOptions): boolean {
+	if (!options.pageId || !operationPageId) return false;
+	return operationPageId.toLowerCase() !== options.pageId.toLowerCase();
+}
+
+// Whether an operation changes the list of pages or a page's title, which is
+// what the page strip shows. The canvas has nothing to apply for these, so the
+// editor reloads the report to pick them up.
+function changesPages(operation: RemoteOperation): boolean {
+	switch (operation.type) {
+		case "addPage":
+		case "removePage":
+		case "reorderPages":
+			return true;
+		case "updatePage":
+			return operation.title !== undefined;
+		default:
+			return false;
+	}
 }
 
 export interface ApplyResult {
@@ -104,13 +140,19 @@ export function applyOperation(
 			// An insert with no id cannot be reproduced, so it is ignored
 			// rather than guessed at. The next full reload picks it up.
 			if (!id) return { visuals, deferred };
+			if (onOtherPage(operation.pageId, options)) {
+				return { visuals, deferred };
+			}
 			// Applying the same op twice must not duplicate, since a session
 			// can receive an op it already applied after a reconnect.
 			if (visuals.some((v) => v.visualId === id)) {
 				return { visuals, deferred };
 			}
 
-			const { config, layout } = splitLayout(operation.config, operation.layout);
+			const { config, layout } = splitLayout(
+				operation.config,
+				operation.layout,
+			);
 			return {
 				visuals: [
 					...visuals,
@@ -132,7 +174,10 @@ export function applyOperation(
 				return { visuals, deferred: [operation.visualId] };
 			}
 
-			const { config, layout } = splitLayout(operation.config, operation.layout);
+			const { config, layout } = splitLayout(
+				operation.config,
+				operation.layout,
+			);
 			return {
 				visuals: visuals.map((visual) => {
 					if (visual.visualId !== operation.visualId) return visual;
@@ -160,12 +205,17 @@ export function applyOperation(
 			// nothing left to protect, and leaving a ghost that no longer
 			// exists on the server would fail on the next save.
 			return {
-				visuals: visuals.filter((v) => v.visualId !== operation.visualId),
+				visuals: visuals.filter(
+					(v) => v.visualId !== operation.visualId,
+				),
 				deferred,
 			};
 		}
 
 		case "reorderVisuals": {
+			if (onOtherPage(operation.pageId, options)) {
+				return { visuals, deferred };
+			}
 			const order = new Map(
 				operation.visualIds.map((id, index) => [id, index]),
 			);
@@ -204,6 +254,9 @@ export interface SyncResult {
 	deferred: string[];
 	// Actors whose changes landed, for a short notice in the UI.
 	actors: string[];
+	// Whether another session added, removed, reordered or renamed a page.
+	// The canvas cannot show that, so the editor reloads the report for it.
+	pagesChanged: boolean;
 }
 
 // Applies a batch of remote ops in sequence order.
@@ -223,6 +276,7 @@ export function applyRemoteOps(
 	let seq = 0;
 	const deferred = new Set<string>();
 	const actors = new Set<string>();
+	let pagesChanged = false;
 
 	// Sequence order is what makes every session converge, so it is enforced
 	// here rather than trusted from the transport.
@@ -240,6 +294,7 @@ export function applyRemoteOps(
 		}
 
 		for (const operation of entry.op.operations ?? []) {
+			if (changesPages(operation)) pagesChanged = true;
 			const result = applyOperation(next, operation, options);
 			next = result.visuals;
 			for (const id of result.deferred) deferred.add(id);
@@ -255,5 +310,6 @@ export function applyRemoteOps(
 		seq,
 		deferred: Array.from(deferred),
 		actors: Array.from(actors),
+		pagesChanged,
 	};
 }

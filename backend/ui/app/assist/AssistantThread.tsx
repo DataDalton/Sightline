@@ -287,6 +287,12 @@ function AnswerBlock({
 			{message.status === "stopped" && (
 				<p className={styles.stopped}>Stopped.</p>
 			)}
+			{message.heldDrafts && message.heldDrafts.length > 0 && (
+				<p className={styles.stopped}>
+					The change was written for a screen that was closed before
+					it arrived, so it was not applied.
+				</p>
+			)}
 
 			{!running && (
 				<div className={styles.answerFoot}>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { Modal } from "../components/shared/Modal";
 import { Select } from "../components/shared/Select";
@@ -91,9 +91,14 @@ export function EditSourceDialog({
 	const [failure, setFailure] = useState<string | null>(null);
 
 	// Seeded once the source arrives. Held as state rather than read through,
-	// so typing does not fight the revalidation.
+	// so typing does not fight the revalidation. A revalidation that brings
+	// back a changed freshness reading is a new object, so the seed is keyed on
+	// the source rather than on the object, and does not overwrite what has
+	// been typed since.
+	const seededFor = useRef<string | null>(null);
 	useEffect(() => {
-		if (!source) return;
+		if (!source || seededFor.current === source.sourceKey) return;
+		seededFor.current = source.sourceKey;
 		setLateness(source.lateness?.setting ?? { mode: "auto" });
 		setTitle(source.title);
 		setDescription(source.description ?? "");

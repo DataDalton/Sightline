@@ -140,8 +140,11 @@ export function sanitizeSvg(
 	let skipDepth = 0;
 	let skipping: string | null = null;
 
-	const tagPattern = /<\/?([a-zA-Z][a-zA-Z0-9:-]*)((?:[^>"']|"[^"]*"|'[^']*')*)\/?>/g;
+	const tagPattern =
+		/<\/?([a-zA-Z][a-zA-Z0-9:-]*)((?:[^>"']|"[^"]*"|'[^']*')*)\/?>/g;
 	let match: RegExpExecArray | null;
+	// Where the text before the next tag starts.
+	let cursor = 0;
 
 	while ((match = tagPattern.exec(body)) !== null) {
 		const raw = match[0];
@@ -149,6 +152,15 @@ export function sanitizeSvg(
 		const attributeText = match[2] ?? "";
 		const closing = raw.startsWith("</");
 		const selfClosing = raw.endsWith("/>");
+
+		// The words of a <text> or <title> sit between tags. Kept as text
+		// inside the drawing, with the brackets escaped so none of it can
+		// open a tag, and dropped along with a removed element's contents.
+		const between = body.slice(cursor, match.index);
+		cursor = match.index + raw.length;
+		if (!skipping && out.length > 0 && between !== "") {
+			out.push(between.replace(/</g, "&lt;").replace(/>/g, "&gt;"));
+		}
 
 		if (skipping) {
 			if (name === skipping) {
@@ -174,7 +186,8 @@ export function sanitizeSvg(
 		}
 
 		const attributes: string[] = [];
-		const attributePattern = /([a-zA-Z][a-zA-Z0-9:-]*)\s*=\s*("([^"]*)"|'([^']*)')/g;
+		const attributePattern =
+			/([a-zA-Z][a-zA-Z0-9:-]*)\s*=\s*("([^"]*)"|'([^']*)')/g;
 		let attribute: RegExpExecArray | null;
 
 		while ((attribute = attributePattern.exec(attributeText)) !== null) {
@@ -208,8 +221,11 @@ export function sanitizeSvg(
 			}
 		}
 
-		const rendered = attributes.length > 0 ? ` ${attributes.join(" ")}` : "";
-		out.push(selfClosing ? `<${name}${rendered}/>` : `<${name}${rendered}>`);
+		const rendered =
+			attributes.length > 0 ? ` ${attributes.join(" ")}` : "";
+		out.push(
+			selfClosing ? `<${name}${rendered}/>` : `<${name}${rendered}>`,
+		);
 	}
 
 	const markup = out.join("");

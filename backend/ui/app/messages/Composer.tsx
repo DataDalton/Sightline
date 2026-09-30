@@ -89,6 +89,8 @@ export function Composer({
 			}
 			setSent(result.threadId);
 			void mutate("/api/messages");
+		} catch {
+			setError("It could not be sent. Try again.");
 		} finally {
 			setSending(false);
 		}

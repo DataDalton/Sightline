@@ -70,11 +70,22 @@ export function formatCompact(value: unknown, hint: FormatHint): string {
 	const sign = n < 0 ? "-" : "";
 	const prefix = hint === "currency" ? "$" : "";
 
-	if (abs >= 1_000_000_000)
-		return `${sign}${prefix}${(abs / 1_000_000_000).toFixed(1)}B`;
-	if (abs >= 1_000_000)
-		return `${sign}${prefix}${(abs / 1_000_000).toFixed(1)}M`;
-	if (abs >= 10_000) return `${sign}${prefix}${(abs / 1_000).toFixed(0)}K`;
+	// A figure that rounds up to a thousand of one unit is written in the next
+	// one, so 999999 reads as 1.0M rather than 1000K.
+	const billions = `${sign}${prefix}${(abs / 1_000_000_000).toFixed(1)}B`;
+	if (abs >= 1_000_000_000) return billions;
+	if (abs >= 1_000_000) {
+		const millions = (abs / 1_000_000).toFixed(1);
+		return millions === "1000.0"
+			? billions
+			: `${sign}${prefix}${millions}M`;
+	}
+	if (abs >= 10_000) {
+		const thousands = (abs / 1_000).toFixed(0);
+		return thousands === "1000"
+			? `${sign}${prefix}${(abs / 1_000_000).toFixed(1)}M`
+			: `${sign}${prefix}${thousands}K`;
+	}
 
 	if (hint === "currency") return currencyFormat.format(n);
 	if (hint === "integer") return integerFormat.format(n);

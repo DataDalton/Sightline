@@ -23,6 +23,8 @@ import {
 	type QueryOut,
 	type StepKind,
 } from "./events";
+import { trimToolResults } from "./rounds";
+import { asksToRemember } from "./memoryIntent";
 import { addMemory, type Profile } from "./store";
 import type { Surface } from "./surfaces";
 import {
@@ -389,6 +391,9 @@ export async function runAgent(
 	const surfaceTools = new Set(
 		surface?.tools.map((t) => t.function.name) ?? [],
 	);
+	// Offered only when the person's own message asks for something to be
+	// kept. See lib/assistant/memoryIntent.
+	const mayRemember = asksToRemember(question);
 	const bySource = new Map(available.map((s) => [s.sourceKey, s]));
 	const policy = await resolvePolicyClass(identity);
 	let charts = 0;
@@ -397,7 +402,7 @@ export async function runAgent(
 	// failure, so the reason is handed straight back instead.
 	const failed = new Map<string, string>();
 
-	const messages: ChatMessage[] = [
+	let messages: ChatMessage[] = [
 		{ role: "system", content: instructions(context, profile, surface) },
 		...history.map(
 			(turn): ChatMessage =>
@@ -485,6 +490,12 @@ export async function runAgent(
 			if (!note) {
 				done(false, "Nothing to remember");
 				return "Error: the note was empty.";
+			}
+			// A call named without the tool being offered is refused, so
+			// only the person's own request can save anything.
+			if (!mayRemember) {
+				done(false, "Not saved, since the question did not ask for it");
+				return "Error: saving is only allowed when the person asks for something to be remembered.";
 			}
 			try {
 				await addMemory(identity.email, note);
@@ -702,7 +713,7 @@ export async function runAgent(
 		}
 	};
 
-	let ranAs: "caller" | "app" = "app";
+	let ranAs: "caller" | "app" = "caller";
 
 	for (let round = 0; round < maxRounds; round++) {
 		if (signal?.aborted) return;
@@ -713,7 +724,13 @@ export async function runAgent(
 		const turn = await converse(
 			identity.userToken,
 			messages,
-			last ? [] : [...tools, ...(surface?.tools ?? []), rememberTool],
+			last
+				? []
+				: [
+						...tools,
+						...(surface?.tools ?? []),
+						...(mayRemember ? [rememberTool] : []),
+					],
 			{ onText: (delta) => emit({ type: "text", delta }), signal },
 		);
 		ranAs = turn.as;
@@ -739,6 +756,7 @@ export async function runAgent(
 				content: results[i],
 			});
 		});
+		messages = trimToolResults(messages);
 	}
 
 	emit({ type: "done", ranAs });

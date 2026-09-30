@@ -8,10 +8,12 @@ import { sql } from "../data/lakebase";
 import { isDatabricksApp } from "../runtime";
 import { getSource } from "../semantic/registry";
 import { compileQuery } from "./builder";
-import { QueryAccessError } from "./execute";
+import { assertCanReadSource, QueryAccessError } from "./execute";
 import { QuerySpecError, type QuerySpec } from "./spec";
 import { maxExportRows } from "./exportLimits";
 import { csvHeader, csvRows } from "./csv";
+import { applyTransforms } from "./transform";
+import { plainDates } from "../format";
 
 // Export produces a file of real business data leaving the platform, so it is
 // treated as a privileged action rather than a convenience:
@@ -125,6 +127,10 @@ export async function startExport(
 		throw new QueryAccessError("A user token is required to export data.");
 	}
 
+	// The same source check every other read makes, before a job or an audit
+	// row is written for a dataset the caller cannot read.
+	await assertCanReadSource(identity, source.sourceKey);
+
 	const spec: QuerySpec = {
 		...request.spec,
 		// One row past the ceiling, so a result that reached it can be reported
@@ -233,29 +239,35 @@ async function runJob(
 	let bytes = 0;
 	let truncated = false;
 
-	// The header is chunk zero.
-	const header = csvHeader(compiled.columns);
-	await sql(
-		`INSERT INTO export_chunks (job_id, seq, body) VALUES ($1, $2, $3)`,
-		[jobId, seq++, header],
-	);
-	bytes += Buffer.byteLength(header);
+	// Figures worked out from the answer, the same ones a grid shows beside
+	// the warehouse columns. Asked with no rows, applyTransforms still names
+	// the columns they add, in the order they are added.
+	const transforms = request.spec.transforms ?? [];
+	const columns =
+		transforms.length > 0
+			? applyTransforms([], compiled.columns, transforms).columns
+			: compiled.columns;
 
 	try {
+		// The header is chunk zero. Written inside the try, so a failure here
+		// marks the job failed rather than leaving it running.
+		const header = csvHeader(columns);
+		await sql(
+			`INSERT INTO export_chunks (job_id, seq, body) VALUES ($1, $2, $3)`,
+			[jobId, seq++, header],
+		);
+		bytes += Buffer.byteLength(header);
+
 		const limit = maxExportRows;
 
-		const consume = async (batch: Record<string, unknown>[]) => {
-			if (written >= limit) {
-				truncated = true;
-				return;
-			}
-			// The query asked for one row past the ceiling, so the last batch
-			// can carry the row that proves the result was cut short.
-			const room = limit - written;
-			const usable = batch.length > room ? batch.slice(0, room) : batch;
-			if (batch.length > room) truncated = true;
+		// Rows held back until the answer is complete. A share of the total, a
+		// rank or a running figure is taken over every row, so with transforms
+		// the rows are gathered, bounded by the export ceiling, and written
+		// once they are all in.
+		const held: Record<string, unknown>[] = [];
 
-			const body = csvRows(compiled.columns, usable);
+		const write = async (usable: Record<string, unknown>[]) => {
+			const body = csvRows(columns, usable);
 			await sql(
 				`INSERT INTO export_chunks (job_id, seq, body) VALUES ($1, $2, $3)`,
 				[jobId, seq++, body],
@@ -275,6 +287,26 @@ async function runJob(
 			);
 		};
 
+		const consume = async (batch: Record<string, unknown>[]) => {
+			const taken = written + held.length;
+			if (taken >= limit) {
+				truncated = true;
+				return;
+			}
+			// The query asked for one row past the ceiling, so the last batch
+			// can carry the row that proves the result was cut short.
+			const room = limit - taken;
+			// Dates as the warehouse spells them, the same as every other
+			// read. The driver hands back Date objects, which would otherwise
+			// be written in the server's long form.
+			const rows = plainDates(batch);
+			const usable = rows.length > room ? rows.slice(0, room) : rows;
+			if (rows.length > room) truncated = true;
+
+			if (transforms.length > 0) held.push(...usable);
+			else await write(usable);
+		};
+
 		if (identity.userToken) {
 			await queryAsUserBatches(
 				identity.userToken,
@@ -290,6 +322,17 @@ async function runJob(
 			const all = await queryLocally(compiled.sql, compiled.params);
 			for (let i = 0; i < all.length; i += batchRows) {
 				await consume(all.slice(i, i + batchRows));
+			}
+		}
+
+		if (held.length > 0) {
+			const derived = applyTransforms(
+				held,
+				compiled.columns,
+				transforms,
+			).rows;
+			for (let i = 0; i < derived.length; i += batchRows) {
+				await write(derived.slice(i, i + batchRows));
 			}
 		}
 

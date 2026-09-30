@@ -21,6 +21,7 @@ import {
 import { Sparkline } from "./Sparkline";
 import { evaluateConditions, type VisualStyle } from "../../lib/visuals/style";
 import { readThemeColors, withAlpha } from "./colors";
+import { useTheme } from "../context/ThemeContext";
 import { VisualError } from "./VisualFrame";
 import { VisualLoadingState } from "./LoadingState";
 import { fieldTooltip, type FieldMeta } from "./types";
@@ -274,11 +275,13 @@ export function KpiRow({
 			: null,
 	);
 
+	const { resolved: resolvedTheme } = useTheme();
 	const colors = useMemo(
 		() => (typeof window === "undefined" ? null : readThemeColors()),
-		// Recomputed when the data changes, which is often enough to pick up a
-		// theme switch without observing one directly.
-		[rows.length, isLoading],
+		// Read again when the data arrives and when the theme switches, since
+		// the palette is read off the document.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[rows.length, isLoading, resolvedTheme],
 	);
 
 	if (error) return <VisualError error={error} />;

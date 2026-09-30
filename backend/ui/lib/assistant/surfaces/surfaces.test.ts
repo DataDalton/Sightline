@@ -468,3 +468,25 @@ test("an unknown screen offers nothing", () => {
 		"explore",
 	);
 });
+
+test("only settings the visual declares are taken from the model", () => {
+	const surface = editorSurface(pageState, available);
+	const out = surface.run("edit_page", {
+		operations: [
+			{
+				op: "add_visual",
+				visualType: "textPanel",
+				options: { html: '<a href="https://example.com">Sign in</a>' },
+			},
+		],
+	});
+	assert.equal(out.ok, true, out.result);
+	const op = (out.draft as EditorOp[])[0];
+	assert.equal(op.op, "add");
+	if (op.op === "add") {
+		const options = op.visual.config.options as
+			| Record<string, unknown>
+			| undefined;
+		assert.equal(options?.html, undefined);
+	}
+});

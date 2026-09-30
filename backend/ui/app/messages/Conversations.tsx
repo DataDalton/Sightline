@@ -19,6 +19,10 @@ import styles from "./Messages.module.css";
 export const conversationsKey = "/api/messages";
 
 const refreshMs = 8000;
+// The app-wide dedupe window is longer than refreshMs, and a poll inside it
+// reuses the last answer rather than asking again. These keys use a window
+// shorter than the poll so each poll reaches the server.
+const dedupeMs = 2000;
 
 function initials(name: string): string {
 	return (
@@ -79,7 +83,10 @@ export function Conversations({
 	const { data, error, isLoading } = useSWR<{
 		threads: ThreadSummary[];
 		unread: number;
-	}>(conversationsKey, { refreshInterval: refreshMs });
+	}>(conversationsKey, {
+		refreshInterval: refreshMs,
+		dedupingInterval: dedupeMs,
+	});
 
 	if (error) {
 		return (
@@ -176,11 +183,13 @@ function Thread({
 	threadId: string;
 	onBack: () => void;
 }) {
-	const key = `/api/messages/${threadId}`;
+	// The id comes from the address, so it is encoded to stay one path
+	// segment under /api/messages.
+	const key = `/api/messages/${encodeURIComponent(threadId)}`;
 	const { data, error, mutate } = useSWR<{
 		thread: ThreadSummary;
 		messages: ThreadMessage[];
-	}>(key, { refreshInterval: refreshMs });
+	}>(key, { refreshInterval: refreshMs, dedupingInterval: dedupeMs });
 	const { mutate: mutateList } = useSWR(conversationsKey);
 
 	const [draft, setDraft] = useState("");
@@ -235,6 +244,8 @@ function Thread({
 			setDraft("");
 			void mutate();
 			void mutateList();
+		} catch {
+			setSendError("It could not be sent. Try again.");
 		} finally {
 			setSending(false);
 		}

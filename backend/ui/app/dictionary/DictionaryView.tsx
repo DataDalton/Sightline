@@ -431,6 +431,21 @@ function UsagePanel({
 		return [...groups.values()];
 	}, [usage]);
 
+	// Focus moves into the panel when it opens and back to what opened it
+	// when it closes, so the keyboard reaches the panel without tabbing past
+	// every row of the list behind it.
+	const closeRef = useRef<HTMLButtonElement | null>(null);
+	useEffect(() => {
+		const opener =
+			document.activeElement instanceof HTMLElement
+				? document.activeElement
+				: null;
+		closeRef.current?.focus();
+		return () => {
+			if (opener?.isConnected) opener.focus();
+		};
+	}, []);
+
 	// Escape closes the panel, as the scrim does.
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
@@ -465,6 +480,7 @@ function UsagePanel({
 						</p>
 					</div>
 					<button
+						ref={closeRef}
 						type="button"
 						className={styles.panelClose}
 						onClick={onClose}

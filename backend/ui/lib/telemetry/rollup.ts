@@ -1,4 +1,5 @@
-import { sql, tryAdvisoryLock } from "../data/lakebase";
+import type { PoolClient } from "pg";
+import { sql, transaction, tryAdvisoryLock } from "../data/lakebase";
 
 // Collapsing usage events into a shape the administration screens can read.
 //
@@ -64,15 +65,25 @@ export async function rollupUsage(days = rebuildDays): Promise<RollupResult> {
 	return { days, rowsWritten, ranMs: Date.now() - startedAt };
 }
 
+// One transaction per day, so a screen reading while the day is rebuilt sees
+// the old rows or the new ones and never the day missing, and a failure part
+// way keeps the old rows.
 async function rollupDay(back: number): Promise<number> {
+	return transaction((client) => rebuildDay(client, back));
+}
+
+async function rebuildDay(client: PoolClient, back: number): Promise<number> {
+	const run = async <T>(text: string, params: unknown[]): Promise<T[]> =>
+		(await client.query(text, params)).rows as T[];
+
 	// Deleted then rewritten rather than merged, so a row whose underlying
 	// events were themselves corrected does not keep a stale total. Both
 	// statements name the same day, so the pair is idempotent.
-	await sql(`DELETE FROM usage_daily WHERE day = current_date - $1::int`, [
+	await run(`DELETE FROM usage_daily WHERE day = current_date - $1::int`, [
 		back,
 	]);
 
-	const written = await sql<{ n: string }>(
+	const written = await run<{ n: string }>(
 		`WITH rolled AS (
 		   INSERT INTO usage_daily (
 		     day, event_type, user_email, report_id, source_key,
@@ -109,11 +120,11 @@ async function rollupDay(back: number): Promise<number> {
 
 	// Latency separately, because a percentile cannot be recovered from sums
 	// and counts and has to be measured where the samples still exist.
-	await sql(
+	await run(
 		`DELETE FROM usage_daily_latency WHERE day = current_date - $1::int`,
 		[back],
 	);
-	await sql(
+	await run(
 		`INSERT INTO usage_daily_latency (day, source_key, samples, p50_ms, p95_ms, max_ms)
 		 SELECT
 		   occurred_on::date,

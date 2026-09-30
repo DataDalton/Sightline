@@ -317,22 +317,26 @@ export async function downloadSheet(
 	const auditId = randomUUID();
 	const filename = `${sheet.title.replace(/[\\/:*?"<>|\r\n]+/g, "_").trim() || "sheet"}.csv`;
 
+	// Rows are keyed by column position rather than by header text. Two
+	// columns may carry the same name, such as a note column named after a
+	// field, and keying by name writes one column's values into both.
 	let header: string[] = [];
 	let lines: Record<string, unknown>[] = [];
 
 	if (def.mode === "pivot") {
 		const data = await pivotData(identity, sheet);
+		const down = data.table.down.length;
 		header = [
 			...data.table.down,
 			...data.table.columns.map((c) => c.label),
 		];
 		lines = data.table.rows.map((row) => {
 			const out: Record<string, unknown> = {};
-			data.table.down.forEach((d, i) => {
-				out[d] = row.total && i === 0 ? "Total" : row.keys[i];
+			data.table.down.forEach((_d, i) => {
+				out[i] = row.total && i === 0 ? "Total" : row.keys[i];
 			});
-			data.table.columns.forEach((c, i) => {
-				out[c.label] = row.cells[i];
+			data.table.columns.forEach((_c, i) => {
+				out[down + i] = row.cells[i];
 			});
 			return out;
 		});
@@ -351,16 +355,16 @@ export async function downloadSheet(
 		header = columns.map((c) => c.name);
 		lines = rows.map((row, i) => {
 			const out: Record<string, unknown> = {};
-			for (const c of columns) {
-				if (c.kind === "field") out[c.name] = row[c.name];
+			columns.forEach((c, at) => {
+				if (c.kind === "field") out[at] = row[c.name];
 				else if (c.kind === "formula") {
 					const v = computed.values[i][c.name];
-					out[c.name] = isError(v) ? v.code : inert(v);
+					out[at] = isError(v) ? v.code : inert(v);
 				} else
-					out[c.name] = inert(
+					out[at] = inert(
 						noteIndex.get(`${keys[i]}\u0000${c.id}`) ?? "",
 					);
-			}
+			});
 			return out;
 		});
 	}
@@ -387,7 +391,12 @@ export async function downloadSheet(
 		notes: `csv export of sheet ${sheet.title}`,
 	});
 
-	const body = csvHeader(header) + csvRows(header, lines);
+	const body =
+		csvHeader(header) +
+		csvRows(
+			header.map((_h, i) => String(i)),
+			lines,
+		);
 
 	await insertLog({
 		recordType: "export",

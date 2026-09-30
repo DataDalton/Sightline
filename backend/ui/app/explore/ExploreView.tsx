@@ -67,9 +67,14 @@ export default function ExploreView() {
 	// Set while a sheet is being made, so a second click does not make another.
 	const [openingSheet, setOpeningSheet] = useState(false);
 	const { alertsEnabled } = useNotify();
-	const { data: editingAlert } = useSWR<{ alert: AlertRecord }>(
-		alertId ? `/api/alerts/${alertId}` : null,
+	// Encoded, since the id comes from the address and must name one alert
+	// rather than a path to some other endpoint.
+	const { data: editingAlertResponse } = useSWR<{ alert?: AlertRecord }>(
+		alertId ? `/api/alerts/${encodeURIComponent(alertId)}` : null,
 	);
+	const editingAlert = editingAlertResponse?.alert?.definition
+		? { alert: editingAlertResponse.alert }
+		: null;
 
 	const apply = (state: ExploreState) => {
 		setSourceKey(state.sourceKey);
@@ -98,6 +103,8 @@ export default function ExploreView() {
 	const { setPanelOpen } = useAssistant();
 	useAssistantSurface({
 		kind: "explore",
+		// One Explore screen. What it holds is sent with each question.
+		id: "explore",
 		state: () => current ?? { sourceKey: "", columns: [], conditions: [] },
 		apply: (draft) => apply(draft as ExploreState),
 		placeholder: "Describe the table you want",

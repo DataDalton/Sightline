@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, memo } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, memo } from "react";
 import { createPortal } from "react-dom";
 import styles from "./Modal.module.css";
 
@@ -61,6 +61,28 @@ export const Modal = memo(function Modal({
 	// dialog and released over the overlay leaves it open.
 	const pressedOverlayRef = useRef(false);
 
+	// The element focus returns to on close. Read during the render that opens
+	// the dialog, before its children exist, since a child with autoFocus
+	// takes the focus while React commits it, ahead of any effect here.
+	// Whether the dialog is open is recorded once each render commits, so a
+	// render that is thrown away before committing reads it again.
+	const openerRef = useRef<HTMLElement | null>(null);
+	const committedOpenRef = useRef(false);
+	if (
+		isOpen &&
+		!committedOpenRef.current &&
+		typeof document !== "undefined"
+	) {
+		openerRef.current =
+			document.activeElement instanceof HTMLElement &&
+			document.activeElement !== document.body
+				? document.activeElement
+				: null;
+	}
+	useLayoutEffect(() => {
+		committedOpenRef.current = isOpen;
+	}, [isOpen]);
+
 	useEffect(() => {
 		if (!isOpen) return;
 
@@ -69,11 +91,9 @@ export const Modal = memo(function Modal({
 		document.body.style.overflow = "hidden";
 
 		// Focus goes into the dialog and comes back to whatever had it
-		// before, so a keyboard user is not left at the top of the page.
-		const previous =
-			document.activeElement instanceof HTMLElement
-				? document.activeElement
-				: null;
+		// before it opened, so a keyboard user is not left at the top of the
+		// page.
+		const previous = openerRef.current;
 		// The first control in the body rather than the close button, which
 		// comes first in the markup. Left alone when a child has already taken
 		// the focus for itself.

@@ -58,14 +58,10 @@ export async function GET(
 		if (error instanceof VersionNotFoundError) {
 			return NextResponse.json({ error: error.message }, { status: 404 });
 		}
+		// Anything else is a database error, logged rather than returned.
 		console.error("Version comparison failed:", error);
 		return NextResponse.json(
-			{
-				error:
-					error instanceof Error
-						? error.message
-						: "Could not compare those versions",
-			},
+			{ error: "Could not compare those versions" },
 			{ status: 500 },
 		);
 	}

@@ -223,14 +223,50 @@ export function settingsLoadedAt(): number {
 	return loadedAt;
 }
 
+type NumericSetting = {
+	[K in keyof PlatformSettings]: PlatformSettings[K] extends number
+		? K
+		: never;
+}[keyof PlatformSettings];
+
+// The range each number may take. A value outside it is clamped to the
+// nearest end. Zero or a negative number for any of these leaves a cache that
+// holds nothing, a timer that fires continuously, a batch that never flushes,
+// or a grace period that never ends, and every one of them is a single typo in
+// the admin form away.
+const numericBounds: Record<NumericSetting, [number, number]> = {
+	resultTtlSeconds: [1, 7 * 86400],
+	resultMaxEntries: [1, 1_000_000],
+	resultMaxBytes: [1, 64 * 1024],
+	expectedReaders: [1, 10_000_000],
+	liveTtlSeconds: [1, 86400],
+	refreshIntervalSeconds: [30, 7 * 86400],
+	groupCacheTtlSeconds: [1, 86400],
+	policyGraceSeconds: [0, 7 * 86400],
+	telemetryFlushIntervalMs: [1000, 3_600_000],
+	telemetryMaxBatch: [1, 100_000],
+	telemetryMaxBuffer: [1, 1_000_000],
+	maxAlertsPerUser: [0, 10_000],
+};
+
+export function coerceNumber(key: NumericSetting, raw: string): number {
+	const fallback = defaultSettings[key];
+	// Number("") is zero, so a cleared field would otherwise store zero
+	// rather than returning to the default.
+	if (raw.trim() === "") return fallback;
+	const parsed = Number(raw);
+	if (!Number.isFinite(parsed)) return fallback;
+	const [min, max] = numericBounds[key];
+	return Math.min(max, Math.max(min, parsed));
+}
+
 // Coerces a stored string into the type the default declares, so the table can
 // hold everything as text without the caller doing conversions.
 function coerce(key: keyof PlatformSettings, raw: string): unknown {
 	const fallback = defaultSettings[key];
 
 	if (typeof fallback === "number") {
-		const parsed = Number(raw);
-		return Number.isFinite(parsed) ? parsed : fallback;
+		return coerceNumber(key as NumericSetting, raw);
 	}
 	if (typeof fallback === "boolean") {
 		const normalized = raw.trim().toLowerCase();

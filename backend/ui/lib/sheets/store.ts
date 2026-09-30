@@ -27,6 +27,8 @@ export interface SheetSummary {
 export interface Sheet extends SheetSummary {
 	definition: SheetDefinition;
 	version: number;
+	// The layout this copy was read at, which a layout save names as its base.
+	layoutVersion: number;
 }
 
 export class SheetError extends Error {
@@ -46,6 +48,7 @@ interface Row {
 	title: string;
 	definition: SheetDefinition;
 	version: string;
+	layout_version: string;
 	modified_on: string;
 	modified_by: string;
 	permission: SheetPermission;
@@ -60,7 +63,8 @@ interface Row {
 // "this sheet" read as "this sheet, or any sheet the caller owns".
 const visible = `
 	SELECT s.sheet_id::text, s.owner_email, s.title, s.definition,
-	       s.version::text, s.modified_on::text, s.modified_by,
+	       s.version::text, s.layout_version::text, s.modified_on::text,
+	       s.modified_by,
 	       CASE WHEN s.owner_email = $1 THEN 'owner'
 	            ELSE (SELECT sh.permission FROM sheet_shares sh
 	                  WHERE sh.sheet_id = s.sheet_id AND sh.email = $1)
@@ -85,6 +89,7 @@ function toSheet(row: Row): Sheet {
 		sharedWith: Number(row.shared_with),
 		definition: cleanDefinition(row.definition),
 		version: Number(row.version),
+		layoutVersion: Number(row.layout_version),
 	};
 }
 
@@ -100,7 +105,12 @@ export async function listSheets(identity: Identity): Promise<SheetSummary[]> {
 		[identity.email.toLowerCase()],
 	);
 	return rows.map((r) => {
-		const { definition: _d, version: _v, ...summary } = toSheet(r);
+		const {
+			definition: _d,
+			version: _v,
+			layoutVersion: _l,
+			...summary
+		} = toSheet(r);
 		return summary;
 	});
 }
@@ -154,8 +164,8 @@ function mayEdit(sheet: Sheet): boolean {
 
 // A change to the sheet itself. Refused when the caller's copy is behind, so
 // two people changing the layout at once cannot silently undo each other: the
-// second is told to take the newer version first. Notes do not need this,
-// since each note is its own row.
+// second is told to take the newer version first. The check is against the
+// layout version, which notes leave alone, since each note is its own row.
 export async function updateSheet(
 	identity: Identity,
 	id: string,
@@ -178,8 +188,9 @@ export async function updateSheet(
 
 	const rows = await sql<{ version: string }>(
 		`UPDATE sheets SET title = $3, definition = $4, version = version + 1,
+		   layout_version = layout_version + 1,
 		   modified_on = now(), modified_by = $5
-		 WHERE sheet_id = $1 AND ($2::bigint IS NULL OR version = $2)
+		 WHERE sheet_id = $1 AND ($2::bigint IS NULL OR layout_version = $2)
 		 RETURNING version::text`,
 		[
 			id,

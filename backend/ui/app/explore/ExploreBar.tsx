@@ -154,7 +154,12 @@ export function ExploreBar({
 	// in the list, and overridden by an "and" or "or" typed in front of it.
 	const [nextJoin, setNextJoin] = useState<"and" | "or">("and");
 	const [active, setActive] = useState(0);
-	const [values, setValues] = useState<string[]>([]);
+	// Values looked up for one field, kept with the field they belong to so a
+	// list read for the previous field is never offered for the next one.
+	const [lookedUp, setLookedUp] = useState<{
+		field: string;
+		values: string[];
+	} | null>(null);
 	// A column chip whose menu is open.
 	const [chipMenu, setChipMenu] = useState<string | null>(null);
 	// A column being swapped for another: the next field picked takes its
@@ -211,10 +216,15 @@ export function ExploreBar({
 			? parsed.condition.field
 			: null;
 	const lookupText = parsed?.typedValue ?? "";
+	const values = useMemo(
+		() =>
+			lookedUp && lookedUp.field === lookupField ? lookedUp.values : [],
+		[lookedUp, lookupField],
+	);
 
 	useEffect(() => {
 		if (!source || !lookupField) {
-			setValues([]);
+			setLookedUp(null);
 			return;
 		}
 		let live = true;
@@ -232,12 +242,15 @@ export function ExploreBar({
 				.then((r) => (r.ok ? r.json() : { values: [] }))
 				.then((body) => {
 					if (live)
-						setValues(
-							Array.isArray(body?.values) ? body.values : [],
-						);
+						setLookedUp({
+							field: lookupField,
+							values: Array.isArray(body?.values)
+								? body.values
+								: [],
+						});
 				})
 				.catch(() => {
-					if (live) setValues([]);
+					if (live) setLookedUp(null);
 				});
 		}, 200);
 		return () => {

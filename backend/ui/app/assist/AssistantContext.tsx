@@ -47,6 +47,9 @@ export const conversationsKey = "/api/assist/conversations";
 // draft that comes back is handed to it to apply as an unsaved change.
 export interface SurfaceBinding {
 	kind: "sheet" | "explore" | "editor";
+	// Which screen of that kind it is, such as the sheet id or the report and
+	// page. A draft is applied only to the screen it was asked on.
+	id: string;
 	// Read when a question is sent, so it is what the screen holds then.
 	state: () => unknown;
 	apply: (draft: unknown) => void;
@@ -175,8 +178,12 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 	const [attachments, setAttachments] = useState<Attachment[]>([]);
 	const [picking, setPicking] = useState(false);
 	const abortRef = useRef<AbortController | null>(null);
-	// Held in a ref as well as state, so an answer that finishes after the
-	// screen changed hands its draft to whichever screen is open then.
+	// Held in a ref as well as state, so a draft is handed to the binding
+	// registered when it arrives rather than the one registered when the
+	// question was sent. That binding is used only when it is the same screen
+	// the question was asked on, matched by kind and id, which covers a screen
+	// that registered again while the answer was streaming. A draft for a
+	// screen that is no longer open is kept on the answer instead.
 	const [surface, setSurface] = useState<SurfaceBinding | null>(null);
 	const surfaceRef = useRef<SurfaceBinding | null>(null);
 
@@ -230,6 +237,10 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 			),
 		);
 
+	// Raised by every open, every new conversation and every question asked,
+	// so a conversation that finishes loading after any of those is not shown.
+	const openRequest = useRef(0);
+
 	const run = useCallback(
 		async (
 			question: string,
@@ -237,6 +248,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 			sourceKey: string | undefined,
 			pointed: Attachment[],
 		) => {
+			openRequest.current += 1;
 			const answerId = newId();
 			const started: Message = {
 				role: "assistant",
@@ -275,6 +287,9 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 			const abort = new AbortController();
 			abortRef.current = abort;
 			const asking = surfaceRef.current;
+			const askedOn = asking
+				? { kind: asking.kind, id: asking.id }
+				: null;
 
 			try {
 				const response = await fetch("/api/assist", {
@@ -342,12 +357,31 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 								) {
 									finished = true;
 								}
-								// Only to the screen it was written for.
-								if (
-									event.type === "draft" &&
-									surfaceRef.current?.kind === event.kind
-								) {
-									surfaceRef.current.apply(event.draft);
+								// Only to the screen it was written for, and
+								// only while that screen is still open.
+								if (event.type === "draft") {
+									const open = surfaceRef.current;
+									if (
+										askedOn &&
+										open &&
+										event.kind === askedOn.kind &&
+										open.kind === askedOn.kind &&
+										open.id === askedOn.id
+									) {
+										open.apply(event.draft);
+									} else {
+										const held = {
+											kind: event.kind,
+											draft: event.draft,
+										};
+										update(answerId, (m) => ({
+											...m,
+											heldDrafts: [
+												...(m.heldDrafts ?? []),
+												held,
+											],
+										}));
+									}
 								}
 								update(answerId, (m) => apply(m, event));
 							} catch {
@@ -423,10 +457,6 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 		},
 		[busy, messages, run],
 	);
-
-	// Raised by every open and every new conversation, so only the one asked
-	// for last is shown when replies land out of order.
-	const openRequest = useRef(0);
 
 	const newConversation = useCallback(() => {
 		abortRef.current?.abort();

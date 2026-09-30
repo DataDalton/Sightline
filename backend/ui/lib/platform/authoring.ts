@@ -13,6 +13,7 @@ import {
 	validateVisual,
 } from "../visuals/validate";
 import { invalidateDefinitions } from "./definitionCache";
+import type { EditOperation } from "./editing";
 import { refuseAddPage, refuseReportDelete } from "./pageProtection";
 
 // Creating the things the editor could only ever add to.
@@ -93,7 +94,8 @@ export async function createCategory(
 
 	// Reactivated rather than refused when the id was used before. A category
 	// removed and then wanted back is the same category, and the reports that
-	// pointed at it still do.
+	// pointed at it still do. An id in use by a live category is refused:
+	// renaming one is updateCategory's, which takes a different capability.
 	const rows = await sql<{ category_id: string }>(
 		`INSERT INTO categories (category_id, name, description, icon, sort_order)
 		 VALUES ($1, $2, $3, $4,
@@ -103,6 +105,7 @@ export async function createCategory(
 		   description = EXCLUDED.description,
 		   icon = EXCLUDED.icon,
 		   is_active = TRUE
+		 WHERE categories.is_active = FALSE
 		 RETURNING category_id`,
 		[
 			categoryId,
@@ -111,6 +114,9 @@ export async function createCategory(
 			input.icon ?? null,
 		],
 	);
+	if (rows.length === 0) {
+		throw new AuthoringError("That id is already in use.");
+	}
 
 	await insertLog({
 		recordType: "category",
@@ -669,11 +675,12 @@ export interface AddPageInput extends TemplateChoice {
 	sourceKey: string | null;
 }
 
-// The editor's own addPage op handles an empty page, because it has to: that op
-// travels over the live change feed so every open session applies the same
-// insert. A page built from a template is not that. It carries visuals, it is
-// not something two editors race on, and putting it through the op log would
-// mean encoding a template expansion as a dozen ops.
+// The editor's own addPage op handles an empty page. A page built from a
+// template carries visuals, so it is written here in one transaction rather
+// than validated op by op through applyEdits. It is still recorded on the op
+// log as the addPage and addVisual ops it amounts to, so an editor with the
+// report open advances its version past this change and refreshes its page
+// strip instead of being refused on its next save.
 export async function addTemplatePage(
 	identity: Identity,
 	input: AddPageInput,
@@ -689,8 +696,9 @@ export async function addTemplatePage(
 		const current = await client.query<{
 			version: string;
 			protect_add_page: boolean;
+			is_personal: boolean;
 		}>(
-			`SELECT version, protect_add_page FROM reports
+			`SELECT version, protect_add_page, is_personal FROM reports
 			 WHERE report_id = $1 FOR UPDATE`,
 			[input.reportId],
 		);
@@ -710,14 +718,28 @@ export async function addTemplatePage(
 		});
 		if (said) throw new AuthoringError(said.reason);
 
-		const next = await client.query<{ sort_order: number; count: string }>(
+		const next = await client.query<{
+			sort_order: number;
+			count: string;
+			slugs: string[] | null;
+		}>(
 			`SELECT coalesce(max(sort_order), -1) + 1 AS sort_order,
-			        count(*)::text AS count
+			        count(*)::text AS count,
+			        array_agg(slug) AS slugs
 			 FROM report_pages WHERE report_id = $1`,
 			[input.reportId],
 		);
 		const order = next.rows[0]?.sort_order ?? 0;
 
+		// The first page-N the report does not already use. The count alone
+		// can land on a slug that is taken, since a page copied from another
+		// report keeps its slug and a removed page keeps its row.
+		const taken = new Set(next.rows[0]?.slugs ?? []);
+		let number = Number(next.rows[0]?.count ?? 0) + 1;
+		while (taken.has(`page-${number}`)) number++;
+
+		const slug = `page-${number}`;
+		const pageTitle = title.slice(0, 200);
 		const page = await client.query<{ page_id: string }>(
 			`INSERT INTO report_pages
 			   (report_id, slug, title, template, source_key, sort_order)
@@ -725,8 +747,8 @@ export async function addTemplatePage(
 			 RETURNING page_id::text AS page_id`,
 			[
 				input.reportId,
-				`page-${Number(next.rows[0]?.count ?? 0) + 1}`,
-				title.slice(0, 200),
+				slug,
+				pageTitle,
 				built.templateKey,
 				input.sourceKey,
 				order,
@@ -734,24 +756,38 @@ export async function addTemplatePage(
 		);
 		const created = page.rows[0].page_id;
 
+		// The same shape applyEdits would have logged for this page, so a
+		// session replaying the feed sees an ordinary page and visual insert.
+		const operations: EditOperation[] = [
+			{
+				type: "addPage",
+				pageId: created,
+				title: pageTitle,
+				slug,
+				sourceKey: input.sourceKey,
+			},
+		];
+
 		for (let i = 0; i < built.visuals.length; i++) {
 			const visual = built.visuals[i];
-			await client.query(
+			const config = {
+				dimensions: visual.dimensions,
+				measures: visual.measures,
+				filters: visual.filters ?? [],
+				options: visual.options,
+			};
+			const inserted = await client.query<{ visual_id: string }>(
 				`INSERT INTO report_visuals
 				   (page_id, visual_type, title, source_key, config,
 				    layout_x, layout_y, layout_w, layout_h, sort_order)
-				 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+				 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+				 RETURNING visual_id::text AS visual_id`,
 				[
 					created,
 					visual.visualType,
 					visual.title,
 					input.sourceKey,
-					JSON.stringify({
-						dimensions: visual.dimensions,
-						measures: visual.measures,
-						filters: visual.filters ?? [],
-						options: visual.options,
-					}),
+					JSON.stringify(config),
 					visual.layout.x,
 					visual.layout.y,
 					visual.layout.w,
@@ -759,16 +795,89 @@ export async function addTemplatePage(
 					i,
 				],
 			);
+			operations.push({
+				type: "addVisual",
+				visualId: inserted.rows[0].visual_id,
+				pageId: created,
+				visualType: visual.visualType,
+				title: visual.title,
+				sourceKey: input.sourceKey,
+				config,
+				layout: visual.layout,
+			});
 		}
 
-		// Bumped so an editor with the report open is told to reload rather than
-		// saving over a page they cannot see.
+		const nextVersion = Number(current.rows[0].version ?? 0) + 1;
 		await client.query(
-			`UPDATE reports SET version = version + 1, modified_by = $2,
+			`UPDATE reports SET version = $2, modified_by = $3,
 			                    modified_on = now()
 			 WHERE report_id = $1`,
-			[input.reportId, identity.email],
+			[input.reportId, nextVersion, identity.email],
 		);
+
+		// Written in the same transaction as the page, as applyEdits writes its
+		// own, so a session never replays an op for a page that did not land.
+		const opRow = await client.query<{ seq: string }>(
+			`INSERT INTO report_ops (report_id, actor, origin_id, op)
+			 VALUES ($1, $2, NULL, $3)
+			 RETURNING seq`,
+			[
+				input.reportId,
+				identity.email,
+				JSON.stringify({ version: nextVersion, operations }),
+			],
+		);
+		const seq = Number(opRow.rows[0]?.seq ?? 0);
+
+		// A snapshot for the new version, so the history lists it and a later
+		// restore can return to it. A personal page keeps no history, as with
+		// any other edit.
+		if (current.rows[0].is_personal !== true) {
+			const visuals = await client.query(
+				`SELECT v.visual_id, v.page_id, v.visual_type, v.title, v.source_key,
+				        v.config, v.layout_x, v.layout_y, v.layout_w, v.layout_h,
+				        v.sort_order, v.is_active
+				 FROM report_visuals v
+				 JOIN report_pages p ON p.page_id = v.page_id
+				 WHERE p.report_id = $1`,
+				[input.reportId],
+			);
+			const pages = await client.query(
+				`SELECT page_id, slug, title, source_key, config, sort_order, is_active
+				 FROM report_pages WHERE report_id = $1`,
+				[input.reportId],
+			);
+			const header = await client.query(
+				`SELECT title, description FROM reports WHERE report_id = $1`,
+				[input.reportId],
+			);
+			await client.query(
+				`INSERT INTO report_versions (report_id, version, snapshot, created_by)
+				 VALUES ($1, $2, $3, $4)
+				 ON CONFLICT (report_id, version) DO NOTHING`,
+				[
+					input.reportId,
+					nextVersion,
+					JSON.stringify({
+						visuals: visuals.rows,
+						pages: pages.rows,
+						report: header.rows[0] ?? null,
+					}),
+					identity.email,
+				],
+			);
+		}
+
+		// A latency hint for listeners. The sequence above is what guarantees
+		// delivery.
+		await client.query(`SELECT pg_notify($1, $2)`, [
+			`report_${input.reportId.replace(/-/g, "")}`,
+			JSON.stringify({
+				seq,
+				version: nextVersion,
+				actor: identity.email,
+			}),
+		]);
 
 		return created;
 	});
@@ -781,7 +890,10 @@ export async function addTemplatePage(
 		newValue: JSON.stringify({ title, template: built.templateKey }),
 	});
 
+	// The report row as well as its body, since the version it carries moved
+	// and an editor reloading on the cached one would be refused on save.
 	invalidateDefinitions(`report-body:${input.reportId}`);
+	invalidateDefinitions("report:");
 
 	return { pageId, visuals: built.visuals };
 }

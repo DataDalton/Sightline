@@ -4,6 +4,16 @@ import { unsubscribe } from "@/lib/deliveries/store";
 import { checkWriteRateLimit } from "@/lib/rateLimit";
 import { caller, privateJson } from "../../notifications/guard";
 
+// Refusals the runner words for the reader, with the status each one means.
+const readableFailures = new Map<string, number>([
+	["Not found", 404],
+	["That dataset is not one you can read.", 403],
+	["A user token is required to send this now.", 403],
+	["The dataset is no longer available.", 409],
+	["The page is no longer there.", 409],
+	["The page has no dataset.", 409],
+]);
+
 // Stops sending a page.
 export async function DELETE(
 	request: NextRequest,
@@ -34,14 +44,12 @@ export async function POST(
 		await sendNow(identity, id);
 		return privateJson({ ok: true });
 	} catch (error) {
-		const message = error instanceof Error ? error.message : "Failed";
-		return privateJson(
-			{ error: message },
-			message === "Not found"
-				? 404
-				: message === "That dataset is not one you can read."
-					? 403
-					: 500,
-		);
+		const message = error instanceof Error ? error.message : "";
+		const status = readableFailures.get(message);
+		if (status) return privateJson({ error: message }, status);
+		// Anything else can be a warehouse or database error carrying schema
+		// details, so it is logged rather than returned.
+		console.error("Sending a scheduled page failed:", error);
+		return privateJson({ error: "Could not send the page" }, 500);
 	}
 }

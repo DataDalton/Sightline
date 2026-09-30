@@ -2,7 +2,10 @@ import { sql } from "../data/lakebase";
 import { asApp } from "../alerts/runner";
 import { liveTtlSeconds } from "../query/cache";
 import { demoMode, isDatabricksApp, resolveWarehousePath } from "../runtime";
-import { parseMetricViewTables } from "../semantic/rowFilterGroups";
+import {
+	metricViewSourcesComplete,
+	parseMetricViewTables,
+} from "../semantic/rowFilterGroups";
 import { listSources } from "../semantic/registry";
 import type { SemanticSource } from "../semantic/types";
 import { runCatalogQuery } from "../semantic/ucMetadata";
@@ -96,9 +99,11 @@ async function resolveTables(source: SemanticSource): Promise<string[] | null> {
 			null,
 			`SHOW CREATE TABLE ${self}`,
 		);
-		const tables = parseMetricViewTables(
-			String(Object.values(created[0] ?? {})[0] ?? ""),
-		);
+		const statement = String(Object.values(created[0] ?? {})[0] ?? "");
+		// A view reading from a query or a short name has sources that cannot
+		// all be named, and a partial list would be kept as if it were whole.
+		if (!metricViewSourcesComplete(statement)) return null;
+		const tables = parseMetricViewTables(statement);
 		if (tables.length === 0) return null;
 		await sql(
 			`UPDATE data_sources SET base_tables = $2::jsonb WHERE source_key = $1`,

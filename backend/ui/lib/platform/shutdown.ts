@@ -12,6 +12,10 @@
 // point here: the telemetry buffer has to be written before the pool it writes
 // through is closed.
 
+// The longest an exit is held for the work, so a stuck write cannot keep a
+// container the platform has asked to stop.
+const exitCeilingMs = 10 * 1000;
+
 export function onShutdown(work: () => Promise<void>): void {
 	let stopping = false;
 
@@ -20,9 +24,26 @@ export function onShutdown(work: () => Promise<void>): void {
 		// again while the first is still finishing it.
 		if (stopping) return;
 		stopping = true;
-		void work().catch((error) => {
+		const finished = work().catch((error) => {
 			console.warn("Shutdown work failed:", error);
 		});
+
+		// Next listens for the same signals, closes its server and then calls
+		// process.exit, without waiting for any other listener. On an idle
+		// replica the server closes at once, which would end the process part
+		// way through the work. An exit asked for while the work runs is held
+		// until it finishes or the ceiling passes, then carried out as asked.
+		const exit = process.exit.bind(process);
+		let held = false;
+		process.exit = ((code?: number) => {
+			if (held) return;
+			held = true;
+			const ceiling = setTimeout(() => exit(code), exitCeilingMs);
+			void finished.finally(() => {
+				clearTimeout(ceiling);
+				exit(code);
+			});
+		}) as typeof process.exit;
 	};
 
 	// once rather than on, so nothing accumulates if this is ever called twice,

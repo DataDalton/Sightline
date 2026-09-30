@@ -99,11 +99,16 @@ export async function POST(request: NextRequest) {
 		if (error instanceof ViewInputError) {
 			return NextResponse.json({ error: error.message }, { status: 400 });
 		}
-		const message =
-			error instanceof Error ? error.message : "Could not save the view";
+		const message = error instanceof Error ? error.message : "";
 		// A failed ownership check is the caller's, not a server fault.
-		const status = message.includes("do not own") ? 403 : 500;
-		if (status === 500) console.error("View save failed:", error);
-		return NextResponse.json({ error: message }, { status });
+		if (message.includes("do not own")) {
+			return NextResponse.json({ error: message }, { status: 403 });
+		}
+		// Anything else is a database error, logged rather than returned.
+		console.error("View save failed:", error);
+		return NextResponse.json(
+			{ error: "Could not save the view" },
+			{ status: 500 },
+		);
 	}
 }

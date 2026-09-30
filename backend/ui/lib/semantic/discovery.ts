@@ -176,11 +176,28 @@ export async function registerSource(
 		.toLowerCase()
 		.replace(/[^a-z0-9_]/g, "_");
 
-	const clash = await sql<{ source_key: string; object_name: string }>(
-		`SELECT source_key, object_name FROM data_sources WHERE source_key = $1`,
+	// The same key is only the same source when all three parts match. The
+	// key leaves the catalogue out, so comparing the object alone let a
+	// registration of the same table in another catalogue re-point every
+	// report on the key at it, and answers cached from the old table would go
+	// on being served under the new one.
+	const clash = await sql<{
+		source_key: string;
+		catalog_name: string;
+		schema_name: string;
+		object_name: string;
+	}>(
+		`SELECT source_key, catalog_name, schema_name, object_name
+		 FROM data_sources WHERE source_key = $1`,
 		[sourceKey],
 	);
-	if (clash.length > 0 && clash[0].object_name !== input.object) {
+	const held = clash[0];
+	if (
+		held &&
+		(held.catalog_name !== input.catalog ||
+			held.schema_name !== input.schema ||
+			held.object_name !== input.object)
+	) {
 		throw new RegistrationError(
 			`Another source already uses the key ${sourceKey}. Give this one a different key.`,
 		);
@@ -280,9 +297,20 @@ export async function deactivateSource(
 	identity: Identity,
 	sourceKey: string,
 ): Promise<void> {
+	// A page or a visual can name a source of its own, so a report built on
+	// another source can still read this one.
 	const used = await sql<{ count: string }>(
-		`SELECT count(*)::text AS count FROM reports
-		 WHERE source_key = $1 AND is_active = TRUE`,
+		`SELECT count(*)::text AS count FROM reports r
+		 WHERE r.is_active = TRUE
+		   AND (r.source_key = $1
+		        OR EXISTS (
+		          SELECT 1 FROM report_pages p
+		          WHERE p.report_id = r.report_id AND p.is_active = TRUE
+		            AND (p.source_key = $1
+		                 OR EXISTS (
+		                   SELECT 1 FROM report_visuals v
+		                   WHERE v.page_id = p.page_id AND v.is_active = TRUE
+		                     AND v.source_key = $1))))`,
 		[sourceKey],
 	);
 	if (Number(used[0]?.count ?? 0) > 0) {
@@ -359,8 +387,8 @@ export async function updateSource(
 	const updated = await sql<{ source_key: string }>(
 		`UPDATE data_sources SET
 		   title = COALESCE($2, title),
-		   description = COALESCE($3, description),
-		   default_time_field = COALESCE($4, default_time_field),
+		   description = CASE WHEN $8 THEN $3 ELSE description END,
+		   default_time_field = CASE WHEN $9 THEN $4 ELSE default_time_field END,
 		   cache_ttl_seconds = COALESCE($5, cache_ttl_seconds),
 		   is_live = COALESCE($6, is_live),
 		   lateness = COALESCE($7::jsonb, lateness),
@@ -377,6 +405,11 @@ export async function updateSource(
 				: Math.max(0, Math.floor(input.cacheTtlSeconds)),
 			input.isLive ?? null,
 			input.lateness ? JSON.stringify(input.lateness) : null,
+			// Present with a null value means cleared, and absent means left
+			// as it is. COALESCE could not tell the two apart, so neither
+			// could ever be emptied once set.
+			input.description !== undefined,
+			input.defaultTimeField !== undefined,
 		],
 	);
 	if (updated.length === 0) {
@@ -423,7 +456,7 @@ export async function updateSourceFields(
 	for (const edit of edits) {
 		const rows = await sql<{ field_id: string }>(
 			`UPDATE source_fields SET
-			   display_name = $3,
+			   display_name = CASE WHEN $6 THEN $3 ELSE display_name END,
 			   description = COALESCE($4, description),
 			   format_hint = COALESCE($5, format_hint)
 			 WHERE source_key = $1 AND field_name = $2
@@ -436,6 +469,10 @@ export async function updateSourceFields(
 				edit.displayName?.trim() || null,
 				edit.description ?? null,
 				edit.formatHint ?? null,
+				// Written only when the edit carries it. An edit to the
+				// description alone leaves the display name out, and that is
+				// not the same as blanking it.
+				edit.displayName !== undefined,
 			],
 		);
 		changed += rows.length;

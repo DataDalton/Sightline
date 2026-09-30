@@ -12,6 +12,7 @@ import {
 	removeNote,
 } from "@/lib/platform/notes";
 import { sql } from "@/lib/data/lakebase";
+import { isUuid } from "@/lib/alerts/store";
 
 // Commentary on a visual.
 //
@@ -100,6 +101,11 @@ export async function GET(request: NextRequest) {
 			{ status: 400 },
 		);
 	}
+	// Both are compared against uuid columns, which reject anything else with
+	// an error rather than an empty result.
+	if (!isUuid(pageId) || !isUuid(reportId)) {
+		return NextResponse.json({ error: "Not found" }, { status: 404 });
+	}
 
 	const allowed = await reach(request, reportId);
 	if (!allowed.ok) return allowed.response;
@@ -138,7 +144,7 @@ export async function POST(request: NextRequest) {
 
 	let payload: PostBody;
 	try {
-		payload = (await request.json()) as PostBody;
+		payload = ((await request.json()) ?? {}) as PostBody;
 	} catch {
 		return NextResponse.json(
 			{ error: "The request could not be read." },
@@ -158,6 +164,9 @@ export async function POST(request: NextRequest) {
 			{ error: "A report, a page and a visual are required." },
 			{ status: 400 },
 		);
+	}
+	if (!isUuid(reportId) || !isUuid(pageId) || !isUuid(visualId)) {
+		return NextResponse.json({ error: "Not found" }, { status: 404 });
 	}
 	if (body === "") {
 		return NextResponse.json(
@@ -231,6 +240,9 @@ export async function DELETE(request: NextRequest) {
 			{ error: "A note is required." },
 			{ status: 400 },
 		);
+	}
+	if (!isUuid(noteId)) {
+		return NextResponse.json({ error: "Not found" }, { status: 404 });
 	}
 
 	try {

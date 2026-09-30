@@ -52,7 +52,22 @@ interface FieldRow {
 let sources = new Map<string, SemanticSource>();
 let loadedAt = 0;
 let loading: Promise<void> | null = null;
+// A reload asked for while one was running, and whether any caller forced it.
+let queuedLoad: Promise<void> | null = null;
+let queuedForce = false;
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+let protectionTimer: ReturnType<typeof setInterval> | null = null;
+
+// How often the stored protection flags are reread, apart from the full
+// reload. Another replica can record a source as protected at any moment,
+// and until this one knows, it keys that source's answers as shared by
+// everyone. Only the flags are read, so it is a small query.
+const protectionCheckMs = 5_000;
+
+// When each source was marked protected on this replica. A reload that read
+// the tables before that moment carries the older flag, and is not allowed to
+// put it back.
+const markedAt = new Map<string, number>();
 
 // What is stored about each source, reread. Registering or editing one reloads
 // this immediately, so the poll is only for changes another replica made, which
@@ -90,10 +105,26 @@ function toField(row: FieldRow): SemanticField {
 // privilege that made the walk fail, and reusing the failed answer would report
 // the fix as having changed nothing.
 export async function loadRegistry(force = false): Promise<void> {
-	// Share one in-flight load between concurrent callers.
-	if (loading) return loading;
+	// A caller arriving during a load gets a fresh load after it, not the one
+	// already running. That load may have read the tables before the caller's
+	// own write committed, so joining it would leave a just registered or
+	// edited source invisible until the next poll. Callers arriving during the
+	// same load share one queued reload.
+	if (loading) {
+		queuedForce = queuedForce || force;
+		if (!queuedLoad) {
+			queuedLoad = loading.then(() => {
+				const again = queuedForce;
+				queuedLoad = null;
+				queuedForce = false;
+				return loadRegistry(again);
+			});
+		}
+		return queuedLoad;
+	}
 
 	loading = (async () => {
+		const startedAt = Date.now();
 		try {
 			const [sourceRows, fieldRows] = await Promise.all([
 				sql<SourceRow>(
@@ -126,7 +157,9 @@ export async function loadRegistry(force = false): Promise<void> {
 					object: row.object_name,
 					kind: row.kind === "metric_view" ? "metric_view" : "table",
 					accessMode: row.access_mode as AccessMode,
-					hasRowFilter: row.has_row_filter,
+					hasRowFilter:
+						row.has_row_filter ||
+						(markedAt.get(row.source_key) ?? 0) >= startedAt,
 					cacheTtlSeconds: row.cache_ttl_seconds,
 					isLive: row.is_live,
 					defaultTimeField: row.default_time_field,
@@ -301,6 +334,44 @@ async function discoverAndApply(
 	}
 }
 
+// Treats a source as protected from now on, on this replica, without waiting
+// for the next reload. Set on the object every request is already holding, so
+// a query mid way through keys its answer by policy class too. Answers held
+// in memory for it are dropped.
+export async function markProtected(sourceKey: string): Promise<void> {
+	markedAt.set(sourceKey, Date.now());
+	const source = sources.get(sourceKey);
+	if (!source || source.hasRowFilter) return;
+	source.hasRowFilter = true;
+	const { forgetSourceInMemory } = await import("../query/cache");
+	forgetSourceInMemory(sourceKey);
+}
+
+// Rereads which sources are recorded as protected, and takes on any that this
+// replica still treats as unprotected. The full reload follows so the walk
+// reads the new filters.
+async function checkProtection(): Promise<void> {
+	try {
+		const rows = await sql<{ source_key: string }>(
+			`SELECT source_key FROM data_sources
+			 WHERE is_active = TRUE AND has_row_filter = TRUE`,
+		);
+		let changed = false;
+		for (const row of rows) {
+			const source = sources.get(row.source_key);
+			if (source && !source.hasRowFilter) {
+				await markProtected(row.source_key);
+				changed = true;
+			}
+		}
+		if (changed) void loadRegistry(true);
+	} catch (error) {
+		// The shared cache is guarded in its own statements, so a missed check
+		// delays this replica's switch rather than leaking a shared answer.
+		console.warn("Protection check failed:", error);
+	}
+}
+
 export function getSource(sourceKey: string): SemanticSource | null {
 	return sources.get(sourceKey) ?? null;
 }
@@ -326,11 +397,20 @@ export function startRegistryPolling(): void {
 	};
 	refreshTimer = setTimeout(tick, refreshIntervalMs());
 	refreshTimer.unref?.();
+	protectionTimer = setInterval(
+		() => void checkProtection(),
+		protectionCheckMs,
+	);
+	protectionTimer.unref?.();
 }
 
 export function stopRegistryPolling(): void {
 	if (refreshTimer) {
 		clearTimeout(refreshTimer);
 		refreshTimer = null;
+	}
+	if (protectionTimer) {
+		clearInterval(protectionTimer);
+		protectionTimer = null;
 	}
 }

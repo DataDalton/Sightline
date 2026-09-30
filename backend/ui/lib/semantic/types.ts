@@ -115,6 +115,14 @@ export function quoteName(part: string): string {
 	return bareName.test(part) ? part : "`" + part.replace(/`/g, "``") + "`";
 }
 
+// The expression a table field is registered with. A column name can hold a
+// backtick, so embedded ones are doubled and the name cannot close the quote
+// and write the rest of the statement.
+export function defaultTableExpr(name: string, kind: string): string {
+	const column = `\`${name.replace(/`/g, "``")}\``;
+	return kind === "measure" ? `SUM(${column})` : column;
+}
+
 // A catalogue, schema and object as one reference for SQL, each part quoted.
 export function quotedRef(
 	catalog: string,

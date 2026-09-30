@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { filterDiscoveryComplete } from "../semantic/filterDiscovery";
+import { filterDiscoveryCovers } from "../semantic/filterDiscovery";
 import { sql } from "../data/lakebase";
 import { changedSince, isChecked } from "../freshness/marks";
 import { settings } from "../settings";
@@ -69,8 +69,10 @@ function superseded(key: string, entry: CacheEntry): boolean {
 // keeps its answers for its own interval.
 const watchedBackstopSeconds = 24 * 3600;
 
+// A source switched to filtered after the last walk is not covered by it, so
+// it stays unshareable until a walk has read its filters.
 export function isShareable(source: SemanticSource): boolean {
-	return !source.hasRowFilter || filterDiscoveryComplete();
+	return !source.hasRowFilter || filterDiscoveryCovers(source.sourceKey);
 }
 
 export function buildCacheKey(
@@ -209,14 +211,22 @@ function toEntry(row: CacheRow): CacheEntry {
 	};
 }
 
+// An answer stored for everyone is served only while the source is still
+// recorded as unprotected. Asked in the same statement as the read or write,
+// so a replica that has not yet reloaded its registry cannot read or store a
+// shared answer once any replica has recorded the source as protected.
+const stillShared = `(rc.policy_class <> 'unfiltered' OR NOT EXISTS (
+	SELECT 1 FROM data_sources d
+	WHERE d.source_key = rc.source_key AND d.has_row_filter))`;
+
 async function sharedGet(
 	key: string,
 ): Promise<{ entry: CacheEntry; bytes: number } | null> {
 	try {
 		const rows = await sql<CacheRow>(
 			`SELECT payload, row_count, created_on, expires_on
-			 FROM result_cache
-			 WHERE cache_key = $1`,
+			 FROM result_cache rc
+			 WHERE cache_key = $1 AND ${stillShared}`,
 			[key],
 		);
 		const row = rows[0];
@@ -276,8 +286,8 @@ export async function cacheGetMany(
 		try {
 			const rows = await sql<CacheRow & { cache_key: string }>(
 				`SELECT cache_key, payload, row_count, created_on, expires_on
-				 FROM result_cache
-				 WHERE cache_key = ANY($1)`,
+				 FROM result_cache rc
+				 WHERE cache_key = ANY($1) AND ${stillShared}`,
 				[missing],
 			);
 			for (const row of rows) {
@@ -339,7 +349,12 @@ async function sharedSet(
 		await sql(
 			`INSERT INTO result_cache
 			   (cache_key, policy_class, source_key, payload, row_count, created_on, expires_on)
-			 VALUES ($1, $2, $3, $4, $5, to_timestamp($6), to_timestamp($7))
+			 SELECT $1::text, $2::text, $3::text, $4::jsonb, $5::integer,
+			        to_timestamp($6::double precision),
+			        to_timestamp($7::double precision)
+			 WHERE $2::text <> 'unfiltered' OR NOT EXISTS (
+			   SELECT 1 FROM data_sources d
+			   WHERE d.source_key = $3::text AND d.has_row_filter)
 			 ON CONFLICT (cache_key) DO UPDATE SET
 			   payload = EXCLUDED.payload,
 			   row_count = EXCLUDED.row_count,
@@ -415,8 +430,9 @@ export async function cacheFresh(keys: string[]): Promise<Set<string>> {
 
 	try {
 		const rows = await sql<{ cache_key: string }>(
-			`SELECT cache_key FROM result_cache
-			 WHERE cache_key = ANY($1) AND expires_on > now()`,
+			`SELECT cache_key FROM result_cache rc
+			 WHERE cache_key = ANY($1) AND expires_on > now()
+			   AND ${stillShared}`,
 			[unknown],
 		);
 		for (const row of rows) fresh.add(row.cache_key);
@@ -475,12 +491,19 @@ export async function cacheSet(
 	return entry;
 }
 
-// Drops cached results for one source across both tiers. Called when a dataset
-// is refreshed or its semantic definition changes.
-export async function invalidateSource(sourceKey: string): Promise<void> {
+// Drops this replica's in memory results for one source, for a source found
+// to have become protected. The shared tier is already guarded by the
+// statements above.
+export function forgetSourceInMemory(sourceKey: string): void {
 	for (const key of Array.from(memory.keys())) {
 		if (key.startsWith(`${sourceKey}:`)) memoryDelete(key);
 	}
+}
+
+// Drops cached results for one source across both tiers. Called when a dataset
+// is refreshed or its semantic definition changes.
+export async function invalidateSource(sourceKey: string): Promise<void> {
+	forgetSourceInMemory(sourceKey);
 	try {
 		await sql(`DELETE FROM result_cache WHERE source_key = $1`, [
 			sourceKey,

@@ -3,7 +3,7 @@ import type { Identity } from "../auth/identity";
 import { parseMetricViewFields } from "./metricViewDefinition";
 import { parseMetricViewCalculations } from "./metricViewCalculations";
 import { readColumns, runCatalogQuery } from "./ucMetadata";
-import { quotedRef } from "./types";
+import { defaultTableExpr, quotedRef } from "./types";
 import {
 	detectRenames,
 	type FieldPrint,
@@ -226,6 +226,7 @@ function emptyResult(
 interface ExistingRow {
 	field_name: string;
 	field_kind: string;
+	sql_expr: string | null;
 	status: string;
 	data_type: string | null;
 	description: string | null;
@@ -320,8 +321,8 @@ export async function syncSourceFields(
 	}
 
 	const existing = await sql<ExistingRow>(
-		`SELECT field_name, field_kind, status, data_type, description,
-		        sort_order, fingerprint, renamed_to
+		`SELECT field_name, field_kind, sql_expr, status, data_type,
+		        description, sort_order, fingerprint, renamed_to
 		 FROM source_fields WHERE source_key = $1`,
 		[sourceKey],
 	);
@@ -351,9 +352,7 @@ export async function syncSourceFields(
 					// here is how the app drifts from the view.
 					source.kind === "metric_view"
 						? null
-						: field.kind === "measure"
-							? `SUM(\`${field.name}\`)`
-							: `\`${field.name}\``,
+						: defaultTableExpr(field.name, field.kind),
 					field.dataType,
 					field.description,
 					formatHintFor(field.name, field.kind),
@@ -365,10 +364,22 @@ export async function syncSourceFields(
 		}
 
 		if (known.field_kind !== field.kind) {
+			// A table field still carrying the expression registration wrote
+			// for its old kind takes the one for its new kind. A measure read
+			// as a bare column sits in the SELECT of an aggregating query
+			// without being grouped, which the warehouse refuses. An
+			// expression somebody wrote by hand is left alone.
+			const expr =
+				source.kind !== "metric_view" &&
+				known.sql_expr ===
+					defaultTableExpr(field.name, known.field_kind)
+					? defaultTableExpr(field.name, field.kind)
+					: known.sql_expr;
 			await sql(
-				`UPDATE source_fields SET field_kind = $3, modified_on = now()
+				`UPDATE source_fields
+				 SET field_kind = $3, sql_expr = $4, modified_on = now()
 				 WHERE source_key = $1 AND field_name = $2`,
-				[sourceKey, field.name, field.kind],
+				[sourceKey, field.name, field.kind, expr],
 			);
 			reclassified.push(field.name);
 		}

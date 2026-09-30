@@ -341,6 +341,14 @@ export function EditorCanvas({
 		onGestureEnd?.(id);
 	};
 
+	// A gesture the browser took away still ends, so its visual stops being
+	// held against remote edits.
+	const cancelGesture = () => {
+		const id = state?.id;
+		cancel();
+		if (id) onGestureEnd?.(id);
+	};
+
 	// While a gesture is running the dragged visual uses the live rectangle
 	// and everything else uses its stored one.
 	const rectFor = (visual: EditableVisual): Rect =>
@@ -477,7 +485,7 @@ export function EditorCanvas({
 		startGesture,
 		finishGesture,
 		move,
-		cancel,
+		cancel: cancelGesture,
 		rectFor,
 		observeFit,
 	};

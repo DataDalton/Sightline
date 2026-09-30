@@ -71,8 +71,10 @@ export async function GET(request: NextRequest) {
 		return NextResponse.json({ error: "Not found" }, { status: 404 });
 	}
 
+	// A value that is not a number falls back to the default. NaN would pass
+	// through both bounds and fail every interval built from it.
 	const days = Math.min(
-		Math.max(Number(request.nextUrl.searchParams.get("days") ?? 7), 1),
+		Math.max(Number(request.nextUrl.searchParams.get("days") ?? 7) || 7, 1),
 		90,
 	);
 	const section = request.nextUrl.searchParams.get("section") ?? "overview";

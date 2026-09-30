@@ -5,6 +5,7 @@ import { isDatabricksApp } from "../runtime";
 import { buildCacheKey, cacheFresh, cacheGetMany, isShareable } from "./cache";
 import { executeQuery } from "./execute";
 import { parseQuerySpec } from "./spec";
+import { pagedSpec, sliceWindow, type RowWindow } from "./paging";
 import { canonicalRequest } from "./requestKey";
 import { initialQueryForVisual } from "./visualSpec";
 import { openingBreakdown, openingFilters } from "../visuals/pageDefaults";
@@ -181,7 +182,12 @@ async function onlyCold(
 			const parsed = parseQuerySpec(spec);
 			const source = getSource(parsed.sourceKey);
 			if (!source) continue;
-			keyed.push({ spec, key: buildCacheKey(source, parsed, policy) });
+			// Keyed as executeQuery keys it, which for a paged query with
+			// whole-answer figures is the whole answer.
+			keyed.push({
+				spec,
+				key: buildCacheKey(source, pagedSpec(parsed).spec, policy),
+			});
 		} catch {
 			// A spec that will not parse is one the renderer would not send
 			// either. Dropped rather than warmed.
@@ -253,6 +259,9 @@ const warmedClasses = new Map<string, number>();
 // the same entries repeatedly for a reader who never opened them.
 const classWarmIntervalMs = 10 * 60 * 1000;
 
+// How many class stamps are held before the stale ones are swept.
+const maxTrackedClasses = 1000;
+
 // How many unopened reports one walk will consider.
 //
 // Was five, which is where the per-spec cache check pinned it: a reader with
@@ -287,6 +296,15 @@ export function warmForReader(
 			// Stamped before the work rather than after, so two requests
 			// arriving together do not both start the same walk.
 			warmedClasses.set(policy.id, now);
+			// A stamp older than the interval decides nothing, so those are
+			// dropped as the map grows rather than kept for every class the
+			// replica has ever seen.
+			if (warmedClasses.size > maxTrackedClasses) {
+				for (const [id, at] of warmedClasses) {
+					if (now - at >= classWarmIntervalMs)
+						warmedClasses.delete(id);
+				}
+			}
 
 			// Imported here rather than at the top: reports.ts reaches the
 			// access layer, and warming is called from the shell, which is
@@ -384,15 +402,23 @@ export async function seedPageQueries(
 		// and is built from the parsed spec; the seed has to land under what
 		// the client will ask with, which is the canonical form of the shape
 		// itself, before parsing fills in defaults the client never sends.
-		const keyed: { shape: unknown; key: string }[] = [];
+		const keyed: {
+			shape: unknown;
+			key: string;
+			window: RowWindow | null;
+		}[] = [];
 		for (const raw of specs.slice(0, maxQueries)) {
 			try {
 				const spec = parseQuerySpec(raw);
 				const source = getSource(spec.sourceKey);
 				if (!source || !isShareable(source)) continue;
+				// A paged query with whole-answer figures is held whole, and
+				// its page is cut from that as executeQuery cuts it.
+				const { spec: runSpec, window } = pagedSpec(spec);
 				keyed.push({
 					shape: raw,
-					key: buildCacheKey(source, spec, policy),
+					key: buildCacheKey(source, runSpec, policy),
+					window,
 				});
 			} catch {
 				// A spec the renderer would not send either.
@@ -409,10 +435,11 @@ export async function seedPageQueries(
 			// old answer with nothing scheduled to replace it, where asking
 			// normally serves the same rows and starts the refresh.
 			if (!lookup?.entry || lookup.stale) continue;
+			const rows = sliceWindow(lookup.entry.rows, held.window);
 			seeded[canonicalRequest(held.shape)] = {
-				rows: lookup.entry.rows,
+				rows,
 				columns: lookup.entry.columns,
-				rowCount: lookup.entry.rowCount,
+				rowCount: held.window ? rows.length : lookup.entry.rowCount,
 				meta: {
 					source: lookup.tier ?? "l1",
 					stale: false,

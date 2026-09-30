@@ -23,7 +23,9 @@ import { refreshTrackedGroups } from "@/lib/semantic/registry";
 // granting is the only step.
 
 const subjectTypes = ["group", "user"] as const;
-const resourceTypes = ["category", "report", "page"] as const;
+// Pages take their access from their report. No read path consults a grant
+// on a single page, so one is refused rather than stored with no effect.
+const resourceTypes = ["category", "report"] as const;
 const permissions = ["view", "edit", "admin"] as const;
 
 type SubjectType = (typeof subjectTypes)[number];

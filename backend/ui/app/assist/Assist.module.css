@@ -756,6 +756,7 @@
 	z-index: 1;
 	width: 8px;
 	cursor: ew-resize;
+	touch-action: none;
 }
 
 .dockResize:hover,

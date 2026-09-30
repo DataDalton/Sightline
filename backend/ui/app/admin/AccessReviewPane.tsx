@@ -107,6 +107,9 @@ function ByReport({ reports }: { reports: { id: string; name: string }[] }) {
 		reportId
 			? `/api/admin?section=reportAccess&reportId=${encodeURIComponent(reportId)}`
 			: null,
+		// A lookup for one report that fails would otherwise leave the previous
+		// report's routes on screen under the newly picked report's name.
+		{ keepPreviousData: false },
 	);
 
 	const answer = data?.report;
@@ -205,6 +208,9 @@ function ByPerson() {
 		subject
 			? `/api/admin?section=subjectAccess&subject=${encodeURIComponent(subject)}`
 			: null,
+		// A lookup for one person that fails would otherwise leave the previous
+		// person's grants on screen under the newly entered email.
+		{ keepPreviousData: false },
 	);
 
 	const answer = data?.subject;

@@ -20,6 +20,9 @@ export interface UcColumn {
 	dataType: string | null;
 	comment: string | null;
 	tags: Record<string, string>;
+	// Whether the tag view could be read. An empty tag list only means the
+	// column has none when it was.
+	tagsRead: boolean;
 }
 
 export interface SyncResult {
@@ -87,6 +90,7 @@ export async function readColumns(
 	// Tags live in a separate view and are frequently empty, so a failure to
 	// read them degrades the result rather than failing the sync.
 	let tagRows: Record<string, unknown>[] = [];
+	let tagsRead = false;
 	try {
 		tagRows = await runQuery(
 			`SELECT column_name, tag_name, tag_value
@@ -94,6 +98,7 @@ export async function readColumns(
 			 WHERE schema_name = :schema AND table_name = :object`,
 			{ schema, object },
 		);
+		tagsRead = true;
 	} catch {
 		// No tag view, or no permission on it. Descriptions still sync.
 	}
@@ -113,6 +118,7 @@ export async function readColumns(
 		dataType: row.full_data_type ? String(row.full_data_type) : null,
 		comment: row.comment ? String(row.comment) : null,
 		tags: tagsByColumn.get(String(row.column_name ?? "")) ?? {},
+		tagsRead,
 	}));
 }
 
@@ -141,13 +147,18 @@ async function recordBaseTables(
 			`SHOW CREATE TABLE ${quotedRef(source.catalog_name, source.schema_name, source.object_name)}`,
 		);
 		const statement = String(Object.values(rows[0] ?? {})[0] ?? "");
-		const { parseMetricViewTables } = await import("./rowFilterGroups");
+		const { metricViewSourcesComplete, parseMetricViewTables } =
+			await import("./rowFilterGroups");
 		const tables = parseMetricViewTables(statement);
 		if (tables.length === 0) return;
 
+		// A list read from a view with a source that is not a table is only
+		// part of what it reads. Written down, the walk would take it as the
+		// whole, so it is cleared instead and the walk reads the view itself.
+		const complete = metricViewSourcesComplete(statement);
 		await sql(
 			`UPDATE data_sources SET base_tables = $2::jsonb WHERE source_key = $1`,
-			[source.source_key, JSON.stringify(tables)],
+			[source.source_key, complete ? JSON.stringify(tables) : null],
 		);
 	} catch (error) {
 		console.warn(
@@ -240,11 +251,15 @@ export async function syncSourceMetadata(
 			descriptionsUpdated += updated.length;
 		}
 
-		if (Object.keys(column.tags).length > 0) {
+		// Written whenever the tags were read, an empty set included, so a tag
+		// removed in the catalogue is removed here too. Not when the read
+		// failed, where an empty set says nothing.
+		if (column.tagsRead) {
 			const updated = await sql<{ field_id: string }>(
 				`UPDATE source_fields
 				 SET tags = $3::jsonb, modified_on = now()
 				 WHERE source_key = $1 AND field_name = $2
+				   AND tags IS DISTINCT FROM $3::jsonb
 				 RETURNING field_id`,
 				[sourceKey, column.columnName, JSON.stringify(column.tags)],
 			);

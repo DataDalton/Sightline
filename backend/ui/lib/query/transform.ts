@@ -21,9 +21,12 @@
 //   They run before the answer is cached and the transforms are part of the
 //   cache key, so a hit serves the derived columns too and costs nothing.
 //
-// What they cannot do is change which rows come back. A running total over the
-// first five hundred rows of a larger result is a running total over those five
-// hundred, and the visuals that use these ask for the whole set they draw.
+// What they cannot do is change which rows come back, so they are only as whole
+// as the rows they are given. A spec that pages with limit and offset and
+// carries anything but a ratio is run for the whole answer instead, the figures
+// are worked out over that, and the page is cut from it afterwards. Rank, share
+// and running total therefore carry on across pages rather than starting again
+// on each. See lib/query/paging.
 
 export type QueryTransform =
 	// Each row's share of the column's total, as a percentage.

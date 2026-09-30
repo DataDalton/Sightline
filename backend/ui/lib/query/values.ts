@@ -11,6 +11,7 @@ import { assertCanReadSource, QueryAccessError } from "./execute";
 import { isShareable } from "./cache";
 import type { QueryFilter } from "./spec";
 import { compileQuery } from "./builder";
+import { changedSince } from "../freshness/marks";
 
 // Distinct values for one dimension, feeding the column filter dropdown.
 //
@@ -55,6 +56,7 @@ const maxOffset = 10000;
 
 interface CacheEntry {
 	value: ValuesResult;
+	computedAt: number;
 	expiresAt: number;
 }
 
@@ -140,8 +142,10 @@ export async function getDistinctValues(
 		);
 	}
 
+	// Whole, because it is written into the statement and a fractional limit
+	// is refused by the warehouse.
 	const limit = Math.min(
-		Math.max(request.limit ?? defaultLimit, 1),
+		Math.max(Math.trunc(request.limit ?? defaultLimit) || defaultLimit, 1),
 		maxLimit,
 	);
 	// Bounded, because an offset is a number from a client and a scroll that
@@ -160,90 +164,99 @@ export async function getDistinctValues(
 
 	const key = cacheKey(request, policy.id, source.hasRowFilter);
 	const now = Date.now();
+	// Not once the data behind it has changed, the same rule ranges follow.
+	// See lib/freshness.
 	const cached = shareable ? cache.get(key) : undefined;
-	if (cached && cached.expiresAt > now) {
+	if (
+		cached &&
+		cached.expiresAt > now &&
+		!changedSince(request.sourceKey, cached.computedAt)
+	) {
 		return { ...cached.value, source: "cache" };
 	}
 
 	const existing = shareable ? inflight.get(key) : undefined;
 	if (existing) return existing;
 
+	// Finished in a callback rather than inside the body. The body can throw
+	// before its first await, on a filter naming an unknown field, and a
+	// finally there would run before the promise is registered below, leaving
+	// a rejected promise in the map that every later caller with the same key
+	// would be handed.
 	const pending = (async (): Promise<ValuesResult> => {
-		try {
-			// Reuse the compiler so the filter and identifier handling is the
-			// same as any other read: one place decides how a value is bound.
-			const filters = [...(request.filters ?? [])];
-			if (request.search && request.search.trim() !== "") {
-				filters.push({
-					field: request.field,
-					op: "contains",
-					value: request.search.trim(),
-				});
-			}
-
-			const compiled = compileQuery(source, {
-				sourceKey: request.sourceKey,
-				dimensions: [request.field],
-				measures: [],
-				filters,
-				sort: [{ field: request.field, direction: "asc" }],
-				// One extra row reveals whether another page exists.
-				limit: limit + 1,
-				offset,
-				transforms: [],
+		// Reuse the compiler so the filter and identifier handling is the
+		// same as any other read, with one place deciding how a value is bound.
+		const filters = [...(request.filters ?? [])];
+		if (request.search && request.search.trim() !== "") {
+			filters.push({
+				field: request.field,
+				op: "contains",
+				value: request.search.trim(),
 			});
-
-			const rows = plainDates(
-				identity.userToken
-					? await queryAsUser(
-							identity.userToken,
-							compiled.sql,
-							compiled.params,
-							identity.email.toLowerCase(),
-						)
-					: !isDatabricksApp
-						? await (
-								await import("../data/localSession")
-							).queryLocally(compiled.sql, compiled.params)
-						: (() => {
-								throw new QueryAccessError(
-									"A user token is required to read column values.",
-								);
-							})(),
-			);
-
-			const truncated = rows.length > limit;
-			const values = (truncated ? rows.slice(0, limit) : rows)
-				.map((row) => row[request.field])
-				.filter((v) => v !== null && v !== undefined && v !== "")
-				.map((v) => String(v));
-
-			const result: ValuesResult = {
-				values,
-				truncated,
-				source: "warehouse",
-			};
-
-			if (shareable) {
-				// Dated from here rather than from the start of the request, so
-				// a slow warehouse does not shorten the life of its own answer.
-				cache.set(key, {
-					value: result,
-					// Four times the result TTL, matching ranges. The set of
-					// values a column takes changes when the data lands, not
-					// while somebody is using a filter, so holding these as
-					// briefly as a query answer refetched them constantly for
-					// no change.
-					expiresAt:
-						Date.now() + settings().resultTtlSeconds * 4 * 1000,
-				});
-				evictIfNeeded();
-			}
-			return result;
-		} finally {
-			inflight.delete(key);
 		}
-	})();
+
+		const compiled = compileQuery(source, {
+			sourceKey: request.sourceKey,
+			dimensions: [request.field],
+			measures: [],
+			filters,
+			sort: [{ field: request.field, direction: "asc" }],
+			// One extra row reveals whether another page exists.
+			limit: limit + 1,
+			offset,
+			transforms: [],
+		});
+
+		const rows = plainDates(
+			identity.userToken
+				? await queryAsUser(
+						identity.userToken,
+						compiled.sql,
+						compiled.params,
+						identity.email.toLowerCase(),
+					)
+				: !isDatabricksApp
+					? await (
+							await import("../data/localSession")
+						).queryLocally(compiled.sql, compiled.params)
+					: (() => {
+							throw new QueryAccessError(
+								"A user token is required to read column values.",
+							);
+						})(),
+		);
+
+		const truncated = rows.length > limit;
+		const values = (truncated ? rows.slice(0, limit) : rows)
+			.map((row) => row[request.field])
+			.filter((v) => v !== null && v !== undefined && v !== "")
+			.map((v) => String(v));
+
+		const result: ValuesResult = {
+			values,
+			truncated,
+			source: "warehouse",
+		};
+
+		if (shareable) {
+			// Dated from here rather than from the start of the request, so
+			// a slow warehouse does not shorten the life of its own answer.
+			cache.set(key, {
+				value: result,
+				computedAt: Date.now(),
+				// Four times the result TTL, matching ranges. The set of
+				// values a column takes changes when the data lands, not
+				// while somebody is using a filter, so holding these as
+				// briefly as a query answer refetched them constantly for
+				// no change.
+				expiresAt: Date.now() + settings().resultTtlSeconds * 4 * 1000,
+			});
+			evictIfNeeded();
+		}
+		return result;
+	})().finally(() => {
+		if (inflight.get(key) === pending) inflight.delete(key);
+	});
 
 	if (shareable) inflight.set(key, pending);
 	return pending;

@@ -42,6 +42,10 @@ const inflight = new Map<string, Promise<PolicyClass>>();
 
 const maxCacheEntries = 50000;
 
+// How many times one resolution asks again after the tracked group list changes
+// under it, before it gives up and reports the class as unresolved.
+const maxResolveAttempts = 2;
+
 // Groups the platform evaluates, and which directory each is asked about.
 //
 // Two sources feed this. The platform's own access rules say who may open a
@@ -231,8 +235,15 @@ function emptyClass(now: number): PolicyClass {
 // Probes group membership in one round trip. is_account_group_member is
 // evaluated by the warehouse for the identity running the query, so this must
 // run under the user token, never the service principal.
-async function probeGrants(identity: Identity): Promise<string[]> {
-	if (trackedGroups.length === 0) return [];
+//
+// Takes the group list as an argument rather than reading the module value, so
+// the column m<i> in the answer is read back against the same group it was
+// asked about even when the tracked list is replaced while the query runs.
+async function probeGrants(
+	identity: Identity,
+	groups: TrackedGroup[],
+): Promise<string[]> {
+	if (groups.length === 0) return [];
 
 	const { isDatabricksApp } = await import("../runtime");
 	if (!identity.userToken && isDatabricksApp) {
@@ -248,7 +259,7 @@ async function probeGrants(identity: Identity): Promise<string[]> {
 
 	// Each group is asked about with the function the thing that named it uses,
 	// so the answer means what the filter meant.
-	const selects = trackedGroups
+	const selects = groups
 		.map((group, i) =>
 			group.scope === "workspace"
 				? `is_member(:g${i}) AS m${i}`
@@ -256,7 +267,7 @@ async function probeGrants(identity: Identity): Promise<string[]> {
 		)
 		.join(", ");
 	const params: Record<string, unknown> = {};
-	trackedGroups.forEach((group, i) => {
+	groups.forEach((group, i) => {
 		params[`g${i}`] = group.name;
 	});
 
@@ -272,10 +283,10 @@ async function probeGrants(identity: Identity): Promise<string[]> {
 		: await (
 				await import("../data/localSession")
 			).queryLocally(
-					`SELECT ${selects}`,
-					params,
-					identity.email.toLowerCase(),
-				);
+				`SELECT ${selects}`,
+				params,
+				identity.email.toLowerCase(),
+			);
 	const row = rows[0] ?? {};
 
 	// The two query paths disagree on type. The SQL driver returns a real
@@ -285,14 +296,14 @@ async function probeGrants(identity: Identity): Promise<string[]> {
 	const isTrue = (value: unknown): boolean =>
 		value === true || String(value).toLowerCase() === "true";
 
-	const matched = trackedGroups.filter((_, i) => isTrue(row[`m${i}`]));
+	const matched = groups.filter((_, i) => isTrue(row[`m${i}`]));
 
 	// Records that a probe has resolved for these groups, which is what lets
 	// administration tell a group name somebody typed correctly from one they
 	// typed wrong. A group assigned a role but never matched by anyone who has
 	// signed in is the shape of a typo.
 	const now = Date.now();
-	for (const group of trackedGroups) {
+	for (const group of groups) {
 		const seen = groupProbes.get(group.name) ?? {
 			probedAt: 0,
 			matchedAt: 0,
@@ -311,8 +322,8 @@ async function probeGrants(identity: Identity): Promise<string[]> {
 // The set of groups an answer was computed against. A stored answer is only
 // usable while this matches, because a group added to the tracked list is a
 // question that was never asked.
-function groupSetKey(): string {
-	return trackedGroups
+function groupSetKey(groups: TrackedGroup[]): string {
+	return groups
 		.map((g) => `${g.scope}:${g.name}`)
 		.sort()
 		.join("|");
@@ -320,16 +331,15 @@ function groupSetKey(): string {
 
 async function readStoredPolicy(
 	email: string,
-	now: number,
+	setKey: string,
 ): Promise<string[] | null> {
 	try {
 		const { sql } = await import("../data/lakebase");
 		const rows = await sql<{ grants: string[] }>(
 			`SELECT grants FROM reader_policy
 			 WHERE user_email = $1 AND group_set = $2 AND expires_on > now()`,
-			[email, groupSetKey()],
+			[email, setKey],
 		);
-		void now;
 		return rows[0]?.grants ?? null;
 	} catch (error) {
 		// A miss, never an error the caller sees: the probe still runs.
@@ -341,7 +351,7 @@ async function readStoredPolicy(
 async function writeStoredPolicy(
 	email: string,
 	grants: string[],
-	now: number,
+	setKey: string,
 ): Promise<void> {
 	try {
 		const { sql } = await import("../data/lakebase");
@@ -356,12 +366,11 @@ async function writeStoredPolicy(
 			   expires_on = EXCLUDED.expires_on`,
 			[
 				email,
-				groupSetKey(),
+				setKey,
 				JSON.stringify(grants),
 				settings().groupCacheTtlSeconds,
 			],
 		);
-		void now;
 	} catch (error) {
 		// Costs the next replica a probe, never correctness.
 		console.warn("Stored policy write failed:", error);
@@ -405,17 +414,40 @@ export async function resolvePolicyClass(
 	const existing = inflight.get(key);
 	if (existing) return existing;
 
-	const pending = (async (): Promise<PolicyClass> => {
+	// Declared ahead of the body so its own cleanup can tell its entry apart.
+	let pending: Promise<PolicyClass> | undefined = undefined;
+	pending = (async (): Promise<PolicyClass> => {
 		try {
 			// Read back before it is asked for again. The stored answer carries
 			// the same lifetime the memory one does, so this shares an existing
 			// window between replicas rather than widening it: a membership
 			// change still takes effect within groupCacheTtlSeconds, and the
 			// grace window still covers a lookup outage.
-			const stored = await readStoredPolicy(key, now);
-			const grants = stored ?? (await probeGrants(identity));
+			//
+			// The answer is only kept when the tracked list is still the one it
+			// was asked against. A list replaced while the probe ran would
+			// otherwise leave a class built without a newly tracked row filter
+			// group, and that class would share cached rows with people outside
+			// the group. The probe is asked again against the new list instead.
+			let groups = trackedGroups;
+			let setKey = groupSetKey(groups);
+			let stored: string[] | null = null;
+			let grants: string[] = [];
+			for (let attempt = 0; ; attempt++) {
+				stored = await readStoredPolicy(key, setKey);
+				grants = stored ?? (await probeGrants(identity, groups));
+				const currentKey = groupSetKey(trackedGroups);
+				if (currentKey === setKey) break;
+				if (attempt >= maxResolveAttempts) {
+					throw new Error(
+						"The tracked group list kept changing while membership was resolved.",
+					);
+				}
+				groups = trackedGroups;
+				setKey = currentKey;
+			}
 			if (!stored) {
-				void writeStoredPolicy(key, grants, now);
+				void writeStoredPolicy(key, grants, setKey);
 				void recordMemberGroups(key, grants);
 			}
 			const value: PolicyClass = {
@@ -460,7 +492,9 @@ export async function resolvePolicyClass(
 				resolvedAt: now,
 			};
 		} finally {
-			inflight.delete(key);
+			// Only this resolution's own entry. A tracked list change clears the
+			// map, and a resolution started after that belongs to someone else.
+			if (inflight.get(key) === pending) inflight.delete(key);
 		}
 	})();
 

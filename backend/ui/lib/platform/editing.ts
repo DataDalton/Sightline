@@ -423,26 +423,37 @@ async function assertTargetsBelongToReport(
 async function assertDefinitionsAreDrawable(
 	operations: EditOperation[],
 ): Promise<void> {
-	// An update may change only a title, in which case the type and the source
-	// it is checked against are the stored ones rather than the op's.
+	// An update that changes only a title or a layout draws the same thing it
+	// did, so it is not checked. One that changes the type, the source or the
+	// settings is checked with whichever of the three it leaves alone taken
+	// from what is stored.
+	const redraws = (op: EditOperation): boolean =>
+		op.type === "updateVisual" &&
+		(op.config !== undefined ||
+			op.visualType !== undefined ||
+			op.sourceKey !== undefined);
 	const needStored = operations
-		.filter(
-			(op): op is Extract<EditOperation, { type: "updateVisual" }> =>
-				op.type === "updateVisual" && op.config !== undefined,
+		.filter((op): op is Extract<EditOperation, { type: "updateVisual" }> =>
+			redraws(op),
 		)
 		.map((op) => op.visualId);
 
 	const stored = new Map<
 		string,
-		{ type: string; sourceKey: string | null }
+		{
+			type: string;
+			sourceKey: string | null;
+			config: Record<string, unknown>;
+		}
 	>();
 	if (needStored.length > 0) {
 		const rows = await sql<{
 			visual_id: string;
 			visual_type: string;
 			source_key: string | null;
+			config: Record<string, unknown> | null;
 		}>(
-			`SELECT visual_id::text AS visual_id, visual_type, source_key
+			`SELECT visual_id::text AS visual_id, visual_type, source_key, config
 			 FROM report_visuals WHERE visual_id = ANY($1::uuid[])`,
 			[needStored],
 		);
@@ -450,13 +461,14 @@ async function assertDefinitionsAreDrawable(
 			stored.set(row.visual_id, {
 				type: row.visual_type,
 				sourceKey: row.source_key,
+				config: row.config ?? {},
 			});
 		}
 	}
 
 	for (const op of operations) {
 		if (op.type !== "addVisual" && op.type !== "updateVisual") continue;
-		if (op.type === "updateVisual" && op.config === undefined) continue;
+		if (op.type === "updateVisual" && !redraws(op)) continue;
 
 		const previous =
 			op.type === "updateVisual" ? stored.get(op.visualId) : undefined;
@@ -480,7 +492,7 @@ async function assertDefinitionsAreDrawable(
 
 		const problems = validateVisual(
 			visualType,
-			(op.config ?? {}) as Record<string, unknown>,
+			(op.config ?? previous?.config ?? {}) as Record<string, unknown>,
 			source
 				? {
 						dimensions: source.dimensions.map((f) => f.name),
@@ -506,11 +518,38 @@ async function assertDefinitionsAreDrawable(
 	}
 }
 
+// Every page and visual id an operation names, in lower case.
+//
+// Postgres reads a uuid in any case and hands it back in lower case, so the
+// lock and ownership checks compare what the database returned against what
+// the client sent. An id sent in upper case matched no lookup, which skipped
+// the lock on its page while the write still found the row.
+function lowerCaseIds(op: EditOperation): EditOperation {
+	const lower = (value: unknown) =>
+		typeof value === "string" ? value.toLowerCase() : value;
+	const next = { ...op } as Record<string, unknown>;
+	for (const key of ["pageId", "visualId"]) {
+		if (key in next) next[key] = lower(next[key]);
+	}
+	for (const key of ["pageIds", "visualIds"]) {
+		if (Array.isArray(next[key])) {
+			next[key] = (next[key] as unknown[]).map(lower);
+		}
+	}
+	return next as EditOperation;
+}
+
 export async function applyEdits(
 	policy: PolicyClass,
 	email: string,
-	request: EditRequest,
+	asked: EditRequest,
 ): Promise<EditResult> {
+	const request: EditRequest = {
+		...asked,
+		operations: Array.isArray(asked.operations)
+			? asked.operations.map(lowerCaseIds)
+			: asked.operations,
+	};
 	const personal = await assertCanEdit(policy, email, request.reportId);
 
 	if (request.operations.length === 0) {
@@ -521,7 +560,7 @@ export async function applyEdits(
 	await assertDefinitionsAreDrawable(request.operations);
 	await assertPagesAreUnlocked(request.reportId, request.operations);
 
-	return transaction(async (client) => {
+	const result = await transaction(async (client) => {
 		// Locking the report row serializes concurrent edits to it. Without
 		// this, two editors could both read version 4, both write version 5,
 		// and one change would vanish.
@@ -756,13 +795,6 @@ export async function applyEdits(
 			[request.reportId, nextVersion, email],
 		);
 
-		// This replica drops what it was holding immediately, so an editor
-		// never watches their own change wait out a cache. Another replica
-		// serves the previous definition until its entry lapses, which is the
-		// price of not asking the database whether it is still current.
-		invalidateDefinitions(`report-body:${request.reportId}`);
-		invalidateDefinitions("report:");
-
 		// The op log is what other sessions replay. It is written inside the
 		// same transaction as the change itself, so a session can never see an
 		// op describing a change that did not land.
@@ -863,6 +895,16 @@ export async function applyEdits(
 
 		return { version: nextVersion, seq };
 	});
+
+	// This replica drops what it was holding once the change has committed,
+	// so an editor never watches their own change wait out a cache. Dropped
+	// after the commit rather than inside the transaction, where a read
+	// landing before the commit would load the old rows and keep them.
+	// Another replica serves the previous definition until its entry lapses,
+	// which is the price of not asking the database whether it is current.
+	invalidateDefinitions(`report-body:${request.reportId}`);
+	invalidateDefinitions("report:");
+	return result;
 }
 
 export interface ReportOp {

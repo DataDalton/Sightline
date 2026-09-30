@@ -22,11 +22,13 @@ const table = (over: Record<string, unknown> = {}) => ({
 	...over,
 });
 
-const snapshot = (visuals: unknown[]): Snapshot =>
-	({ visuals }) as Snapshot;
+const snapshot = (visuals: unknown[]): Snapshot => ({ visuals }) as Snapshot;
 
 test("the first version is described as a creation, not as a pile of additions", () => {
-	const changes = diffSnapshots(null, snapshot([table(), table({ visual_id: "v2" })]));
+	const changes = diffSnapshots(
+		null,
+		snapshot([table(), table({ visual_id: "v2" })]),
+	);
 	assert.equal(changes.length, 1);
 	assert.equal(changes[0].text, "Created the report");
 });
@@ -35,7 +37,9 @@ test("a removed measure is named", () => {
 	const changes = diffSnapshots(
 		snapshot([table()]),
 		snapshot([
-			table({ config: { dimensions: ["Division"], measures: ["Net Sales"] } }),
+			table({
+				config: { dimensions: ["Division"], measures: ["Net Sales"] },
+			}),
 		]),
 	);
 	assert.ok(changes.some((c) => c.text === "Removed Freight from the table"));
@@ -64,16 +68,29 @@ test("reordering columns is a change, not silence", () => {
 	const changes = diffSnapshots(
 		snapshot([table()]),
 		snapshot([
-			table({ config: { dimensions: ["Division"], measures: ["Freight", "Net Sales"] } }),
+			table({
+				config: {
+					dimensions: ["Division"],
+					measures: ["Freight", "Net Sales"],
+				},
+			}),
 		]),
 	);
-	assert.ok(changes.some((c) => c.text === "Reordered the measures on the table"));
+	assert.ok(
+		changes.some((c) => c.text === "Reordered the measures on the table"),
+	);
 });
 
 test("a visual added and one removed are both reported", () => {
 	const changes = diffSnapshots(
 		snapshot([table()]),
-		snapshot([table({ visual_id: "v2", visual_type: "barChart", title: "Sales by division" })]),
+		snapshot([
+			table({
+				visual_id: "v2",
+				visual_type: "barChart",
+				title: "Sales by division",
+			}),
+		]),
 	);
 	assert.ok(changes.some((c) => c.kind === "added"));
 	assert.ok(changes.some((c) => c.kind === "removed"));
@@ -88,7 +105,10 @@ test("a real title is quoted and a slot name is not", () => {
 
 	const slot = diffSnapshots(
 		snapshot([table()]),
-		snapshot([table(), table({ visual_id: "v2", title: "kpi", visual_type: "kpiRow" })]),
+		snapshot([
+			table(),
+			table({ visual_id: "v2", title: "kpi", visual_type: "kpiRow" }),
+		]),
 	);
 	assert.ok(slot.some((c) => c.text === "Added the kpi row"));
 });
@@ -110,10 +130,97 @@ test("a save that changed nothing says so rather than showing an empty entry", (
 });
 
 test("a subtitle edit is reported", () => {
-	const before = { visuals: [table()], report: { title: "Sales", description: "Old" } };
-	const after = { visuals: [table()], report: { title: "Sales", description: "New" } };
+	const before = {
+		visuals: [table()],
+		report: { title: "Sales", description: "Old" },
+	};
+	const after = {
+		visuals: [table()],
+		report: { title: "Sales", description: "New" },
+	};
 	const changes = diffSnapshots(before as Snapshot, after as Snapshot);
 	assert.ok(changes.some((c) => c.text === "Changed the subtitle"));
+});
+
+const page = (over: Record<string, unknown> = {}) => ({
+	page_id: "p1",
+	title: "Overview",
+	config: {},
+	is_active: true,
+	...over,
+});
+
+const withPages = (pages: unknown[]): Snapshot =>
+	({ visuals: [table()], pages }) as Snapshot;
+
+test("an empty page added on its own is reported", () => {
+	const changes = diffSnapshots(
+		withPages([page()]),
+		withPages([page(), page({ page_id: "p2", title: "Regions" })]),
+	);
+	assert.deepEqual(changes, [
+		{ kind: "added", text: 'Added the page "Regions"' },
+	]);
+});
+
+test("a removed page is reported, whether dropped or deactivated", () => {
+	const deactivated = diffSnapshots(
+		withPages([page(), page({ page_id: "p2", title: "Regions" })]),
+		withPages([
+			page(),
+			page({ page_id: "p2", title: "Regions", is_active: false }),
+		]),
+	);
+	assert.deepEqual(deactivated, [
+		{ kind: "removed", text: 'Removed the page "Regions"' },
+	]);
+
+	const dropped = diffSnapshots(
+		withPages([page(), page({ page_id: "p2", title: "Regions" })]),
+		withPages([page()]),
+	);
+	assert.deepEqual(dropped, [
+		{ kind: "removed", text: 'Removed the page "Regions"' },
+	]);
+});
+
+test("a page brought back by a restore reads as added", () => {
+	const changes = diffSnapshots(
+		withPages([
+			page(),
+			page({ page_id: "p2", title: "Regions", is_active: false }),
+		]),
+		withPages([page(), page({ page_id: "p2", title: "Regions" })]),
+	);
+	assert.deepEqual(changes, [
+		{ kind: "added", text: 'Added the page "Regions"' },
+	]);
+});
+
+test("a page rename names both titles", () => {
+	const changes = diffSnapshots(
+		withPages([page()]),
+		withPages([page({ title: "Summary" })]),
+	);
+	assert.deepEqual(changes, [
+		{ kind: "renamed", text: 'Renamed the page "Overview" to "Summary"' },
+	]);
+});
+
+test("a page with no title is still named as a page", () => {
+	const changes = diffSnapshots(
+		withPages([page()]),
+		withPages([page(), page({ page_id: "p2", title: "  " })]),
+	);
+	assert.deepEqual(changes, [{ kind: "added", text: "Added a page" }]);
+});
+
+test("an older snapshot with no page flag counts its pages as active", () => {
+	const changes = diffSnapshots(
+		withPages([{ page_id: "p1", title: "Overview" }]),
+		withPages([{ page_id: "p1", title: "Overview" }]),
+	);
+	assert.equal(changes[0].text, "Saved with no visible change");
 });
 
 test("an older snapshot with no layout recorded does not report a phantom move", () => {

@@ -349,6 +349,9 @@ export function ReportEditor({
 	const [addingPage, setAddingPage] = useState(false);
 	const [removing, setRemoving] = useState(false);
 	const [confirmingRemove, setConfirmingRemove] = useState(false);
+	// Leaving with unsaved edits drops them, and the button sits beside
+	// Publish, so it asks before throwing the batch away.
+	const [confirmingDiscard, setConfirmingDiscard] = useState(false);
 	// The page a removal is being confirmed for. Deleting a page takes every
 	// visual on it with it, and the control is a small cross on a tab, so it
 	// asks first.
@@ -431,6 +434,10 @@ export function ReportEditor({
 	// Operations accumulate rather than replacing state, so a save can tell an
 	// insert from an update without diffing the whole page.
 	const pendingRef = useRef<Map<string, PendingOp>>(new Map());
+	// The operations a save request is carrying, while it is in flight. An
+	// insert in here may already exist on the server, so removing it has to
+	// queue a removal rather than cancel the insert.
+	const inFlightRef = useRef<Map<string, PendingOp> | null>(null);
 	const sessionIdRef = useRef<string>(
 		typeof crypto !== "undefined"
 			? crypto.randomUUID()
@@ -562,6 +569,10 @@ export function ReportEditor({
 		localState: () => ({ visualId: selectedId }),
 		onRemoteChange,
 		onReload,
+		// Refetches the report, which refreshes the page strip. The editor is
+		// keyed by page rather than by version, so the canvas and its unsaved
+		// edits stay as they are.
+		onPagesChanged: () => void onSaved(),
 		getVisuals: () => visualsRef.current as AppliedVisual[],
 		getVersion: () => versionRef.current,
 	});
@@ -600,6 +611,10 @@ export function ReportEditor({
 		if (existing?.type === "addVisual" && op.type === "updateVisual")
 			return;
 		if (existing?.type === "addVisual" && op.type === "removeVisual") {
+			if (inFlightRef.current?.get(key) === existing) {
+				pendingRef.current.set(key, op);
+				return;
+			}
 			pendingRef.current.delete(key);
 			return;
 		}
@@ -1399,6 +1414,8 @@ export function ReportEditor({
 		// it sent. Edits queued while the request is in flight stay pending.
 		const sent = new Map(pendingRef.current);
 		const sentVisuals = new Map<string, EditableVisual>();
+		inFlightRef.current = sent;
+		let landed = false;
 
 		// One operation list rather than a request per change, so the version
 		// moves once and concurrent editors contend once.
@@ -1507,6 +1524,7 @@ export function ReportEditor({
 				return false;
 			}
 
+			landed = true;
 			const result = await response.json();
 			// Only the operations this request carried are done. One replaced
 			// while the request was in flight is a newer edit and stays. An
@@ -1557,6 +1575,20 @@ export function ReportEditor({
 			);
 			return false;
 		} finally {
+			inFlightRef.current = null;
+			// An insert that did not land and was removed while the request was
+			// out never reached the server, so its queued removal cancels out.
+			if (!landed) {
+				for (const [key, op] of sent) {
+					if (
+						op.type === "addVisual" &&
+						pendingRef.current.get(key)?.type === "removeVisual"
+					) {
+						pendingRef.current.delete(key);
+					}
+				}
+				setDirty(pendingRef.current.size > 0);
+			}
 			setSaving(false);
 		}
 	}, [
@@ -1695,6 +1727,9 @@ export function ReportEditor({
 		useAssistant();
 	useAssistantSurface({
 		kind: "editor",
+		// The page the editor was opened on. A page drafted by the assistant
+		// in the same answer stays on this binding.
+		id: `${reportId}:${pageId}`,
 		state: () => ({
 			reportTitle,
 			pageTitle: pageTitleRef.current,
@@ -2131,7 +2166,9 @@ export function ReportEditor({
 				<button
 					type="button"
 					className={styles.toolButton}
-					onClick={onExit}
+					onClick={() =>
+						dirty ? setConfirmingDiscard(true) : onExit()
+					}
 					disabled={saving}
 				>
 					{dirty ? "Discard and exit" : "Done"}
@@ -2216,6 +2253,19 @@ export function ReportEditor({
 						)
 					}
 					onClose={() => setProtecting(false)}
+				/>
+			)}
+
+			{confirmingDiscard && (
+				<ConfirmDialog
+					title="Discard unsaved changes"
+					body="Every edit made since the last publish will be lost. Nobody else has seen them."
+					confirmLabel="Discard and exit"
+					onConfirm={() => {
+						setConfirmingDiscard(false);
+						onExit();
+					}}
+					onCancel={() => setConfirmingDiscard(false)}
 				/>
 			)}
 

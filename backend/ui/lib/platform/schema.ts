@@ -220,6 +220,11 @@ const statements: string[] = [
 
 	`CREATE INDEX IF NOT EXISTS saved_views_owner_idx
 		ON saved_views (owner_email, page_id)`,
+	// A page's views are listed by page, and owners are matched without case.
+	`CREATE INDEX IF NOT EXISTS saved_views_page_idx
+		ON saved_views (page_id)`,
+	`CREATE INDEX IF NOT EXISTS saved_views_owner_lower_idx
+		ON saved_views (lower(owner_email))`,
 
 	// A question somebody asked outside any report.
 	//
@@ -263,6 +268,9 @@ const statements: string[] = [
 
 	`CREATE INDEX IF NOT EXISTS access_policies_lookup_idx
 		ON access_policies (resource_type, resource_id, is_active)`,
+	// Grants are matched to a caller by subject, without case.
+	`CREATE INDEX IF NOT EXISTS access_policies_subject_lower_idx
+		ON access_policies (subject_type, lower(subject_id)) WHERE is_active`,
 
 	// A named bundle of one resource permission and the platform actions its
 	// holder may take. The built-in three are re-asserted on every start from
@@ -312,6 +320,9 @@ const statements: string[] = [
 
 	`CREATE INDEX IF NOT EXISTS role_assignments_subject_idx
 		ON role_assignments (subject_type, subject_id, is_active)`,
+	// Subjects are matched without case when a caller's roles are resolved.
+	`CREATE INDEX IF NOT EXISTS role_assignments_subject_lower_idx
+		ON role_assignments (subject_type, lower(subject_id)) WHERE is_active`,
 
 	`CREATE INDEX IF NOT EXISTS role_assignments_scope_idx
 		ON role_assignments (scope_type, scope_id, is_active)`,
@@ -475,6 +486,9 @@ const statements: string[] = [
 
 	`CREATE INDEX IF NOT EXISTS activity_log_record_idx
 		ON activity_log (record_type, record_id, changed_on DESC)`,
+	// The administration log is read newest first across every record type.
+	`CREATE INDEX IF NOT EXISTS activity_log_changed_idx
+		ON activity_log (changed_on DESC)`,
 
 	// Who viewed what, when, and what it cost.
 	//
@@ -606,6 +620,9 @@ const statements: string[] = [
 
 	`CREATE INDEX IF NOT EXISTS favourites_user_idx
 		ON favourites (user_email, created_on DESC)`,
+	// Every read matches the reader without case.
+	`CREATE INDEX IF NOT EXISTS favourites_user_lower_idx
+		ON favourites (lower(user_email), created_on DESC)`,
 
 	// --- Commentary --------------------------------------------------------
 
@@ -1046,6 +1063,10 @@ const migrations: string[] = [
 	// in lib/platform/presence and leaveSheet in lib/sheets/store.
 	`ALTER TABLE presence ADD COLUMN IF NOT EXISTS left_on TIMESTAMPTZ`,
 	`ALTER TABLE sheet_presence ADD COLUMN IF NOT EXISTS left_on TIMESTAMPTZ`,
+	// Goes up only on a change to the layout, which is what a layout save is
+	// checked against. Version also goes up on every note, so a note written
+	// by one person does not refuse another person's layout change.
+	`ALTER TABLE sheets ADD COLUMN IF NOT EXISTS layout_version BIGINT NOT NULL DEFAULT 1`,
 
 	// The category a role belongs to, for the editor role every category has.
 	// See syncCategoryRoles in lib/platform/roles.
@@ -1072,6 +1093,20 @@ const migrations: string[] = [
 	// it. The walk then reads this column instead of re-parsing megabytes every
 	// hour, and the application never needs SELECT on anything.
 	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS base_tables JSONB`,
+	// Lists written before a view reading from a query or a short name was
+	// recognised can hold only part of what the view reads. They are cleared
+	// once, marked by the column added alongside, and read again from each
+	// view's definition the next time a check needs them.
+	`DO $$ BEGIN
+	   IF NOT EXISTS (
+	     SELECT 1 FROM pg_attribute
+	     WHERE attrelid = 'data_sources'::regclass
+	       AND attname = 'base_tables_rechecked' AND NOT attisdropped
+	   ) THEN
+	     ALTER TABLE data_sources ADD COLUMN base_tables_rechecked BOOLEAN;
+	     UPDATE data_sources SET base_tables = NULL;
+	   END IF;
+	 END $$`,
 
 	`ALTER TABLE source_fields ALTER COLUMN sql_expr DROP NOT NULL`,
 	`ALTER TABLE source_fields ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '{}'::jsonb`,
@@ -1211,10 +1246,22 @@ const migrations: string[] = [
 		ON table_arrivals (arrived_on)`,
 	`CREATE INDEX IF NOT EXISTS alert_events_fired_idx
 		ON alert_events (fired_on)`,
-	`ALTER TABLE usage_events DROP CONSTRAINT IF EXISTS usage_events_event_type_check`,
-	`ALTER TABLE usage_events ADD CONSTRAINT usage_events_event_type_check
-	 CHECK (event_type IN ('page_view', 'query', 'export', 'edit', 'error',
-	                       'page_open', 'visual_action'))`,
+	// Rebuilt only when the constraint does not already allow the newest event
+	// type. Adding a check takes an exclusive lock and scans the whole table,
+	// which is never pruned, and this runs on every start of every replica.
+	`DO $$ BEGIN
+	   IF NOT EXISTS (
+	     SELECT 1 FROM pg_constraint
+	     WHERE conname = 'usage_events_event_type_check'
+	       AND conrelid = 'usage_events'::regclass
+	       AND pg_get_constraintdef(oid) LIKE '%visual_action%'
+	   ) THEN
+	     ALTER TABLE usage_events DROP CONSTRAINT IF EXISTS usage_events_event_type_check;
+	     ALTER TABLE usage_events ADD CONSTRAINT usage_events_event_type_check
+	       CHECK (event_type IN ('page_view', 'query', 'export', 'edit', 'error',
+	                             'page_open', 'visual_action'));
+	   END IF;
+	 END $$`,
 	`CREATE INDEX IF NOT EXISTS usage_events_page_idx
 		ON usage_events (report_id, event_type, occurred_on DESC)`,
 
@@ -1224,9 +1271,18 @@ const migrations: string[] = [
 	// what the last sync saw of it, which is what a rename is recognised by once
 	// the name itself is gone. See lib/semantic/fieldSync and renames.
 	`ALTER TABLE source_fields ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'`,
-	`ALTER TABLE source_fields DROP CONSTRAINT IF EXISTS source_fields_status_check`,
-	`ALTER TABLE source_fields ADD CONSTRAINT source_fields_status_check
-	 CHECK (status IN ('active', 'missing'))`,
+	// Added once rather than dropped and added on every start, for the same
+	// reason as the usage check above.
+	`DO $$ BEGIN
+	   IF NOT EXISTS (
+	     SELECT 1 FROM pg_constraint
+	     WHERE conname = 'source_fields_status_check'
+	       AND conrelid = 'source_fields'::regclass
+	   ) THEN
+	     ALTER TABLE source_fields ADD CONSTRAINT source_fields_status_check
+	       CHECK (status IN ('active', 'missing'));
+	   END IF;
+	 END $$`,
 	`ALTER TABLE source_fields ADD COLUMN IF NOT EXISTS missing_since TIMESTAMPTZ`,
 	// Set when an administrator confirmed the field was renamed and remapped
 	// everything that named it. See lib/semantic/remap.

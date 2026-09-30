@@ -95,13 +95,14 @@ export async function POST(
 		if (error instanceof EditForbiddenError) {
 			return NextResponse.json({ error: error.message }, { status: 403 });
 		}
+		if (
+			error instanceof Error &&
+			/^Version \d+ does not exist$/.test(error.message)
+		) {
+			return NextResponse.json({ error: error.message }, { status: 404 });
+		}
+		// Anything else is a database error, logged rather than returned.
 		console.error("Restore failed:", error);
-		return NextResponse.json(
-			{
-				error:
-					error instanceof Error ? error.message : "Restore failed",
-			},
-			{ status: 500 },
-		);
+		return NextResponse.json({ error: "Restore failed" }, { status: 500 });
 	}
 }

@@ -3,6 +3,7 @@ import { resolvePolicyClass, type PolicyClass } from "../auth/policy";
 import { queryAsUser } from "../data/userSession";
 import { plainDates } from "../format";
 import { applyTransforms } from "./transform";
+import { pagedSpec, sliceWindow, type RowWindow } from "./paging";
 import { isDatabricksApp } from "../runtime";
 import { getSource } from "../semantic/registry";
 import type { SemanticSource } from "../semantic/types";
@@ -84,11 +85,15 @@ function toResult(
 	queryMs: number | null,
 	startedAt: number,
 	semantic: SemanticSource,
+	window: RowWindow | null,
 ): QueryResult {
+	// A spec widened by pagedSpec is cached whole, and the page it asked for is
+	// cut out here, on a hit and a miss alike.
+	const rows = sliceWindow(entry.rows, window);
 	return {
-		rows: entry.rows,
+		rows,
 		columns: entry.columns,
-		rowCount: entry.rowCount,
+		rowCount: window ? rows.length : entry.rowCount,
 		source,
 		stale,
 		computedAt: entry.computedAt,
@@ -127,7 +132,10 @@ export async function executeQuery(
 		);
 	}
 
-	const key = buildCacheKey(source, spec, policy);
+	// Derived figures that read every row are worked out over the whole
+	// answer, which is what is run and cached. See lib/query/paging.
+	const { spec: runSpec, window } = pagedSpec(spec);
+	const key = buildCacheKey(source, runSpec, policy);
 
 	// A filtered source whose filters have not been read is answered from the
 	// warehouse every time, under this reader token. Slower, and the only
@@ -146,6 +154,7 @@ export async function executeQuery(
 			null,
 			startedAt,
 			source,
+			window,
 		);
 	}
 
@@ -157,7 +166,7 @@ export async function executeQuery(
 	if (lookup.entry && lookup.stale && !source.isLive) {
 		if (!revalidating.has(key)) {
 			revalidating.add(key);
-			void runAndCache(identity, source, spec, policy, key)
+			void runAndCache(identity, source, runSpec, policy, key)
 				.catch((error) => {
 					console.warn(
 						`Background refresh failed for ${key}:`,
@@ -173,13 +182,14 @@ export async function executeQuery(
 			null,
 			startedAt,
 			source,
+			window,
 		);
 	}
 
 	// An answer that may not be shared is not shared in flight either. It was
 	// computed under one reader's token.
 	const queryStartedAt = Date.now();
-	const run = () => runAndCache(identity, source, spec, policy, key);
+	const run = () => runAndCache(identity, source, runSpec, policy, key);
 	const entry = await (shareable ? shareInflight(key, run) : run());
 	return toResult(
 		entry,
@@ -188,6 +198,7 @@ export async function executeQuery(
 		Date.now() - queryStartedAt,
 		startedAt,
 		source,
+		window,
 	);
 }
 
@@ -330,11 +341,17 @@ export async function executeQueries(
 			refused.add(index);
 			return null;
 		}
+		// The spec that is run and cached, which for a paged query with
+		// whole-answer figures is the whole answer. The one asked for is kept
+		// for the checks that name its fields.
+		const { spec: runSpec, window } = pagedSpec(spec);
 		return {
 			spec,
+			runSpec,
+			window,
 			source,
 			shareable: isShareable(source),
-			key: buildCacheKey(source, spec, policy),
+			key: buildCacheKey(source, runSpec, policy),
 		};
 	});
 
@@ -394,6 +411,7 @@ export async function executeQueries(
 					null,
 					startedAt,
 					entry.source,
+					entry.window,
 				),
 			};
 			return;
@@ -407,7 +425,7 @@ export async function executeQueries(
 				void runAndCache(
 					identity,
 					entry.source,
-					entry.spec,
+					entry.runSpec,
 					policy,
 					entry.key,
 				)
@@ -427,6 +445,7 @@ export async function executeQueries(
 					null,
 					startedAt,
 					entry.source,
+					entry.window,
 				),
 			};
 			return;
@@ -453,7 +472,7 @@ export async function executeQueries(
 					runAndCache(
 						identity,
 						entry.source,
-						entry.spec,
+						entry.runSpec,
 						policy,
 						entry.key,
 					);
@@ -468,6 +487,7 @@ export async function executeQueries(
 						Date.now() - queryStartedAt,
 						startedAt,
 						entry.source,
+						entry.window,
 					),
 				};
 			} catch (error) {

@@ -48,8 +48,14 @@ export default function SheetsList() {
 
 	const create = async () => {
 		setCreating(true);
-		const id = await createSheet("Untitled sheet");
-		setCreating(false);
+		let id: string | null = null;
+		try {
+			id = await createSheet("Untitled sheet");
+		} catch {
+			// Offline or an unreadable reply. The button is offered again.
+		} finally {
+			setCreating(false);
+		}
 		if (id) router.push(`/sheets/${id}/`);
 	};
 

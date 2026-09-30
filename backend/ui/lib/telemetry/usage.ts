@@ -47,6 +47,45 @@ export interface UsageEvent {
 	action?: string | null;
 }
 
+const columns = [
+	"occurred_on",
+	"user_email",
+	"policy_class",
+	"event_type",
+	"category_id",
+	"report_id",
+	"page_id",
+	"visual_id",
+	"source_key",
+	"duration_ms",
+	"query_ms",
+	"row_count",
+	"cache_hit",
+	"error_message",
+	"session_id",
+	"client_info",
+	"action",
+];
+
+// Postgres binds at most this many parameters in one statement.
+const maxParams = 65535;
+
+// Events per insert. The setting is stored as free text, so it is held
+// between one and the most whose parameters fit one statement. A value past
+// that would fail every flush and lose every event, and zero would never
+// drain the buffer.
+export function batchSize(setting: number): number {
+	const most = Math.floor(maxParams / columns.length);
+	if (!Number.isFinite(setting)) return most;
+	return Math.min(Math.max(Math.floor(setting), 1), most);
+}
+
+// Milliseconds between flushes, held to at least a second so a zero or an
+// unreadable setting cannot spin the timer.
+export function flushInterval(setting: number): number {
+	return Number.isFinite(setting) ? Math.max(setting, 1000) : 15_000;
+}
+
 let buffer: UsageEvent[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let dropped = 0;
@@ -64,7 +103,7 @@ export function record(event: UsageEvent): void {
 
 	// Flush early when the batch is already full rather than waiting out the
 	// interval, so a traffic spike does not sit in memory.
-	if (buffer.length >= settings().telemetryMaxBatch) {
+	if (buffer.length >= batchSize(settings().telemetryMaxBatch)) {
 		void flush();
 	}
 }
@@ -72,31 +111,12 @@ export function record(event: UsageEvent): void {
 export async function flush(): Promise<void> {
 	if (buffer.length === 0) return;
 
-	const batch = buffer.splice(0, settings().telemetryMaxBatch);
+	const batch = buffer.splice(0, batchSize(settings().telemetryMaxBatch));
 
 	try {
 		// One multi-row INSERT per flush. Values bind positionally because
 		// Postgres caps a statement at 65535 parameters and this keeps the
 		// count predictable at one per column per event.
-		const columns = [
-			"occurred_on",
-			"user_email",
-			"policy_class",
-			"event_type",
-			"category_id",
-			"report_id",
-			"page_id",
-			"visual_id",
-			"source_key",
-			"duration_ms",
-			"query_ms",
-			"row_count",
-			"cache_hit",
-			"error_message",
-			"session_id",
-			"client_info",
-			"action",
-		];
 		const params: unknown[] = [];
 		const tuples = batch.map((event, i) => {
 			const base = i * columns.length;
@@ -144,12 +164,18 @@ export function startTelemetryFlushing(): void {
 	const tick = () => {
 		void flush().finally(() => {
 			if (flushTimer === null) return;
-			flushTimer = setTimeout(tick, settings().telemetryFlushIntervalMs);
+			flushTimer = setTimeout(
+				tick,
+				flushInterval(settings().telemetryFlushIntervalMs),
+			);
 			flushTimer.unref?.();
 		});
 	};
 
-	flushTimer = setTimeout(tick, settings().telemetryFlushIntervalMs);
+	flushTimer = setTimeout(
+		tick,
+		flushInterval(settings().telemetryFlushIntervalMs),
+	);
 	flushTimer.unref?.();
 }
 
@@ -158,8 +184,14 @@ export async function stopTelemetryFlushing(): Promise<void> {
 		clearTimeout(flushTimer);
 		flushTimer = null;
 	}
-	// Drain what is left so a graceful shutdown does not lose the tail.
-	await flush();
+	// Drain what is left so a graceful shutdown does not lose the tail. One
+	// flush takes one batch, so it repeats until the buffer is empty. It stops
+	// at the first failed flush, since the store is then most likely gone.
+	for (let guard = 0; buffer.length > 0 && guard < 1000; guard++) {
+		const failuresBefore = flushFailures;
+		await flush();
+		if (flushFailures > failuresBefore) break;
+	}
 }
 
 export interface TelemetryStats {

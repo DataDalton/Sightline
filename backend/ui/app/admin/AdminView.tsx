@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { describeFetchError } from "../../lib/swr";
+import { sanitizeSvg } from "../../lib/visuals/svgSanitize";
 import { formatCompact } from "../../lib/format";
 import { describeInterval } from "../../lib/freshness/history";
 import {
@@ -181,21 +182,29 @@ export default function AdminView() {
 	// One request for whichever pane is open. Panes marked "own" fetch for
 	// themselves and panes marked "settings" read the settings endpoint through
 	// ConfigurationSection, so the shell asks for nothing on their behalf.
-	const key =
-		feed === "usage"
-			? `/api/admin?days=${days}`
-			: feed === "security"
-				? "/api/admin?section=security"
-				: feed === "platform"
-					? "/api/admin?section=platform"
-					: null;
-
-	const { data, error, isLoading, mutate } = useSWR(key);
+	//
+	// One hook per feed, so the answer SWR holds over while a new key loads is
+	// always from the same feed. A single hook hands a usage answer to the
+	// security section on the first render after a pane change, before the new
+	// request marks itself loading, and reading the wrong shape throws inside
+	// the pane's error boundary. Changing the window keeps the previous
+	// window's figures on screen until the new ones land.
+	const usage = useSWR(feed === "usage" ? `/api/admin?days=${days}` : null);
+	const security = useSWR(
+		feed === "security" ? "/api/admin?section=security" : null,
+	);
+	const platform = useSWR(
+		feed === "platform" ? "/api/admin?section=platform" : null,
+	);
+	const fetched =
+		feed === "usage" || feed === "security" || feed === "platform";
+	const { data, error, isLoading, mutate } =
+		feed === "usage" ? usage : feed === "security" ? security : platform;
 	// Both admin sections answer from cache, so a placeholder shown on every
 	// pane change would blink rather than inform.
 	const showSkeleton = useDeferredLoading(isLoading);
 
-	const waiting = Boolean(key) && (isLoading || !data);
+	const waiting = fetched && (isLoading || !data);
 
 	const body = () => {
 		if (error) {
@@ -1067,13 +1076,37 @@ function ConfigurationSection({ group }: { group: PaneId }) {
 
 	const save = async () => {
 		if (!draft) return;
+		// Only what differs from what was loaded. The endpoint takes a partial
+		// body and records one audit entry per key it receives, so sending the
+		// whole object wrote back every setting as it stood when this pane
+		// loaded, undoing changes saved elsewhere since, and logged each one as
+		// changed by this save.
+		const base = (data?.settings ?? {}) as Partial<ConfigValues>;
+		const changes: Record<string, unknown> = {};
+		for (const [key, value] of Object.entries(draft)) {
+			if (
+				JSON.stringify(value) !==
+				JSON.stringify(base[key as keyof ConfigValues])
+			) {
+				changes[key] = value;
+			}
+		}
+		// The server rebuilds the mark with the adaptive option, so a change to
+		// that option carries the mark with it.
+		if ("appLogoAdaptive" in changes && draft.appLogo) {
+			changes.appLogo = draft.appLogo;
+		}
+		if (Object.keys(changes).length === 0) {
+			setDraft(null);
+			return;
+		}
 		setSaving(true);
 		setFailure(null);
 		try {
 			const response = await fetch("/api/admin/settings", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(draft),
+				body: JSON.stringify(changes),
 			});
 			if (!response.ok) {
 				const detail = await response.json().catch(() => null);
@@ -1100,6 +1133,15 @@ function ConfigurationSection({ group }: { group: PaneId }) {
 	}
 
 	const logoKb = Math.round(new Blob([values.appLogo ?? ""]).size / 1024);
+	// A freshly chosen file is still the raw upload until the server stores
+	// its cleaned form, so the preview runs it through the same allow-list
+	// before it reaches the document. Event handler attributes in the raw
+	// file would otherwise run in this admin session.
+	const logoPreview = values.appLogo
+		? (sanitizeSvg(values.appLogo, {
+				adaptive: values.appLogoAdaptive !== false,
+			})?.markup ?? "")
+		: "";
 	const limitKb = Math.round((data?.maxLogoBytes ?? 0) / 1024);
 
 	return (
@@ -1158,7 +1200,7 @@ function ConfigurationSection({ group }: { group: PaneId }) {
 													styles.brandPreviewMark
 												}
 												dangerouslySetInnerHTML={{
-													__html: values.appLogo,
+													__html: logoPreview,
 												}}
 											/>
 										) : (

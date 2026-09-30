@@ -3,6 +3,7 @@
 import { Fragment, useState } from "react";
 import useSWR from "swr";
 import { Skeleton } from "../components/shared/Skeleton";
+import { ConfirmDialog } from "../components/shared/ConfirmDialog";
 import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import styles from "./Admin.module.css";
 
@@ -57,6 +58,12 @@ export default function CategoriesPane() {
 	const [opened, setOpened] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [failure, setFailure] = useState<string | null>(null);
+	// The category a removal is being confirmed for. Removing one also removes
+	// its editor role and every assignment of it.
+	const [removingCategory, setRemovingCategory] = useState<{
+		categoryId: string;
+		name: string;
+	} | null>(null);
 
 	const categories = data?.categories ?? [];
 	const editing = categories.some((c) => c.categoryId === draft.categoryId);
@@ -203,14 +210,11 @@ export default function CategoriesPane() {
 											className={styles.linkButton}
 											disabled={busy}
 											onClick={() =>
-												post(
-													{
-														action: "removeCategory",
-														categoryId:
-															category.categoryId,
-													},
-													"Could not remove",
-												)
+												setRemovingCategory({
+													categoryId:
+														category.categoryId,
+													name: category.name,
+												})
 											}
 										>
 											Remove
@@ -371,6 +375,32 @@ export default function CategoriesPane() {
 			</div>
 
 			{failure && <div className={styles.saveError}>{failure}</div>}
+
+			{removingCategory && (
+				<ConfirmDialog
+					title="Remove this category"
+					body={
+						<>
+							<strong>{removingCategory.name}</strong> leaves the
+							navigation, and its editor role stops applying to
+							everybody it was assigned to.
+						</>
+					}
+					confirmLabel="Remove category"
+					busy={busy}
+					onConfirm={async () => {
+						await post(
+							{
+								action: "removeCategory",
+								categoryId: removingCategory.categoryId,
+							},
+							"Could not remove",
+						);
+						setRemovingCategory(null);
+					}}
+					onCancel={() => setRemovingCategory(null)}
+				/>
+			)}
 		</>
 	);
 }

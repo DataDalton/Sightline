@@ -10,6 +10,7 @@ import {
 	type PageProtection,
 } from "./pageProtection";
 import { insertLog } from "../activityLog";
+import { invalidateDefinitions } from "./definitionCache";
 import { diffSnapshots, type Change, type Snapshot } from "./versionDiff";
 import { diffVersions, type VersionDiff } from "./versionDetail";
 
@@ -227,7 +228,7 @@ export async function restoreVersion(
 ): Promise<RestoreResult> {
 	await assertCanEdit(policy, email, reportId);
 
-	return transaction(async (client) => {
+	const restored = await transaction(async (client) => {
 		// The same lock a save takes, so a restore and an edit cannot
 		// interleave and produce a report that is half of each.
 		const current = await client.query<{ version: string }>(
@@ -317,11 +318,17 @@ export async function restoreVersion(
 		}
 
 		for (const page of snapshot.pages ?? []) {
+			// Order and source as well, which every snapshot has recorded
+			// alongside the rest. A source recorded as null means the page
+			// reads the report's, so it is restored as null when the snapshot
+			// has the column at all, and left alone only when it does not.
 			await client.query(
 				`UPDATE report_pages
 				 SET title = COALESCE($3, title),
 				     config = COALESCE($4::jsonb, config),
-				     is_active = COALESCE($5, is_active)
+				     is_active = COALESCE($5, is_active),
+				     sort_order = COALESCE($6, sort_order),
+				     source_key = CASE WHEN $8 THEN $7 ELSE source_key END
 				 WHERE page_id = $2 AND report_id = $1`,
 				[
 					reportId,
@@ -329,6 +336,9 @@ export async function restoreVersion(
 					page.title ?? null,
 					page.config ? JSON.stringify(page.config) : null,
 					page.is_active ?? null,
+					page.sort_order ?? null,
+					page.source_key ?? null,
+					"source_key" in page,
 				],
 			);
 		}
@@ -404,4 +414,11 @@ export async function restoreVersion(
 			restoredFrom: version,
 		};
 	});
+
+	// Dropped once the restore has committed, the same as a save, so the
+	// reload every open session makes on the restore op reads the restored
+	// report and its new version rather than the cached one.
+	invalidateDefinitions(`report-body:${reportId}`);
+	invalidateDefinitions("report:");
+	return restored;
 }

@@ -5,6 +5,7 @@ import { catalogAccessEnabled, readableSources } from "../auth/sourceAccess";
 import { effectiveAdminGroups, settings } from "../settings";
 import { isDatabricksApp } from "../runtime";
 import { loadAssignments } from "./roles";
+import { invalidateDefinitions } from "./definitionCache";
 import {
 	can,
 	capabilities as allCapabilities,
@@ -129,6 +130,15 @@ interface CacheEntry {
 const cache = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<AccessContext>>();
 
+// Counts invalidations. A lookup that started before a grant changed may have
+// read the old grants, so it answers its own callers but is not kept.
+let generation = 0;
+
+// Contexts built while part of what feeds them could not be read. Served to
+// the request that built them and never cached, so the next request tries
+// again rather than working from a partial answer for a whole lifetime.
+const partial = new WeakSet<AccessContext>();
+
 // Two entries accumulate per person, and each holds their whole reachable
 // catalogue: catalogGrants puts a grant in the map for every report built on a
 // source they can read. Expiry decides whether an entry may be served and on
@@ -220,10 +230,11 @@ async function loadPolicies(
 		 FROM access_policies
 		 WHERE is_active = TRUE
 		   AND (
-		     (subject_type = 'group' AND subject_id = ANY($1))
+		     (subject_type = 'group' AND lower(subject_id) = ANY($1))
 		     OR (subject_type = 'user' AND lower(subject_id) = $2)
 		   )`,
-		[policy.grants, email.toLowerCase()],
+		// Group names compared without case, the same as role assignments.
+		[policy.grants.map((g) => g.toLowerCase()), email.toLowerCase()],
 	);
 
 	const grants = new Map<string, Permission>();
@@ -295,11 +306,17 @@ async function cached(
 	const existing = inflight.get(key);
 	if (existing) return existing;
 
+	const startedIn = generation;
 	const pending = (async () => {
 		try {
 			const context = await load();
-			cache.set(key, { context, expiresAt: now + contextTtlMs() });
-			evictIfNeeded(Date.now());
+			if (generation === startedIn && !partial.has(context)) {
+				cache.set(key, {
+					context,
+					expiresAt: Date.now() + contextTtlMs(),
+				});
+				evictIfNeeded(Date.now());
+			}
 			return context;
 		} catch (error) {
 			console.error(
@@ -307,10 +324,10 @@ async function cached(
 				error,
 			);
 			return floorContext(policy, email);
-		} finally {
-			inflight.delete(key);
 		}
-	})();
+	})().finally(() => {
+		if (inflight.get(key) === pending) inflight.delete(key);
+	});
 
 	inflight.set(key, pending);
 	return pending;
@@ -330,8 +347,10 @@ async function loadExplicit(
 	// nothing else: a reader with no explicit grant at all still reaches the
 	// reports built on data they hold SELECT on, which for most people is every
 	// report they have ever opened.
+	let incomplete = false;
 	const [policies, assignments] = await Promise.all([
 		loadPolicies(policy, email).catch((error) => {
+			incomplete = true;
 			console.error("Access policies could not be read:", error);
 			return new Map<string, Permission>();
 		}),
@@ -346,6 +365,7 @@ async function loadExplicit(
 					"not exist yet: restart so the schema is applied.",
 				error,
 			);
+			incomplete = true;
 			return [];
 		}),
 	]);
@@ -374,12 +394,14 @@ async function loadExplicit(
 		}
 	}
 
-	return {
+	const context: AccessContext = {
 		grants,
 		baseline: strongest([roles.baseline, configured]),
 		capabilities,
 		email,
 	};
+	if (incomplete) partial.add(context);
+	return context;
 }
 
 export async function getExplicitContext(
@@ -432,6 +454,7 @@ export async function getAccessContext(
 						);
 					}
 				} catch (error) {
+					partial.add(context);
 					console.error(
 						"Catalogue reachability unavailable, serving explicit grants only:",
 						error,
@@ -469,6 +492,12 @@ export async function canAdminister(
 	);
 }
 
+// Also drops what was derived from a context, the per reader navigation counts
+// and search targets, which would otherwise go on offering what was withdrawn.
 export function invalidateAccessCache(): void {
+	generation++;
 	cache.clear();
+	inflight.clear();
+	invalidateDefinitions("navigation:visible:");
+	invalidateDefinitions("search:targets:");
 }

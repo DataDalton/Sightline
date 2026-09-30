@@ -147,7 +147,9 @@ export default function StatusView() {
 
 	const [term, setTerm] = useState("");
 	const [group, setGroup] = useState<Group | null>(null);
-	const [saving, setSaving] = useState<string | null>(null);
+	// Sources whose toggle is being saved. Each is cleared by its own save, so
+	// one finishing does not re-enable another still in flight.
+	const [saving, setSaving] = useState<ReadonlySet<string>>(() => new Set());
 	const [failure, setFailure] = useState<string | null>(null);
 
 	const sources = useMemo(
@@ -183,7 +185,8 @@ export default function StatusView() {
 	}, [sources, term, group]);
 
 	const subscribe = async (source: SourceStatus, subscribed: boolean) => {
-		setSaving(source.sourceKey);
+		const key = source.sourceKey;
+		setSaving((held) => new Set(held).add(key));
 		setFailure(null);
 		const toggled = (current?: { sources: SourceStatus[] }) => ({
 			sources: (current?.sources ?? []).map((s) =>
@@ -221,7 +224,11 @@ export default function StatusView() {
 					: "That choice could not be saved.",
 			);
 		});
-		setSaving(null);
+		setSaving((held) => {
+			const next = new Set(held);
+			next.delete(key);
+			return next;
+		});
 	};
 
 	const now = Date.now();
@@ -353,10 +360,9 @@ export default function StatusView() {
 															on,
 														)
 													}
-													disabled={
-														saving ===
-														source.sourceKey
-													}
+													disabled={saving.has(
+														source.sourceKey,
+													)}
 													label="Tell me when it is late"
 												/>
 											)}

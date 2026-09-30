@@ -11,7 +11,10 @@ import {
 // the same order end up with the same canvas. Everything else in co-editing is
 // presentation; convergence is correctness.
 
-function visual(id: string, overrides: Partial<AppliedVisual> = {}): AppliedVisual {
+function visual(
+	id: string,
+	overrides: Partial<AppliedVisual> = {},
+): AppliedVisual {
 	return {
 		visualId: id,
 		visualType: "barChart",
@@ -23,7 +26,11 @@ function visual(id: string, overrides: Partial<AppliedVisual> = {}): AppliedVisu
 	};
 }
 
-function op(seq: number, originId: string | null, operations: unknown[]): RemoteOp {
+function op(
+	seq: number,
+	originId: string | null,
+	operations: unknown[],
+): RemoteOp {
 	return {
 		seq,
 		actor: `user${seq}@example.com`,
@@ -166,7 +173,11 @@ test("two sessions receiving the same ops converge", () => {
 	const start = [visual("v1"), visual("v2")];
 	const ops = [
 		op(1, "alice", [
-			{ type: "updateVisual", visualId: "v1", layout: { x: 6, y: 0, w: 6, h: 4 } },
+			{
+				type: "updateVisual",
+				visualId: "v1",
+				layout: { x: 6, y: 0, w: 6, h: 4 },
+			},
 		]),
 		op(2, "bob", [
 			{
@@ -199,10 +210,18 @@ test("the later of two edits to the same field wins", () => {
 		[visual("v1")],
 		[
 			op(1, "alice", [
-				{ type: "updateVisual", visualId: "v1", layout: { x: 1, y: 1, w: 6, h: 4 } },
+				{
+					type: "updateVisual",
+					visualId: "v1",
+					layout: { x: 1, y: 1, w: 6, h: 4 },
+				},
 			]),
 			op(2, "bob", [
-				{ type: "updateVisual", visualId: "v1", layout: { x: 8, y: 2, w: 4, h: 3 } },
+				{
+					type: "updateVisual",
+					visualId: "v1",
+					layout: { x: 8, y: 2, w: 4, h: 3 },
+				},
 			]),
 		],
 		"me",
@@ -230,18 +249,117 @@ test("edits to different visuals both survive", () => {
 
 	assert.equal(result.visuals[0].title, "Alice edited");
 	assert.equal(result.visuals[1].title, "Bob edited");
-	assert.deepEqual(result.actors.sort(), ["alice", "bob"].map(
-		(_, i) => `user${i + 1}@example.com`,
-	));
+	assert.deepEqual(
+		result.actors.sort(),
+		["alice", "bob"].map((_, i) => `user${i + 1}@example.com`),
+	);
 });
 
 test("reordering follows the order the op names", () => {
-	const result = applyOperation(
-		[visual("a"), visual("b"), visual("c")],
-		{ type: "reorderVisuals", pageId: "p1", visualIds: ["c", "a", "b"] },
-	);
+	const result = applyOperation([visual("a"), visual("b"), visual("c")], {
+		type: "reorderVisuals",
+		pageId: "p1",
+		visualIds: ["c", "a", "b"],
+	});
 	assert.deepEqual(
 		result.visuals.map((v) => v.visualId),
 		["c", "a", "b"],
 	);
+});
+
+test("an insert for another page stays off this canvas", () => {
+	// A page added from a template arrives as inserts naming the new page. An
+	// editor showing a different page must not grow those visuals.
+	const result = applyOperation(
+		[visual("v1")],
+		{
+			type: "addVisual",
+			visualId: "v2",
+			pageId: "P2",
+			visualType: "pieChart",
+		},
+		{ pageId: "p1" },
+	);
+	assert.deepEqual(
+		result.visuals.map((v) => v.visualId),
+		["v1"],
+	);
+
+	const samePage = applyOperation(
+		[visual("v1")],
+		{
+			type: "addVisual",
+			visualId: "v2",
+			pageId: "P1",
+			visualType: "pieChart",
+		},
+		{ pageId: "p1" },
+	);
+	assert.equal(samePage.visuals.length, 2);
+});
+
+test("a page added by another session is flagged so the page strip reloads", () => {
+	const result = applyRemoteOps(
+		[visual("v1")],
+		[
+			op(4, null, [
+				{
+					type: "addPage",
+					pageId: "p2",
+					title: "Regions",
+					slug: "page-2",
+				},
+				{
+					type: "addVisual",
+					visualId: "v9",
+					pageId: "p2",
+					visualType: "barChart",
+				},
+			]),
+		],
+		"me",
+		3,
+		{ pageId: "p1" },
+	);
+
+	assert.equal(result.pagesChanged, true);
+	assert.equal(result.version, 4);
+	assert.deepEqual(
+		result.visuals.map((v) => v.visualId),
+		["v1"],
+	);
+});
+
+test("a visual edit alone does not flag a page change", () => {
+	const result = applyRemoteOps(
+		[visual("v1")],
+		[
+			op(1, "them", [
+				{ type: "updateVisual", visualId: "v1", title: "New" },
+			]),
+		],
+		"me",
+		0,
+	);
+	assert.equal(result.pagesChanged, false);
+});
+
+test("this session's own page add does not flag a page change", () => {
+	// The session that added the page already shows it in its strip.
+	const result = applyRemoteOps(
+		[visual("v1")],
+		[
+			op(2, "me", [
+				{
+					type: "addPage",
+					pageId: "p2",
+					title: "Regions",
+					slug: "page-2",
+				},
+			]),
+		],
+		"me",
+		1,
+	);
+	assert.equal(result.pagesChanged, false);
 });
