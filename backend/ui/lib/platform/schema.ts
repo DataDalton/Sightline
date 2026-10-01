@@ -624,6 +624,50 @@ const statements: string[] = [
 	`CREATE INDEX IF NOT EXISTS favourites_user_lower_idx
 		ON favourites (lower(user_email), created_on DESC)`,
 
+	// Boards, each a canvas somebody arranges from visuals copied out of reports,
+	// notes and text. The definition holds every item and arrow. Version goes
+	// up on every change and is what an open copy polls. See lib/boards.
+	`CREATE TABLE IF NOT EXISTS boards (
+		board_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		owner_email TEXT NOT NULL,
+		title       TEXT NOT NULL,
+		definition  JSONB NOT NULL,
+		version     BIGINT NOT NULL DEFAULT 1,
+		created_on  TIMESTAMPTZ NOT NULL DEFAULT now(),
+		modified_on TIMESTAMPTZ NOT NULL DEFAULT now(),
+		modified_by TEXT NOT NULL
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS boards_owner_idx
+		ON boards (owner_email, modified_on DESC)`,
+
+	// People a board is shared with, to look at or to change.
+	`CREATE TABLE IF NOT EXISTS board_shares (
+		board_id   UUID NOT NULL REFERENCES boards (board_id) ON DELETE CASCADE,
+		email      TEXT NOT NULL,
+		permission TEXT NOT NULL CHECK (permission IN ('view', 'edit')),
+		granted_by TEXT NOT NULL,
+		granted_on TIMESTAMPTZ NOT NULL DEFAULT now(),
+		PRIMARY KEY (board_id, email)
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS board_shares_email_idx
+		ON board_shares (email)`,
+
+	// A figure somebody pinned to their home page briefing, or hid from it.
+	// Keyed by the report and measure it came from, so it follows the figure
+	// rather than wherever it happens to sit in the list. See lib/briefing.
+	`CREATE TABLE IF NOT EXISTS briefing_choices (
+		user_email TEXT NOT NULL,
+		report_id  UUID NOT NULL REFERENCES reports (report_id) ON DELETE CASCADE,
+		measure    TEXT NOT NULL,
+		choice     TEXT NOT NULL CHECK (choice IN ('pin', 'hide')),
+		-- Where a pin sits among the reader's pins. Null for a hide.
+		position   INTEGER,
+		chosen_on  TIMESTAMPTZ NOT NULL DEFAULT now(),
+		PRIMARY KEY (user_email, report_id, measure)
+	)`,
+
 	// --- Commentary --------------------------------------------------------
 
 	// A note somebody pinned to a visual.
@@ -1067,6 +1111,7 @@ const migrations: string[] = [
 	// checked against. Version also goes up on every note, so a note written
 	// by one person does not refuse another person's layout change.
 	`ALTER TABLE sheets ADD COLUMN IF NOT EXISTS layout_version BIGINT NOT NULL DEFAULT 1`,
+	`ALTER TABLE briefing_choices ADD COLUMN IF NOT EXISTS position INTEGER`,
 
 	// The category a role belongs to, for the editor role every category has.
 	// See syncCategoryRoles in lib/platform/roles.

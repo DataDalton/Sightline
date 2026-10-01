@@ -8,6 +8,7 @@ import { Select } from "../components/shared/Select";
 import { ConfirmDialog } from "../components/shared/ConfirmDialog";
 import { Modal } from "../components/shared/Modal";
 import { ShareDialog } from "../authoring/PageActions";
+import { BoardsSection } from "../boards/BoardsSection";
 import { SkeletonCards } from "../components/shared/Skeleton";
 import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { usePageTitle } from "../hooks/usePageTitle";
@@ -169,7 +170,8 @@ export default function MyPagesView() {
 				<div>
 					<h1 className={styles.title}>My pages</h1>
 					<p className={styles.subtitle}>
-						Visible to you and anyone you share them with.
+						Pages and boards, visible to you and anyone you share
+						them with.
 					</p>
 				</div>
 			</div>
@@ -194,6 +196,8 @@ export default function MyPagesView() {
 							New page
 						</button>
 					</div>
+
+					<BoardsSection />
 
 					{authored.length > 0 && (
 						<>

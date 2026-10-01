@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import useSWR from "swr";
+import { Briefing } from "./briefing/Briefing";
 import { NavIcon } from "./components/NavIcon";
 import { SkeletonCards } from "./components/shared/Skeleton";
 import { useDeferredLoading } from "./hooks/useDeferredLoading";
@@ -59,9 +60,7 @@ export default function Home() {
 	const membershipUnresolved = user?.policy.degraded === true;
 
 	const appName = branding?.name || fallbackName;
-	const greeting = user?.name
-		? `Welcome back, ${user.name.split(" ")[0]}`
-		: appName;
+	const firstName = user?.name ? user.name.split(" ")[0] : null;
 
 	// Without a forwarded token no query can run at all, because every data
 	// read goes through the caller own Unity Catalog session. Saying so is
@@ -70,13 +69,6 @@ export default function Home() {
 
 	return (
 		<div className={styles.page}>
-			<div className={styles.header}>
-				<h1 className={styles.title}>{greeting}</h1>
-				<p className={styles.subtitle}>
-					{branding?.description || fallbackDescription}
-				</p>
-			</div>
-
 			{cannotQuery && (
 				<div className={styles.notice}>
 					<svg
@@ -133,6 +125,17 @@ export default function Home() {
 					</div>
 				</div>
 			)}
+
+			{!cannotQuery && !membershipUnresolved && (
+				<Briefing firstName={firstName} />
+			)}
+
+			<h2 className={styles.browseTitle}>
+				Browse {appName}
+				<span className={styles.browseNote}>
+					{branding?.description || fallbackDescription}
+				</span>
+			</h2>
 
 			{showSkeleton ? (
 				<SkeletonCards count={6} />

@@ -549,3 +549,36 @@ textarea:disabled,
 		transition-duration: 0.01ms !important;
 	}
 }
+
+/* Cards on the home page briefing carry themselves to their new place when
+   the page rearranges, such as on a pin. See moved in app/briefing. */
+::view-transition-group(*) {
+	animation-duration: 320ms;
+	animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* A card that changes size on the way, such as one pinned into the large
+   place, keeps its own proportions. Its pictures are drawn at their real size
+   from the top left and clipped by the box as it grows or shrinks, rather than
+   stretched to fill it, which blew a small card up to the size of the large
+   one before it settled. */
+::view-transition-image-pair(*) {
+	overflow: hidden;
+}
+
+::view-transition-old(*),
+::view-transition-new(*) {
+	inline-size: auto;
+	block-size: auto;
+	object-fit: none;
+	object-position: 0 0;
+}
+
+::view-transition-old(*) {
+	animation-duration: 140ms;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+	animation-duration: 160ms;
+}

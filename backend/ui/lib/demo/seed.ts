@@ -17,6 +17,9 @@ import { createPageAlert, setSubscription } from "../alerts/pageStore";
 import { resolvePolicyClass } from "../auth/policy";
 import { notify } from "../notify/store";
 import { createSheet } from "../sheets/store";
+import { createBoard, updateBoard } from "../boards/store";
+import type { BoardItem } from "../boards/definition";
+import { demoBoard } from "./board";
 import {
 	categories,
 	groups,
@@ -363,6 +366,65 @@ async function seedSheet(): Promise<void> {
 	});
 }
 
+// A board telling one quarter's story, so Boards opens on something to look
+// at. Its visuals are copied from the seeded reports with their settings, as
+// Add to board copies them.
+async function seedBoard(): Promise<void> {
+	const existing = await sql(`SELECT 1 FROM boards LIMIT 1`);
+	if (existing.length > 0) return;
+	const rows = await sql<{
+		slug: string;
+		report_id: string;
+		report_title: string;
+		visual_title: string | null;
+		visual_type: string;
+		source_key: string | null;
+		config: Record<string, unknown>;
+	}>(
+		`SELECT r.slug, r.report_id::text AS report_id, r.title AS report_title,
+		        v.title AS visual_title, v.visual_type,
+		        coalesce(v.source_key, p.source_key, r.source_key) AS source_key,
+		        v.config
+		 FROM report_visuals v
+		 JOIN report_pages p ON p.page_id = v.page_id
+		 JOIN reports r ON r.report_id = p.report_id
+		 WHERE v.is_active AND p.is_active AND r.is_active`,
+	);
+	const items = demoBoard.items.flatMap((item): BoardItem[] => {
+		const { from, ...rest } = item;
+		if (!from) return [rest];
+		const row = rows.find(
+			(r) =>
+				r.slug === from.slug &&
+				r.visual_title === from.title &&
+				r.visual_type === from.visualType,
+		);
+		if (!row?.source_key) return [];
+		return [
+			{
+				...rest,
+				visual: {
+					visualType: row.visual_type,
+					title: row.visual_title,
+					sourceKey: row.source_key,
+					config: row.config,
+				},
+				origin: {
+					reportId: row.report_id,
+					slug: row.slug,
+					title: row.report_title,
+				},
+			},
+		];
+	});
+	const author = identityOf(localIdentityEmail);
+	const board = await createBoard(author, demoBoard.title, []);
+	await updateBoard(author, board.id, {
+		definition: { items, links: demoBoard.links },
+		baseVersion: board.version,
+	});
+}
+
 // Two months of people reading the reports, so the usage a maintainer sees
 // has something in it. Every report is opened, the first page far more than
 // the rest, and only some visuals are ever expanded or clicked into, so the
@@ -595,6 +657,9 @@ export async function seedDemo(): Promise<void> {
 		await loadRegistry(true);
 		await seedContent();
 		await seedSheet();
+		await seedBoard().catch((error) => {
+			console.warn("Demo board was not created:", error);
+		});
 		await seedUsage();
 		await seedDelivery();
 		await seedAlert().catch((error) => {

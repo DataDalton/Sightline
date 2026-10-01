@@ -1,0 +1,796 @@
+/* The home page briefing. Every colour is a theme token, so dark mode follows
+   the rest of the app. Tone is carried as data-tone on the element that
+   needs it: good and bad come from the report's own target, neutral is a
+   figure with no target to say which way is better. */
+
+.briefing {
+	--tone-good: var(--delta-positive);
+	--tone-bad: var(--delta-negative);
+	--tone-neutral: var(--chart-1);
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-6);
+	margin-bottom: var(--space-7);
+}
+
+/* --- Masthead ------------------------------------------------------------ */
+
+.masthead {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+	padding-bottom: var(--space-5);
+	border-bottom: 1px solid var(--border-subtle);
+}
+
+.eyebrow {
+	font-size: var(--text-xs);
+	font-weight: 600;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--text-muted);
+}
+
+.headline {
+	font-size: clamp(28px, 4.2vw, 46px);
+	line-height: 1.12;
+	font-weight: 600;
+	letter-spacing: -0.025em;
+	max-width: 26ch;
+	text-wrap: balance;
+	color: var(--text-primary);
+}
+
+/* The greeting opens the headline on a line of its own and in a quieter
+   colour, so the sentence about the day still carries the weight. */
+.greeting {
+	display: block;
+	color: var(--text-muted);
+}
+
+.standfirst {
+	font-size: var(--text-md);
+	color: var(--text-secondary);
+	max-width: 62ch;
+}
+
+.progress {
+	height: 3px;
+	width: min(320px, 100%);
+	border-radius: var(--radius-full);
+	background: var(--surface-sunken);
+	overflow: hidden;
+	transition: opacity 600ms ease 400ms;
+}
+
+.progress > span {
+	display: block;
+	height: 100%;
+	background: var(--brand);
+	transition: width 300ms ease;
+}
+
+.progress[data-done] {
+	opacity: 0;
+}
+
+/* --- Layout -------------------------------------------------------------- */
+
+.layout {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 300px;
+	gap: var(--space-6);
+	align-items: start;
+}
+
+@media (max-width: 1080px) {
+	.layout {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+.main {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-6);
+	min-width: 0;
+}
+
+.section {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+}
+
+.sectionTitle {
+	font-size: var(--text-xs);
+	font-weight: 600;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--text-muted);
+}
+
+.sectionHead {
+	display: flex;
+	align-items: baseline;
+	flex-wrap: wrap;
+	gap: var(--space-1) var(--space-3);
+}
+
+.sectionHint {
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+}
+
+/* A pinned card's place in the reader's order. The first spans the row as the
+   large card, the rest fill the grid, and the slot is what is dragged. */
+.pinSlot {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	cursor: grab;
+	border-radius: var(--radius-lg);
+	touch-action: pan-y;
+	transition:
+		opacity 150ms ease,
+		outline-color 150ms ease;
+	outline: 2px dashed transparent;
+	outline-offset: 5px;
+}
+
+.pinSlot > * {
+	flex: 1;
+}
+
+.pinSlotFirst {
+	grid-column: 1 / -1;
+}
+
+/* The card being moved stays in place, faded, so the gap it leaves reads as
+   where it came from. */
+.pinSlot[data-lifted] {
+	opacity: 0.35;
+}
+
+/* Where it will land. */
+.pinSlot[data-over] {
+	outline-color: var(--brand-strong);
+}
+
+/* The compact preview that follows the pointer while a card is moved. */
+.dragChip {
+	position: fixed;
+	z-index: 1000;
+	width: 240px;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: var(--space-3);
+	border: 1px solid var(--brand-strong);
+	border-radius: var(--radius-lg);
+	background: var(--surface-raised);
+	box-shadow: var(--shadow-lg);
+	pointer-events: none;
+	transform: rotate(-1.5deg);
+}
+
+.dragChipReport {
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.dragChipName {
+	font-size: var(--text-md);
+	font-weight: 600;
+}
+
+.dragChipValue {
+	font-size: var(--text-xl);
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.pinEmpty {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: var(--space-2);
+	padding: var(--space-4);
+	border: 1px dashed var(--border-default);
+	border-radius: var(--radius-lg);
+}
+
+.leadGrid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr));
+	gap: var(--space-4);
+}
+
+.movingGrid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+	gap: var(--space-4);
+}
+
+.tiles {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(min(100%, 190px), 1fr));
+	gap: var(--space-3);
+}
+
+/* --- Cards --------------------------------------------------------------- */
+
+.card {
+	--tone: var(--tone-neutral);
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	padding: var(--space-4);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-lg);
+	background: var(--surface-raised);
+	min-width: 0;
+}
+
+.card[data-tone="good"] {
+	--tone: var(--tone-good);
+}
+
+.card[data-tone="bad"] {
+	--tone: var(--tone-bad);
+}
+
+.cardLead {
+	padding: var(--space-5);
+	gap: var(--space-3);
+	box-shadow: var(--shadow-sm);
+}
+
+/* An unusual figure carries its tone into the card's ground, faintly, so the
+   section reads as a set of warnings before any card is read. */
+.cardLead[data-unusual] {
+	background: color-mix(in srgb, var(--tone) 5%, var(--surface-raised));
+	border-color: color-mix(in srgb, var(--tone) 28%, var(--border-subtle));
+}
+
+/* The figure that most needs a look leads the page across the whole width,
+   with its history drawn large beside the words. Every part sits in the first
+   column and the trend in the second, spanning them all. */
+.cardHero {
+	grid-column: 1 / -1;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
+	column-gap: var(--space-6);
+	row-gap: var(--space-3);
+	align-content: start;
+	padding: var(--space-6);
+}
+
+.cardHero > *:not(.heroTrend) {
+	grid-column: 1;
+}
+
+.heroTrend {
+	grid-column: 2;
+	grid-row: 1 / span 7;
+	align-self: stretch;
+	display: flex;
+	min-height: 200px;
+}
+
+.heroTrend .trend {
+	height: 100%;
+	min-height: 200px;
+}
+
+.cardHero .figure {
+	font-size: clamp(38px, 4.4vw, 56px);
+}
+
+@media (max-width: 760px) {
+	.cardHero {
+		display: flex;
+		padding: var(--space-5);
+	}
+	/* Stacked, the trend sits under the figure and above what moved it. */
+	.heroTrend {
+		order: 1;
+		min-height: 0;
+	}
+	.cardHero .driver {
+		order: 2;
+	}
+	.cardHero .cardActions {
+		order: 3;
+	}
+	.heroTrend .trend {
+		min-height: 110px;
+	}
+}
+
+.cardTop {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-2);
+}
+
+.cardReport {
+	font-size: var(--text-sm);
+	color: var(--text-muted);
+	text-decoration: none;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.cardReport:hover {
+	color: var(--text-primary);
+	text-decoration: underline;
+}
+
+.cardMarks {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+	flex-shrink: 0;
+}
+
+/* Pin and hide sit quietly until the card is hovered or focused, except a pin
+   that is on, which stays visible so a pinned figure reads as pinned. */
+.tools {
+	display: inline-flex;
+	gap: 2px;
+}
+
+.tool {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 26px;
+	height: 26px;
+	border: none;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--text-muted);
+	cursor: pointer;
+	opacity: 0;
+	transition: opacity 120ms ease;
+}
+
+.card:hover .tool,
+.card:focus-within .tool,
+.tile:hover .tool,
+.tile:focus-within .tool,
+.tool[data-on] {
+	opacity: 1;
+}
+
+@media (hover: none) {
+	.tool {
+		opacity: 1;
+	}
+}
+
+.tool:disabled {
+	visibility: hidden;
+}
+
+.tool:hover {
+	background: var(--state-hover);
+	color: var(--text-primary);
+}
+
+.tool[data-on] {
+	color: var(--brand-strong);
+}
+
+.tool:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: 1px;
+}
+
+.flag {
+	flex-shrink: 0;
+	font-size: var(--text-xs);
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	padding: 2px var(--space-2);
+	border-radius: var(--radius-full);
+	color: var(--tone);
+	background: color-mix(in srgb, var(--tone) 12%, transparent);
+}
+
+.cardName {
+	font-size: var(--text-lg);
+	font-weight: 600;
+	letter-spacing: -0.01em;
+	line-height: 1.25;
+}
+
+.figureRow {
+	display: flex;
+	align-items: baseline;
+	flex-wrap: wrap;
+	gap: var(--space-2) var(--space-3);
+}
+
+.figure {
+	font-size: var(--text-2xl);
+	font-weight: 600;
+	letter-spacing: -0.02em;
+	font-variant-numeric: tabular-nums;
+	line-height: 1.1;
+}
+
+.cardLead .figure {
+	font-size: var(--text-3xl);
+}
+
+.move {
+	font-size: var(--text-sm);
+	font-weight: 600;
+	color: var(--text-secondary);
+}
+
+.move[data-tone="good"] {
+	color: var(--tone-good);
+}
+
+.move[data-tone="bad"] {
+	color: var(--tone-bad);
+}
+
+.period {
+	font-size: var(--text-sm);
+	color: var(--text-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.driver {
+	font-size: var(--text-md);
+	line-height: 1.5;
+	color: var(--text-secondary);
+	padding-top: var(--space-2);
+	border-top: 1px solid var(--border-subtle);
+}
+
+.cardActions {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+	margin-top: auto;
+	padding-top: var(--space-1);
+}
+
+.why {
+	font-size: var(--text-sm);
+	font-weight: 600;
+	padding: var(--space-1) var(--space-3);
+	border-radius: var(--radius-full);
+	border: 1px solid var(--border-default);
+	background: transparent;
+	color: var(--text-primary);
+	cursor: pointer;
+}
+
+.why:hover {
+	background: var(--state-hover);
+}
+
+.why:focus-visible,
+.open:focus-visible,
+.railItem:focus-visible,
+.hiddenToggle:focus-visible,
+.hiddenShow:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: 2px;
+}
+
+.open {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1);
+	font-size: var(--text-sm);
+	font-weight: 600;
+	color: var(--text-link);
+	text-decoration: none;
+}
+
+.open:hover {
+	text-decoration: underline;
+}
+
+/* --- Trend --------------------------------------------------------------- */
+
+.trend {
+	--line: var(--tone-neutral);
+	display: block;
+	width: 100%;
+	height: 72px;
+	overflow: visible;
+}
+
+.cardLead .trend {
+	height: 96px;
+}
+
+.trendCompact {
+	height: 34px;
+}
+
+.trend[data-tone="good"] {
+	--line: var(--tone-good);
+}
+
+.trend[data-tone="bad"] {
+	--line: var(--tone-bad);
+}
+
+.trendBand {
+	fill: color-mix(in srgb, var(--text-muted) 9%, transparent);
+}
+
+.trendArea {
+	fill: color-mix(in srgb, var(--line) 9%, transparent);
+}
+
+.trendLine {
+	fill: none;
+	stroke: var(--line);
+	stroke-width: 1.75;
+	stroke-linejoin: round;
+	stroke-linecap: round;
+}
+
+.trendDot {
+	stroke: var(--line);
+	stroke-width: 7;
+	stroke-linecap: round;
+}
+
+/* --- Steady tiles -------------------------------------------------------- */
+
+.tile {
+	position: relative;
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	min-width: 0;
+}
+
+.tile:hover {
+	border-color: var(--border-default);
+	background: var(--surface-hover);
+}
+
+.tileLink {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	padding: var(--space-3);
+	color: inherit;
+	text-decoration: none;
+	min-width: 0;
+}
+
+.tileLink:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: 2px;
+	border-radius: var(--radius-md);
+}
+
+.tile .tools {
+	position: absolute;
+	top: var(--space-1);
+	right: var(--space-1);
+}
+
+.tileName {
+	font-size: var(--text-sm);
+	color: var(--text-secondary);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.tileValue {
+	font-size: var(--text-xl);
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.tileMeta {
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* --- Loading ------------------------------------------------------------- */
+
+.placeholders {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+	gap: var(--space-4);
+}
+
+.placeholder {
+	height: 210px;
+	border-radius: var(--radius-lg);
+	background: linear-gradient(
+		100deg,
+		var(--surface-sunken) 30%,
+		var(--surface-hover) 50%,
+		var(--surface-sunken) 70%
+	);
+	background-size: 300% 100%;
+	animation: shimmer 1.6s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+	from {
+		background-position: 100% 0;
+	}
+	to {
+		background-position: 0 0;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.placeholder {
+		animation: none;
+	}
+	.progress > span {
+		transition: none;
+	}
+}
+
+.quiet {
+	font-size: var(--text-md);
+	color: var(--text-secondary);
+	max-width: 62ch;
+}
+
+/* --- Rail ---------------------------------------------------------------- */
+
+.rail {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-5);
+	position: sticky;
+	top: calc(var(--header-height) + var(--space-4));
+}
+
+@media (max-width: 1080px) {
+	.rail {
+		position: static;
+	}
+}
+
+.railBlock {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+
+.railTitle {
+	font-size: var(--text-xs);
+	font-weight: 600;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--text-muted);
+}
+
+.railBlock[data-tone="warning"] .railTitle {
+	color: var(--warning);
+}
+
+.railEmpty {
+	font-size: var(--text-sm);
+	color: var(--text-muted);
+}
+
+.railList {
+	list-style: none;
+	display: flex;
+	flex-direction: column;
+}
+
+.railItem {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: var(--space-2) 0;
+	border-bottom: 1px solid var(--border-subtle);
+	color: inherit;
+	text-decoration: none;
+}
+
+.railItem:hover .railItemTitle {
+	text-decoration: underline;
+}
+
+.railItemTitle {
+	font-size: var(--text-sm);
+	line-height: 1.4;
+	color: var(--text-primary);
+}
+
+.railItem[data-unread] .railItemTitle {
+	font-weight: 600;
+}
+
+.railItemMeta {
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+}
+
+/* --- Hidden figures ------------------------------------------------------ */
+
+.choiceError {
+	font-size: var(--text-sm);
+	color: var(--danger);
+}
+
+.hiddenBar {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+
+.hiddenToggle {
+	align-self: flex-start;
+	font-size: var(--text-sm);
+	color: var(--text-muted);
+	background: none;
+	border: none;
+	padding: 0;
+	cursor: pointer;
+	text-decoration: underline;
+	text-underline-offset: 3px;
+}
+
+.hiddenToggle:hover {
+	color: var(--text-primary);
+}
+
+.hiddenList {
+	list-style: none;
+	display: flex;
+	flex-direction: column;
+	max-width: 520px;
+}
+
+.hiddenList li {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-3);
+	padding: var(--space-2) 0;
+	border-bottom: 1px solid var(--border-subtle);
+	font-size: var(--text-sm);
+}
+
+.hiddenFrom {
+	display: block;
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+}
+
+.hiddenShow {
+	flex-shrink: 0;
+	font-size: var(--text-sm);
+	font-weight: 600;
+	color: var(--text-link);
+	background: none;
+	border: none;
+	cursor: pointer;
+}

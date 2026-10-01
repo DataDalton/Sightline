@@ -150,8 +150,17 @@
 	background: var(--surface-raised);
 }
 
-.chartTitle {
+/* The chart's title, with the way to keep it on a board beside it. */
+.chartHead {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	flex-wrap: wrap;
+	gap: var(--space-2);
 	margin-bottom: var(--space-2);
+}
+
+.chartTitle {
 	font-size: var(--text-md);
 	font-weight: 600;
 	color: var(--text-primary);

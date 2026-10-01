@@ -28,6 +28,12 @@ an editor's new measure reaches everyone, personalised or not.
 
 ## What it does
 
+- **A briefing on the home page.** The headline figures from the reports each
+  person reads, each judged against its own history, with what moved it, the
+  alerts that fired and any data running late. Figures can be pinned, hidden
+  and put in order.
+- **Boards**, a canvas for arranging live charts from any report with notes,
+  boxes, text and arrows, shared to look at or to change.
 - **Reports** built on a grid from page templates, edited live by several
   people, with version history and per-reader saved views.
 - **Row-level security by construction.** Every query runs under the reader's
@@ -53,6 +59,7 @@ an editor's new measure reaches everyone, personalised or not.
 
 | | |
 | --- | --- |
+| ![The home page briefing, with the figures that moved](docs/images/home.png) | ![A board of live charts, notes and arrows](docs/images/board.png) |
 | ![The report editor](docs/images/editor.png) | ![Explore, a table from one search bar](docs/images/explore.png) |
 | ![A sheet with formula columns](docs/images/sheet.png) | ![A field in the dictionary, with every report that uses it](docs/images/dictionary.png) |
 | ![A category with its maintainers](docs/images/category.png) | ![A conversation with a category's maintainers](docs/images/conversations.png) |

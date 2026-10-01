@@ -17,6 +17,7 @@ import {
 import { ExploreBar } from "./ExploreBar";
 import { SavedViews, type SavedView } from "./SavedViews";
 import { AlertDialog } from "../alerts/AlertDialog";
+import { AddToBoard } from "../boards/AddToBoard";
 import { createSheet } from "../sheets/SheetsList";
 import type { AlertRecord } from "../../lib/alerts/store";
 import { useNotify } from "../notify/NotifyContext";
@@ -313,6 +314,34 @@ export default function ExploreView() {
 							</svg>
 							Alert
 						</button>
+					)}
+					{source && columns.length > 0 && (
+						<AddToBoard
+							variant="text"
+							className={styles.headerButton}
+							unavailable={
+								logic.anyOf || logic.where
+									? "Conditions joined with or cannot go on a board yet. Join them with and to add this."
+									: null
+							}
+							piece={() => ({
+								visual: {
+									visualType: "table",
+									title: `${source.title} exploration`,
+									sourceKey: source.sourceKey,
+									config: {
+										dimensions,
+										measures,
+										filters: logic.filters,
+									},
+								},
+								origin: {
+									reportId: null,
+									slug: null,
+									title: "From Explore",
+								},
+							})}
+						/>
 					)}
 					<SavedViews
 						current={current}

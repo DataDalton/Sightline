@@ -7,18 +7,26 @@ import { Modal } from "../components/shared/Modal";
 import styles from "./Sheets.module.css";
 
 // Sharing a sheet with named people. Each of them sees their own rows of the
-// data, as with a report, and the notes on those rows.
+// data, as with a report, and the notes on those rows. Boards share the same
+// way through their own address, with their own words.
 
 export function ShareDialog({
 	sheetId,
 	isOwner,
 	onClose,
+	sharesUrl,
+	title = "Share this sheet",
+	hint = "Each person sees the rows their own access allows, and the notes on those rows. They are told in their inbox.",
 }: {
 	sheetId: string;
 	isOwner: boolean;
 	onClose: () => void;
+	// Where the shares are read and changed, when it is not a sheet's.
+	sharesUrl?: string;
+	title?: string;
+	hint?: string;
 }) {
-	const key = `/api/sheets/${sheetId}/shares`;
+	const key = sharesUrl ?? `/api/sheets/${sheetId}/shares`;
 	const { data, mutate } = useSWR<{ shares: Share[] }>(key);
 	const [email, setEmail] = useState("");
 	const [permission, setPermission] = useState<"view" | "edit">("view");
@@ -50,12 +58,9 @@ export function ShareDialog({
 	};
 
 	return (
-		<Modal isOpen onClose={onClose} title="Share this sheet" width="520px">
+		<Modal isOpen onClose={onClose} title={title} width="520px">
 			<div className={styles.form}>
-				<p className={styles.fieldHint}>
-					Each person sees the rows their own access allows, and the
-					notes on those rows. They are told in their inbox.
-				</p>
+				<p className={styles.fieldHint}>{hint}</p>
 				{isOwner && (
 					<form
 						className={styles.shareRow}

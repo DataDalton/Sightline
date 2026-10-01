@@ -45,6 +45,7 @@ const exploration = Buffer.from(
 // animations, which have no single event to wait on. Click names an element
 // pressed once the page has loaded, such as the first conversation, and
 // clickText presses the first button, link or table row showing that text.
+// Board names a board by its title, found when the run starts.
 const shots = [
 	{ name: "home", path: "/", width: 1440, height: 900 },
 	{ name: "report", path: "/r/revenue-overview/", width: 1440, height: 900 },
@@ -89,6 +90,13 @@ const shots = [
 		width: 1440,
 		height: 900,
 		clickText: "Usage",
+	},
+	{
+		name: "board",
+		board: "Q3 revenue story",
+		width: 1600,
+		height: 940,
+		wait: 12000,
 	},
 	{
 		name: "phone",
@@ -205,7 +213,21 @@ try {
 			deviceScaleFactor: scale,
 			mobile: Boolean(shot.mobile),
 		});
-		await page.send("Page.navigate", { url: `${base}${shot.path}` });
+		let path = shot.path;
+		if (shot.board) {
+			const { boards } = await (
+				await fetch(`${base}/api/boards/`)
+			).json();
+			const found = boards.find((b) => b.title === shot.board);
+			if (!found) {
+				console.warn(
+					`No board called ${shot.board}, so ${shot.name} is skipped.`,
+				);
+				continue;
+			}
+			path = `/boards/${found.id}/`;
+		}
+		await page.send("Page.navigate", { url: `${base}${path}` });
 		await sleep(shot.wait ?? 9000);
 		if (shot.click) {
 			await page.send("Runtime.evaluate", {

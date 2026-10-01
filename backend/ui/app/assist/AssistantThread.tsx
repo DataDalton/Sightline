@@ -1,5 +1,6 @@
 "use client";
 
+import { AddToBoard } from "../boards/AddToBoard";
 import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { DataGrid } from "../visuals/DataGrid";
@@ -202,7 +203,31 @@ function ChartBlock({
 
 	return (
 		<figure className={styles.result}>
-			<figcaption className={styles.chartTitle}>{chart.title}</figcaption>
+			<figcaption className={styles.chartHead}>
+				<span className={styles.chartTitle}>{chart.title}</span>
+				<AddToBoard
+					variant="text"
+					piece={() => ({
+						visual: {
+							visualType: chart.visualType,
+							title: chart.title,
+							sourceKey: chart.sourceKey,
+							config: {
+								dimensions: chart.dimensions,
+								measures: chart.measures,
+								filters: chart.filters,
+								sort: chart.sort,
+								...(chart.limit ? { limit: chart.limit } : {}),
+							},
+						},
+						origin: {
+							reportId: null,
+							slug: null,
+							title: "From the assistant",
+						},
+					})}
+				/>
+			</figcaption>
 			{chart.visualType === "table" ? (
 				<DataGrid
 					sourceKey={chart.sourceKey}

@@ -50,6 +50,7 @@ import {
 	selectionValue,
 	type SelectionPart,
 } from "../../lib/visuals/selection";
+import { AddToBoard, useBoardOrigin } from "../boards/AddToBoard";
 import { noteUse } from "../hooks/noteUse";
 import styles from "./Visual.module.css";
 
@@ -386,6 +387,29 @@ function VisualBody({
 		() => (drillLevel ? [drillLevel] : dimensions),
 		[drillLevel, dimensions],
 	);
+
+	// What "Add to board" takes is this visual as it is showing now, with the
+	// page's filters and the breakdown the reader chose folded into its own,
+	// so the board reads the same numbers off the page.
+	const boardOrigin = useBoardOrigin();
+	const boardPiece = () =>
+		sourceKey
+			? {
+					visual: {
+						visualType: visual.visualType,
+						title: visual.title,
+						sourceKey,
+						config: {
+							...visual.config,
+							dimensions: activeDimensions.filter(
+								(d) => !d.startsWith("<"),
+							),
+							filters,
+						},
+					},
+					origin: boardOrigin,
+				}
+			: null;
 
 	// A click on a chart mark, a table cell, a matrix row or a small multiple
 	// becomes the same page filter, labelled the way the fields are labelled
@@ -818,6 +842,7 @@ function VisualBody({
 							sources={sources}
 							pageId={pageId}
 						/>
+						<AddToBoard piece={boardPiece} />
 						<ChartActions
 							getImage={getChartImage}
 							onShowTable={() => {
@@ -1016,6 +1041,7 @@ function VisualBody({
 							sources={sources}
 							pageId={pageId}
 						/>
+						<AddToBoard piece={boardPiece} />
 						<NotesAction
 							count={notes.length}
 							onOpen={() => {
