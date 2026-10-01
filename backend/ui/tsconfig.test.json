@@ -87,6 +87,8 @@
 		"lib/semantic/metricViewCalculations.test.ts",
 		"lib/semantic/rowFilterGroups.ts",
 		"lib/semantic/rowFilterGroups.test.ts",
+		"lib/semantic/authoredFields.ts",
+		"lib/semantic/authoredFields.test.ts",
 		"lib/semantic/metricViewDefinition.test.ts",
 		"lib/semantic/renames.ts",
 		"lib/semantic/renames.test.ts",

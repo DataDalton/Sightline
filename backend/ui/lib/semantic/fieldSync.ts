@@ -3,6 +3,7 @@ import type { Identity } from "../auth/identity";
 import { parseMetricViewFields } from "./metricViewDefinition";
 import { parseMetricViewCalculations } from "./metricViewCalculations";
 import { readColumns, runCatalogQuery } from "./ucMetadata";
+import { isAuthored, isPresent } from "./authoredFields";
 import { defaultTableExpr, quotedRef } from "./types";
 import {
 	detectRenames,
@@ -28,7 +29,9 @@ import { refreshProtection, type ProtectionResult } from "./detectProtection";
 // Nothing is deleted. A field the source no longer publishes is marked missing,
 // which keeps its labels and takes it out of the pickers and the query builder,
 // and is reported so an admin can decide what to do with the items naming it.
-// If it comes back it is simply active again.
+// If it comes back it is simply active again. A calculation defined in the
+// app is not published under its own name, so it is judged by the columns it
+// reads instead. See authoredFields.ts.
 //
 // What each field looked like is kept as a fingerprint, so when one field goes
 // and another arrives in the same sync the pair can be offered as a rename.
@@ -387,6 +390,21 @@ export async function syncSourceFields(
 		if (known.status === "missing") returned.push(field.name);
 	}
 
+	const published = new Set(fields.map((f) => f.name));
+
+	// A calculation defined in the app is never published under its own name,
+	// so it is here whenever the columns it reads are. One marked missing
+	// while those columns were all present is returned.
+	for (const known of existing) {
+		if (
+			known.status === "missing" &&
+			isAuthored(known.field_name, known.sql_expr) &&
+			isPresent(known.field_name, known.sql_expr, published)
+		) {
+			returned.push(known.field_name);
+		}
+	}
+
 	// A field that came back is an ordinary field again. Whatever was said
 	// about it while it was gone no longer applies.
 	if (returned.length > 0) {
@@ -426,8 +444,9 @@ export async function syncSourceFields(
 		],
 	);
 
-	const published = new Set(fields.map((f) => f.name));
-	const gone = existing.filter((f) => !published.has(f.field_name));
+	const gone = existing.filter(
+		(f) => !isPresent(f.field_name, f.sql_expr, published),
+	);
 	const newlyMissing = gone
 		.filter((f) => f.status !== "missing")
 		.map((f) => f.field_name);
