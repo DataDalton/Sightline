@@ -118,14 +118,16 @@ export interface PlatformSettings {
 	// Alerts somebody sets on a measure. Off stops every check and hides the
 	// feature, without deleting anybody's alerts.
 	alertsEnabled: boolean;
-	// How many alerts one person may keep. Each is a warehouse query on its
-	// schedule, so this is a ceiling on what alerts can cost.
-	maxAlertsPerUser: number;
 	// Notifications pushed to phones and browsers as well as written to the
 	// inbox. Off by default: turning it on generates the signing keys, and a
 	// push leaves the network for the browser vendor's push service, which an
 	// administrator should decide to allow.
 	pushEnabled: boolean;
+
+	// How many months a personal page, sheet, board, saved exploration or
+	// assistant conversation may go unused before it is removed. Zero turns
+	// retention off. See lib/retention.
+	retentionMonths: number;
 }
 
 export const defaultSettings: PlatformSettings = {
@@ -163,8 +165,9 @@ export const defaultSettings: PlatformSettings = {
 	assistantEndpointUrl: "",
 
 	alertsEnabled: true,
-	maxAlertsPerUser: 25,
 	pushEnabled: false,
+
+	retentionMonths: 12,
 
 	trackedGroups: [],
 	// Databricks account group names. is_account_group_member is
@@ -246,7 +249,7 @@ const numericBounds: Record<NumericSetting, [number, number]> = {
 	telemetryFlushIntervalMs: [1000, 3_600_000],
 	telemetryMaxBatch: [1, 100_000],
 	telemetryMaxBuffer: [1, 1_000_000],
-	maxAlertsPerUser: [0, 10_000],
+	retentionMonths: [0, 120],
 };
 
 export function coerceNumber(key: NumericSetting, raw: string): number {
@@ -363,8 +366,8 @@ export const writableSettings = [
 	"assistantEndpoint",
 	"assistantEndpointUrl",
 	"alertsEnabled",
-	"maxAlertsPerUser",
 	"pushEnabled",
+	"retentionMonths",
 ] as const satisfies readonly (keyof PlatformSettings)[];
 
 export type WritableSetting = (typeof writableSettings)[number];

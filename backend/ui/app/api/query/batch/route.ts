@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getIdentity } from "@/lib/auth/identity";
-import { executeQueries } from "@/lib/query/execute";
+import { executeQueries, type BatchOutcome } from "@/lib/query/execute";
 import { parseQuerySpec, QuerySpecError } from "@/lib/query/spec";
 import { resolvePolicyClass } from "@/lib/auth/policy";
 import { record } from "@/lib/telemetry/usage";
@@ -99,58 +99,17 @@ export async function POST(request: NextRequest) {
 	const runnable = parsed
 		.map((entry, index) => ({ entry, index }))
 		.filter((held) => held.entry.spec !== undefined);
+	const specs = runnable.map((held) => held.entry.spec!);
 
-	try {
-		const answers = await executeQueries(
-			identity,
-			runnable.map((held) => held.entry.spec!),
-		);
-
-		type Slot =
-			| { error: string }
-			| {
-					rows: Record<string, unknown>[];
-					columns: string[];
-					rowCount: number;
-					meta: {
-						source: string;
-						stale: boolean;
-						computedAt: number;
-						durationMs: number;
-						refreshAfterMs: number | null;
-					};
-			  }
-			| null;
-
-		const results: Slot[] = parsed.map((entry) =>
-			entry.error ? { error: entry.error } : null,
-		);
-		runnable.forEach((held, position) => {
-			const outcome = answers[position];
-			results[held.index] = outcome.error
-				? { error: outcome.error }
-				: {
-						rows: outcome.result!.rows,
-						columns: outcome.result!.columns,
-						rowCount: outcome.result!.rowCount,
-						meta: {
-							source: outcome.result!.source,
-							stale: outcome.result!.stale,
-							computedAt: outcome.result!.computedAt,
-							durationMs: outcome.result!.durationMs,
-							refreshAfterMs: outcome.result!.refreshAfterMs,
-						},
-					};
-		});
-
-		// Recorded per query rather than per batch, so the usage figures mean
-		// the same thing however a page chose to ask.
+	// Recorded per query rather than per batch, so the usage figures mean the
+	// same thing however a page chose to ask.
+	const recordUsage = async (answers: BatchOutcome[]): Promise<void> => {
 		const policy = await resolvePolicyClass(identity);
 		const sessionId = request.headers.get("x-session-id");
 		const occurredOn = new Date().toISOString();
 		runnable.forEach((held, position) => {
 			const outcome = answers[position];
-			if (!outcome.result) return;
+			if (!outcome?.result) return;
 			const cacheHit = outcome.result.source !== "warehouse";
 			// A page on a live source asks the same question every few
 			// seconds. Warehouse queries are always recorded, and the same
@@ -176,13 +135,147 @@ export async function POST(request: NextRequest) {
 				sessionId,
 			});
 		});
+	};
 
-		const response = NextResponse.json({ results });
-		// Identity scoped, so no shared cache may hold them.
-		response.headers.set("Cache-Control", "private, no-store");
-		return response;
-	} catch (error) {
-		console.error("Batch query failed:", error);
-		return NextResponse.json({ error: "Query failed" }, { status: 500 });
+	// A client that reads the answer as it arrives says so. One that does not
+	// is answered with a single JSON body once every query has settled.
+	const streamed = (request.headers.get("accept") ?? "").includes(
+		"application/x-ndjson",
+	);
+
+	if (!streamed) {
+		try {
+			const answers = await executeQueries(identity, specs);
+			const results: (Slot | null)[] = parsed.map((entry) =>
+				entry.error ? { error: entry.error } : null,
+			);
+			runnable.forEach((held, position) => {
+				results[held.index] = toSlot(answers[position]);
+			});
+			await recordUsage(answers);
+
+			const response = NextResponse.json({ results });
+			// Identity scoped, so no shared cache may hold them.
+			response.headers.set("Cache-Control", "private, no-store");
+			return response;
+		} catch (error) {
+			console.error("Batch query failed:", error);
+			return NextResponse.json(
+				{ error: "Query failed" },
+				{ status: 500 },
+			);
+		}
 	}
+
+	// One line per query, written the moment it settles, so a slow cold query
+	// holds back only its own visual. Malformed specs are written first, then
+	// answers found in cache, then each warehouse answer as it lands. Every
+	// line names the position of its query in the request.
+	const encoder = new TextEncoder();
+	let open = true;
+	const stream = new ReadableStream<Uint8Array>({
+		async start(controller) {
+			const written = new Set<number>();
+			const write = (index: number, slot: Slot) => {
+				if (!open || written.has(index)) return;
+				written.add(index);
+				try {
+					controller.enqueue(
+						encoder.encode(
+							`${JSON.stringify({ i: index, ...slot })}\n`,
+						),
+					);
+				} catch {
+					// The reader left. Queries already started still finish
+					// and are cached for the next visit.
+					open = false;
+				}
+			};
+
+			parsed.forEach((entry, index) => {
+				if (entry.error) write(index, { error: entry.error });
+			});
+
+			let answers: BatchOutcome[] | null = null;
+			try {
+				answers = await executeQueries(
+					identity,
+					specs,
+					(position, outcome) =>
+						write(runnable[position].index, toSlot(outcome)),
+				);
+			} catch (error) {
+				// The same failure the single JSON answer reports, given to
+				// each query not yet answered.
+				console.error("Batch query failed:", error);
+				for (const held of runnable) {
+					write(held.index, { error: "Query failed", status: 500 });
+				}
+			}
+
+			if (open) {
+				try {
+					controller.close();
+				} catch {
+					// The stream was cancelled by the reader.
+				}
+			}
+
+			if (answers) {
+				await recordUsage(answers).catch((error) => {
+					console.warn("Batch usage could not be recorded:", error);
+				});
+			}
+		},
+		cancel() {
+			open = false;
+		},
+	});
+
+	return new Response(stream, {
+		headers: {
+			"Content-Type": "application/x-ndjson",
+			// Identity scoped, so no shared cache may hold them.
+			"Cache-Control": "private, no-store",
+		},
+	});
+}
+
+// What a query's slot carries back to the page.
+//
+// A failed query carries only its message, as it always has. A status is sent
+// only where the whole batch failed, which is the status the page would have
+// read from the response itself.
+type Slot =
+	| { error: string; status?: number }
+	| {
+			rows: Record<string, unknown>[];
+			columns: string[];
+			rowCount: number;
+			meta: {
+				source: string;
+				stale: boolean;
+				computedAt: number;
+				durationMs: number;
+				refreshAfterMs: number | null;
+			};
+	  };
+
+function toSlot(outcome: BatchOutcome): Slot {
+	if (outcome.error || !outcome.result) {
+		return { error: outcome.error ?? "Query failed" };
+	}
+	const result = outcome.result;
+	return {
+		rows: result.rows,
+		columns: result.columns,
+		rowCount: result.rowCount,
+		meta: {
+			source: result.source,
+			stale: result.stale,
+			computedAt: result.computedAt,
+			durationMs: result.durationMs,
+			refreshAfterMs: result.refreshAfterMs,
+		},
+	};
 }

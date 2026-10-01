@@ -5,7 +5,8 @@ import { catalogAccessEnabled, readableSources } from "../auth/sourceAccess";
 import { effectiveAdminGroups, settings } from "../settings";
 import { isDatabricksApp } from "../runtime";
 import { loadAssignments } from "./roles";
-import { invalidateDefinitions } from "./definitionCache";
+import { invalidateDefinitions, invalidateMatching } from "./definitionCache";
+import { curatedReports } from "./curated";
 import {
 	can,
 	capabilities as allCapabilities,
@@ -128,11 +129,16 @@ interface CacheEntry {
 }
 
 const cache = new Map<string, CacheEntry>();
-const inflight = new Map<string, Promise<AccessContext>>();
 
-// Counts invalidations. A lookup that started before a grant changed may have
-// read the old grants, so it answers its own callers but is not kept.
-let generation = 0;
+// A lookup in progress, and whether an invalidation reached its key while it
+// ran. One that started before a grant changed may have read the old grants,
+// so it answers its own callers but is not kept.
+interface PendingContext {
+	promise: Promise<AccessContext>;
+	stale: boolean;
+}
+
+const inflight = new Map<string, PendingContext>();
 
 // Contexts built while part of what feeds them could not be read. Served to
 // the request that built them and never cached, so the next request tries
@@ -253,11 +259,11 @@ async function loadPolicies(
 // View only. Editing and administering are decisions about this platform rather
 // than about the data, so they never follow from a catalogue privilege.
 //
-// Personal pages are excluded at the query. Somebody who can read a table is
-// entitled to the curated reporting built on it; they are not entitled to a
-// page a colleague built for themselves on the same table. Excluded here rather
-// than filtered afterwards, so nothing derived ever lands in the map for a
-// personal page and the resolver's guarantee has nothing to unpick.
+// Personal pages are excluded by the query behind the curated list. Somebody
+// who can read a table is entitled to the curated reporting built on it, but
+// not to a page a colleague built for themselves on the same table. Excluded at the source rather than filtered afterwards, so nothing
+// derived ever lands in the map for a personal page and the resolver's
+// guarantee has nothing to unpick.
 async function catalogGrants(
 	identity: Identity,
 ): Promise<Map<string, Permission>> {
@@ -265,16 +271,11 @@ async function catalogGrants(
 	const readable = await readableSources(identity);
 	if (readable.size === 0) return derived;
 
-	const rows = await sql<{ report_id: string; category_id: string | null }>(
-		`SELECT report_id::text AS report_id, category_id
-		 FROM reports
-		 WHERE is_active = TRUE
-		   AND is_personal = FALSE
-		   AND source_key = ANY($1)`,
-		[Array.from(readable)],
-	);
-
-	for (const row of rows) {
+	// The shared list of active curated reports, filtered here by source. The
+	// same rows a query for reports on the readable sources would return,
+	// without asking the database once per reader.
+	for (const row of await curatedReports()) {
+		if (!row.source_key || !readable.has(row.source_key)) continue;
 		derived.set(grantKey("report", row.report_id), "view");
 		if (row.category_id) {
 			derived.set(grantKey("category", row.category_id), "view");
@@ -304,13 +305,13 @@ async function cached(
 	if (hit && hit.expiresAt > now) return hit.context;
 
 	const existing = inflight.get(key);
-	if (existing) return existing;
+	if (existing) return existing.promise;
 
-	const startedIn = generation;
-	const pending = (async () => {
+	const pending = { stale: false } as PendingContext;
+	pending.promise = (async () => {
 		try {
 			const context = await load();
-			if (generation === startedIn && !partial.has(context)) {
+			if (!pending.stale && !partial.has(context)) {
 				cache.set(key, {
 					context,
 					expiresAt: Date.now() + contextTtlMs(),
@@ -330,7 +331,7 @@ async function cached(
 	});
 
 	inflight.set(key, pending);
-	return pending;
+	return pending.promise;
 }
 
 // Roles and per-resource grants, with nothing derived from the catalogue.
@@ -495,9 +496,33 @@ export async function canAdminister(
 // Also drops what was derived from a context, the per reader navigation counts
 // and search targets, which would otherwise go on offering what was withdrawn.
 export function invalidateAccessCache(): void {
-	generation++;
 	cache.clear();
+	for (const pending of inflight.values()) pending.stale = true;
 	inflight.clear();
 	invalidateDefinitions("navigation:visible:");
 	invalidateDefinitions("search:targets:");
+	// A category's contacts are the holders of its editor role, so a role
+	// change can change who is listed.
+	invalidateDefinitions("navigation:category-summary:");
+}
+
+// The same, for one person. Used when a grant names that person alone, so
+// everybody else keeps what they were holding. Context keys end in the
+// lowercased email, and so do the derived navigation and search keys.
+export function invalidateAccessFor(email: string): void {
+	const suffix = `|${email.trim().toLowerCase()}`;
+	for (const key of cache.keys()) {
+		if (key.endsWith(suffix)) cache.delete(key);
+	}
+	for (const [key, pending] of inflight) {
+		if (!key.endsWith(suffix)) continue;
+		pending.stale = true;
+		inflight.delete(key);
+	}
+	invalidateMatching(
+		(key) =>
+			(key.startsWith("navigation:visible:") ||
+				key.startsWith("search:targets:")) &&
+			key.endsWith(suffix),
+	);
 }

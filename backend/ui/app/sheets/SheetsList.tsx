@@ -10,6 +10,7 @@ import { ago } from "../admin/when";
 import { SkeletonText } from "../components/shared/Skeleton";
 import { usePageTitle } from "../hooks/usePageTitle";
 import type { SourceMeta } from "../visuals/types";
+import { KeptBadge } from "../mine/Retention";
 import { SheetActions } from "./SheetActions";
 import styles from "./Sheets.module.css";
 
@@ -82,7 +83,15 @@ export default function SheetsList() {
 							</svg>
 						</span>
 						<span className={styles.sheetText}>
-							<span className={styles.sheetTitle}>{s.title}</span>
+							<span className={styles.sheetTitle}>
+								{s.title}
+								{s.permission === "owner" && s.keep && (
+									<>
+										{" "}
+										<KeptBadge />
+									</>
+								)}
+							</span>
 							<span className={styles.sheetMeta}>
 								{s.sourceKey
 									? titleOf(s.sourceKey)
@@ -107,6 +116,8 @@ export default function SheetsList() {
 						permission={s.permission}
 						onDeleted={() => void mutate()}
 						onDuplicated={(id) => router.push(`/sheets/${id}/`)}
+						keep={s.keep}
+						onKeepChanged={() => void mutate()}
 					/>
 				</li>
 			))}

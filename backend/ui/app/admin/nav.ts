@@ -177,6 +177,12 @@ export const adminNav = [
 				blurb: "Alerts people set, the pushes that reach their devices, and announcements to everyone.",
 				feed: "settings",
 			},
+			{
+				id: "retention",
+				label: "Retention",
+				blurb: "How long personal pages, sheets, boards, saved explorations and assistant conversations are kept once nobody uses them.",
+				feed: "settings",
+			},
 		],
 	},
 ] as const satisfies readonly { label: string; panes: readonly Pane[] }[];

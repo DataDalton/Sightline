@@ -8,7 +8,6 @@ import {
 	saveView,
 	ViewInputError,
 } from "@/lib/platform/views";
-import { checkWriteRateLimit } from "@/lib/rateLimit";
 
 export async function GET(request: NextRequest) {
 	await ensureReadyOrDegrade();
@@ -49,9 +48,6 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
 	await ensureReadyOrDegrade();
-
-	const limited = checkWriteRateLimit(request);
-	if (limited) return limited;
 
 	const identity = getIdentity(request);
 	if (!identity) {

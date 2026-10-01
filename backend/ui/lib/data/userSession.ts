@@ -25,6 +25,13 @@ interface PooledSession {
 	session: Promise<IDBSQLSession>;
 	client: DBSQLClient;
 	lastUsed: number;
+	// The token the connection was opened with. The connection keeps it for
+	// its whole life, so once it expires every statement on the session fails
+	// even though the caller already holds a newer one.
+	token: string;
+	// Statements running on the session. A busy session is never evicted,
+	// because closing it would fail the statements still reading from it.
+	active: number;
 }
 
 const pool = new Map<string, PooledSession>();
@@ -82,17 +89,19 @@ let sweepTimer: ReturnType<typeof setInterval> | null = null;
 function sweepIdle(): void {
 	const now = Date.now();
 	for (const [key, entry] of pool) {
-		if (now - entry.lastUsed > idleTimeoutMs) {
+		if (entry.active === 0 && now - entry.lastUsed > idleTimeoutMs) {
 			void closeEntry(key, entry);
 		}
 	}
 	// Hard ceiling so a spike in distinct tokens cannot exhaust warehouse
-	// connections. Evicts least-recently-used first.
+	// connections. Evicts least-recently-used first, and only sessions with
+	// nothing running. Busy sessions are left to finish, so the pool can sit
+	// over the ceiling until they do.
 	if (pool.size > maxPooledSessions) {
-		const entries = Array.from(pool.entries()).sort(
-			(a, b) => a[1].lastUsed - b[1].lastUsed,
-		);
-		for (const [key, entry] of entries.slice(
+		const idle = Array.from(pool.entries())
+			.filter(([, entry]) => entry.active === 0)
+			.sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+		for (const [key, entry] of idle.slice(
 			0,
 			pool.size - maxPooledSessions,
 		)) {
@@ -116,6 +125,8 @@ function enforceCeiling(): void {
 	sweepIdle();
 }
 
+// Takes the caller's session for one statement, opening it if needed. The
+// statement is counted as running until release is called.
 function acquire(key: string, token: string): PooledSession {
 	ensureSweeping();
 
@@ -123,10 +134,23 @@ function acquire(key: string, token: string): PooledSession {
 	if (!entry) {
 		entry = openSession(token);
 		pool.set(key, entry);
+		// Counted before the ceiling is enforced, so the new session is never
+		// the one evicted to make room.
+		entry.active++;
 		enforceCeiling();
+	} else {
+		entry.active++;
 	}
 	entry.lastUsed = Date.now();
 	return entry;
+}
+
+// Marks one statement on the session as finished. Idle time counts from here,
+// so a long statement does not leave its session looking idle the moment it
+// ends.
+function release(entry: PooledSession): void {
+	entry.active = Math.max(0, entry.active - 1);
+	entry.lastUsed = Date.now();
 }
 
 function openSession(token: string): PooledSession {
@@ -153,7 +177,7 @@ function openSession(token: string): PooledSession {
 		return client.openSession();
 	})();
 
-	return { session, client, lastUsed: Date.now() };
+	return { session, client, lastUsed: Date.now(), token, active: 0 };
 }
 
 // Whether an error is the statement itself failing, such as a query the
@@ -164,6 +188,40 @@ function statementFailed(error: unknown): boolean {
 		error instanceof OperationStateError &&
 		error.errorCode === OperationStateErrorCode.Error
 	);
+}
+
+// Runs one statement on the caller's pooled session.
+//
+// A failure of the session itself, rather than of the statement, drops the
+// session so the next call reconnects. Where that session was opened with a
+// different token than the one the caller now holds, the failure is most
+// likely the old token expiring, so the statement is run once more on a
+// session opened with the current token. canRetry says whether the attempt
+// that failed had already handed rows on, in which case running again would
+// hand them twice and the error is passed on instead.
+async function onSession<T>(
+	key: string,
+	token: string,
+	run: (session: IDBSQLSession) => Promise<T>,
+	canRetry: () => boolean,
+): Promise<T> {
+	for (let attempt = 0; ; attempt++) {
+		const entry = acquire(key, token);
+		try {
+			return await run(await entry.session);
+		} catch (error) {
+			// An expired token surfaces here and must not be retried against
+			// the same dead session. A statement the warehouse ran and refused
+			// leaves the session healthy, and closing it would fail every
+			// other query the same reader has running on it.
+			if (statementFailed(error)) throw error;
+			void closeEntry(key, entry);
+			const rotated = entry.token !== token;
+			if (attempt > 0 || !rotated || !canRetry()) throw error;
+		} finally {
+			release(entry);
+		}
+	}
 }
 
 // Runs a query as the given user. The token is passed per call rather than
@@ -182,33 +240,32 @@ export async function queryAsUser(
 	}
 
 	const key = sessionKey ?? userToken;
-	const entry = acquire(key, userToken);
 
 	const namedParameters = params as
 		| Record<string, DBSQLParameterValue>
 		| undefined;
 
-	let operation: IOperation | null = null;
-	try {
-		const session = await entry.session;
-		operation = await session.executeStatement(
-			sql,
-			namedParameters ? { namedParameters } : undefined,
-		);
-		return (await operation.fetchAll()) as Row[];
-	} catch (error) {
-		// Drop the pooled session so the next call reconnects with a fresh
-		// token. An expired token surfaces here and must not be retried
-		// against the same dead session. A statement the warehouse ran and
-		// refused leaves the session healthy, and closing it would fail every
-		// other query the same reader has running on it.
-		if (!statementFailed(error)) void closeEntry(key, entry);
-		throw error;
-	} finally {
-		if (operation) {
-			await operation.close().catch(() => {});
-		}
-	}
+	// fetchAll hands nothing on until it has every row, so a failed attempt
+	// can always be run again.
+	return onSession(
+		key,
+		userToken,
+		async (session) => {
+			let operation: IOperation | null = null;
+			try {
+				operation = await session.executeStatement(
+					sql,
+					namedParameters ? { namedParameters } : undefined,
+				);
+				return (await operation.fetchAll()) as Row[];
+			} finally {
+				if (operation) {
+					await operation.close().catch(() => {});
+				}
+			}
+		},
+		() => true,
+	);
 }
 
 // Runs a query and hands back its rows in batches.
@@ -231,42 +288,46 @@ export async function queryAsUserBatches(
 	}
 
 	const key = sessionKey ?? userToken;
-	const entry = acquire(key, userToken);
 
 	const namedParameters = params as
 		| Record<string, DBSQLParameterValue>
 		| undefined;
 
-	let operation: IOperation | null = null;
 	let total = 0;
-	try {
-		const session = await entry.session;
-		operation = await session.executeStatement(
-			sql,
-			namedParameters ? { namedParameters } : undefined,
-		);
+	return onSession(
+		key,
+		userToken,
+		async (session) => {
+			let operation: IOperation | null = null;
+			try {
+				operation = await session.executeStatement(
+					sql,
+					namedParameters ? { namedParameters } : undefined,
+				);
 
-		// hasMoreRows is only meaningful after a fetch, so this is a do-while
-		// rather than a while: asking first would skip a single-batch result.
-		do {
-			const rows = (await operation.fetchChunk({
-				maxRows: batchSize,
-			})) as Row[];
-			if (rows.length > 0) {
-				total += rows.length;
-				await onBatch(rows);
+				// hasMoreRows is only meaningful after a fetch, so this is a
+				// do-while rather than a while. Asking first would skip a
+				// single-batch result.
+				do {
+					const rows = (await operation.fetchChunk({
+						maxRows: batchSize,
+					})) as Row[];
+					if (rows.length > 0) {
+						total += rows.length;
+						await onBatch(rows);
+					}
+				} while (await operation.hasMoreRows());
+
+				return total;
+			} finally {
+				if (operation) {
+					await operation.close().catch(() => {});
+				}
 			}
-		} while (await operation.hasMoreRows());
-
-		return total;
-	} catch (error) {
-		if (!statementFailed(error)) void closeEntry(key, entry);
-		throw error;
-	} finally {
-		if (operation) {
-			await operation.close().catch(() => {});
-		}
-	}
+		},
+		// Run again only while no batch has been handed on.
+		() => total === 0,
+	);
 }
 
 // Opens this caller's warehouse session without running anything on it.

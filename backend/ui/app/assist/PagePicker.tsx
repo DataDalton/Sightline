@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useAssistant } from "./AssistantContext";
+import { useAssistantStatus } from "./AssistantContext";
 import styles from "./Assist.module.css";
 
 // Pointing at part of the page to ask about it, like a browser's element
@@ -54,7 +54,7 @@ function labelOf(el: HTMLElement): string {
 }
 
 export function PagePicker() {
-	const { picking, setPicking, attach, setPanelOpen } = useAssistant();
+	const { picking, setPicking, attach, setPanelOpen } = useAssistantStatus();
 	const [hover, setHover] = useState<{ rect: DOMRect; label: string } | null>(
 		null,
 	);

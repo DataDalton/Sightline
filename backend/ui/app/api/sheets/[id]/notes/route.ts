@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { checkWriteRateLimit } from "@/lib/rateLimit";
-import { canSeeRow } from "@/lib/sheets/data";
-import { maxNoteLength, SheetError, writeNote } from "@/lib/sheets/store";
+import { canSeeRow, notesOnRows } from "@/lib/sheets/data";
+import {
+	limits,
+	maxNoteLength,
+	SheetError,
+	writeNote,
+} from "@/lib/sheets/store";
 import { privateJson, readJson } from "../../../notifications/guard";
 import { failure, sheetFor, type IdContext } from "../../respond";
 
@@ -9,8 +13,6 @@ import { failure, sheetFor, type IdContext } from "../../respond";
 // value. Only on a row the writer can see now, so a note cannot be left on a
 // row somebody else's filter shows them and this person's hides.
 export async function PUT(request: NextRequest, { params }: IdContext) {
-	const limited = checkWriteRateLimit(request);
-	if (limited) return limited;
 	const found = await sheetFor(request, (await params).id);
 	if (found instanceof NextResponse) return found;
 	const body = ((await readJson(request)) ?? {}) as Record<string, unknown>;
@@ -39,5 +41,25 @@ export async function PUT(request: NextRequest, { params }: IdContext) {
 		return privateJson({ version });
 	} catch (error) {
 		return failure(error, "save the note");
+	}
+}
+
+// { keys }: the notes on rows the page already holds, read again after the
+// notes changed, without reading the rows again. Answered only for rows the
+// caller can see now.
+export async function POST(request: NextRequest, { params }: IdContext) {
+	const found = await sheetFor(request, (await params).id);
+	if (found instanceof NextResponse) return found;
+	const body = ((await readJson(request)) ?? {}) as Record<string, unknown>;
+	// No more keys than a table holds rows, each no longer than the row key
+	// a note may be written on.
+	const keys = (Array.isArray(body.keys) ? body.keys : [])
+		.filter((k): k is string => typeof k === "string" && k.length <= 4000)
+		.slice(0, limits.tableRows);
+	try {
+		const notes = await notesOnRows(found.identity, found.sheet, keys);
+		return privateJson({ notesVersion: found.sheet.notesVersion, notes });
+	} catch (error) {
+		return failure(error, "load the notes");
 	}
 }

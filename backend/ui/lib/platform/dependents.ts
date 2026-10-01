@@ -251,7 +251,8 @@ export async function collectDependents(
 			`SELECT view_id::text AS view_id, name, owner_email, state,
 				        state->>'sourceKey' AS source_key
 				 FROM explore_views
-				 WHERE state->>'sourceKey' = ANY($1::text[])
+				 WHERE removed_on IS NULL
+				   AND state->>'sourceKey' = ANY($1::text[])
 				   AND ${mentions("state")}`,
 			params,
 		),
@@ -302,7 +303,8 @@ export async function collectDependents(
 			`SELECT sheet_id::text AS sheet_id, title, owner_email,
 				        definition, definition->>'sourceKey' AS source_key
 				 FROM sheets
-				 WHERE definition->>'sourceKey' = ANY($1::text[])
+				 WHERE removed_on IS NULL
+				   AND definition->>'sourceKey' = ANY($1::text[])
 				   AND ${mentions("definition")}`,
 			params,
 		),

@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+	memo,
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { maxExportRows } from "../../lib/query/exportLimits";
 import { createResultMemo, resultMaxAge } from "./resultMemo";
@@ -154,6 +162,42 @@ interface FirstPage {
 
 const firstPages = createResultMemo<FirstPage>(40, resultMaxAge);
 
+// Combines threshold rules and colour scales for one cell.
+//
+// A rule that paints a background also carries a marker or a weight change,
+// so the meaning survives greyscale printing and does not rely on the reader
+// distinguishing hues.
+interface CellAppearance {
+	background?: string;
+	color?: string;
+	bold?: boolean;
+	marker?: string;
+	bar?: { width: number; color: string };
+}
+
+// How one cell is drawn, beyond its value. The change is against the earlier
+// window, or null when there is nothing to compare.
+interface CellLook {
+	appearance: CellAppearance;
+	change: number | null;
+}
+
+type Row = Record<string, unknown>;
+
+const noLook: CellLook = { appearance: {}, change: null };
+
+// The custom properties that carry each column's width and, for a pinned
+// column, its left offset. Every cell reads its width from these, so a drag on
+// a column edge writes one property on the grid and every row follows without
+// being drawn again.
+function widthVar(index: number): string {
+	return `--dg-w${index}`;
+}
+
+function leftVar(index: number): string {
+	return `--dg-l${index}`;
+}
+
 export function DataGrid({
 	sourceKey,
 	dimensions,
@@ -282,78 +326,41 @@ export function DataGrid({
 
 	// A drag on the edge between two columns.
 	//
-	// Held in a ref rather than in state: it updates on every pointer move,
-	// and re-rendering a virtualized grid of forty columns per pixel of travel
-	// is the difference between a resize that follows the cursor and one that
-	// lags behind it. State carries the committed width, which changes once.
+	// Held in a ref rather than in state, and drawn by writing the column's
+	// custom property on the grid element directly. It updates on every
+	// pointer move, and re-rendering a virtualized grid per pixel of travel is
+	// the difference between a resize that follows the cursor and one that
+	// lags behind it. State carries the committed width, set once on release.
+	const gridRef = useRef<HTMLDivElement | null>(null);
 	const resizeRef = useRef<{
 		column: string;
 		startX: number;
 		startWidth: number;
+		// Where the column sits in the display order, which names its
+		// custom property.
+		index: number;
+		// The width of every column together when the drag began.
+		total: number;
+		// Pinned columns to the right of this one, with their left offsets
+		// when the drag began. They move by however much this one grows.
+		laterPins: { index: number; left: number }[];
 	} | null>(null);
-	const [resizing, setResizing] = useState<{
-		column: string;
-		width: number;
-	} | null>(null);
 
-	const beginResize = useCallback(
-		(event: React.PointerEvent, column: string, from: number) => {
-			// Its own gesture, and the header's drag-to-reorder must not also
-			// start: a press on the edge is a resize, not a move.
-			event.stopPropagation();
-			event.preventDefault();
-			event.currentTarget.setPointerCapture(event.pointerId);
-			resizeRef.current = {
-				column,
-				startX: event.clientX,
-				startWidth: from,
-			};
-			setResizing({ column, width: from });
-		},
-		[],
-	);
-
-	const moveResize = useCallback((event: React.PointerEvent) => {
-		const state = resizeRef.current;
-		if (!state) return;
-		// Bounded below so a column cannot be dragged to nothing and lost.
-		// Not bounded above: a column of long descriptions is exactly the case
-		// this exists for, and the grid already scrolls sideways.
-		const width = Math.max(
-			minColumnWidth,
-			state.startWidth + (event.clientX - state.startX),
-		);
-		setResizing({ column: state.column, width });
-	}, []);
-
-	const endResize = useCallback(
-		(event: React.PointerEvent) => {
-			const state = resizeRef.current;
-			resizeRef.current = null;
-			setResizing(null);
-			if (!state) return;
-			if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-				event.currentTarget.releasePointerCapture(event.pointerId);
-			}
-
-			const width = Math.max(
-				minColumnWidth,
-				state.startWidth + (event.clientX - state.startX),
-			);
-			// A press that went nowhere is not a resize, so nothing is
-			// recorded and the column keeps whatever it had.
-			if (Math.abs(width - state.startWidth) < 2) return;
-
-			const next = { ...sized, [state.column]: width };
-			setSized(next);
-			onColumnLayout?.({
-				columnOrder: order,
-				pinnedColumns: pinned,
-				columnWidths: next,
-			});
-		},
-		[sized, order, pinned, onColumnLayout],
-	);
+	// Writes a column's width, and everything that depends on it, onto the
+	// grid element without a render.
+	const paintWidth = (
+		state: NonNullable<typeof resizeRef.current>,
+		width: number,
+	) => {
+		const grid = gridRef.current;
+		if (!grid) return;
+		const delta = width - state.startWidth;
+		grid.style.setProperty(widthVar(state.index), `${width}px`);
+		grid.style.setProperty("--dg-total", `${state.total + delta}px`);
+		for (const pin of state.laterPins) {
+			grid.style.setProperty(leftVar(pin.index), `${pin.left + delta}px`);
+		}
+	};
 
 	const scrollerRef = useRef<HTMLDivElement | null>(null);
 	const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -742,19 +749,16 @@ export function DataGrid({
 		const map = new Map<string, number>();
 		for (const column of orderedColumns) {
 			// The reader's own width wins over the one worked out from the
-			// name, and the drag in progress wins over both so the column
-			// follows the cursor before anything is committed.
-			const dragged =
-				resizing?.column === column ? resizing.width : undefined;
+			// name. A drag in progress is drawn straight onto the grid
+			// element, see paintWidth.
 			map.set(
 				column,
-				dragged ??
-					sized[column] ??
+				sized[column] ??
 					columnWidth(column, hints.get(column) ?? "text"),
 			);
 		}
 		return map;
-	}, [orderedColumns, hints, sized, resizing]);
+	}, [orderedColumns, hints, sized]);
 
 	const totalWidth = useMemo(
 		() =>
@@ -769,6 +773,17 @@ export function DataGrid({
 	// frozen region ends.
 	const lastPinned = orderedColumns.filter((c) => pinned.includes(c)).at(-1);
 
+	// Where each column starts, measured across the whole grid.
+	const columnOffsets = useMemo(() => {
+		const map = new Map<string, number>();
+		let x = 0;
+		for (const column of orderedColumns) {
+			map.set(column, x);
+			x += widths.get(column) ?? minColumnWidth;
+		}
+		return map;
+	}, [orderedColumns, widths]);
+
 	// How far from the left edge each pinned column sits, so several pins stack
 	// rather than overlapping.
 	const pinOffsets = useMemo(() => {
@@ -781,6 +796,151 @@ export function DataGrid({
 		}
 		return map;
 	}, [orderedColumns, pinned, widths]);
+
+	// Each column's place in the display order, which names the custom
+	// properties holding its width and offset.
+	const columnIndex = useMemo(
+		() => new Map(orderedColumns.map((column, i) => [column, i])),
+		[orderedColumns],
+	);
+
+	// The widths and pinned offsets as custom properties on the grid element.
+	// Cells read these rather than a number of their own, so a width change
+	// is one style write rather than a render of every row.
+	const columnVars = useMemo(() => {
+		const vars: Record<string, string> = {
+			"--dg-total": `${totalWidth}px`,
+		};
+		orderedColumns.forEach((column, i) => {
+			vars[widthVar(i)] = `${widths.get(column) ?? minColumnWidth}px`;
+			const left = pinOffsets.get(column);
+			if (left !== undefined) vars[leftVar(i)] = `${left}px`;
+		});
+		return vars;
+	}, [orderedColumns, widths, pinOffsets, totalWidth]);
+
+	const beginResize = (
+		event: React.PointerEvent,
+		column: string,
+		from: number,
+	) => {
+		// Its own gesture, and the header's drag-to-reorder must not also
+		// start, because a press on the edge is a resize, not a move.
+		event.stopPropagation();
+		event.preventDefault();
+		event.currentTarget.setPointerCapture(event.pointerId);
+		const index = columnIndex.get(column) ?? 0;
+		resizeRef.current = {
+			column,
+			startX: event.clientX,
+			startWidth: from,
+			index,
+			total: totalWidth,
+			laterPins: pinned.includes(column)
+				? orderedColumns.flatMap((c, i) => {
+						const left = pinOffsets.get(c);
+						return i > index && left !== undefined
+							? [{ index: i, left }]
+							: [];
+					})
+				: [],
+		};
+	};
+
+	const moveResize = (event: React.PointerEvent) => {
+		const state = resizeRef.current;
+		if (!state) return;
+		// Bounded below so a column cannot be dragged to nothing and lost.
+		// Not bounded above, since a column of long descriptions is exactly
+		// the case this exists for, and the grid already scrolls sideways.
+		const width = Math.max(
+			minColumnWidth,
+			state.startWidth + (event.clientX - state.startX),
+		);
+		paintWidth(state, width);
+	};
+
+	const endResize = (event: React.PointerEvent) => {
+		const state = resizeRef.current;
+		resizeRef.current = null;
+		if (!state) return;
+		if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+			event.currentTarget.releasePointerCapture(event.pointerId);
+		}
+
+		const width = Math.max(
+			minColumnWidth,
+			state.startWidth + (event.clientX - state.startX),
+		);
+		// A press that went nowhere is not a resize, so nothing is recorded
+		// and the column goes back to whatever it had.
+		if (Math.abs(width - state.startWidth) < 2) {
+			paintWidth(state, state.startWidth);
+			return;
+		}
+
+		// The render that follows writes the same values the drag painted.
+		const next = { ...sized, [state.column]: width };
+		setSized(next);
+		onColumnLayout?.({
+			columnOrder: order,
+			pinnedColumns: pinned,
+			columnWidths: next,
+		});
+	};
+
+	// The pinned run, always drawn, and the loose columns after it.
+	const pinCount = useMemo(() => {
+		const at = orderedColumns.findIndex((c) => !pinned.includes(c));
+		return at < 0 ? orderedColumns.length : at;
+	}, [orderedColumns, pinned]);
+	const pins = useMemo(
+		() => orderedColumns.slice(0, pinCount),
+		[orderedColumns, pinCount],
+	);
+	const loose = useMemo(
+		() => orderedColumns.slice(pinCount),
+		[orderedColumns, pinCount],
+	);
+	const pinnedWidth = pins.reduce(
+		(sum, c) => sum + (widths.get(c) ?? minColumnWidth),
+		0,
+	);
+
+	// Only the loose columns near the viewport are drawn in each row, so a
+	// wide result costs what is on screen rather than every column. The
+	// pinned run sits at the left edge and is always drawn. Spacers either
+	// side of the drawn columns keep every cell where it would otherwise be.
+	const columnVirtualizer = useVirtualizer({
+		horizontal: true,
+		count: loose.length,
+		getScrollElement: () => scrollerRef.current,
+		estimateSize: (i) => widths.get(loose[i]) ?? minColumnWidth,
+		paddingStart: pinnedWidth,
+		overscan: 3,
+	});
+	useLayoutEffect(() => {
+		columnVirtualizer.measure();
+	}, [columnVirtualizer, widths, loose, pinnedWidth]);
+
+	const columnItems = columnVirtualizer.getVirtualItems();
+	const firstColumn = columnItems[0]?.index ?? 0;
+	const lastColumn = columnItems.at(-1)?.index ?? loose.length - 1;
+	const shownColumns = useMemo(
+		() => loose.slice(firstColumn, lastColumn + 1),
+		[loose, firstColumn, lastColumn],
+	);
+	const leftSpace =
+		shownColumns.length > 0
+			? (columnOffsets.get(shownColumns[0]) ?? pinnedWidth) - pinnedWidth
+			: 0;
+	const shownEnd =
+		shownColumns.length > 0
+			? (columnOffsets.get(shownColumns[shownColumns.length - 1]) ?? 0) +
+				(widths.get(shownColumns[shownColumns.length - 1]) ??
+					minColumnWidth)
+			: pinnedWidth;
+	const rightSpace = Math.max(0, totalWidth - shownEnd);
 
 	// Enough placeholder rows to reach the bottom of the card, so the
 	// placeholder is the size of the thing it stands in for.
@@ -845,17 +1005,6 @@ export function DataGrid({
 		pinOriginRef.current.delete(column);
 		publish(nextLoose, nextPinned);
 	};
-
-	// Where each column starts, measured across the whole grid.
-	const columnOffsets = useMemo(() => {
-		const map = new Map<string, number>();
-		let x = 0;
-		for (const column of orderedColumns) {
-			map.set(column, x);
-			x += widths.get(column) ?? minColumnWidth;
-		}
-		return map;
-	}, [orderedColumns, widths]);
 
 	// Reordering by pointer rather than by the native drag events.
 	//
@@ -1081,19 +1230,6 @@ export function DataGrid({
 	// grid's own error slot, which would replace the rows the reader still has.
 	const exportError = exporter.error;
 
-	// Combines threshold rules and colour scales for one cell.
-	//
-	// A rule that paints a background also carries a marker or a weight change,
-	// so the meaning survives greyscale printing and does not rely on the
-	// reader distinguishing hues.
-	interface CellAppearance {
-		background?: string;
-		color?: string;
-		bold?: boolean;
-		marker?: string;
-		bar?: { width: number; color: string };
-	}
-
 	// Alternating row shading, on unless an author turns it off. Reading across
 	// a wide row is where a grid loses people, and a stripe is the cheapest fix.
 	//
@@ -1105,105 +1241,154 @@ export function DataGrid({
 	// Only a selection about this grid's own dimensions marks its rows. One
 	// left over from a breakdown switch names a column that is gone.
 	const marking = selectionCovers(selection, dimensions) ? selection : null;
-	const pickable = onCellSelect ? new Set(dimensions) : null;
+	const dimensionKey = dimensions.join("\u001f");
+	const canPick = Boolean(onCellSelect);
+	const pickable = useMemo(
+		() => (canPick ? new Set(dimensionKey.split("\u001f")) : null),
+		[canPick, dimensionKey],
+	);
 
-	// The change in one measure against the earlier window, or null when there
-	// is nothing to compare: no comparison asked for, not a measure, the row
-	// absent from the earlier window, or an earlier figure of zero which has
-	// no percentage to express.
-	function changeFor(
-		row: Record<string, unknown>,
-		column: string,
-	): number | null {
-		if (earlier.size === 0 || !measures.includes(column)) return null;
-		const before = earlier.get(rowKey(row));
-		if (!before) return null;
-		return relativeChange(toNumber(row[column]), toNumber(before[column]));
-	}
+	// The latest cell handler, read when a cell is clicked, so the rows can be
+	// memoised against a callback that does not change.
+	const pickRef = useRef(onCellSelect);
+	useLayoutEffect(() => {
+		pickRef.current = onCellSelect;
+	});
+	const onPick = useCallback(
+		(column: string, value: unknown) => pickRef.current?.(column, value),
+		[],
+	);
 
-	function cellAppearance(
-		row: Record<string, unknown>,
-		column: string,
-		rowIndex: number,
-	): CellAppearance {
-		if (!themeColors) return {};
-		const result: CellAppearance = {};
+	// How each cell is drawn, worked out the first time the cell is shown and
+	// kept per row object until something it reads changes. Scrolling back
+	// over rows, typing in the search box and dragging a column reuse what is
+	// held rather than evaluating every rule again.
+	const measureKey = measures.join("\u001f");
+	const cellLook = useMemo(() => {
+		const cache = new WeakMap<Row, Map<string, CellLook>>();
+		const measureSet = new Set(measureKey.split("\u001f"));
+		const conditions = style?.conditions ?? [];
+		const scales = style?.colorScales ?? [];
+		const total = rows.length;
 
-		const match = evaluateConditions(style?.conditions ?? [], row, column, {
-			position: rowIndex,
-			total: rows.length,
-		});
-		if (match) {
-			if (match.background) {
-				result.background = withAlpha(
-					themeColors.resolve(
-						match.background,
-						themeColors.series[0],
-					),
-					0.18,
-				);
+		// The change in one measure against the earlier window, or null when
+		// there is nothing to compare: no comparison asked for, not a measure,
+		// the row absent from the earlier window, or an earlier figure of zero
+		// which has no percentage to express.
+		const changeFor = (row: Row, column: string): number | null => {
+			if (earlier.size === 0 || !measureSet.has(column)) return null;
+			const before = earlier.get(rowKey(row));
+			if (!before) return null;
+			return relativeChange(
+				toNumber(row[column]),
+				toNumber(before[column]),
+			);
+		};
+
+		const appearanceOf = (
+			row: Row,
+			column: string,
+			rowIndex: number,
+		): CellAppearance => {
+			if (!themeColors) return {};
+			const result: CellAppearance = {};
+
+			const match = evaluateConditions(conditions, row, column, {
+				position: rowIndex,
+				total,
+			});
+			if (match) {
+				if (match.background) {
+					result.background = withAlpha(
+						themeColors.resolve(
+							match.background,
+							themeColors.series[0],
+						),
+						0.18,
+					);
+				}
+				if (match.textColor) {
+					result.color = themeColors.resolve(
+						match.textColor,
+						themeColors.text,
+					);
+				}
+				result.bold = match.bold;
+				result.marker = match.marker;
 			}
-			if (match.textColor) {
-				result.color = themeColors.resolve(
-					match.textColor,
-					themeColors.text,
-				);
-			}
-			result.bold = match.bold;
-			result.marker = match.marker;
-		}
 
-		const scale = (style?.colorScales ?? []).find(
-			(s) => s.field === column,
-		);
-		if (scale) {
-			const stats = columnStats.get(column);
-			const value = toNumber(row[column]);
-			if (stats && value !== null) {
-				const position = scalePosition(
-					value,
-					stats.min,
-					stats.max,
-					scale.kind === "diverging"
-						? (scale.midpoint ?? 0)
-						: undefined,
-				);
-				if (position) {
-					const endpoint =
-						position.side === "low"
-							? themeColors.resolve(
-									scale.low,
-									themeColors.negative,
-								)
-							: themeColors.resolve(
-									scale.high,
-									themeColors.positive,
-								);
+			const scale = scales.find((s) => s.field === column);
+			if (scale) {
+				const stats = columnStats.get(column);
+				const value = toNumber(row[column]);
+				if (stats && value !== null) {
+					const position = scalePosition(
+						value,
+						stats.min,
+						stats.max,
+						scale.kind === "diverging"
+							? (scale.midpoint ?? 0)
+							: undefined,
+					);
+					if (position) {
+						const endpoint =
+							position.side === "low"
+								? themeColors.resolve(
+										scale.low,
+										themeColors.negative,
+									)
+								: themeColors.resolve(
+										scale.high,
+										themeColors.positive,
+									);
 
-					if (scale.asDataBar) {
-						// A bar compares more precisely than a colour wash and
-						// reads without colour at all.
-						result.bar = {
-							width: Math.round(position.ratio * 100),
-							color: withAlpha(endpoint, 0.25),
-						};
-					} else {
-						const base = themeColors.resolve(
-							scale.mid,
-							themeColors.surface,
-						);
-						result.background = mix(
-							base,
-							endpoint,
-							position.ratio * 0.7,
-						);
+						if (scale.asDataBar) {
+							// A bar compares more precisely than a colour
+							// wash and reads without colour at all.
+							result.bar = {
+								width: Math.round(position.ratio * 100),
+								color: withAlpha(endpoint, 0.25),
+							};
+						} else {
+							const base = themeColors.resolve(
+								scale.mid,
+								themeColors.surface,
+							);
+							result.background = mix(
+								base,
+								endpoint,
+								position.ratio * 0.7,
+							);
+						}
 					}
 				}
 			}
-		}
 
-		return result;
-	}
+			return result;
+		};
+
+		return (row: Row, column: string, rowIndex: number): CellLook => {
+			let byColumn = cache.get(row);
+			if (!byColumn) {
+				byColumn = new Map();
+				cache.set(row, byColumn);
+			}
+			let look = byColumn.get(column);
+			if (!look) {
+				const appearance = appearanceOf(row, column, rowIndex);
+				const change = changeFor(row, column);
+				look =
+					change === null && Object.keys(appearance).length === 0
+						? noLook
+						: { appearance, change };
+				byColumn.set(column, look);
+			}
+			return look;
+		};
+	}, [rows, style, themeColors, columnStats, earlier, rowKey, measureKey]);
+
+	// The column being reordered, faded in every row while it is lifted.
+	const lifted = drag && !drag.settling ? drag.column : null;
 
 	// The page filters this grid is drawn under, named when it comes back
 	// empty.
@@ -1216,7 +1401,11 @@ export function DataGrid({
 	if (error && rows.length === 0) return <VisualError error={error} />;
 
 	return (
-		<div className={styles.grid} style={{ height }}>
+		<div
+			className={styles.grid}
+			ref={gridRef}
+			style={{ height, ...columnVars } as React.CSSProperties}
+		>
 			<div className={styles.toolbar}>
 				<div className={styles.search}>
 					<svg
@@ -1367,7 +1556,10 @@ export function DataGrid({
 					</>
 				)}
 
-				<div className={styles.headerRow} style={{ width: totalWidth }}>
+				<div
+					className={styles.headerRow}
+					style={{ width: "var(--dg-total)" }}
+				>
 					{orderedColumns.map((column) => {
 						const hint = hints.get(column) ?? "text";
 						const isSorted = sort?.field === column;
@@ -1386,9 +1578,9 @@ export function DataGrid({
 									drag?.column === column ? styles.lifted : ""
 								} ${drag ? styles.dragInProgress : ""}`}
 								style={{
-									width: widths.get(column),
+									width: `var(${widthVar(columnIndex.get(column) ?? 0)})`,
 									left: isPinned
-										? pinOffsets.get(column)
+										? `var(${leftVar(columnIndex.get(column) ?? 0)})`
 										: undefined,
 								}}
 								onPointerDown={(e) =>
@@ -1548,7 +1740,7 @@ export function DataGrid({
 					// with a word in the middle of an empty card.
 					<div
 						className={styles.skeletonRows}
-						style={{ width: totalWidth }}
+						style={{ width: "var(--dg-total)" }}
 						role="status"
 						aria-busy="true"
 						aria-label="Loading"
@@ -1559,7 +1751,7 @@ export function DataGrid({
 									<div
 										key={column}
 										className={styles.skeletonCell}
-										style={{ width: widths.get(column) }}
+										style={{ width: `var(${widthVar(c)})` }}
 									>
 										<span
 											className={styles.skeletonBar}
@@ -1590,7 +1782,7 @@ export function DataGrid({
 						className={styles.rows}
 						style={{
 							height: virtualizer.getTotalSize(),
-							width: totalWidth,
+							width: "var(--dg-total)",
 						}}
 					>
 						{virtualizer.getVirtualItems().map((item) => {
@@ -1599,180 +1791,27 @@ export function DataGrid({
 								marking !== null &&
 								matchesSelection(marking, row);
 							return (
-								<div
+								<GridRow
 									key={item.key}
-									className={`${styles.row} ${
-										striped && item.index % 2 === 1
-											? styles.rowAlt
-											: ""
-									} ${chosen ? styles.rowChosen : ""} ${
-										marking && !chosen
-											? styles.rowDimmed
-											: ""
-									}`}
-									style={{
-										height: item.size,
-										transform: `translateY(${item.start}px)`,
-									}}
-								>
-									{orderedColumns.map((column) => {
-										const hint =
-											hints.get(column) ?? "text";
-										const cell = cellAppearance(
-											row,
-											column,
-											item.index,
-										);
-										const isPinned =
-											pinned.includes(column);
-										const isLastPin =
-											isPinned && column === lastPinned;
-										return (
-											<div
-												key={column}
-												className={`${styles.cell} ${
-													isNumericHint(hint)
-														? styles.numeric
-														: ""
-												} ${isPinned ? styles.pinned : ""} ${
-													isLastPin
-														? styles.pinEdge
-														: ""
-												} ${
-													drag?.column === column &&
-													!drag.settling
-														? styles.lifted
-														: ""
-												} ${
-													pickable?.has(column)
-														? styles.pickable
-														: ""
-												}`}
-												onClick={
-													pickable?.has(column)
-														? () => {
-																// A drag across the
-																// text to copy it
-																// ends in a click,
-																// and is not a
-																// choice of value.
-																if (
-																	window
-																		.getSelection()
-																		?.toString()
-																) {
-																	return;
-																}
-																onCellSelect?.(
-																	column,
-																	row[column],
-																);
-															}
-														: undefined
-												}
-												style={{
-													width: widths.get(column),
-													left: isPinned
-														? pinOffsets.get(column)
-														: undefined,
-													// A pinned cell scrolls over the
-													// others, so it carries its own
-													// ground. Faintly tinted with the
-													// accent, so the frozen columns
-													// read as a group at a glance,
-													// and still striped so a row is
-													// followable across the boundary.
-													background:
-														cell.background ??
-														(isPinned
-															? striped &&
-																item.index %
-																	2 ===
-																	1
-																? "var(--pin-surface-alt)"
-																: "var(--pin-surface)"
-															: undefined),
-													color: cell.color,
-													fontWeight: cell.bold
-														? 600
-														: undefined,
-												}}
-												title={String(
-													row[column] ?? "",
-												)}
-											>
-												{cell.bar && (
-													<span
-														className={
-															styles.dataBar
-														}
-														style={{
-															width: `${cell.bar.width}%`,
-															background:
-																cell.bar.color,
-														}}
-														aria-hidden="true"
-													/>
-												)}
-												<span
-													className={styles.cellText}
-												>
-													{cell.marker && (
-														<span
-															className={
-																styles.marker
-															}
-														>
-															{cell.marker}
-														</span>
-													)}
-													{formatValue(
-														row[column],
-														hint,
-													)}
-												</span>
-												{/* The change under the
-												    figure rather than in a
-												    column of its own, so the
-												    number and its movement are
-												    read together and the
-												    reader's column
-												    arrangement is left
-												    alone. */}
-												{(() => {
-													const change = changeFor(
-														row,
-														column,
-													);
-													if (change === null)
-														return null;
-													return (
-														<span
-															className={`${styles.cellChange} ${
-																change > 0
-																	? styles.changeUp
-																	: change < 0
-																		? styles.changeDown
-																		: ""
-															}`}
-														>
-															{change > 0
-																? "▲"
-																: change < 0
-																	? "▼"
-																	: "="}
-															{Math.abs(
-																change * 100,
-															) < 0.05
-																? "0%"
-																: `${Math.abs(change * 100).toFixed(1)}%`}
-														</span>
-													);
-												})()}
-											</div>
-										);
-									})}
-								</div>
+									row={row}
+									index={item.index}
+									start={item.start}
+									size={item.size}
+									alt={striped && item.index % 2 === 1}
+									chosen={chosen}
+									dimmed={marking !== null && !chosen}
+									pins={pins}
+									lastPinned={lastPinned}
+									columns={shownColumns}
+									leftSpace={leftSpace}
+									rightSpace={rightSpace}
+									columnIndex={columnIndex}
+									hints={hints}
+									cellLook={cellLook}
+									pickable={pickable}
+									lifted={lifted}
+									onPick={onPick}
+								/>
 							);
 						})}
 					</div>
@@ -1798,7 +1837,7 @@ export function DataGrid({
 				{showTotals && totals && rows.length > 0 && (
 					<div
 						className={styles.totalRow}
-						style={{ width: totalWidth }}
+						style={{ width: "var(--dg-total)" }}
 					>
 						{orderedColumns.map((column, index) => {
 							const hint = hints.get(column) ?? "text";
@@ -1817,9 +1856,9 @@ export function DataGrid({
 											: ""
 									}`}
 									style={{
-										width: widths.get(column),
+										width: `var(${widthVar(index)})`,
 										left: isPinned
-											? pinOffsets.get(column)
+											? `var(${leftVar(index)})`
 											: undefined,
 									}}
 								>
@@ -1870,3 +1909,165 @@ export function DataGrid({
 		</div>
 	);
 }
+
+interface GridRowProps {
+	row: Row;
+	index: number;
+	start: number;
+	size: number;
+	// Striped, by the row's place in the result.
+	alt: boolean;
+	chosen: boolean;
+	dimmed: boolean;
+	pins: string[];
+	lastPinned: string | undefined;
+	// The loose columns near the viewport, the only ones drawn.
+	columns: string[];
+	// The width of the loose columns left out either side of those drawn.
+	leftSpace: number;
+	rightSpace: number;
+	columnIndex: Map<string, number>;
+	hints: Map<string, FormatHint>;
+	cellLook: (row: Row, column: string, rowIndex: number) => CellLook;
+	pickable: Set<string> | null;
+	lifted: string | null;
+	onPick: (column: string, value: unknown) => void;
+}
+
+// One data row. Memoised so scrolling, typing in the search box and dragging
+// a column draw only the rows whose own props changed. Every prop is a
+// primitive or held steady by the grid.
+const GridRow = memo(function GridRow({
+	row,
+	index,
+	start,
+	size,
+	alt,
+	chosen,
+	dimmed,
+	pins,
+	lastPinned,
+	columns,
+	leftSpace,
+	rightSpace,
+	columnIndex,
+	hints,
+	cellLook,
+	pickable,
+	lifted,
+	onPick,
+}: GridRowProps) {
+	const cell = (column: string, isPinned: boolean) => {
+		const hint = hints.get(column) ?? "text";
+		const { appearance, change } = cellLook(row, column, index);
+		const at = columnIndex.get(column) ?? 0;
+		const isLastPin = isPinned && column === lastPinned;
+		return (
+			<div
+				key={column}
+				className={`${styles.cell} ${
+					isNumericHint(hint) ? styles.numeric : ""
+				} ${isPinned ? styles.pinned : ""} ${
+					isLastPin ? styles.pinEdge : ""
+				} ${lifted === column ? styles.lifted : ""} ${
+					pickable?.has(column) ? styles.pickable : ""
+				}`}
+				onClick={
+					pickable?.has(column)
+						? () => {
+								// A drag across the text to copy it ends in a
+								// click, and is not a choice of value.
+								if (window.getSelection()?.toString()) {
+									return;
+								}
+								onPick(column, row[column]);
+							}
+						: undefined
+				}
+				style={{
+					width: `var(${widthVar(at)})`,
+					left: isPinned ? `var(${leftVar(at)})` : undefined,
+					// A pinned cell scrolls over the others, so it carries its
+					// own ground. Faintly tinted with the accent, so the
+					// frozen columns read as a group at a glance, and still
+					// striped so a row is followable across the boundary.
+					background:
+						appearance.background ??
+						(isPinned
+							? alt
+								? "var(--pin-surface-alt)"
+								: "var(--pin-surface)"
+							: undefined),
+					color: appearance.color,
+					fontWeight: appearance.bold ? 600 : undefined,
+				}}
+				title={String(row[column] ?? "")}
+			>
+				{appearance.bar && (
+					<span
+						className={styles.dataBar}
+						style={{
+							width: `${appearance.bar.width}%`,
+							background: appearance.bar.color,
+						}}
+						aria-hidden="true"
+					/>
+				)}
+				<span className={styles.cellText}>
+					{appearance.marker && (
+						<span className={styles.marker}>
+							{appearance.marker}
+						</span>
+					)}
+					{formatValue(row[column], hint)}
+				</span>
+				{/* The change under the figure rather than in a column of its
+				    own, so the number and its movement are read together and
+				    the reader's column arrangement is left alone. */}
+				{change !== null && (
+					<span
+						className={`${styles.cellChange} ${
+							change > 0
+								? styles.changeUp
+								: change < 0
+									? styles.changeDown
+									: ""
+						}`}
+					>
+						{change > 0 ? "▲" : change < 0 ? "▼" : "="}
+						{Math.abs(change * 100) < 0.05
+							? "0%"
+							: `${Math.abs(change * 100).toFixed(1)}%`}
+					</span>
+				)}
+			</div>
+		);
+	};
+
+	return (
+		<div
+			className={`${styles.row} ${alt ? styles.rowAlt : ""} ${
+				chosen ? styles.rowChosen : ""
+			} ${dimmed ? styles.rowDimmed : ""}`}
+			style={{
+				height: size,
+				transform: `translateY(${start}px)`,
+			}}
+		>
+			{pins.map((column) => cell(column, true))}
+			{leftSpace > 0 && (
+				<div
+					style={{ width: leftSpace, flexShrink: 0 }}
+					aria-hidden="true"
+				/>
+			)}
+			{columns.map((column) => cell(column, false))}
+			{rightSpace > 0 && (
+				<div
+					style={{ width: rightSpace, flexShrink: 0 }}
+					aria-hidden="true"
+				/>
+			)}
+		</div>
+	);
+});

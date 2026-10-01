@@ -16,6 +16,7 @@ import {
 	type Capability,
 } from "./access";
 import { cachedDefinition } from "./definitionCache";
+import { curatedReports } from "./curated";
 import { sql } from "../data/lakebase";
 import { listFavourites } from "./search";
 import { getCategory, getReport } from "./reports";
@@ -212,6 +213,11 @@ export async function navigationPayload(
 	identity: Identity,
 	policy: PolicyClass,
 ): Promise<NavigationPayload> {
+	// The marked reports need only the email, so they are read while the
+	// access context resolves rather than after it.
+	const markedPending = listFavourites(identity.email).catch(
+		() => [] as string[],
+	);
 	const context = await getAccessContext(policy, identity);
 
 	// Ids rather than a count, because the count is per reader and the list is
@@ -221,23 +227,20 @@ export async function navigationPayload(
 	// Personal pages are excluded: they sit in no category, so they would add
 	// nothing to a count here, and walking them for every reader on every
 	// navigation load would grow with the number of people using the app.
-	const [rows, reportRows] = await cachedDefinition(
-		"navigation:categories",
-		async () =>
-			await Promise.all([
-				sql<CategoryRow>(
+	const [rows, reportRows, marked] = await Promise.all([
+		cachedDefinition(
+			"navigation:categories",
+			async () =>
+				await sql<CategoryRow>(
 					`SELECT category_id, name, icon, sort_order
 					 FROM categories
 					 WHERE is_active = TRUE
 					 ORDER BY sort_order, name`,
 				),
-				sql<ReportRow>(
-					`SELECT report_id::text AS report_id, category_id, slug, title
-					 FROM reports
-					 WHERE is_active = TRUE AND is_personal = FALSE`,
-				),
-			]),
-	);
+		),
+		curatedReports(),
+		markedPending,
+	]);
 
 	// Resolved once per reader rather than on every render.
 	//
@@ -259,9 +262,6 @@ export async function navigationPayload(
 	// A grant can be withdrawn after somebody marked a report, and the mark is
 	// not a grant, so this is checked on every read rather than at the point it
 	// was saved.
-	const marked = await listFavourites(context.email).catch(
-		() => [] as string[],
-	);
 	const byId = new Map(reportRows.map((row) => [row.report_id, row]));
 	const favourites: NavigationPayload["favourites"] = [];
 	for (const reportId of marked) {
@@ -373,21 +373,29 @@ export async function reportPayload(
 
 // The category a report sits in, as its page shows it. The name for the trail
 // above the title, and who to ask about the report.
+//
+// The same for every reader of the category, so it is held under the
+// navigation prefix, which category changes already drop.
 async function categorySummary(categoryId: string): Promise<{
 	categoryId: string;
 	name: string;
 	contacts: Awaited<ReturnType<typeof categoryContacts>>;
 } | null> {
-	const [rows, contacts] = await Promise.all([
-		sql<{ name: string }>(
-			`SELECT name FROM categories
-			 WHERE category_id = $1 AND is_active = TRUE`,
-			[categoryId],
-		),
-		categoryContacts(categoryId),
-	]);
-	if (!rows[0]) return null;
-	return { categoryId, name: rows[0].name, contacts };
+	return await cachedDefinition(
+		`navigation:category-summary:${categoryId}`,
+		async () => {
+			const [rows, contacts] = await Promise.all([
+				sql<{ name: string }>(
+					`SELECT name FROM categories
+					 WHERE category_id = $1 AND is_active = TRUE`,
+					[categoryId],
+				),
+				categoryContacts(categoryId),
+			]);
+			if (!rows[0]) return null;
+			return { categoryId, name: rows[0].name, contacts };
+		},
+	);
 }
 
 export interface InfoPayload {

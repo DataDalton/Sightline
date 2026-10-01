@@ -18,8 +18,10 @@ import {
 	cacheSet,
 	isShareable,
 	liveTtlSeconds,
+	promoteNewerShared,
 	type CacheEntry,
 } from "./cache";
+import { createGate } from "./gate";
 import { QuerySpecError, type QuerySpec } from "./spec";
 
 // Runs a query spec for one caller. This is the single entry point every
@@ -72,6 +74,48 @@ export async function assertCanReadSource(
 // Tracks refreshes running behind a stale response, so a burst of requests for
 // the same key triggers one warehouse query rather than one each.
 const revalidating = new Set<string>();
+
+// How many warehouse queries one batch will start at the same time.
+//
+// A batch is one page, and a page that misses on everything should not open
+// twenty statements against one warehouse session. The rest queue behind these
+// and the reader waits the same total either way, with far less pressure on the
+// session.
+const maxBatchConcurrency = 6;
+
+// Refreshes behind stale responses, across every request on this replica.
+//
+// A page whose answers expired together asks for all of them in one burst, and
+// each stale answer starts a refresh. Run unbounded, that burst opens one
+// statement per visual on the same warehouse session. Sized like a batch, so
+// background work never presses on a session harder than a cold page does.
+const backgroundRefreshes = createGate(maxBatchConcurrency);
+
+// Refreshes a stale entry behind the response that served it.
+//
+// Another replica may have refreshed the same key already, so the shared tier
+// is asked first, and a newer answer found there is taken in place of a
+// warehouse query. Only one refresh per key runs at a time on this replica.
+function refreshBehind(
+	identity: Identity,
+	source: SemanticSource,
+	spec: QuerySpec,
+	policy: PolicyClass,
+	key: string,
+	held: CacheEntry,
+): void {
+	if (revalidating.has(key)) return;
+	revalidating.add(key);
+	void backgroundRefreshes
+		.run(async () => {
+			if (await promoteNewerShared(key, held)) return;
+			await runAndCache(identity, source, spec, policy, key);
+		})
+		.catch((error) => {
+			console.warn(`Background refresh failed for ${key}:`, error);
+		})
+		.finally(() => revalidating.delete(key));
+}
 
 // Shares an in-flight warehouse query between concurrent callers waiting on
 // the same key. Without this, N users hitting a cold entry at once produce N
@@ -164,17 +208,7 @@ export async function executeQuery(
 	// served while a fresh one is fetched. The page is already asking again on
 	// the live interval and would draw the old figures twice.
 	if (lookup.entry && lookup.stale && !source.isLive) {
-		if (!revalidating.has(key)) {
-			revalidating.add(key);
-			void runAndCache(identity, source, runSpec, policy, key)
-				.catch((error) => {
-					console.warn(
-						`Background refresh failed for ${key}:`,
-						error,
-					);
-				})
-				.finally(() => revalidating.delete(key));
-		}
+		refreshBehind(identity, source, runSpec, policy, key, lookup.entry);
 		return toResult(
 			lookup.entry,
 			lookup.tier ?? "l1",
@@ -281,14 +315,6 @@ async function runAndCache(
 
 // --- Several queries at once ------------------------------------------------
 
-// How many warehouse queries one batch will start at the same time.
-//
-// A batch is one page, and a page that misses on everything should not open
-// twenty statements against one warehouse session. The rest queue behind these
-// and the reader waits the same total either way, with far less pressure on the
-// session.
-const maxBatchConcurrency = 6;
-
 export interface BatchOutcome {
 	result?: QueryResult;
 	error?: string;
@@ -305,18 +331,34 @@ export interface BatchOutcome {
 // round trip rather than one per visual. Everything after that is the same code
 // path, so a batched query and a single one produce the same entry under the
 // same key.
+//
+// onOutcome, when given, is told about each query the moment it settles, so a
+// caller can answer cached queries without waiting for the cold ones. Answers
+// found in cache settle before any warehouse query starts. Every query is
+// reported exactly once, and the full list is still returned at the end.
 export async function executeQueries(
 	identity: Identity,
 	specs: QuerySpec[],
+	onOutcome?: (index: number, outcome: BatchOutcome) => void,
 ): Promise<BatchOutcome[]> {
 	const startedAt = Date.now();
 
+	const outcomes: BatchOutcome[] = new Array(specs.length);
+	const settle = (index: number, outcome: BatchOutcome): void => {
+		outcomes[index] = outcome;
+		onOutcome?.(index, outcome);
+	};
+	const settleAll = (outcome: BatchOutcome): BatchOutcome[] => {
+		specs.forEach((_, index) => settle(index, { ...outcome }));
+		return outcomes;
+	};
+
 	const policy = await resolvePolicyClass(identity);
 	if (policy.degraded) {
-		return specs.map(() => ({
+		return settleAll({
 			error: "Access could not be verified. Group membership is temporarily unavailable.",
 			status: 403,
-		}));
+		});
 	}
 
 	// Asked once for the batch. A spec on a source outside it is refused
@@ -326,10 +368,10 @@ export async function executeQueries(
 		reachable = await reachableSet(identity);
 	} catch (error) {
 		console.warn("Source access could not be resolved:", error);
-		return specs.map(() => ({
+		return settleAll({
 			error: "Access could not be verified.",
 			status: 403,
-		}));
+		});
 	}
 	const refused = new Set<number>();
 
@@ -363,22 +405,21 @@ export async function executeQueries(
 			.map((p) => (p as NonNullable<typeof p>).key),
 	);
 
-	const outcomes: BatchOutcome[] = new Array(specs.length);
 	const pending: number[] = [];
 
 	prepared.forEach((entry, index) => {
 		if (refused.has(index)) {
-			outcomes[index] = {
+			settle(index, {
 				error: "That dataset is not one you can read.",
 				status: 403,
-			};
+			});
 			return;
 		}
 		if (!entry) {
-			outcomes[index] = {
+			settle(index, {
 				error: `Unknown source "${specs[index].sourceKey}"`,
 				status: 400,
-			};
+			});
 			return;
 		}
 
@@ -386,10 +427,10 @@ export async function executeQueries(
 		try {
 			assertFieldsPresent(entry.source, entry.spec);
 		} catch (error) {
-			outcomes[index] = {
+			settle(index, {
 				error: (error as Error).message,
 				status: 400,
-			};
+			});
 			return;
 		}
 
@@ -403,7 +444,7 @@ export async function executeQueries(
 
 		if (lookup.entry && !lookup.stale) {
 			nudge(entry.source);
-			outcomes[index] = {
+			settle(index, {
 				result: toResult(
 					lookup.entry,
 					lookup.tier ?? "l1",
@@ -413,31 +454,22 @@ export async function executeQueries(
 					entry.source,
 					entry.window,
 				),
-			};
+			});
 			return;
 		}
 
 		if (lookup.entry && lookup.stale && !entry.source.isLive) {
 			// Served now, refreshed behind the response, exactly as the single
 			// query path does it.
-			if (!revalidating.has(entry.key)) {
-				revalidating.add(entry.key);
-				void runAndCache(
-					identity,
-					entry.source,
-					entry.runSpec,
-					policy,
-					entry.key,
-				)
-					.catch((error) => {
-						console.warn(
-							`Background refresh failed for ${entry.key}:`,
-							error,
-						);
-					})
-					.finally(() => revalidating.delete(entry.key));
-			}
-			outcomes[index] = {
+			refreshBehind(
+				identity,
+				entry.source,
+				entry.runSpec,
+				policy,
+				entry.key,
+				lookup.entry,
+			);
+			settle(index, {
 				result: toResult(
 					lookup.entry,
 					lookup.tier ?? "l1",
@@ -447,7 +479,7 @@ export async function executeQueries(
 					entry.source,
 					entry.window,
 				),
-			};
+			});
 			return;
 		}
 
@@ -479,7 +511,7 @@ export async function executeQueries(
 				const answered = await (entry.shareable
 					? shareInflight(entry.key, run)
 					: run());
-				outcomes[index] = {
+				settle(index, {
 					result: toResult(
 						answered,
 						"warehouse",
@@ -489,7 +521,7 @@ export async function executeQueries(
 						entry.source,
 						entry.window,
 					),
-				};
+				});
 			} catch (error) {
 				// A refusal or a problem with the request is the reader's to
 				// read, a missing field included. A warehouse error can carry
@@ -500,7 +532,7 @@ export async function executeQueries(
 				if (!readable) {
 					console.error(`Query failed for ${entry.key}:`, error);
 				}
-				outcomes[index] = {
+				settle(index, {
 					error: readable ? (error as Error).message : "Query failed",
 					status:
 						error instanceof QueryAccessError
@@ -508,7 +540,7 @@ export async function executeQueries(
 							: error instanceof QuerySpecError
 								? 400
 								: 500,
-				};
+				});
 			}
 		}
 	};

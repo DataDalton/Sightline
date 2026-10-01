@@ -281,6 +281,65 @@ export function rowKey(
 	);
 }
 
+// The values a row key was made from, in the order of the fields that group
+// it, or null when the text is not a key for that many fields.
+export function parseRowKey(
+	key: string,
+	fieldCount: number,
+): (string | null)[] | null {
+	if (fieldCount === 0) return key === "*" ? [] : null;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(key);
+	} catch {
+		return null;
+	}
+	if (!Array.isArray(parsed) || parsed.length !== fieldCount) return null;
+	if (!parsed.every((v) => v === null || typeof v === "string")) return null;
+	return parsed as (string | null)[];
+}
+
+// --- What the data is read from ---------------------------------------------
+
+// The parts of a definition its rows are read from. Widths, formats, the
+// title, the column order, frozen columns, formulas and notes leave the rows
+// as they are. A sort on a formula or a note column is applied in the page,
+// so only a sort on a field is part of the question.
+export function queryShape(def: SheetDefinition): unknown {
+	if (def.mode === "pivot") {
+		return {
+			s: def.sourceKey,
+			m: "pivot",
+			c: def.conditions,
+			p: def.pivot,
+		};
+	}
+	return {
+		s: def.sourceKey,
+		m: "table",
+		f: def.columns,
+		c: def.conditions,
+		o: def.sort && def.columns.includes(def.sort.column) ? def.sort : null,
+	};
+}
+
+// One 32 bit FNV-1a pass over the text from the given starting value.
+function fnv1a(text: string, basis: number): string {
+	let h = basis;
+	for (let i = 0; i < text.length; i++) {
+		h ^= text.charCodeAt(i);
+		h = Math.imul(h, 0x01000193);
+	}
+	return (h >>> 0).toString(16).padStart(8, "0");
+}
+
+// A fingerprint of queryShape, worked out the same way in the browser and on
+// the server. Two definitions with the same fingerprint read the same rows.
+export function queryFingerprint(def: SheetDefinition): string {
+	const text = JSON.stringify(queryShape(def));
+	return fnv1a(text, 0x811c9dc5) + fnv1a(text, 0x050c5d1f);
+}
+
 // --- Pivots ----------------------------------------------------------------
 
 export interface PivotColumn {

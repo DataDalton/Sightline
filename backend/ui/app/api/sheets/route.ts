@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { checkWriteRateLimit } from "@/lib/rateLimit";
 import { createSheet, listSheets } from "@/lib/sheets/store";
 import { caller, privateJson, readJson } from "../notifications/guard";
 import { failure } from "./respond";
@@ -18,8 +17,6 @@ export async function GET(request: NextRequest) {
 
 // { title, definition }
 export async function POST(request: NextRequest) {
-	const limited = checkWriteRateLimit(request);
-	if (limited) return limited;
 	const identity = await caller(request);
 	if (identity instanceof NextResponse) return identity;
 	const body = (await readJson(request)) as {

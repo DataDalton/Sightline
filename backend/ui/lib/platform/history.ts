@@ -10,7 +10,8 @@ import {
 	type PageProtection,
 } from "./pageProtection";
 import { insertLog } from "../activityLog";
-import { invalidateDefinitions } from "./definitionCache";
+import { invalidateReport } from "./curated";
+import { writeVersion } from "./versionWrite";
 import { diffSnapshots, type Change, type Snapshot } from "./versionDiff";
 import { diffVersions, type VersionDiff } from "./versionDetail";
 
@@ -39,9 +40,63 @@ export interface HistoryEntry {
 interface VersionRow {
 	version: string | number;
 	label: string | null;
-	snapshot: Snapshot;
+	changes: Change[] | null;
 	created_by: string | null;
 	created_on: string;
+}
+
+// The change summary of each version is stored when the version is written.
+// Rows written before that, or by a path that does not store one, are worked
+// out here from their snapshots once and stored, so the next read finds them.
+//
+// The rows arrive newest first with one extra at the end, so the version
+// before each is the next row along.
+async function fillMissingChanges(
+	reportId: string,
+	rows: VersionRow[],
+	limit: number,
+): Promise<void> {
+	const missing: number[] = [];
+	for (let i = 0; i < Math.min(rows.length, limit); i++) {
+		if (rows[i].changes === null) missing.push(i);
+	}
+	if (missing.length === 0) return;
+
+	const wanted = new Set<number>();
+	for (const i of missing) {
+		wanted.add(Number(rows[i].version));
+		if (rows[i + 1]) wanted.add(Number(rows[i + 1].version));
+	}
+	const snapshots = await sql<{
+		version: string | number;
+		snapshot: Snapshot;
+	}>(
+		`SELECT version, snapshot FROM report_versions
+		 WHERE report_id = $1 AND version = ANY($2::bigint[])`,
+		[reportId, [...wanted]],
+	);
+	const byVersion = new Map(
+		snapshots.map((row) => [Number(row.version), row.snapshot]),
+	);
+
+	for (const i of missing) {
+		const version = Number(rows[i].version);
+		const next = rows[i + 1];
+		const changes = diffSnapshots(
+			next ? (byVersion.get(Number(next.version)) ?? null) : null,
+			byVersion.get(version) ?? null,
+		);
+		rows[i].changes = changes;
+		// Stored for next time. A failure here costs only the saving, since
+		// the summary has already been worked out for this read.
+		await sql(
+			`UPDATE report_versions SET changes = $3::jsonb
+			 WHERE report_id = $1 AND version = $2 AND changes IS NULL`,
+			[reportId, version, JSON.stringify(changes)],
+		).catch((error) => {
+			console.warn("A version summary could not be stored:", error);
+		});
+	}
 }
 
 export async function listHistory(
@@ -49,39 +104,34 @@ export async function listHistory(
 	limit = 60,
 ): Promise<HistoryEntry[]> {
 	// One extra row, because describing the oldest entry in the window needs
-	// the version before it to compare against.
-	const rows = await sql<VersionRow>(
-		`SELECT version, label, snapshot, created_by, created_on::text
-		 FROM report_versions
-		 WHERE report_id = $1
-		 ORDER BY version DESC
-		 LIMIT $2`,
-		[reportId, limit + 1],
-	);
-
-	const current = await sql<{ version: string | number }>(
-		`SELECT version FROM reports WHERE report_id = $1`,
-		[reportId],
-	);
+	// the version before it to compare against when its summary was never
+	// stored. The snapshots themselves are read only for those rows.
+	const [rows, current] = await Promise.all([
+		sql<VersionRow>(
+			`SELECT version, label, changes, created_by, created_on::text
+			 FROM report_versions
+			 WHERE report_id = $1
+			 ORDER BY version DESC
+			 LIMIT $2`,
+			[reportId, limit + 1],
+		),
+		sql<{ version: string | number }>(
+			`SELECT version FROM reports WHERE report_id = $1`,
+			[reportId],
+		),
+	]);
 	const currentVersion = Number(current[0]?.version ?? 0);
 
-	const entries: HistoryEntry[] = [];
-	for (let i = 0; i < Math.min(rows.length, limit); i++) {
-		const row = rows[i];
-		// Ordered newest first, so the version before this one is the next in
-		// the array. Its absence means this is the first version there is.
-		const previous = rows[i + 1]?.snapshot ?? null;
+	await fillMissingChanges(reportId, rows, limit);
 
-		entries.push({
-			version: Number(row.version),
-			author: row.created_by,
-			createdOn: row.created_on,
-			label: row.label,
-			changes: diffSnapshots(previous, row.snapshot),
-			isCurrent: Number(row.version) === currentVersion,
-		});
-	}
-	return entries;
+	return rows.slice(0, limit).map((row) => ({
+		version: Number(row.version),
+		author: row.created_by,
+		createdOn: row.created_on,
+		label: row.label,
+		changes: row.changes ?? [],
+		isCurrent: Number(row.version) === currentVersion,
+	}));
 }
 
 // A version number nobody wrote. Named rather than generic so the route can
@@ -228,14 +278,16 @@ export async function restoreVersion(
 ): Promise<RestoreResult> {
 	await assertCanEdit(policy, email, reportId);
 
+	let reportSlug: string | null = null;
 	const restored = await transaction(async (client) => {
 		// The same lock a save takes, so a restore and an edit cannot
 		// interleave and produce a report that is half of each.
-		const current = await client.query<{ version: string }>(
-			`SELECT version FROM reports WHERE report_id = $1 FOR UPDATE`,
+		const current = await client.query<{ version: string; slug: string }>(
+			`SELECT version, slug FROM reports WHERE report_id = $1 FOR UPDATE`,
 			[reportId],
 		);
 		const currentVersion = Number(current.rows[0]?.version ?? 0);
+		reportSlug = current.rows[0]?.slug ?? null;
 
 		const found = await client.query<{ snapshot: Snapshot }>(
 			`SELECT snapshot FROM report_versions
@@ -383,19 +435,13 @@ export async function restoreVersion(
 
 		// The restore is itself a version, so it can be undone the same way
 		// anything else can.
-		await client.query(
-			`INSERT INTO report_versions
-			   (report_id, version, label, snapshot, created_by)
-			 VALUES ($1, $2, $3, $4, $5)
-			 ON CONFLICT (report_id, version) DO NOTHING`,
-			[
-				reportId,
-				nextVersion,
-				`Restored version ${version}`,
-				JSON.stringify(snapshot),
-				email,
-			],
-		);
+		await writeVersion(client, {
+			reportId,
+			version: nextVersion,
+			label: `Restored version ${version}`,
+			snapshot,
+			createdBy: email,
+		});
 
 		void insertLog({
 			recordType: "report",
@@ -418,7 +464,6 @@ export async function restoreVersion(
 	// Dropped once the restore has committed, the same as a save, so the
 	// reload every open session makes on the restore op reads the restored
 	// report and its new version rather than the cached one.
-	invalidateDefinitions(`report-body:${reportId}`);
-	invalidateDefinitions("report:");
+	invalidateReport(reportId, [reportSlug]);
 	return restored;
 }

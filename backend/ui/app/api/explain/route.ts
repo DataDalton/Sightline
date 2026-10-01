@@ -11,7 +11,6 @@ import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
 import { reachableSet } from "@/lib/platform/sources";
 import { executeQuery, QueryAccessError } from "@/lib/query/execute";
 import { parseQuerySpec, QuerySpecError } from "@/lib/query/spec";
-import { checkWriteRateLimit } from "@/lib/rateLimit";
 import { getSource } from "@/lib/semantic/registry";
 import type { SemanticSource } from "@/lib/semantic/types";
 
@@ -71,8 +70,6 @@ export async function POST(request: NextRequest) {
 
 	// Each request is two dozen queries, so it is held to the same budget as
 	// the other expensive requests.
-	const limited = checkWriteRateLimit(request);
-	if (limited) return limited;
 
 	const identity = getIdentity(request);
 	if (!identity) {

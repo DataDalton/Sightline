@@ -2,7 +2,7 @@ import { sql, transaction } from "../data/lakebase";
 import type { Identity } from "../auth/identity";
 import type { PolicyClass } from "../auth/policy";
 import { insertLog } from "../activityLog";
-import { invalidateAccessCache } from "./access";
+import { invalidateAccessCache, invalidateAccessFor } from "./access";
 import { AuthoringError, createReport } from "./authoring";
 import { invalidateDefinitions } from "./definitionCache";
 import type { BuiltVisual } from "../visuals/templates";
@@ -31,6 +31,8 @@ export interface PersonalPage {
 	modifiedOn: string;
 	// How many people it has been shared with. Only meaningful on your own.
 	sharedWith: number;
+	// Its owner marked it to be kept however long it goes unused.
+	keep: boolean;
 }
 
 interface Row {
@@ -42,6 +44,7 @@ interface Row {
 	owner_email: string;
 	modified_on: string;
 	shared_with: string;
+	keep: boolean;
 }
 
 function toPage(row: Row): PersonalPage {
@@ -54,11 +57,12 @@ function toPage(row: Row): PersonalPage {
 		ownerEmail: row.owner_email,
 		modifiedOn: row.modified_on,
 		sharedWith: Number(row.shared_with),
+		keep: row.keep === true,
 	};
 }
 
 const selectColumns = `r.report_id::text AS report_id, r.slug, r.title,
-	        r.description, r.source_key, r.owner_email, r.modified_on,
+	        r.description, r.source_key, r.owner_email, r.modified_on, r.keep,
 	        (SELECT count(*) FROM access_policies p
 	          WHERE p.resource_type = 'report'
 	            AND p.resource_id = r.report_id::text
@@ -381,7 +385,9 @@ export async function sharePage(
 		changedBy: identity.email,
 		newValue: target,
 	});
-	invalidateAccessCache();
+	// The grant names one person, so only what was resolved for that person
+	// changes. Everybody else keeps their cached access.
+	invalidateAccessFor(target);
 
 	if (already.length === 0) {
 		void tellSharedWith(identity, reportId, target).catch((error) => {
@@ -436,7 +442,9 @@ export async function unsharePage(
 		changedBy: identity.email,
 		oldValue: email.trim(),
 	});
-	invalidateAccessCache();
+	// Only user grants are written or withdrawn here, so the person named is
+	// the only one whose access changed.
+	invalidateAccessFor(email);
 }
 
 export async function deletePersonalPage(

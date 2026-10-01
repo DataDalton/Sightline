@@ -239,73 +239,138 @@ function payloadFor(
 	});
 }
 
+type PushItem = Pick<InboxItem, "id" | "kind" | "title" | "body" | "link">;
+
+// How many pushes are in flight at once for one batch.
+const sendConcurrency = 8;
+
 export async function deliverPush(
 	ownerEmail: string,
-	item: Pick<InboxItem, "id" | "kind" | "title" | "body" | "link">,
+	item: PushItem,
 	options: { force?: boolean } = {},
 ): Promise<{ sent: number; failed: number }> {
-	if (!settings().pushEnabled) return { sent: 0, failed: 0 };
+	return deliverPushMany([{ ownerEmail, item }], options);
+}
+
+// Sends each entry to every device its owner allowed it on. Every owner's
+// devices and preferences are read in one statement, the sends run a few at a
+// time, and what each send found is written back together at the end.
+export async function deliverPushMany(
+	deliveries: { ownerEmail: string; item: PushItem }[],
+	options: { force?: boolean } = {},
+): Promise<{ sent: number; failed: number }> {
+	if (!settings().pushEnabled || deliveries.length === 0) {
+		return { sent: 0, failed: 0 };
+	}
 	const keys = await vapidKeys();
 	if (!keys) return { sent: 0, failed: 0 };
 
-	if (!options.force) {
-		const prefs = await pushPreferences(ownerEmail);
-		if (!prefs[item.kind]) return { sent: 0, failed: 0 };
-	}
-
-	const targets = await sql<{
+	const owners = [
+		...new Set(deliveries.map((d) => d.ownerEmail.toLowerCase())),
+	];
+	const devices = await sql<{
+		owner_email: string;
 		endpoint: string;
 		p256dh: string;
 		auth: string;
+		push: Partial<PushPreferences> | null;
 	}>(
-		`SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE owner_email = $1`,
-		[ownerEmail.toLowerCase()],
+		`SELECT s.owner_email, s.endpoint, s.p256dh, s.auth, p.push
+		 FROM push_subscriptions s
+		 LEFT JOIN notification_prefs p ON p.owner_email = s.owner_email
+		 WHERE s.owner_email = ANY($1::text[])`,
+		[owners],
 	);
+	const byOwner = new Map<string, typeof devices>();
+	for (const device of devices) {
+		const held = byOwner.get(device.owner_email) ?? [];
+		held.push(device);
+		byOwner.set(device.owner_email, held);
+	}
 
-	let sent = 0;
-	let failed = 0;
-	const payload = payloadFor(item);
-	await Promise.all(
-		targets.map(async (t) => {
-			const outcome = await send(
-				{
-					endpoint: t.endpoint,
-					keys: { p256dh: t.p256dh, auth: t.auth },
-				},
-				payload,
-				keys,
-				item.kind === "alert" ? "high" : "normal",
-			);
-			if (outcome.kind === "sent") {
-				sent++;
-				await sql(
-					`UPDATE push_subscriptions SET last_sent_on = now(), failures = 0
-					 WHERE endpoint = $1`,
-					[t.endpoint],
-				);
-			} else if (outcome.kind === "gone") {
-				failed++;
-				await sql(
-					`DELETE FROM push_subscriptions WHERE endpoint = $1`,
-					[t.endpoint],
-				);
-			} else {
-				failed++;
-				console.warn(
-					`Push to ${new URL(t.endpoint).host} failed (${outcome.status ?? "network"}): ${outcome.message}`,
-				);
-				await sql(
-					`UPDATE push_subscriptions SET failures = failures + 1 WHERE endpoint = $1`,
-					[t.endpoint],
-				);
-				await sql(
-					`DELETE FROM push_subscriptions WHERE endpoint = $1 AND failures >= $2`,
-					[t.endpoint, maxFailures],
-				);
+	const sends: {
+		device: (typeof devices)[number];
+		item: PushItem;
+		payload: ReturnType<typeof payloadFor>;
+	}[] = [];
+	for (const { ownerEmail, item } of deliveries) {
+		const theirs = byOwner.get(ownerEmail.toLowerCase()) ?? [];
+		if (theirs.length === 0) continue;
+		const payload = payloadFor(item);
+		for (const device of theirs) {
+			const prefs = { ...defaultPushPreferences, ...(device.push ?? {}) };
+			if (options.force || prefs[item.kind]) {
+				sends.push({ device, item, payload });
 			}
-		}),
+		}
+	}
+	if (sends.length === 0) return { sent: 0, failed: 0 };
+
+	const delivered: string[] = [];
+	const gone: string[] = [];
+	const failures = new Map<string, number>();
+	const queue = [...sends];
+	const workers = Array.from(
+		{ length: Math.min(sendConcurrency, queue.length) },
+		async () => {
+			for (let next = queue.shift(); next; next = queue.shift()) {
+				const { device, item, payload } = next;
+				const outcome = await send(
+					{
+						endpoint: device.endpoint,
+						keys: { p256dh: device.p256dh, auth: device.auth },
+					},
+					payload,
+					keys,
+					item.kind === "alert" ? "high" : "normal",
+				);
+				if (outcome.kind === "sent") {
+					delivered.push(device.endpoint);
+				} else if (outcome.kind === "gone") {
+					gone.push(device.endpoint);
+				} else {
+					console.warn(
+						`Push to ${new URL(device.endpoint).host} failed (${outcome.status ?? "network"}): ${outcome.message}`,
+					);
+					failures.set(
+						device.endpoint,
+						(failures.get(device.endpoint) ?? 0) + 1,
+					);
+				}
+			}
+		},
 	);
-	return { sent, failed };
+	await Promise.all(workers);
+
+	if (failures.size > 0) {
+		await sql(
+			`UPDATE push_subscriptions s SET failures = s.failures + u.n
+			 FROM unnest($1::text[], $2::int[]) AS u(endpoint, n)
+			 WHERE s.endpoint = u.endpoint`,
+			[[...failures.keys()], [...failures.values()]],
+		);
+		await sql(
+			`DELETE FROM push_subscriptions
+			 WHERE endpoint = ANY($1::text[]) AND failures >= $2`,
+			[[...failures.keys()], maxFailures],
+		);
+	}
+	if (gone.length > 0) {
+		await sql(
+			`DELETE FROM push_subscriptions WHERE endpoint = ANY($1::text[])`,
+			[gone],
+		);
+	}
+	if (delivered.length > 0) {
+		await sql(
+			`UPDATE push_subscriptions SET last_sent_on = now(), failures = 0
+			 WHERE endpoint = ANY($1::text[])`,
+			[delivered],
+		);
+	}
+	const failed =
+		gone.length + [...failures.values()].reduce((a, b) => a + b, 0);
+	return { sent: delivered.length, failed };
 }
 
 export async function pushStats(): Promise<{

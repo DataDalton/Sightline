@@ -3,12 +3,15 @@ import { test } from "node:test";
 import {
 	activeElapsed,
 	addActive,
+	customPattern,
 	describePattern,
 	groupLoads,
 	judge,
 	learnActiveDays,
 	learnPattern,
+	needsRelearning,
 	readLatenessSetting,
+	relearnEveryMs,
 } from "./arrivals";
 
 const minute = 60_000;
@@ -197,5 +200,57 @@ test("daily loads either side of midnight are not averaged to midday", () => {
 	// About ten past midnight UTC, not noon.
 	assert.ok(
 		(pattern.usualMinute ?? 0) < 60 || (pattern.usualMinute ?? 0) > 1400,
+	);
+});
+
+test("a stored pattern is learned again on a new load or once it is old", () => {
+	const now = Date.UTC(2026, 0, 10);
+	const kept = { newestArrival: now - 3_600_000, learnedOn: now - 60_000 };
+	assert.equal(needsRelearning(null, null, now), true);
+	assert.equal(needsRelearning(kept, kept.newestArrival, now), false);
+	assert.equal(needsRelearning(kept, now - 1_000, now), true);
+	// The newest load aged out of the window.
+	assert.equal(needsRelearning(kept, null, now), true);
+	assert.equal(
+		needsRelearning(
+			{ ...kept, learnedOn: now - relearnEveryMs },
+			kept.newestArrival,
+			now,
+		),
+		true,
+	);
+});
+
+test("a hand set schedule matches what learnPattern gives for it", () => {
+	const setting = readLatenessSetting({
+		mode: "custom",
+		everyHours: 6,
+		weekdaysOnly: true,
+	});
+	assert.equal(setting.mode, "custom");
+	if (setting.mode !== "custom") return;
+	const now = Date.UTC(2026, 0, 10);
+	const loads = [now - 7_200_000, now - 3_600_000];
+	assert.deepEqual(
+		customPattern(setting, 2),
+		learnPattern(loads, now, setting),
+	);
+});
+
+test("a second load later in the day does not move the usual time", () => {
+	// Loads each day near 16:33 UTC, and on some days again in the evening.
+	const history: number[] = [];
+	for (let d = 0; d < 28; d++) {
+		const base = monday + d * day;
+		history.push(base + 16 * hour + (30 + (d % 6)) * minute);
+		if (d % 5 === 0) history.push(base + 21 * hour + 5 * minute);
+		if (d % 7 === 3) history.push(base + 22 * hour + 38 * minute);
+	}
+	const pattern = learnPattern(history, monday + 28 * day + 12 * hour);
+	assert.equal(pattern.kind, "regular");
+	const usual = pattern.usualMinute ?? -1;
+	assert.ok(
+		usual >= 16 * 60 + 30 && usual <= 16 * 60 + 40,
+		`usual minute ${usual} should sit at the first load of the day`,
 	);
 });

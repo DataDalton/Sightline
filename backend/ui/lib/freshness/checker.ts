@@ -1,7 +1,7 @@
 import { sql } from "../data/lakebase";
 import { asApp } from "../alerts/runner";
 import { liveTtlSeconds } from "../query/cache";
-import { demoMode, isDatabricksApp, resolveWarehousePath } from "../runtime";
+import { demoMode } from "../runtime";
 import {
 	metricViewSourcesComplete,
 	parseMetricViewTables,
@@ -11,6 +11,7 @@ import type { SemanticSource } from "../semantic/types";
 import { runCatalogQuery } from "../semantic/ucMetadata";
 import { settings } from "../settings";
 import {
+	commitsSinceSeen,
 	isDataChange,
 	readHistory,
 	toHistory,
@@ -18,6 +19,7 @@ import {
 } from "./history";
 import { evaluateLateness } from "./lateness";
 import { refreshMarks } from "./marks";
+import { routineLooksAllowed } from "./warehouse";
 
 // Watches the tables behind each source for new data.
 //
@@ -68,50 +70,118 @@ function quoted(table: string): string {
 }
 
 // What each source was found to read, held for a while so a pass every few
-// seconds does not ask again, and a view that cannot be resolved is not
-// opened on every pass.
+// seconds does not ask again.
 const tablesHeld = new Map<string, { at: number; tables: string[] | null }>();
 const tablesHeldMs = 10 * 60_000;
 
-async function tablesFor(source: SemanticSource): Promise<string[] | null> {
-	const held = tablesHeld.get(source.sourceKey);
-	if (held && Date.now() - held.at < tablesHeldMs) return held.tables;
-	const tables = await resolveTables(source);
-	tablesHeld.set(source.sourceKey, { at: Date.now(), tables });
-	return tables;
+// Metric views whose definitions are being read behind the passes.
+let resolving: Promise<void> | null = null;
+
+// The tables behind every source, or null for one whose tables are not known.
+// A table is its own. A metric view's come from what the catalogue sync
+// recorded, read for every view that needs it in one statement. A view with
+// nothing recorded is read from its definition behind the pass, so a slow
+// warehouse cannot hold up the looks at every other table, and is on a timer
+// until that finishes.
+async function tablesForAll(
+	sources: SemanticSource[],
+): Promise<Map<string, string[] | null>> {
+	const found = new Map<string, string[] | null>();
+	const now = Date.now();
+	const unknown: SemanticSource[] = [];
+	for (const source of sources) {
+		if (source.kind !== "metric_view") {
+			found.set(source.sourceKey, [
+				`${source.catalog}.${source.schema}.${source.object}`,
+			]);
+			continue;
+		}
+		const held = tablesHeld.get(source.sourceKey);
+		if (held && now - held.at < tablesHeldMs) {
+			found.set(source.sourceKey, held.tables);
+			continue;
+		}
+		unknown.push(source);
+	}
+	if (unknown.length === 0) return found;
+
+	const rows = await sql<{
+		source_key: string;
+		base_tables: string[] | null;
+		base_tables_checked_on: string | null;
+	}>(
+		`SELECT source_key, base_tables,
+		        base_tables_checked_on::text AS base_tables_checked_on
+		 FROM data_sources WHERE source_key = ANY($1::text[])`,
+		[unknown.map((s) => s.sourceKey)],
+	);
+	const byKey = new Map(rows.map((r) => [r.source_key, r]));
+	const unresolved: SemanticSource[] = [];
+	for (const source of unknown) {
+		const row = byKey.get(source.sourceKey);
+		const recorded = row?.base_tables;
+		const tables =
+			Array.isArray(recorded) && recorded.length > 0 ? recorded : null;
+		tablesHeld.set(source.sourceKey, { at: now, tables });
+		found.set(source.sourceKey, tables);
+		// A view whose definition was already found to name something other
+		// than tables is not read again until the catalogue sync records a
+		// new list for it.
+		if (!tables && row && !row.base_tables_checked_on) {
+			unresolved.push(source);
+		}
+	}
+	if (unresolved.length > 0 && !resolving) {
+		resolving = resolveDefinitions(unresolved)
+			.catch((error) => {
+				console.warn("Reading metric view definitions failed:", error);
+			})
+			.finally(() => {
+				resolving = null;
+			});
+	}
+	return found;
 }
 
-async function resolveTables(source: SemanticSource): Promise<string[] | null> {
-	const self = `${source.catalog}.${source.schema}.${source.object}`;
-	if (source.kind !== "metric_view") return [self];
-
-	const rows = await sql<{ base_tables: string[] | null }>(
-		`SELECT base_tables FROM data_sources WHERE source_key = $1`,
-		[source.sourceKey],
-	);
-	const recorded = rows[0]?.base_tables;
-	if (Array.isArray(recorded) && recorded.length > 0) return recorded;
-
-	// Not recorded yet. Read from the view's definition once and kept, as
-	// the catalogue sync would.
-	try {
-		const created = await runCatalogQuery(
-			null,
-			`SHOW CREATE TABLE ${self}`,
-		);
-		const statement = String(Object.values(created[0] ?? {})[0] ?? "");
+// Reads each view's definition for the tables it names, as the catalogue sync
+// would, only while the warehouse is already up, so this never starts it. A
+// complete list is kept on the source. A definition naming something other
+// than tables is marked as checked, so it is not read again. A read that fails
+// is tried again once the hold runs out.
+async function resolveDefinitions(sources: SemanticSource[]): Promise<void> {
+	for (const source of sources) {
+		if (!(await routineLooksAllowed())) return;
+		const self = `${source.catalog}.${source.schema}.${source.object}`;
+		let statement: string;
+		try {
+			const created = await runCatalogQuery(
+				null,
+				`SHOW CREATE TABLE ${quoted(self)}`,
+			);
+			statement = String(Object.values(created[0] ?? {})[0] ?? "");
+		} catch {
+			continue;
+		}
 		// A view reading from a query or a short name has sources that cannot
 		// all be named, and a partial list would be kept as if it were whole.
-		if (!metricViewSourcesComplete(statement)) return null;
-		const tables = parseMetricViewTables(statement);
-		if (tables.length === 0) return null;
-		await sql(
-			`UPDATE data_sources SET base_tables = $2::jsonb WHERE source_key = $1`,
-			[source.sourceKey, JSON.stringify(tables)],
-		);
-		return tables;
-	} catch {
-		return null;
+		const tables = metricViewSourcesComplete(statement)
+			? parseMetricViewTables(statement)
+			: [];
+		if (tables.length > 0) {
+			await sql(
+				`UPDATE data_sources
+				 SET base_tables = $2::jsonb, base_tables_checked_on = NULL
+				 WHERE source_key = $1 AND base_tables IS NULL`,
+				[source.sourceKey, JSON.stringify(tables)],
+			);
+			tablesHeld.set(source.sourceKey, { at: Date.now(), tables });
+		} else {
+			await sql(
+				`UPDATE data_sources SET base_tables_checked_on = now()
+				 WHERE source_key = $1 AND base_tables IS NULL`,
+				[source.sourceKey],
+			);
+		}
 	}
 }
 
@@ -190,80 +260,6 @@ async function recordArrivals(
 	);
 }
 
-let warehouseState: {
-	at: number;
-	running: boolean;
-	autoStopMinutes: number | null;
-} | null = null;
-let workspaceClient: unknown = null;
-
-// Whether routine looks may run, meaning the SQL warehouse is up and people
-// are reading. The warehouse is asked about through the workspace rather than
-// the warehouse, so asking never starts it. Assumed yes outside a deployment,
-// and when the answer cannot be had, since a look that was not needed costs
-// less than an answer that stayed old.
-async function routineLooksAllowed(): Promise<boolean> {
-	if (demoMode || !isDatabricksApp) return true;
-	if (warehouseState && Date.now() - warehouseState.at < 15_000) {
-		return warehouseState.running && (await readersActive());
-	}
-	let running = true;
-	let autoStopMinutes: number | null = null;
-	try {
-		const id = resolveWarehousePath().split("/").pop();
-		if (id) {
-			const { WorkspaceClient } =
-				await import("@databricks/sdk-experimental");
-			workspaceClient ??= new WorkspaceClient({});
-			const warehouse = await (
-				workspaceClient as InstanceType<typeof WorkspaceClient>
-			).warehouses.get({ id });
-			running = warehouse.state === "RUNNING";
-			autoStopMinutes =
-				typeof warehouse.auto_stop_mins === "number" &&
-				warehouse.auto_stop_mins > 0
-					? warehouse.auto_stop_mins
-					: null;
-		}
-	} catch {
-		running = true;
-	}
-	warehouseState = { at: Date.now(), running, autoStopMinutes };
-	return running && (await readersActive());
-}
-
-let readerState: { at: number; active: boolean } | null = null;
-
-// Whether anybody has read data recently enough that the warehouse is up on
-// their account. A look is itself a query, so looking whenever the warehouse
-// is up would keep it up for ever. Looks stop half the warehouse's idle
-// window after the last reader, which lets it stop soon after they leave.
-async function readersActive(): Promise<boolean> {
-	if (readerState && Date.now() - readerState.at < 15_000) {
-		return readerState.active;
-	}
-	const windowMinutes = Math.max(
-		1,
-		Math.floor((warehouseState?.autoStopMinutes ?? 10) / 2),
-	);
-	let active = true;
-	try {
-		const rows = await sql<{ active: boolean }>(
-			`SELECT EXISTS (
-			   SELECT 1 FROM usage_events
-			   WHERE occurred_on > now() - make_interval(mins => $1)
-			     AND event_type IN ('query', 'page_view', 'page_open')
-			 ) AS active`,
-			[windowMinutes],
-		);
-		active = rows[0]?.active ?? true;
-	} catch {
-		active = true;
-	}
-	readerState = { at: Date.now(), active };
-	return active;
-}
-
 let passing = false;
 // The tables the last pass made sure had a row, as one sorted key.
 let knownTables = "";
@@ -284,8 +280,9 @@ async function pass(): Promise<void> {
 	const intervalByTable = new Map<string, number>();
 	const unreadable: SemanticSource[] = [];
 
+	const resolved = await tablesForAll(sources);
 	for (const source of sources) {
-		const tables = await tablesFor(source);
+		const tables = resolved.get(source.sourceKey) ?? null;
 		if (!tables) {
 			unreadable.push(source);
 			continue;
@@ -338,6 +335,7 @@ async function pass(): Promise<void> {
 		version: string | null;
 		version_at: string | null;
 		learned_on: string | null;
+		lease: string;
 	}>(
 		`UPDATE source_checks SET
 		   next_check_on = now() + interval '${claimLease}',
@@ -351,7 +349,7 @@ async function pass(): Promise<void> {
 		   FOR UPDATE SKIP LOCKED
 		 )
 		 RETURNING table_name, version::text, version_at::text,
-		           learned_on::text`,
+		           learned_on::text, next_check_on::text AS lease`,
 		[tables, running],
 	);
 	if (due.length === 0) return;
@@ -361,8 +359,20 @@ async function pass(): Promise<void> {
 	const workers = Array.from({ length: 3 }, async () => {
 		for (let row = queue.shift(); row; row = queue.shift()) {
 			const interval = intervalByTable.get(row.table_name) ?? 3600;
+			// The lease starts again as each look starts, so a table waiting
+			// behind slow looks is still held when its turn comes. A table
+			// whose lease another replica took over in the meantime is left
+			// to it.
+			const held = await sql(
+				`UPDATE source_checks
+				 SET next_check_on = now() + interval '${claimLease}'
+				 WHERE table_name = $1 AND next_check_on = $2::timestamptz
+				 RETURNING 1`,
+				[row.table_name, row.lease],
+			).catch(() => null);
+			if (held !== null && held.length === 0) continue;
 			try {
-				const history = await tableHistory(row.table_name);
+				let history = await tableHistory(row.table_name);
 				const lastSeen =
 					row.version === null
 						? null
@@ -374,6 +384,18 @@ async function pass(): Promise<void> {
 							};
 				const { latest, changed } = readHistory(history, lastSeen);
 				if (changed) changedTables.add(row.table_name);
+
+				// A page that stopped short of the version last seen is read
+				// again far enough back to reach it, so the commit that
+				// loaded the data is found and timed.
+				const reach = demoMode
+					? null
+					: commitsSinceSeen(history, lastSeen);
+				if (reach !== null)
+					history = await tableHistory(
+						row.table_name,
+						Math.min(reach, learningPage),
+					).catch(() => history);
 
 				// What this page of history says about when the table
 				// loads, and once a day the longer history, so a table is
@@ -449,7 +471,9 @@ async function pass(): Promise<void> {
 
 // Brings each source's standing up to date from its tables: watched when every
 // table it reads was read, on a timer when any could not be, and changed when
-// any changed on this pass.
+// any changed on this pass. When each table was last looked at stays on its
+// row in source_checks, so a look that changes nothing writes nothing here.
+// See lookedOnSql in ./marks.
 async function settleSources(
 	tablesOf: Map<string, string[]>,
 	changedTables: Set<string>,
@@ -458,10 +482,9 @@ async function settleSources(
 	const state = await sql<{
 		table_name: string;
 		version: string | null;
-		checked_on: string | null;
 		last_error: string | null;
 	}>(
-		`SELECT table_name, version::text, checked_on::text, last_error
+		`SELECT table_name, version::text, last_error
 		 FROM source_checks WHERE table_name = ANY($1::text[])`,
 		[all],
 	);
@@ -470,16 +493,12 @@ async function settleSources(
 	const keys: string[] = [];
 	const modes: string[] = [];
 	const notes: (string | null)[] = [];
-	const looks: (string | null)[] = [];
 	const changes: boolean[] = [];
 	for (const [sourceKey, tables] of tablesOf) {
 		const rows = tables.map((t) => byTable.get(t));
 		const failed = rows.find((r) => r?.last_error);
 		const unseen = rows.some((r) => !r || r.version === null);
 		const changed = tables.some((t) => changedTables.has(t));
-		const oldestLook = rows
-			.map((r) => (r?.checked_on ? Date.parse(r.checked_on) : 0))
-			.reduce((a, b) => Math.min(a, b), Number.POSITIVE_INFINITY);
 
 		const mode = failed || unseen ? "timer" : "checked";
 		const note = failed
@@ -491,30 +510,24 @@ async function settleSources(
 		keys.push(sourceKey);
 		modes.push(mode);
 		notes.push(note);
-		looks.push(
-			Number.isFinite(oldestLook) && oldestLook > 0
-				? new Date(oldestLook).toISOString()
-				: null,
-		);
 		changes.push(changed);
 	}
 	if (keys.length === 0) return;
 
-	// One statement for every source, writing only the rows that moved.
+	// One statement for every source, writing only the rows whose mode or
+	// note moved or whose data changed.
 	await sql(
 		`UPDATE data_sources d SET
 		   freshness_mode = u.mode, freshness_note = u.note,
-		   checked_on = u.checked,
 		   data_changed_on = CASE WHEN u.changed THEN now()
 		                          ELSE d.data_changed_on END
-		 FROM unnest($1::text[], $2::text[], $3::text[], $4::timestamptz[],
-		             $5::boolean[])
-		      AS u(key, mode, note, checked, changed)
+		 FROM unnest($1::text[], $2::text[], $3::text[], $4::boolean[])
+		      AS u(key, mode, note, changed)
 		 WHERE d.source_key = u.key
 		   AND (u.changed
-		        OR (d.freshness_mode, d.freshness_note, d.checked_on)
-		           IS DISTINCT FROM (u.mode, u.note, u.checked))`,
-		[keys, modes, notes, looks, changes],
+		        OR (d.freshness_mode, d.freshness_note)
+		           IS DISTINCT FROM (u.mode, u.note))`,
+		[keys, modes, notes, changes],
 	);
 	const changedKeys = keys.filter((_, i) => changes[i]);
 	if (changedKeys.length > 0) {

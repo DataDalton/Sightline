@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { getIdentity } from "@/lib/auth/identity";
 import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
 import { deleteView } from "@/lib/platform/views";
-import { checkWriteRateLimit } from "@/lib/rateLimit";
 
 export async function DELETE(
 	request: NextRequest,
@@ -10,12 +9,12 @@ export async function DELETE(
 ) {
 	await ensureReadyOrDegrade();
 
-	const limited = checkWriteRateLimit(request);
-	if (limited) return limited;
-
 	const identity = getIdentity(request);
 	if (!identity) {
-		return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+		return NextResponse.json(
+			{ error: "Not authenticated" },
+			{ status: 401 },
+		);
 	}
 
 	const { viewId } = await params;

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sendNow } from "@/lib/deliveries/runner";
 import { unsubscribe } from "@/lib/deliveries/store";
-import { checkWriteRateLimit } from "@/lib/rateLimit";
 import { caller, privateJson } from "../../notifications/guard";
 
 // Refusals the runner words for the reader, with the status each one means.
@@ -19,8 +18,6 @@ export async function DELETE(
 	request: NextRequest,
 	{ params }: { params: Promise<{ id: string }> },
 ) {
-	const limited = checkWriteRateLimit(request);
-	if (limited) return limited;
 	const identity = await caller(request);
 	if (identity instanceof NextResponse) return identity;
 	const { id } = await params;
@@ -35,8 +32,6 @@ export async function POST(
 	request: NextRequest,
 	{ params }: { params: Promise<{ id: string }> },
 ) {
-	const limited = checkWriteRateLimit(request);
-	if (limited) return limited;
 	const identity = await caller(request);
 	if (identity instanceof NextResponse) return identity;
 	const { id } = await params;

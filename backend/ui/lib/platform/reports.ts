@@ -9,6 +9,7 @@ import {
 	type Permission,
 } from "./access";
 import { insertLog } from "../activityLog";
+import { curatedReports } from "./curated";
 
 // Reading reports, pages and visuals, always filtered by what the caller may
 // open. Access is applied here rather than in each route so there is one place
@@ -119,20 +120,14 @@ export async function listReports(
 	// the resolver: they belong to nobody's category, so a category listing
 	// that included them would be asking a question with no useful answer, and
 	// the uncategorised listing is what the home page walks.
+	//
+	// Filtered from the shared curated list, which holds the same rows for
+	// every reader in the same order. Only the access decision below is per
+	// reader.
+	const curated = await curatedReports();
 	const rows = categoryId
-		? await sql<ReportRow>(
-				`SELECT ${reportColumns}
-				 FROM reports
-				 WHERE is_active = TRUE AND is_personal = FALSE AND category_id = $1
-				 ORDER BY sort_order, title`,
-				[categoryId],
-			)
-		: await sql<ReportRow>(
-				`SELECT ${reportColumns}
-				 FROM reports
-				 WHERE is_active = TRUE AND is_personal = FALSE
-				 ORDER BY sort_order, title`,
-			);
+		? curated.filter((row) => row.category_id === categoryId)
+		: curated;
 
 	const visible: ReportSummary[] = [];
 	for (const row of rows) {

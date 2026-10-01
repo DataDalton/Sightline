@@ -155,12 +155,24 @@ export function ReportGrid({
 		};
 		measure();
 
-		const observer = new ResizeObserver(measure);
+		// The observer and the window both fire while a window is dragged,
+		// often more than once a frame. Each asks for one measure on the next
+		// frame, so the page is laid out once per frame at most.
+		let frame = 0;
+		const schedule = () => {
+			if (frame) return;
+			frame = requestAnimationFrame(() => {
+				frame = 0;
+				measure();
+			});
+		};
+		const observer = new ResizeObserver(schedule);
 		observer.observe(element);
-		window.addEventListener("resize", measure);
+		window.addEventListener("resize", schedule);
 		return () => {
 			observer.disconnect();
-			window.removeEventListener("resize", measure);
+			window.removeEventListener("resize", schedule);
+			if (frame) cancelAnimationFrame(frame);
 		};
 	}, [still]);
 

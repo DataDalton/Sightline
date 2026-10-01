@@ -10,7 +10,6 @@ import {
 	type EditOperation,
 } from "@/lib/platform/editing";
 import { getReport } from "@/lib/platform/reports";
-import { checkWriteRateLimit } from "@/lib/rateLimit";
 
 // Applies a batch of edits to a report. Changes publish to everyone: there is
 // one definition per report, not one per reader.
@@ -19,9 +18,6 @@ export async function POST(
 	{ params }: { params: Promise<{ slug: string }> },
 ) {
 	await ensureReadyOrDegrade();
-
-	const limited = checkWriteRateLimit(request);
-	if (limited) return limited;
 
 	const identity = getIdentity(request);
 	if (!identity) {

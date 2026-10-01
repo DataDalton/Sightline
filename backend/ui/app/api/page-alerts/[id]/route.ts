@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { deletePageAlert, updatePageAlert } from "@/lib/alerts/pageStore";
-import { checkWriteRateLimit } from "@/lib/rateLimit";
 import { privateJson } from "../../notifications/guard";
 import { badBody, failed, pageAlertCaller, readBody } from "../respond";
 
@@ -10,8 +9,6 @@ type Context = { params: Promise<{ id: string }> };
 
 // { definition }
 export async function PUT(request: NextRequest, { params }: Context) {
-	const limited = checkWriteRateLimit(request);
-	if (limited) return limited;
 	const who = await pageAlertCaller(request);
 	if (who instanceof NextResponse) return who;
 	const { id } = await params;
@@ -31,8 +28,6 @@ export async function PUT(request: NextRequest, { params }: Context) {
 }
 
 export async function DELETE(request: NextRequest, { params }: Context) {
-	const limited = checkWriteRateLimit(request);
-	if (limited) return limited;
 	const who = await pageAlertCaller(request);
 	if (who instanceof NextResponse) return who;
 	const { id } = await params;

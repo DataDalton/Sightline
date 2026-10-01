@@ -1,4 +1,4 @@
-import { sql } from "../data/lakebase";
+import { sql, transaction } from "../data/lakebase";
 
 // Where conversations and each person's standing preferences are kept.
 //
@@ -32,11 +32,23 @@ export interface Profile {
 	memories: Memory[];
 }
 
-// Bounds on what one person can put here. A transcript carries its steps and
-// their previews, so a long conversation is large; past these a save is
-// refused rather than letting one row grow without end.
-export const maxConversations = 200;
-export const maxTranscriptBytes = 2_000_000;
+// One message as a save carries it, already checked by the route. The JSON is
+// kept as the text that arrived and cast to JSONB in the statement.
+export interface StoredMessage {
+	id: string;
+	role: string;
+	json: string;
+}
+
+// What one save brings to a conversation. The title is used only when the save
+// creates the conversation, since a later title comes from a rename.
+export interface ConversationChanges {
+	title?: string;
+	messages: StoredMessage[];
+	removed: string[];
+}
+
+// Bounds on a person's standing preferences.
 export const maxInstructions = 2000;
 export const maxMemories = 50;
 export const maxMemoryText = 300;
@@ -64,13 +76,11 @@ export async function listConversations(
 		`SELECT conversation_id::text AS conversation_id,
 		        title,
 		        modified_on,
-		        (SELECT count(*) FROM jsonb_array_elements(messages) m
-		          WHERE m->>'role' = 'user')::text AS questions
+		        coalesce(questions, 0)::text AS questions
 		 FROM assistant_conversations
 		 WHERE owner_email = $1
-		 ORDER BY modified_on DESC
-		 LIMIT $2`,
-		[owner(email), maxConversations],
+		 ORDER BY modified_on DESC`,
+		[owner(email)],
 	);
 	return rows.map((r) => ({
 		id: r.conversation_id,
@@ -80,6 +90,9 @@ export async function listConversations(
 	}));
 }
 
+// Reads the conversation's messages in the order they were first saved. A
+// conversation whose transcript has not been moved into rows yet is read from
+// the transcript column instead.
 export async function getConversation(
 	email: string,
 	id: string,
@@ -87,60 +100,146 @@ export async function getConversation(
 	if (!isConversationId(id)) return null;
 	const rows = await sql<{
 		title: string;
-		messages: unknown[];
+		legacy: unknown;
 		modified_on: string;
 	}>(
-		`SELECT title, messages, modified_on
+		`SELECT title,
+		        CASE WHEN messages_moved THEN NULL ELSE messages END AS legacy,
+		        modified_on
 		 FROM assistant_conversations
 		 WHERE conversation_id = $1 AND owner_email = $2`,
 		[id, owner(email)],
 	);
 	const row = rows[0];
 	if (!row) return null;
+
+	const stored = await sql<{ message: unknown }>(
+		`SELECT m.message
+		 FROM assistant_messages m
+		 JOIN assistant_conversations c
+		   ON c.conversation_id = m.conversation_id
+		 WHERE m.conversation_id = $1 AND c.owner_email = $2
+		 ORDER BY m.position, m.created_on, m.message_id`,
+		[id, owner(email)],
+	);
+	const messages =
+		stored.length > 0
+			? stored.map((r) => r.message)
+			: Array.isArray(row.legacy)
+				? row.legacy
+				: [];
 	return {
 		id,
 		title: row.title,
-		messages: Array.isArray(row.messages) ? row.messages : [],
+		messages,
 		modifiedOn: new Date(row.modified_on).toISOString(),
 	};
 }
 
-// Creates the conversation or replaces its transcript. An id that exists under
-// somebody else is not overwritten: the upsert only updates a row the same
-// person owns, and reports whether anything was written.
+// Moves one conversation's transcript, if it is still held whole, into one row
+// per message. The flag is set in the same statement, so a transcript is moved
+// once however often this runs. The migration in lib/platform/schema does the
+// same for every conversation.
+const moveTranscript = `WITH moved AS (
+	     UPDATE assistant_conversations SET messages_moved = true
+	     WHERE NOT messages_moved
+	       AND conversation_id = $1 AND owner_email = $2
+	     RETURNING conversation_id, messages)
+	 INSERT INTO assistant_messages
+	     (conversation_id, message_id, position, role, message)
+	 SELECT moved.conversation_id,
+	        coalesce(m.elem->>'id', 'moved-' || m.ord),
+	        m.ord,
+	        coalesce(m.elem->>'role', ''),
+	        m.elem
+	 FROM moved,
+	      jsonb_array_elements(
+	          CASE WHEN jsonb_typeof(moved.messages) = 'array'
+	               THEN moved.messages ELSE '[]'::jsonb END)
+	          WITH ORDINALITY AS m(elem, ord)
+	 WHERE jsonb_typeof(m.elem) = 'object'
+	 ON CONFLICT (conversation_id, message_id) DO NOTHING`;
+
+// Creates the conversation if it is new, then stores the messages that are new
+// or changed and drops the ones listed as removed, all in one transaction. A
+// message already stored keeps its place and has its content replaced, so a
+// save sent twice changes nothing. An id that exists under somebody else is
+// not touched. The conversation row is only updated for the same owner, and
+// nothing else runs when it was not.
 export async function saveConversation(
 	email: string,
 	id: string,
-	title: string,
-	messages: unknown[],
+	changes: ConversationChanges,
 ): Promise<boolean> {
 	if (!isConversationId(id)) return false;
-	const rows = await sql<{ conversation_id: string }>(
-		`INSERT INTO assistant_conversations
-		     (conversation_id, owner_email, title, messages)
-		 VALUES ($1, $2, $3, $4::jsonb)
-		 ON CONFLICT (conversation_id) DO UPDATE
-		     SET title = EXCLUDED.title,
-		         messages = EXCLUDED.messages,
-		         modified_on = now()
-		     WHERE assistant_conversations.owner_email = EXCLUDED.owner_email
-		 RETURNING conversation_id`,
-		[id, owner(email), title.slice(0, 120), JSON.stringify(messages)],
-	);
-	if (rows.length === 0) return false;
+	const who = owner(email);
+	return transaction(async (client) => {
+		const claimed = await client.query<{ messages_moved: boolean }>(
+			`INSERT INTO assistant_conversations
+			     (conversation_id, owner_email, title, questions, messages_moved)
+			 VALUES ($1, $2, $3, 0, true)
+			 ON CONFLICT (conversation_id) DO UPDATE
+			     SET modified_on = now()
+			     WHERE assistant_conversations.owner_email = EXCLUDED.owner_email
+			 RETURNING messages_moved`,
+			[id, who, (changes.title ?? "").trim().slice(0, 120) || "Untitled"],
+		);
+		const row = claimed.rows[0];
+		if (!row) return false;
 
-	// Oldest beyond the limit go, so the list stays one somebody can read.
-	await sql(
-		`DELETE FROM assistant_conversations
-		 WHERE owner_email = $1
-		   AND conversation_id NOT IN (
-		       SELECT conversation_id FROM assistant_conversations
-		       WHERE owner_email = $1
-		       ORDER BY modified_on DESC
-		       LIMIT $2)`,
-		[owner(email), maxConversations],
-	);
-	return true;
+		// Moved first, so new messages land after the ones already there.
+		if (!row.messages_moved) {
+			await client.query(moveTranscript, [id, who]);
+		}
+
+		if (changes.removed.length > 0) {
+			await client.query(
+				`DELETE FROM assistant_messages
+				 WHERE conversation_id = $1 AND message_id = ANY($2::text[])`,
+				[id, changes.removed],
+			);
+		}
+
+		// The last copy of an id wins, since one statement cannot write the
+		// same row twice.
+		const latest = new Map<string, StoredMessage>();
+		for (const m of changes.messages) {
+			latest.delete(m.id);
+			latest.set(m.id, m);
+		}
+		const messages = [...latest.values()];
+		if (messages.length > 0) {
+			await client.query(
+				`INSERT INTO assistant_messages
+				     (conversation_id, message_id, position, role, message)
+				 SELECT $1, s.message_id, base.top + s.ord, s.role, s.message::jsonb
+				 FROM unnest($2::text[], $3::text[], $4::text[])
+				          WITH ORDINALITY AS s(message_id, role, message, ord),
+				      (SELECT coalesce(max(position), 0) AS top
+				       FROM assistant_messages WHERE conversation_id = $1) base
+				 ON CONFLICT (conversation_id, message_id) DO UPDATE
+				     SET message = EXCLUDED.message,
+				         role = EXCLUDED.role`,
+				[
+					id,
+					messages.map((m) => m.id),
+					messages.map((m) => m.role),
+					messages.map((m) => m.json),
+				],
+			);
+		}
+
+		// Counted from the rows on every save, so the history list reads a
+		// number that stays right through removals and resends.
+		await client.query(
+			`UPDATE assistant_conversations
+			 SET questions = (SELECT count(*) FROM assistant_messages
+			                  WHERE conversation_id = $1 AND role = 'user')
+			 WHERE conversation_id = $1 AND owner_email = $2`,
+			[id, who],
+		);
+		return true;
+	});
 }
 
 export async function renameConversation(

@@ -7,6 +7,8 @@ import {
 	describePeriod,
 	type AnomalySettings,
 } from "./anomaly";
+import type { Reason } from "./completeness";
+import { describeSpan } from "../freshness/arrivals";
 import { cleanSchedule, type Schedule } from "./schedule";
 
 // An alert: one measure, optionally split by a dimension, narrowed by the same
@@ -164,21 +166,37 @@ export interface Reading {
 	group: string | null;
 	value: number | null;
 	// For an unusual alert, the period read, its usual figure and range, and whether
-	// the value sits outside that range.
+	// the value sits outside that range, confirmed.
 	period?: string;
 	usual?: number | null;
 	low?: number | null;
 	high?: number | null;
 	unusual?: boolean;
+	// Far below where it usually is by now, in a period that may still be
+	// filling in, and why it reads that way. See lib/alerts/completeness.
+	early?: boolean;
+	reason?: Reason | null;
+	// Hours since the period ended.
+	ageHours?: number;
+	// A period an earlier check saw as an early signal and did not report,
+	// judged again now that more of it may have arrived.
+	again?: boolean;
 }
 
 export interface GroupState {
 	value: number | null;
 	met: boolean;
-	// For an unusual alert, the period last judged, so one period is reported once
-	// however often the alert is checked.
+	// For an unusual alert, the period last reported, so one period is
+	// reported once however often the alert is checked, and once only when
+	// an early signal is later confirmed.
 	period?: string;
+	// For an unusual alert, periods seen as an early signal and not reported,
+	// which the next check judges again until each is confirmed or clears.
+	pending?: string[];
 }
+
+// Periods one group keeps to judge again.
+export const maxPending = 3;
 
 // What was seen at the last check, by group. The total is stored under "".
 export type AlertState = Record<string, GroupState>;
@@ -195,6 +213,12 @@ export interface Firing {
 	usual?: number | null;
 	low?: number | null;
 	high?: number | null;
+	// For an unusual alert, sent on an early signal, or confirmed for a
+	// period an earlier check saw only as one, and why.
+	early?: boolean;
+	again?: boolean;
+	reason?: Reason | null;
+	ageHours?: number;
 }
 
 function groupKey(group: string | null): string {
@@ -220,13 +244,14 @@ export function evaluate(
 	definition: Pick<
 		AlertDefinition,
 		"condition" | "threshold" | "notifyRecover"
-	>,
+	> & { anomaly?: AnomalySettings | null },
 	readings: Reading[],
 	previous: AlertState,
 ): { state: AlertState; firings: Firing[] } {
 	const state: AlertState = {};
 	const firings: Firing[] = [];
 	const t = definition.threshold ?? 0;
+	const earlySignals = definition.anomaly?.earlySignals === true;
 
 	for (const reading of readings) {
 		const key = groupKey(reading.group);
@@ -236,11 +261,22 @@ export function evaluate(
 
 		// Judged against its own history rather than the last check. Reported
 		// once per period, since an hourly check reads the same finished day
-		// all day.
+		// all day. A period judged again comes before the latest one, so the
+		// latest one's value is what is kept.
 		if (definition.condition === "unusual") {
-			const met = reading.unusual === true;
-			state[key] = { value, met, period: reading.period };
-			if (met && before?.period !== reading.period) {
+			// Periods waiting to be judged again are carried only by the
+			// readings that judged them again, so one that can no longer be
+			// read is let go.
+			const held: GroupState = state[key] ?? {
+				value: last,
+				met: before?.met ?? false,
+				period: before?.period,
+			};
+			const early = reading.early === true;
+			const met = reading.unusual === true || (early && earlySignals);
+			let period = held.period;
+			if (met && held.period !== reading.period) {
+				period = reading.period;
 				firings.push({
 					group: reading.group,
 					value,
@@ -256,8 +292,26 @@ export function evaluate(
 					usual: reading.usual ?? null,
 					low: reading.low ?? null,
 					high: reading.high ?? null,
+					early: reading.unusual !== true,
+					again: reading.again === true,
+					reason: reading.reason ?? null,
+					ageHours: reading.ageHours,
 				});
 			}
+			// An early signal not sent is judged again on the next check, so
+			// it is sent once it is confirmed. One judged again and no longer
+			// early is done with.
+			let pending = (held.pending ?? []).filter(
+				(p) => p !== reading.period,
+			);
+			if (early && !met && reading.period && reading.period !== period)
+				pending = [...pending, reading.period].slice(-maxPending);
+			state[key] = {
+				value: reading.again ? held.value : value,
+				met: reading.again ? held.met : met,
+				...(period !== undefined ? { period } : {}),
+				...(pending.length ? { pending } : {}),
+			};
 			continue;
 		}
 
@@ -356,6 +410,30 @@ export function describeRule(w: Wording): string {
 	return `${who} ${conditionLabel[w.condition]}${t ? ` ${t}` : ""}`;
 }
 
+// Why an unusual alert reads a period the way it does, when that is more than
+// usual alone. An early signal says it may still be loading and why, and a
+// figure confirmed early in its period says what rules loading out.
+export function settlingNote(
+	w: Pick<Wording, "groupBy">,
+	f: Pick<Firing, "early" | "again" | "reason" | "ageHours">,
+): string {
+	if (f.early) {
+		const why =
+			f.reason === "evenDrop"
+				? `Every ${w.groupBy ? `${w.groupBy} value` : "part of it"} fell by a similar share.`
+				: f.reason === "noHistory" && f.ageHours !== undefined
+					? `The period ended ${describeSpan(Math.max(f.ageHours, 0) * 3_600_000)} ago.`
+					: "It is far below where it usually is by now.";
+		return `Early signal. ${why} Data may still be loading.`;
+	}
+	if (f.again) return "Confirmed now that more of its data has arrived.";
+	if (f.reason === "ledByOne")
+		return w.groupBy
+			? `It fell on its own while other ${w.groupBy} values held, so it is not data still loading.`
+			: "One part of it carries the drop, so it is not data still loading.";
+	return "";
+}
+
 function firingLine(w: Wording, f: Firing): string {
 	const subject = f.group !== null ? `${f.group}: ` : "";
 	const now = w.format(f.value);
@@ -369,7 +447,8 @@ function firingLine(w: Wording, f: Firing): string {
 				f.change === null
 					? ""
 					: ` (${f.change > 0 ? "+" : ""}${f.change.toFixed(0)}%)`;
-			return `${subject}${w.measure} was ${now}${when}, usually ${w.format(f.low ?? null)} to ${w.format(f.high ?? null)}${pct}`;
+			const note = settlingNote(w, f);
+			return `${subject}${w.measure} was ${now}${when}, usually ${w.format(f.low ?? null)} to ${w.format(f.high ?? null)}${pct}${note ? `. ${note}` : ""}`;
 		}
 		case "above":
 		case "below":

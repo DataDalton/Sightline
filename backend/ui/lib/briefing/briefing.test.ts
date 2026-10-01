@@ -9,6 +9,7 @@ import {
 	previousOf,
 	readProbe,
 	splitWindows,
+	standingOf,
 	windowOf,
 	worthExplaining,
 	type Card,
@@ -22,6 +23,7 @@ import {
 	movementText,
 	periodLabel,
 	toneOf,
+	waitingText,
 } from "./words";
 
 function field(name: string, extra: Record<string, unknown> = {}) {
@@ -487,7 +489,54 @@ test("steady figures fill what is left in the order given", () => {
 	);
 });
 
+test("an early signal comes after confirmed figures and before moving ones", () => {
+	const entries = [
+		read("moving", false, 0.5, 5),
+		{
+			id: "early",
+			card: {
+				unusual: false,
+				early: true,
+				againstUsual: -0.9,
+				weight: 9.5,
+			} as Card,
+		},
+		read("confirmed", true, 0.3, 13),
+	];
+	assert.deepEqual(
+		chooseShown(entries, 2).map((e) => e.id),
+		["early", "confirmed"],
+	);
+	assert.equal(standingOf(entries[1].card), "early");
+	// Low only as far as a young period usually is reads as steady.
+	assert.equal(
+		standingOf({
+			unusual: false,
+			againstUsual: -0.4,
+			settling: { reason: "fillingIn" },
+		} as Card),
+		"steady",
+	);
+});
+
 test("with room for everything nothing is left out", () => {
 	const entries = [read("a", true, 1, 15), read("b", false, 0, 0)];
 	assert.equal(chooseShown(entries, 16).length, 2);
+});
+
+test("a load past its usual time is called late", () => {
+	const at = Date.parse("2026-10-01T06:00:00Z");
+	const waiting = {
+		period: "2026-09-30",
+		through: "2026-09-30",
+		expectedBy: at,
+	};
+	assert.match(
+		waitingText(waiting, 1, at - 3_600_000, "UTC"),
+		/usually arrives by .*\.$/,
+	);
+	assert.match(
+		waitingText(waiting, 1, at + 3_600_000, "UTC"),
+		/running late\.$/,
+	);
 });

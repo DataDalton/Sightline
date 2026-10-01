@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { AlertDefinitionError } from "@/lib/alerts/rule";
 import { createAlert, listAlerts } from "@/lib/alerts/store";
-import { checkWriteRateLimit } from "@/lib/rateLimit";
 import { settings } from "@/lib/settings";
 import { caller, privateJson, readJson } from "../notifications/guard";
 
@@ -17,7 +16,6 @@ export async function GET(request: NextRequest) {
 		return privateJson({
 			alerts: await listAlerts(identity.email),
 			enabled: true,
-			limit: settings().maxAlertsPerUser,
 		});
 	} catch (error) {
 		console.error("Alert list failed:", error);
@@ -26,8 +24,6 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-	const limited = checkWriteRateLimit(request);
-	if (limited) return limited;
 	const identity = await caller(request);
 	if (identity instanceof NextResponse) return identity;
 	if (!settings().alertsEnabled) {

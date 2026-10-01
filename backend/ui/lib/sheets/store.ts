@@ -1,6 +1,7 @@
 import type { Identity } from "../auth/identity";
 import { insertLog } from "../activityLog";
 import { sql, transaction } from "../data/lakebase";
+import { noteOpened } from "../retention/opened";
 import {
 	cleanDefinition,
 	emptyDefinition,
@@ -22,6 +23,8 @@ export interface SheetSummary {
 	modifiedOn: string;
 	modifiedBy: string;
 	sharedWith: number;
+	// Its owner marked it to be kept however long it goes unused.
+	keep: boolean;
 }
 
 export interface Sheet extends SheetSummary {
@@ -29,6 +32,11 @@ export interface Sheet extends SheetSummary {
 	version: number;
 	// The layout this copy was read at, which a layout save names as its base.
 	layoutVersion: number;
+	// What notes are read again on. Version rises on every layout save and
+	// every note, and the layout version on layout saves only, so the
+	// difference rises with each note written. A field renamed under the
+	// sheet raises it too, which reads the notes once more for nothing.
+	notesVersion: number;
 }
 
 export class SheetError extends Error {
@@ -53,10 +61,13 @@ interface Row {
 	modified_by: string;
 	permission: SheetPermission;
 	shared_with: string;
+	keep: boolean;
 }
 
 // Every sheet query reads through this, so what somebody may see is decided in
-// one place: sheets they own, and sheets named to them.
+// one place: sheets they own, and sheets named to them. A sheet in the
+// retention bin is visible to nobody here, its owner included. Its owner
+// restores it through lib/retention.
 //
 // The two are bracketed together because callers append further conditions
 // with AND. Without the brackets AND binds to the second alternative only, and
@@ -64,7 +75,7 @@ interface Row {
 const visible = `
 	SELECT s.sheet_id::text, s.owner_email, s.title, s.definition,
 	       s.version::text, s.layout_version::text, s.modified_on::text,
-	       s.modified_by,
+	       s.modified_by, s.keep,
 	       CASE WHEN s.owner_email = $1 THEN 'owner'
 	            ELSE (SELECT sh.permission FROM sheet_shares sh
 	                  WHERE sh.sheet_id = s.sheet_id AND sh.email = $1)
@@ -72,7 +83,8 @@ const visible = `
 	       (SELECT count(*) FROM sheet_shares sh
 	        WHERE sh.sheet_id = s.sheet_id)::text AS shared_with
 	FROM sheets s
-	WHERE (s.owner_email = $1
+	WHERE s.removed_on IS NULL
+	  AND (s.owner_email = $1
 	    OR EXISTS (SELECT 1 FROM sheet_shares sh
 	               WHERE sh.sheet_id = s.sheet_id AND sh.email = $1))`;
 
@@ -87,9 +99,11 @@ function toSheet(row: Row): Sheet {
 		modifiedOn: row.modified_on,
 		modifiedBy: row.modified_by,
 		sharedWith: Number(row.shared_with),
+		keep: row.keep === true,
 		definition: cleanDefinition(row.definition),
 		version: Number(row.version),
 		layoutVersion: Number(row.layout_version),
+		notesVersion: Number(row.version) - Number(row.layout_version),
 	};
 }
 
@@ -100,15 +114,15 @@ export function isUuid(value: string): boolean {
 }
 
 export async function listSheets(identity: Identity): Promise<SheetSummary[]> {
-	const rows = await sql<Row>(
-		`${visible} ORDER BY s.modified_on DESC LIMIT 500`,
-		[identity.email.toLowerCase()],
-	);
+	const rows = await sql<Row>(`${visible} ORDER BY s.modified_on DESC`, [
+		identity.email.toLowerCase(),
+	]);
 	return rows.map((r) => {
 		const {
 			definition: _d,
 			version: _v,
 			layoutVersion: _l,
+			notesVersion: _n,
 			...summary
 		} = toSheet(r);
 		return summary;
@@ -126,7 +140,10 @@ export async function getSheet(
 		identity.email.toLowerCase(),
 		id,
 	]);
-	return rows[0] ? toSheet(rows[0]) : null;
+	if (!rows[0]) return null;
+	// Any read by somebody who may open it counts as use for retention.
+	noteOpened("sheet", id);
+	return toSheet(rows[0]);
 }
 
 export async function createSheet(
@@ -135,15 +152,6 @@ export async function createSheet(
 	definition: unknown,
 ): Promise<Sheet> {
 	const email = identity.email.toLowerCase();
-	const count = await sql<{ n: string }>(
-		`SELECT count(*)::text AS n FROM sheets WHERE owner_email = $1`,
-		[email],
-	);
-	if (Number(count[0]?.n ?? 0) >= 200) {
-		throw new SheetError(
-			"You have 200 sheets, the most one person can keep.",
-		);
-	}
 	const clean = definition ? cleanDefinition(definition) : emptyDefinition();
 	const rows = await sql<{ sheet_id: string }>(
 		`INSERT INTO sheets (owner_email, title, definition, modified_by)
@@ -190,7 +198,8 @@ export async function updateSheet(
 		`UPDATE sheets SET title = $3, definition = $4, version = version + 1,
 		   layout_version = layout_version + 1,
 		   modified_on = now(), modified_by = $5
-		 WHERE sheet_id = $1 AND ($2::bigint IS NULL OR layout_version = $2)
+		 WHERE sheet_id = $1 AND removed_on IS NULL
+		   AND ($2::bigint IS NULL OR layout_version = $2)
 		 RETURNING version::text`,
 		[
 			id,

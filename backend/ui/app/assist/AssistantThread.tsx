@@ -2,14 +2,16 @@
 
 import { WatchAction } from "../alerts/WatchAction";
 import { AddToBoard } from "../boards/AddToBoard";
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { DataGrid } from "../visuals/DataGrid";
 import { Chart } from "../visuals/chartEntry";
 import { fieldMap, type SourceMeta } from "../visuals/types";
 import type { ChartOut } from "../../lib/assistant/events";
 import {
-	useAssistant,
+	useAssistantActions,
+	useAssistantMessages,
+	useAssistantStatus,
 	type Activity,
 	type Message,
 	type Step,
@@ -282,7 +284,10 @@ function splitNext(answer: string): { body: string; next: string | null } {
 	};
 }
 
-function AnswerBlock({
+// Drawn again only when its own message changes or an answer starts or ends.
+// The thread keeps each untouched message as the same object, so earlier
+// answers do not parse their Markdown again while a new one streams.
+const AnswerBlock = memo(function AnswerBlock({
 	message,
 	sources,
 	compact,
@@ -291,7 +296,7 @@ function AnswerBlock({
 	sources: SourceMeta[];
 	compact: boolean;
 }) {
-	const { send, retry, busy } = useAssistant();
+	const { send, retry, busy } = useAssistantStatus();
 	const [copied, setCopied] = useState(false);
 	const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	useEffect(
@@ -401,7 +406,9 @@ function AnswerBlock({
 			)}
 		</div>
 	);
-}
+});
+
+const noSources: SourceMeta[] = [];
 
 export function AssistantThread({
 	compact = false,
@@ -410,9 +417,10 @@ export function AssistantThread({
 	compact?: boolean;
 	examples: string[];
 }) {
-	const { messages, send } = useAssistant();
+	const messages = useAssistantMessages();
+	const { send } = useAssistantActions();
 	const { data } = useSWR<{ sources: SourceMeta[] }>("/api/authoring");
-	const sources = data?.sources ?? [];
+	const sources = data?.sources ?? noSources;
 	const endRef = useRef<HTMLDivElement | null>(null);
 
 	// Follows the answer down as it is written, the way a chat does.

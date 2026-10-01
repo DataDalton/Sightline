@@ -32,10 +32,6 @@ export class DeliveryError extends Error {
 // turn the inbox into a feed of the same page.
 export const deliveryFrequencies = ["daily", "weekdays", "weekly"] as const;
 
-// How many pages one person may have sent. Each is a set of warehouse
-// queries on its schedule.
-const maxPerPerson = 25;
-
 export interface DeliveryRecord {
 	id: string;
 	reportId: string;
@@ -124,16 +120,6 @@ export async function subscribe(
 	}
 
 	const email = identity.email.toLowerCase();
-	const count = await sql<{ n: string }>(
-		`SELECT count(*)::text AS n FROM deliveries
-		 WHERE owner_email = $1 AND page_id <> $2::uuid`,
-		[email, page.pageId],
-	);
-	if (Number(count[0]?.n ?? 0) >= maxPerPerson) {
-		throw new DeliveryError(
-			`You have ${maxPerPerson} scheduled pages, the most one person can keep.`,
-		);
-	}
 
 	const figureSource =
 		page.visuals.find((v) => v.visualType === "kpiRow")?.sourceKey ??

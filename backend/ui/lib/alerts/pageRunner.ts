@@ -1,10 +1,6 @@
 import { sql, transaction } from "../data/lakebase";
 import { pageLink } from "../deliveries/store";
-import {
-	notifyInTransaction,
-	pushNotification,
-	type InboxItem,
-} from "../notify/store";
+import { notifyManyInTransaction, pushNotifications } from "../notify/store";
 import type { RowRestriction } from "../query/builder";
 import type { QuerySpec } from "../query/spec";
 import { getSource } from "../semantic/registry";
@@ -30,6 +26,7 @@ import {
 } from "./rule";
 import { probeSpec, readingsFrom, readUnusual, type ReadSpec } from "./runner";
 import { nextRun } from "./schedule";
+import { unusualContext } from "./settlingContext";
 import { alertSpec, runsUnattended, wordingFor } from "./store";
 
 // Running page alerts, on the timer and while subscribers use the app.
@@ -71,6 +68,9 @@ interface ClaimedRow {
 	first_page: boolean;
 	report_id: string;
 	page_id: string;
+	// When the alert last finished a round, so a scope checked since then
+	// belongs to the round under way.
+	round_from: string | null;
 }
 
 // What a scope's check produced, before it is written.
@@ -92,7 +92,13 @@ async function judge(
 		const read: ReadSpec = (spec) => reads.read(source, spec, restriction);
 		let readings: Reading[];
 		if (definition.condition === "unusual") {
-			readings = await readUnusual(source, definition, read);
+			readings = await readUnusual(
+				source,
+				definition,
+				read,
+				await unusualContext(source, definition),
+				previous,
+			);
 		} else {
 			readings = readingsFrom(
 				definition,
@@ -185,31 +191,81 @@ async function checkScope(
 				group.recipients.length,
 			],
 		);
-		const written: { email: string; item: InboxItem }[] = [];
-		for (const email of group.recipients) {
-			const item = await notifyInTransaction(client, email, {
-				kind: "alert",
-				title: message.title,
-				body: `${where}\n${message.body}`,
-				link,
-				data: {
-					pageAlertId: row.alert_id,
-					reportId: row.report_id,
-					pageId: row.page_id,
-				},
-			});
-			written.push({ email, item });
-		}
-		return written;
+		return notifyManyInTransaction(client, group.recipients, {
+			kind: "alert",
+			title: message.title,
+			body: `${where}\n${message.body}`,
+			link,
+			data: {
+				pageAlertId: row.alert_id,
+				reportId: row.report_id,
+				pageId: row.page_id,
+			},
+		});
 	});
 
 	// Pushed once the entries are committed, so no device hears of one that
 	// rolled back.
-	for (const { email, item } of items) pushNotification(email, item);
+	pushNotifications(items);
+}
+
+// How many scopes of one alert are checked at once.
+const scopeWorkers = 3;
+
+// The timer's hold on one claimed alert. The lease starts again after each
+// scope, so an alert with many scopes is not taken by another replica part
+// way through. Renewals run one after another, each from the lease the last
+// one set.
+class AlertClaim {
+	lost = false;
+	private chain: Promise<void> = Promise.resolve();
+
+	constructor(
+		private readonly alertId: string,
+		private lease: string,
+	) {}
+
+	renew(): Promise<void> {
+		this.chain = this.chain.then(async () => {
+			if (this.lost) return;
+			try {
+				const rows = await sql<{ lease: string }>(
+					`UPDATE page_alerts
+					 SET next_check_on = now() + interval '${claimLease}'
+					 WHERE alert_id = $1::uuid
+					   AND next_check_on = $2::timestamptz
+					 RETURNING next_check_on::text AS lease`,
+					[this.alertId, this.lease],
+				);
+				if (rows[0]) this.lease = rows[0].lease;
+				else this.lost = true;
+			} catch (error) {
+				// The lease stands as it was and runs out on its own.
+				console.warn(
+					`Page alert ${this.alertId} could not renew its claim:`,
+					error,
+				);
+			}
+		});
+		return this.chain;
+	}
+
+	// Finishes the round while this replica still holds the alert. One that
+	// lost it leaves the round to whichever replica took it over.
+	async finish(next: Date): Promise<void> {
+		await this.chain;
+		if (this.lost) return;
+		await sql(
+			`UPDATE page_alerts SET next_check_on = $2, last_checked_on = now()
+			 WHERE alert_id = $1::uuid AND next_check_on = $3::timestamptz`,
+			[this.alertId, next.toISOString(), this.lease],
+		);
+	}
 }
 
 async function runOne(
 	row: ClaimedRow,
+	claim: AlertClaim,
 	reads: BatchReads,
 	unattended: Set<string>,
 	restrictable: Set<string>,
@@ -251,20 +307,41 @@ async function runOne(
 		(email) => restrictions.get(email) ?? null,
 	);
 
-	for (const group of groups) {
-		await checkScope(row, source, group, reads, next).catch((error) => {
-			console.warn(
-				`Page alert ${row.alert_id} could not be checked in one scope:`,
-				error,
-			);
-		});
-	}
+	// Scopes checked since the alert last finished a round were checked in
+	// this one, by a replica whose claim ran out before it finished.
+	const done =
+		groups.length === 0
+			? []
+			: await sql<{ scope_key: string }>(
+					`SELECT scope_key FROM page_alert_state
+					 WHERE alert_id = $1::uuid AND scope_key = ANY($2::text[])
+					   AND last_checked_on
+					       > coalesce($3::timestamptz, '-infinity'::timestamptz)`,
+					[row.alert_id, groups.map((g) => g.key), row.round_from],
+				);
+	const checked = new Set(done.map((d) => d.scope_key));
+	const queue = groups.filter((group) => !checked.has(group.key));
 
-	await sql(
-		`UPDATE page_alerts SET next_check_on = $2, last_checked_on = now()
-		 WHERE alert_id = $1::uuid`,
-		[row.alert_id, next.toISOString()],
+	const workers = Array.from(
+		{ length: Math.min(scopeWorkers, queue.length) },
+		async () => {
+			for (let group = queue.shift(); group; group = queue.shift()) {
+				if (claim.lost) return;
+				await checkScope(row, source, group, reads, next).catch(
+					(error) => {
+						console.warn(
+							`Page alert ${row.alert_id} could not be checked in one scope:`,
+							error,
+						);
+					},
+				);
+				await claim.renew();
+			}
+		},
 	);
+	await Promise.all(workers);
+
+	await claim.finish(next);
 }
 
 // The first question each alert asks as the app without a restriction, so
@@ -308,7 +385,7 @@ export async function runDuePageAlerts(
 	try {
 		// Claimed in one statement, so two replicas take different alerts. An
 		// alert nobody follows is left until somebody does.
-		const claimed = await sql<{ alert_id: string }>(
+		const claimed = await sql<{ alert_id: string; lease: string }>(
 			`UPDATE page_alerts SET next_check_on = now() + interval '${claimLease}'
 			 WHERE alert_id IN (
 			   SELECT a.alert_id FROM page_alerts a
@@ -324,7 +401,8 @@ export async function runDuePageAlerts(
 			   LIMIT $2
 			   FOR UPDATE OF a SKIP LOCKED
 			 )
-			 RETURNING alert_id::text AS alert_id`,
+			 RETURNING alert_id::text AS alert_id,
+			           next_check_on::text AS lease`,
 			[unattended, batchSize, restrictable],
 		);
 		if (claimed.length === 0) return;
@@ -335,6 +413,7 @@ export async function runDuePageAlerts(
 			        p.title AS page_title,
 			        a.report_id::text AS report_id,
 			        a.page_id::text AS page_id,
+			        a.last_checked_on::text AS round_from,
 			        p.sort_order = (SELECT min(q.sort_order) FROM report_pages q
 			                        WHERE q.report_id = a.report_id
 			                          AND q.is_active) AS first_page
@@ -354,12 +433,22 @@ export async function runDuePageAlerts(
 			);
 
 		// Three at a time, as personal alerts are checked.
+		const leases = new Map(claimed.map((c) => [c.alert_id, c.lease]));
 		const queue = [...rows];
 		const workers = Array.from({ length: 3 }, async () => {
 			for (let row = queue.shift(); row; row = queue.shift()) {
-				await runOne(row, reads, open, filtered).catch((error) => {
-					console.warn(`Page alert ${row.alert_id} failed:`, error);
-				});
+				const claim = new AlertClaim(
+					row.alert_id,
+					leases.get(row.alert_id) ?? "",
+				);
+				await runOne(row, claim, reads, open, filtered).catch(
+					(error) => {
+						console.warn(
+							`Page alert ${row.alert_id} failed:`,
+							error,
+						);
+					},
+				);
 			}
 		});
 		await Promise.all(workers);
@@ -396,6 +485,7 @@ export async function runPageAlertsForOwner(
 		        p.title AS page_title,
 		        a.report_id::text AS report_id,
 		        a.page_id::text AS page_id,
+		        a.last_checked_on::text AS round_from,
 		        p.sort_order = (SELECT min(q.sort_order) FROM report_pages q
 		                        WHERE q.report_id = a.report_id
 		                          AND q.is_active) AS first_page,

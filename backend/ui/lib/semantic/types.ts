@@ -31,6 +31,10 @@ export interface SemanticField {
 	// sources: a metric view resolves its own fields by name, so re-declaring
 	// the expression here would let the app drift from the view definition.
 	sqlExpr: string | null;
+	// The expression a metric view holds for the field, read from its
+	// definition at sync. Never compiled into a query. It says what kind of
+	// figure a measure is, such as a sum or a rate.
+	expression?: string | null;
 	dataType: string | null;
 	description: string | null;
 	formatHint: FormatHint | null;

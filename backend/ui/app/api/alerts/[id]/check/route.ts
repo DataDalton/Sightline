@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { checkAlertNow } from "@/lib/alerts/runner";
 import { AlertDefinitionError } from "@/lib/alerts/rule";
 import { isUuid } from "@/lib/alerts/store";
-import { checkWriteRateLimit } from "@/lib/rateLimit";
 import { caller, privateJson } from "../../../notifications/guard";
 
 // The one refusal from the runner worded for the reader.
@@ -14,8 +13,6 @@ export async function POST(
 	request: NextRequest,
 	{ params }: { params: Promise<{ id: string }> },
 ) {
-	const limited = checkWriteRateLimit(request);
-	if (limited) return limited;
 	const identity = await caller(request);
 	if (identity instanceof NextResponse) return identity;
 	const { id } = await params;

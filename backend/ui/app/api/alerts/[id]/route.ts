@@ -8,7 +8,6 @@ import {
 	setAlertEnabled,
 	updateAlert,
 } from "@/lib/alerts/store";
-import { checkWriteRateLimit } from "@/lib/rateLimit";
 import { caller, privateJson, readJson } from "../../notifications/guard";
 
 // One of the caller's alerts. Every statement is scoped to the owner, so an id
@@ -33,8 +32,6 @@ export async function GET(request: NextRequest, { params }: Context) {
 }
 
 export async function PUT(request: NextRequest, { params }: Context) {
-	const limited = checkWriteRateLimit(request);
-	if (limited) return limited;
 	const identity = await caller(request);
 	if (identity instanceof NextResponse) return identity;
 	const { id } = await params;

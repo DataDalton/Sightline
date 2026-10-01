@@ -18,7 +18,6 @@ import {
 import { readableSourceList } from "@/lib/platform/sources";
 import { getReport, listReports } from "@/lib/platform/reports";
 import { sql } from "@/lib/data/lakebase";
-import { checkWriteRateLimit } from "@/lib/rateLimit";
 
 // Pages somebody built for themselves, and the people they named on them.
 //
@@ -98,9 +97,6 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-	const limited = checkWriteRateLimit(request);
-	if (limited) return limited;
-
 	await ensureReadyOrDegrade();
 
 	const identity = getIdentity(request);

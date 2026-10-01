@@ -6,6 +6,7 @@ import { settings } from "../settings";
 import type { PolicyClass } from "../auth/policy";
 import type { SemanticSource } from "../semantic/types";
 import { canonicalizeSpec, type QuerySpec } from "./spec";
+import { createGate } from "./gate";
 
 // Three cache tiers in front of the warehouse:
 //
@@ -90,18 +91,38 @@ export function buildCacheKey(
 	return `${source.sourceKey}:${scope}:${digest}`;
 }
 
+// Builds a shared key for something other than a query answer, such as a
+// field's range or the values a filter offers, so it can be held in the shared
+// tier beside answers and under the same rules.
+//
+// Laid out exactly as buildCacheKey lays out its keys. The source comes first,
+// so supersession and invalidation by source treat it like any answer, and the
+// scope is the same literal prefix, so no digest can cross a policy boundary.
+// The kind is hashed with the identity, so no digest of one kind can stand for
+// another or for a query spec.
+export function buildSharedKey(
+	source: SemanticSource,
+	policy: PolicyClass,
+	kind: string,
+	identity: string,
+): string {
+	const scope = source.hasRowFilter ? policy.id : "unfiltered";
+	const digest = createHash("sha256")
+		.update(JSON.stringify([kind, identity]))
+		.digest("hex")
+		.slice(0, 32);
+	return `${source.sourceKey}:${scope}:${digest}`;
+}
+
 // --- L1: per-replica memory ------------------------------------------------
 
 // Bounded by weight, not by count.
 //
-// A result is whatever the query returned, and those differ by four orders of
-// magnitude: a scorecard holds one row, a grid page holds a few hundred, an
-// unaggregated extract holds the query limit. Counting entries prices all of
-// them the same, so a ceiling set where a thousand small results fit is a
-// ceiling a hundred large ones blow through without ever reaching. Measured on
-// representative rows, a single 50000-row result holds about 79MB, so the old
-// two thousand entry cap stood at roughly 150GB and the container died long
-// before eviction ran once.
+// A result is whatever the query returned, and results differ by orders of
+// magnitude. A scorecard holds one row, a grid page holds a few hundred, and
+// an unaggregated extract holds the query limit. Counting entries prices all
+// of them the same, so a ceiling set where many small results fit is one that
+// a few large ones exceed many times over before eviction runs at all.
 //
 // Weight is measured from the JSON the L2 write already produces, so nothing is
 // serialized twice. Resident objects cost more than their serialized form, near
@@ -141,6 +162,17 @@ function memoryGet(key: string): CacheEntry | null {
 	return found.value;
 }
 
+// Reads an entry that may still be served. One whose data has changed since it
+// was computed is dropped on sight, so it stops holding the budget.
+function memoryGetCurrent(key: string): CacheEntry | null {
+	const held = memoryGet(key);
+	if (held && superseded(key, held)) {
+		memoryDelete(key);
+		return null;
+	}
+	return held;
+}
+
 function memoryDelete(key: string): void {
 	const held = memory.get(key);
 	if (!held) return;
@@ -169,10 +201,13 @@ function memorySet(key: string, value: CacheEntry, jsonBytes: number): void {
 	const max = settings().resultMaxEntries;
 	if (heldBytes <= budget && memory.size <= max) return;
 
-	// Expired entries first: they are free to drop and cost nobody a hit.
+	// Expired and superseded entries first. Neither can be served, so they
+	// are free to drop and cost nobody a hit.
 	const now = Date.now();
 	for (const [k, v] of memory) {
-		if (v.value.expiresAt <= now) memoryDelete(k);
+		if (v.value.expiresAt <= now || superseded(k, v.value)) {
+			memoryDelete(k);
+		}
 	}
 
 	const targetBytes = budget * evictionLowMark;
@@ -269,8 +304,7 @@ export async function cacheGetMany(
 	const missing: string[] = [];
 
 	for (const key of wanted) {
-		const held = memoryGet(key);
-		const local = held && !superseded(key, held) ? held : null;
+		const local = memoryGetCurrent(key);
 		if (local && local.expiresAt > now) {
 			found.set(key, { entry: local, tier: "l1", stale: false });
 			continue;
@@ -338,6 +372,35 @@ function estimateJsonBytes(entry: CacheEntry): number {
 	return Math.round((sampled / sampleSize) * entry.rows.length) + 64;
 }
 
+// Shared writes in flight at once, and how many may wait behind them.
+//
+// Each write holds a pool connection for as long as it takes to send its
+// payload, and a cold page plus warming produces a burst of them. Unbounded,
+// that burst fills the pool and the reads every page depends on wait behind
+// it. A write that finds the queue full is dropped, which costs a miss on the
+// next read and nothing else.
+const sharedWriteConcurrency = 3;
+const sharedWriteMaxQueued = 64;
+const sharedWrites = createGate(sharedWriteConcurrency);
+
+function queueSharedSet(
+	key: string,
+	policy: PolicyClass,
+	source: SemanticSource,
+	entry: CacheEntry,
+	payload: string,
+): void {
+	const queued = sharedWrites.tryRun(
+		() => sharedSet(key, policy, source, entry, payload),
+		sharedWriteMaxQueued,
+	);
+	if (!queued) {
+		console.warn(
+			"Shared cache write skipped because the write queue is full.",
+		);
+	}
+}
+
 async function sharedSet(
 	key: string,
 	policy: PolicyClass,
@@ -382,8 +445,7 @@ export async function cacheGet(key: string): Promise<CacheLookup> {
 	const now = Date.now();
 	const allowStale = settings().staleWhileRevalidate;
 
-	const held = memoryGet(key);
-	const local = held && !superseded(key, held) ? held : null;
+	const local = memoryGetCurrent(key);
 	if (local) {
 		if (local.expiresAt > now)
 			return { entry: local, tier: "l1", stale: false };
@@ -404,6 +466,76 @@ export async function cacheGet(key: string): Promise<CacheLookup> {
 	return { entry: null, tier: null, stale: false };
 }
 
+// Takes a newer answer another replica already stored, in place of the one
+// this replica holds.
+//
+// Called before a stale entry is refreshed against the warehouse. The entry in
+// memory expired here, but another replica may have refreshed the same key
+// since, and its answer is in the shared tier. A shared answer newer than the
+// one held, not expired and not superseded is promoted into memory and true is
+// returned, so the caller skips the warehouse.
+export async function promoteNewerShared(
+	key: string,
+	held: CacheEntry,
+): Promise<boolean> {
+	const found = await sharedGet(key);
+	if (!found) return false;
+	const entry = found.entry;
+	if (entry.computedAt <= held.computedAt) return false;
+	if (entry.expiresAt <= Date.now()) return false;
+	if (superseded(key, entry)) return false;
+	memorySet(key, entry, found.bytes);
+	return true;
+}
+
+// A small value held in the shared tier under a key from buildSharedKey.
+//
+// Stored as a single row carrying the value, so the row has the shape every
+// other answer has. The same stillShared guard applies to the read and the
+// write, and an expired or superseded value reads as missing.
+export async function sharedValueGet<T>(
+	key: string,
+): Promise<{ value: T; computedAt: number; expiresAt: number } | null> {
+	const found = await sharedGet(key);
+	if (!found) return null;
+	const entry = found.entry;
+	if (entry.expiresAt <= Date.now() || superseded(key, entry)) return null;
+	if (entry.rows.length !== 1) return null;
+	return {
+		value: entry.rows[0].value as T,
+		computedAt: entry.computedAt,
+		expiresAt: entry.expiresAt,
+	};
+}
+
+// Stores a small value in the shared tier. Not awaited by the caller, and
+// queued with every other shared write.
+export function sharedValueSet(
+	key: string,
+	policy: PolicyClass,
+	source: SemanticSource,
+	value: unknown,
+	computedAt: number,
+	expiresAt: number,
+): void {
+	const rows = [{ value }];
+	const columns = ["value"];
+	const entry: CacheEntry = {
+		rows,
+		columns,
+		rowCount: 1,
+		computedAt,
+		expiresAt,
+	};
+	queueSharedSet(
+		key,
+		policy,
+		source,
+		entry,
+		JSON.stringify({ rows, columns }),
+	);
+}
+
 // Which of these keys already hold a fresh answer.
 //
 // Asked as one question rather than one per key. Warming decides what is worth
@@ -422,8 +554,15 @@ export async function cacheFresh(keys: string[]): Promise<Set<string>> {
 
 	for (const key of keys) {
 		const held = memory.get(key);
-		if (held && held.value.expiresAt > now) fresh.add(key);
-		else unknown.push(key);
+		if (
+			held &&
+			held.value.expiresAt > now &&
+			!superseded(key, held.value)
+		) {
+			fresh.add(key);
+		} else {
+			unknown.push(key);
+		}
 	}
 
 	if (unknown.length === 0) return fresh;
@@ -489,9 +628,9 @@ export async function cacheSet(
 	memorySet(key, entry, payload.length);
 
 	// Not awaited. Nothing in this request reads it back, and the caller has
-	// been holding a finished result while a payload of several megabytes went
-	// to Postgres. A failed write is already handled as a miss on the next read.
-	void sharedSet(key, policy, source, entry, payload);
+	// been holding a finished result while a large payload went to Postgres.
+	// A failed or skipped write is already handled as a miss on the next read.
+	queueSharedSet(key, policy, source, entry, payload);
 
 	return entry;
 }

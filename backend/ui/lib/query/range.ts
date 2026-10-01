@@ -8,7 +8,13 @@ import { settings } from "../settings";
 import { compileQuery } from "./builder";
 import { assertCanReadSource, QueryAccessError } from "./execute";
 import { changedSince } from "../freshness/marks";
-import { isShareable, liveTtlSeconds } from "./cache";
+import {
+	buildSharedKey,
+	isShareable,
+	liveTtlSeconds,
+	sharedValueGet,
+	sharedValueSet,
+} from "./cache";
 import { QuerySpecError, type QueryFilter } from "./spec";
 
 // The smallest and largest value a field actually takes.
@@ -46,7 +52,10 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<FieldRange>>();
-const maxCacheEntries = 300;
+// A range is a few short strings, so many can be held. Each policy class
+// holds its own copy of every field it reads, and the ceiling leaves room for
+// a wide estate read by many classes at once.
+const maxCacheEntries = 5000;
 
 // Expired entries first, then oldest inserted. Dropping only the expired ones
 // leaves the map over its ceiling in the case that matters, which is a burst of
@@ -118,8 +127,30 @@ export async function getFieldRange(
 	const existing = shareable ? inflight.get(key) : undefined;
 	if (existing) return existing;
 
+	// The same question in the shared tier, so a range one replica read is
+	// reused on every other. Keyed and guarded exactly as answers are.
+	const sharedKey = buildSharedKey(
+		source,
+		policy,
+		"range",
+		JSON.stringify([field, bounds, filters]),
+	);
+
 	const pending = (async (): Promise<FieldRange> => {
 		try {
+			if (shareable) {
+				const held = await sharedValueGet<FieldRange>(sharedKey);
+				if (held) {
+					cache.set(key, {
+						value: held.value,
+						computedAt: held.computedAt,
+						expiresAt: held.expiresAt,
+					});
+					evictIfNeeded();
+					return held.value;
+				}
+			}
+
 			const isMeasure = source.measures.some((f) => f.name === field);
 
 			// One row from each end. Two small queries rather than one clever
@@ -177,21 +208,27 @@ export async function getFieldRange(
 			};
 
 			if (shareable) {
-				cache.set(key, {
-					value,
-					computedAt: Date.now(),
-					// Longer than a result cache entry: the extremes of a
-					// column move far more slowly than the figures inside it.
-					// Except on a live source, where the newest value is the
-					// one that moves.
-					expiresAt:
-						Date.now() +
-						(source.isLive
-							? liveTtlSeconds()
-							: settings().resultTtlSeconds * 4) *
-							1000,
-				});
+				const computedAt = Date.now();
+				// Longer than a result cache entry, because the extremes of a
+				// column move far more slowly than the figures inside it.
+				// Except on a live source, where the newest value is the one
+				// that moves.
+				const expiresAt =
+					computedAt +
+					(source.isLive
+						? liveTtlSeconds()
+						: settings().resultTtlSeconds * 4) *
+						1000;
+				cache.set(key, { value, computedAt, expiresAt });
 				evictIfNeeded();
+				sharedValueSet(
+					sharedKey,
+					policy,
+					source,
+					value,
+					computedAt,
+					expiresAt,
+				);
 			}
 
 			return value;

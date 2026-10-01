@@ -38,7 +38,7 @@ import type { VisualPreset } from "../../lib/visuals/presets";
 import { PropertiesPanel } from "./PropertiesPanel";
 import { EditorRail, type EditorPanel } from "./EditorRail";
 import { PageAlertsPanel } from "./PageAlertsPanel";
-import { useAssistant } from "../assist/AssistantContext";
+import { useAssistantPanel } from "../assist/AssistantContext";
 import { useAssistantSurface } from "../assist/useAssistantSurface";
 import type { EditorOp } from "../../lib/assistant/surfaces/editor";
 import { ProtectDialog, type PageLock } from "./ProtectPageDialog";
@@ -1724,7 +1724,7 @@ export function ReportEditor({
 	};
 
 	const { panelOpen: assistantOpen, setPanelOpen: setAssistantOpen } =
-		useAssistant();
+		useAssistantPanel();
 	useAssistantSurface({
 		kind: "editor",
 		// The page the editor was opened on. A page drafted by the assistant

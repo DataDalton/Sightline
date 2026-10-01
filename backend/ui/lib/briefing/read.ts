@@ -1,3 +1,15 @@
+import { periodKey } from "../alerts/anomaly";
+import {
+	ageOf,
+	decideLoad,
+	defaultSettleHours,
+	evennessOf,
+	judgeSettling,
+	learnSettling,
+	type Evenness,
+	type LoadEvidence,
+	type Observation,
+} from "../alerts/completeness";
 import type { Identity } from "../auth/identity";
 import { addsUp, breakdown, rankBreakdowns } from "../explain/drivers";
 import { toNumber } from "../format";
@@ -8,6 +20,7 @@ import {
 	buildCard,
 	historyStart,
 	readProbe,
+	settleCard,
 	splitWindows,
 	worthExplaining,
 	type Card,
@@ -43,6 +56,20 @@ type Filter = { field: string; op: string; value: string };
 export interface ComputedCard {
 	card: Card | null;
 	computedAt: number;
+}
+
+// What is known about a figure apart from its own rows, read from the
+// platform store for the whole briefing at once. See lib/briefing/cards.
+export interface CardContext {
+	// The reader's time zone, where a period's days start and end.
+	timeZone: string;
+	// When the dataset's tables last loaded, or null when not known.
+	load: LoadEvidence | null;
+	// What the figure read as for each period while it settled.
+	observations: Observation[];
+	// Whether the measure is a plain sum or count.
+	additive: boolean;
+	now?: number;
 }
 
 function windowFilters(
@@ -171,15 +198,18 @@ async function readSplit(
 
 // What moved the figure between the two windows, from the breakdowns the
 // report charts. The split that concentrates the change in one member wins.
+// The same reads say whether the change spread evenly across the members of
+// that split, which is how a load gap looks, or sits in one of them.
 async function findDriver(
 	identity: Identity,
 	item: WatchItem,
 	card: Card,
 	stamps: number[],
-): Promise<Driver | null> {
-	if (!card.previousWindow || card.previous === null) return null;
+): Promise<{ driver: Driver | null; evenness: Evenness | null }> {
+	const none = { driver: null, evenness: null };
+	if (!card.previousWindow || card.previous === null) return none;
 	const change = card.value - card.previous;
-	if (change === 0) return null;
+	if (change === 0) return none;
 
 	const splits = await Promise.all(
 		item.splitBy.slice(0, maxSplits).map((dimension) =>
@@ -190,7 +220,7 @@ async function findDriver(
 		),
 	);
 	const usable = splits.filter((s) => s !== null);
-	if (usable.length === 0) return null;
+	if (usable.length === 0) return none;
 	const additive = addsUp(card.value, usable[0].current, item.measure);
 	const ranked = rankBreakdowns(
 		usable.map((s) =>
@@ -204,24 +234,49 @@ async function findDriver(
 			),
 		),
 	);
-	const top = ranked[0]?.members[0];
-	if (!ranked[0] || !top || top.change === 0) return null;
+	if (!ranked[0]) return none;
+	// The split that gathers the change most. If even that one moved evenly,
+	// every split did.
+	const split = usable.find((s) => s.dimension === ranked[0].dimension);
+	const evenness =
+		additive && split
+			? evennessOf(
+					split.current,
+					split.previous,
+					split.dimension,
+					item.measure,
+				)
+			: null;
+	const top = ranked[0].members[0];
+	if (!top || top.change === 0) return { driver: null, evenness };
 	// A member moving against the whole is not what moved it.
-	if (Math.sign(top.change) !== Math.sign(change)) return null;
+	if (Math.sign(top.change) !== Math.sign(change))
+		return { driver: null, evenness };
 	return {
-		dimension: ranked[0].dimension,
-		member: top.value,
-		change: top.change,
-		share: top.share,
+		driver: {
+			dimension: ranked[0].dimension,
+			member: top.value,
+			change: top.change,
+			share: top.share,
+		},
+		evenness,
 	};
 }
 
 // Works out one card for the day given. The item has been through checkItem.
+//
+// The latest finished period is judged only once its load has landed. While
+// it waits, the latest period that has loaded is judged, and the card says
+// what it is waiting for. A low reading in a period still young is then
+// weighed against how complete that period usually is by now. See
+// lib/alerts/completeness.
 export async function computeCard(
 	identity: Identity,
 	item: WatchItem,
 	today: string,
+	context: CardContext,
 ): Promise<ComputedCard> {
+	const now = context.now ?? Date.now();
 	const stamps: number[] = [];
 	const stamp = () => (stamps.length ? Math.min(...stamps) : Date.now());
 
@@ -266,15 +321,61 @@ export async function computeCard(
 		[item.measure]: toNumber(row[item.measure]),
 	}));
 
-	const card = buildCard(item.id, rows, {
+	const keys = rows
+		.map((row) => periodKey(row[item.timeField]))
+		.filter((k): k is string => k !== null);
+	const decision = decideLoad(
+		context.load,
+		keys,
+		reading.target,
+		reading.spacing,
+		context.timeZone,
+		today,
+	);
+	// Nothing read has loaded yet, so the latest period is shown but never
+	// called unusual.
+	const blocked = decision.judged === null;
+	const judged = decision.judged ?? reading.target;
+
+	const built = buildCard(item.id, rows, {
 		timeField: item.timeField,
 		measure: item.measure,
-		target: reading.target,
+		target: judged,
 		spacing: reading.spacing,
 		today,
+		through: reading.target,
 	});
-	if (!card) return { card: null, computedAt: stamp() };
-	if (worthExplaining(card))
-		card.driver = await findDriver(identity, item, card, stamps);
+	if (!built) return { card: null, computedAt: stamp() };
+	let evenness: Evenness | null = null;
+	if (worthExplaining(built)) {
+		const found = await findDriver(identity, item, built, stamps);
+		built.driver = found.driver;
+		evenness = found.evenness;
+	}
+
+	const learned = learnSettling(context.observations);
+	const ageHours = ageOf(judged, built.spacing, context.timeZone, now);
+	const judgement = judgeSettling({
+		value: built.value,
+		usual: built.usual,
+		low: built.low,
+		unusual: built.unusual,
+		additive: context.additive,
+		ageHours,
+		spacing: built.spacing,
+		landed: decision.known,
+		learned,
+		evenness,
+	});
+	const settling = blocked
+		? { ...judgement, level: null, reason: null }
+		: judgement;
+	const card = settleCard(built, {
+		settling,
+		waiting: decision.waiting,
+		settleHours: learned?.settleHours ?? defaultSettleHours(built.spacing),
+		timeZone: context.timeZone,
+		now,
+	});
 	return { card, computedAt: stamp() };
 }

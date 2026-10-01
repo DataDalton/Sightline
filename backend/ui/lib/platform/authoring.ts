@@ -13,6 +13,8 @@ import {
 	validateVisual,
 } from "../visuals/validate";
 import { invalidateDefinitions } from "./definitionCache";
+import { invalidateReport } from "./curated";
+import { writeVersion } from "./versionWrite";
 import type { EditOperation } from "./editing";
 import { refuseAddPage, refuseReportDelete } from "./pageProtection";
 
@@ -334,7 +336,7 @@ export async function updateReportPlacement(
 	});
 
 	invalidateDefinitions("navigation:");
-	invalidateDefinitions("report:");
+	invalidateReport(reportId, [current.slug, slug]);
 	invalidateDefinitions("search:");
 	return { slug };
 }
@@ -365,8 +367,9 @@ export async function reorderReports(
 		changedBy: identity.email,
 		newValue: `${categoryId}: ${reportIds.join(",")}`,
 	});
+	// The order is held in the curated list under the navigation prefix. A
+	// report's own cached header carries no order, so it is left alone.
 	invalidateDefinitions("navigation:");
-	invalidateDefinitions("report:");
 	invalidateDefinitions("search:");
 }
 
@@ -690,6 +693,7 @@ export async function addTemplatePage(
 
 	const built = visualsFromTemplate(input, input.sourceKey);
 
+	let reportSlug: string | null = null;
 	const pageId = await transaction(async (client) => {
 		// Locked for the same reason an edit locks it: two people adding a page
 		// at once must not both take the same sort order or version.
@@ -697,14 +701,16 @@ export async function addTemplatePage(
 			version: string;
 			protect_add_page: boolean;
 			is_personal: boolean;
+			slug: string;
 		}>(
-			`SELECT version, protect_add_page, is_personal FROM reports
+			`SELECT version, protect_add_page, is_personal, slug FROM reports
 			 WHERE report_id = $1 FOR UPDATE`,
 			[input.reportId],
 		);
 		if (current.rows.length === 0) {
 			throw new AuthoringError("Report not found.");
 		}
+		reportSlug = current.rows[0].slug;
 
 		// The same lock applyEdits consults for its own addPage op. This is the
 		// other way a page is created, and until this check existed choosing a
@@ -851,21 +857,16 @@ export async function addTemplatePage(
 				`SELECT title, description FROM reports WHERE report_id = $1`,
 				[input.reportId],
 			);
-			await client.query(
-				`INSERT INTO report_versions (report_id, version, snapshot, created_by)
-				 VALUES ($1, $2, $3, $4)
-				 ON CONFLICT (report_id, version) DO NOTHING`,
-				[
-					input.reportId,
-					nextVersion,
-					JSON.stringify({
-						visuals: visuals.rows,
-						pages: pages.rows,
-						report: header.rows[0] ?? null,
-					}),
-					identity.email,
-				],
-			);
+			await writeVersion(client, {
+				reportId: input.reportId,
+				version: nextVersion,
+				snapshot: {
+					visuals: visuals.rows,
+					pages: pages.rows,
+					report: header.rows[0] ?? null,
+				},
+				createdBy: identity.email,
+			});
 		}
 
 		// A latency hint for listeners. The sequence above is what guarantees
@@ -892,8 +893,7 @@ export async function addTemplatePage(
 
 	// The report row as well as its body, since the version it carries moved
 	// and an editor reloading on the cached one would be refused on save.
-	invalidateDefinitions(`report-body:${input.reportId}`);
-	invalidateDefinitions("report:");
+	invalidateReport(input.reportId, [reportSlug]);
 
 	return { pageId, visuals: built.visuals };
 }
@@ -914,11 +914,14 @@ export async function setPageProtection(
 		page_id: string;
 		report_id: string;
 		title: string;
+		report_slug: string | null;
 	}>(
 		`UPDATE report_pages
 		    SET protect_delete = $2, protect_edit = $3
 		  WHERE page_id = $1 AND is_active = TRUE
-		  RETURNING page_id::text AS page_id, report_id::text AS report_id, title`,
+		  RETURNING page_id::text AS page_id, report_id::text AS report_id, title,
+		            (SELECT r.slug FROM reports r
+		             WHERE r.report_id = report_pages.report_id) AS report_slug`,
 		[pageId, protection.protectDelete, protection.protectEdit],
 	);
 
@@ -946,8 +949,7 @@ export async function setPageProtection(
 	// under the same prefix, so dropping "report:" does not touch it. Missing
 	// this is why a page lock was written and then never seen: the row changed
 	// and every read kept answering from the body taken before it.
-	invalidateDefinitions(`report-body:${page.report_id}`);
-	invalidateDefinitions("report:");
+	invalidateReport(page.report_id, [page.report_slug]);
 
 	return {
 		pageId: page.page_id,
@@ -976,11 +978,11 @@ export async function setReportProtection(
 	protectEdit: boolean;
 	protectAddPage: boolean;
 }> {
-	const rows = await sql<{ report_id: string; title: string }>(
+	const rows = await sql<{ report_id: string; title: string; slug: string }>(
 		`UPDATE reports
 		    SET protect_delete = $2, protect_edit = $3, protect_add_page = $4
 		  WHERE report_id = $1 AND is_active = TRUE
-		  RETURNING report_id::text AS report_id, title`,
+		  RETURNING report_id::text AS report_id, title, slug`,
 		[
 			reportId,
 			protection.protectDelete,
@@ -1009,8 +1011,7 @@ export async function setReportProtection(
 
 	// The locks are on the report row, but a reader picks them up alongside the
 	// pages, so both entries go.
-	invalidateDefinitions(`report-body:${report.report_id}`);
-	invalidateDefinitions("report:");
+	invalidateReport(report.report_id, [report.slug]);
 
 	return {
 		reportId: report.report_id,

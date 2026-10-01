@@ -7,6 +7,7 @@ import {
 	FormulaSyntaxError,
 	isError,
 	parse,
+	readsWholeColumn,
 	references,
 	type Context,
 	type Value,
@@ -240,4 +241,26 @@ test("joined text past the cell limit is an error rather than growing without en
 	assert.ok(isError(out.values[0].B));
 	assert.equal(String(out.values[0].B), "#VALUE!");
 	assert.ok(isError(out.values[0].C));
+});
+
+test("formulas that read down a whole column are told apart", () => {
+	assert.equal(readsWholeColumn([]), false);
+	assert.equal(
+		readsWholeColumn([
+			{ formula: "[Revenue] * 2" },
+			{ formula: 'IF([Revenue] > 5, "high", "low")' },
+		]),
+		false,
+	);
+	for (const fn of ["TOTAL", "SHARE", "RANK", "PREVIOUS", "RUNNING"]) {
+		assert.equal(
+			readsWholeColumn([{ formula: `1 + ROUND(${fn}([Revenue]), 2)` }]),
+			true,
+			fn,
+		);
+	}
+	// Names are read without regard to case, and a formula that cannot be
+	// parsed reads nothing.
+	assert.equal(readsWholeColumn([{ formula: "share([Revenue])" }]), true);
+	assert.equal(readsWholeColumn([{ formula: "TOTAL(" }]), false);
 });

@@ -13,7 +13,11 @@ export async function GET(request: NextRequest, { params }: IdContext) {
 			found.sheet.definition.mode === "pivot"
 				? await pivotData(found.identity, found.sheet)
 				: await tableData(found.identity, found.sheet);
-		return privateJson({ version: found.sheet.version, data });
+		return privateJson({
+			version: found.sheet.version,
+			notesVersion: found.sheet.notesVersion,
+			data,
+		});
 	} catch (error) {
 		return failure(error, "load the sheet's data");
 	}

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { ago } from "../admin/when";
 import type { ExploreState } from "../../lib/explore/state";
+import { KeepIcon, KeptBadge, markKeep } from "../mine/Retention";
 import styles from "./Explore.module.css";
 
 // Explorations saved to come back to, and the current one saved or updated.
@@ -17,6 +18,8 @@ export interface SavedView {
 	name: string;
 	state: ExploreState;
 	modifiedOn: string;
+	// Its owner marked it to be kept however long it goes unused.
+	keep: boolean;
 }
 
 export const viewsKey = "/api/explore/views";
@@ -137,6 +140,14 @@ export function SavedViews({
 			body: JSON.stringify({ state: current }),
 		});
 		if (view) onSaved(view as SavedView);
+	};
+
+	// The Keep mark, so retention never removes the view for going unused.
+	const toggleKeep = async (view: SavedView) => {
+		setFailure(null);
+		const problem = await markKeep("exploreView", view.id, !view.keep);
+		if (problem) setFailure(problem);
+		await mutate();
 	};
 
 	const remove = async (id: string) => {
@@ -276,6 +287,12 @@ export function SavedViews({
 									>
 										<span className={styles.viewsItemName}>
 											{view.name}
+											{view.keep && (
+												<>
+													{" "}
+													<KeptBadge />
+												</>
+											)}
 										</span>
 										<span className={styles.viewsItemMeta}>
 											{sourceTitle(view.state.sourceKey)}{" "}
@@ -293,6 +310,28 @@ export function SavedViews({
 											· {ago(view.modifiedOn)}
 										</span>
 									</button>
+									{confirming !== view.id && (
+										<button
+											type="button"
+											className={styles.viewsIcon}
+											title={
+												view.keep
+													? "Stop keeping, so it can be removed if unused for a long time"
+													: "Keep, so it is never removed for going unused"
+											}
+											aria-label={
+												view.keep
+													? `Stop keeping ${view.name}`
+													: `Keep ${view.name}`
+											}
+											aria-pressed={view.keep}
+											onClick={() =>
+												void toggleKeep(view)
+											}
+										>
+											<KeepIcon size={14} />
+										</button>
+									)}
 									{confirming === view.id ? (
 										<span className={styles.viewsConfirm}>
 											<button

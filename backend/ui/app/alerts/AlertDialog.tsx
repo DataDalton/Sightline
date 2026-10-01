@@ -170,6 +170,9 @@ interface Preview {
 		low?: number | null;
 		high?: number | null;
 		unusual?: boolean;
+		// Far below where it usually is by now, in a period that may still
+		// be loading.
+		early?: boolean;
 	}[];
 	formatted: string[];
 	usual?: (string | null)[];
@@ -606,6 +609,9 @@ export function AlertDialog({
 	const flagged = (r: Preview["readings"][number]) =>
 		unusual ? r.unusual === true : meets(r.value);
 	const firingNow = readings.filter(flagged).length;
+	const earlyNow = unusual
+		? readings.filter((r) => r.early === true).length
+		: 0;
 	const period = unusual ? readings[0]?.period : undefined;
 	const temporalFields = (source?.dimensions ?? []).filter((d) =>
 		isTemporalField(source, d.name),
@@ -914,7 +920,7 @@ export function AlertDialog({
 					</div>
 					<span className={styles.fieldHint}>
 						{unusual
-							? "Usual is worked out from the measure's own history. Each check looks at the latest finished period, never today, which is still filling up, and tells you about a period once."
+							? "Usual is worked out from the measure's own history. Each check looks at the latest finished period whose data has loaded, never today, which is still filling up, and tells you about a period once. A low figure in a period that may still be loading is an early signal, and is sent once it is confirmed."
 							: crossing
 								? "You are told once when it crosses, not on every check it stays there."
 								: condition === "changes"
@@ -929,6 +935,15 @@ export function AlertDialog({
 							checked={notifyRecover}
 							onChange={setNotifyRecover}
 							label="Also tell me when it is back"
+						/>
+					)}
+					{unusual && (
+						<Toggle
+							checked={anomaly.earlySignals === true}
+							onChange={(on) =>
+								setAnomaly({ ...anomaly, earlySignals: on })
+							}
+							label="Alert on early signals"
 						/>
 					)}
 					{unusual && groupBy && (
@@ -1045,10 +1060,12 @@ export function AlertDialog({
 									className={`${styles.pill} ${firingNow ? styles.pillHot : ""}`}
 								>
 									{groupBy
-										? `${firingNow} of ${readings.length} unusual`
+										? `${firingNow} of ${readings.length} unusual${earlyNow ? `, ${earlyNow} early ${earlyNow === 1 ? "signal" : "signals"}` : ""}`
 										: firingNow
 											? "Unusual"
-											: "Within its usual range"}
+											: earlyNow
+												? "Early signal, data may still be loading"
+												: "Within its usual range"}
 								</span>
 							)}
 							{hasLine && preview && readings.length > 0 && (

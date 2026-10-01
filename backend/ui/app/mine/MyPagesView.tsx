@@ -18,6 +18,7 @@ import {
 	type ChooserSource,
 } from "../authoring/TemplateChooser";
 import form from "../authoring/Authoring.module.css";
+import { KeptBadge, markKeep, RecentlyRemoved } from "./Retention";
 import styles from "./MyPages.module.css";
 
 interface PersonalPage {
@@ -28,6 +29,7 @@ interface PersonalPage {
 	ownerEmail: string;
 	modifiedOn: string;
 	sharedWith: number;
+	keep: boolean;
 }
 
 interface Listing {
@@ -57,6 +59,15 @@ export default function MyPagesView() {
 	} | null>(null);
 	const [deleting, setDeleting] = useState(false);
 	const [removeFailure, setRemoveFailure] = useState<string | null>(null);
+	const [keepFailure, setKeepFailure] = useState<string | null>(null);
+
+	// The Keep mark, which only the owner of a page sets.
+	const toggleKeep = async (page: PersonalPage) => {
+		setKeepFailure(null);
+		const problem = await markKeep("page", page.reportId, !page.keep);
+		if (problem) setKeepFailure(problem);
+		await mutate();
+	};
 
 	const mine = data?.mine ?? [];
 	const shared = data?.sharedWithMe ?? [];
@@ -129,6 +140,7 @@ export default function MyPagesView() {
 						{page.sharedWith === 1 ? " person" : " people"}
 					</span>
 				) : null}
+				{kind === "mine" && page.keep && <KeptBadge />}
 				<span>{when(page.modifiedOn)}</span>
 			</span>
 
@@ -147,6 +159,20 @@ export default function MyPagesView() {
 							onClick={() => setSharing(page)}
 						>
 							Share
+						</button>
+					)}
+					{kind === "mine" && (
+						<button
+							type="button"
+							className={styles.cardAction}
+							onClick={() => void toggleKeep(page)}
+							title={
+								page.keep
+									? "Let it be removed if nobody uses it for a long time"
+									: "Never remove it for going unused"
+							}
+						>
+							{page.keep ? "Stop keeping" : "Keep"}
 						</button>
 					)}
 					<button
@@ -180,6 +206,11 @@ export default function MyPagesView() {
 				<SkeletonCards count={4} />
 			) : (
 				<>
+					{keepFailure && (
+						<div className={form.failure} role="alert">
+							{keepFailure}
+						</div>
+					)}
 					<div className={styles.grid}>
 						{mine.map((page) => card(page, "mine"))}
 						<button
@@ -224,6 +255,8 @@ export default function MyPagesView() {
 							</div>
 						</>
 					)}
+
+					<RecentlyRemoved />
 				</>
 			)}
 

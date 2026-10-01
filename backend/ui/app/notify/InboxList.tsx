@@ -1,7 +1,10 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import type { InboxItem } from "../../lib/notify/store";
+import { isRetentionKind } from "../../lib/retention/rules";
+import { KeepIcon, markKeep } from "../mine/Retention";
 import { ago, clock } from "../admin/when";
 import { Skeleton } from "../components/shared/Skeleton";
 import { BellIcon, KindIcon } from "./icons";
@@ -29,6 +32,20 @@ const patch = (ids: string[], read: boolean) => send("PATCH", { ids, read });
 
 const remove = (ids: string[]) => send("DELETE", { ids });
 
+// The item a retention warning is about, when the entry is one.
+function retentionTarget(
+	item: InboxItem,
+): { kind: Parameters<typeof markKeep>[0]; id: string } | null {
+	const target = item.data?.retention as
+		| { kind?: unknown; id?: unknown }
+		| undefined;
+	return target &&
+		isRetentionKind(target.kind) &&
+		typeof target.id === "string"
+		? { kind: target.kind, id: target.id }
+		: null;
+}
+
 export function InboxList({
 	items,
 	loading,
@@ -41,6 +58,8 @@ export function InboxList({
 	emptyText?: string;
 }) {
 	const router = useRouter();
+	// Warnings whose item was marked Keep from here, so the button says so.
+	const [kept, setKept] = useState<Set<string>>(new Set());
 
 	if (loading && !items) {
 		return (
@@ -114,6 +133,42 @@ export function InboxList({
 					</button>
 
 					<span className={styles.itemActions}>
+						{(() => {
+							const target = retentionTarget(item);
+							if (!target) return null;
+							const done = kept.has(item.id);
+							return (
+								<button
+									type="button"
+									className={styles.itemAction}
+									disabled={done}
+									onClick={async () => {
+										const failed = await markKeep(
+											target.kind,
+											target.id,
+											true,
+										);
+										if (!failed) {
+											setKept((s) =>
+												new Set(s).add(item.id),
+											);
+										}
+										if (!item.readOn) {
+											await patch([item.id], true);
+										}
+										onChanged();
+									}}
+									title={
+										done
+											? "Kept. It will not be removed."
+											: "Keep it, so it is never removed for going unused"
+									}
+									aria-label={done ? "Kept" : "Keep"}
+								>
+									<KeepIcon size={16} />
+								</button>
+							);
+						})()}
 						<button
 							type="button"
 							className={styles.itemAction}

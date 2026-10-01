@@ -3,7 +3,6 @@ import { resolvePolicyClass } from "@/lib/auth/policy";
 import { isUuid } from "@/lib/alerts/store";
 import { cleanText, limits } from "@/lib/messages/rules";
 import { MessageError, openThread, reply } from "@/lib/messages/store";
-import { checkWriteRateLimit } from "@/lib/rateLimit";
 import { caller, privateJson, readJson } from "../../notifications/guard";
 
 // One conversation. A conversation the caller is not in reads as not found,
@@ -32,8 +31,6 @@ export async function GET(request: NextRequest, { params }: Context) {
 export async function POST(request: NextRequest, { params }: Context) {
 	const identity = await caller(request);
 	if (identity instanceof NextResponse) return identity;
-	const limited = checkWriteRateLimit(request);
-	if (limited) return limited;
 	const { id } = await params;
 	if (!isUuid(id)) return notFound();
 

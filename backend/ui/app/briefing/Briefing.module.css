@@ -494,6 +494,47 @@
 	background: color-mix(in srgb, var(--tone) 12%, transparent);
 }
 
+/* An early signal is marked more quietly than a confirmed one, in outline
+   rather than filled, since the figure may still fill in. */
+.flagEarly {
+	flex-shrink: 0;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-size: var(--text-xs);
+	font-weight: 600;
+	padding: 1px var(--space-2);
+	border-radius: var(--radius-full);
+	color: var(--text-secondary);
+	border: 1px dashed var(--border-default);
+}
+
+.cardLead[data-early] {
+	border-style: dashed;
+}
+
+/* Why the card reads the way it does, such as still loading, filling in, or
+   held up by one part. */
+.note {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--space-2);
+	font-size: var(--text-sm);
+	line-height: 1.45;
+	color: var(--text-secondary);
+}
+
+.note svg {
+	flex-shrink: 0;
+	margin-top: 2px;
+	color: var(--text-muted);
+}
+
+.tileNote {
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+}
+
 .cardName {
 	font-size: var(--text-lg);
 	font-weight: 600;
@@ -642,6 +683,16 @@
 	stroke: var(--line);
 	stroke-width: 7;
 	stroke-linecap: round;
+}
+
+/* Periods that may still change, drawn dotted and lighter. */
+.trendPending {
+	stroke-dasharray: 2 4;
+	opacity: 0.75;
+}
+
+.trendDotPending {
+	opacity: 0.5;
 }
 
 /* --- Steady tiles -------------------------------------------------------- */

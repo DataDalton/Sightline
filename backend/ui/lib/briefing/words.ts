@@ -1,5 +1,7 @@
 import { describePeriod } from "../alerts/anomaly";
+import type { Waiting } from "../alerts/completeness";
 import { formatCompact, type FormatHint } from "../format";
+import { describeSpan } from "../freshness/arrivals";
 import type { Card, Driver } from "./card";
 
 // The briefing in words. Pure, so each sentence can be tested.
@@ -78,19 +80,100 @@ export function driverText(driver: Driver, hint: FormatHint): string {
 	return `${lead} ${driver.member} (${driver.dimension}), ${amount}${share}`;
 }
 
+// A clock time as the reader's own clock shows it, with the weekday when it
+// is on a later day.
+function clockTime(at: number, now: number, timeZone?: string): string {
+	const options: Intl.DateTimeFormatOptions = {
+		hour: "numeric",
+		minute: "2-digit",
+		...(timeZone ? { timeZone } : {}),
+	};
+	const dayOf = (t: number) =>
+		new Date(t).toLocaleDateString("en-CA", timeZone ? { timeZone } : {});
+	const time = new Date(at).toLocaleTimeString("en-US", options);
+	if (at <= now || dayOf(at) === dayOf(now)) return time;
+	const weekday = new Date(at).toLocaleDateString("en-US", {
+		weekday: "long",
+		...(timeZone ? { timeZone } : {}),
+	});
+	return `${weekday} at ${time}`;
+}
+
+// "Tue 30 Sep has not loaded yet. It usually arrives by 6:00 AM." Once that
+// time has passed, the sentence says the load is running late instead.
+export function waitingText(
+	waiting: Waiting,
+	spacing: number,
+	now = Date.now(),
+	timeZone?: string,
+): string {
+	const first = periodLabel(waiting.period, spacing);
+	const subject =
+		waiting.through === waiting.period
+			? `${first} has`
+			: `${first} to ${periodLabel(waiting.through, spacing)} have`;
+	const when =
+		waiting.expectedBy === null
+			? ""
+			: waiting.expectedBy <= now
+				? ` It usually arrives by ${clockTime(waiting.expectedBy, now, timeZone)}, so it is running late.`
+				: ` It usually arrives by ${clockTime(waiting.expectedBy, now, timeZone)}.`;
+	return `${subject} not loaded yet.${when}`;
+}
+
+// Why the card reads the way it does, when that is more than its distance
+// from usual. Null when there is nothing to add.
+export function settlingText(
+	card: Pick<Card, "period" | "spacing" | "early" | "settling" | "driver">,
+): string | null {
+	const settling = card.settling;
+	if (!settling?.reason) return null;
+	const period = periodLabel(card.period, card.spacing);
+	const parts = card.driver
+		? `Every ${card.driver.dimension}`
+		: "Every part of it";
+	switch (settling.reason) {
+		case "belowExpected":
+			return `Early signal. ${period} is far below where it usually is by now. Data may still be loading.`;
+		case "evenDrop":
+			return `Early signal. ${parts} fell by a similar share, which is how data still loading looks.`;
+		case "together":
+			return "Early signal. Every figure on this dataset fell together, which is how data still loading looks.";
+		case "noHistory":
+			return `Early signal. ${period} is far below usual, but it ended only ${describeSpan(Math.max(settling.ageHours, 0) * 3_600_000)} ago and data may still be loading.`;
+		case "fillingIn":
+			return `Still filling in. ${period} is in line with where it usually is by now.`;
+		case "ledByOne":
+			return card.driver
+				? `One ${card.driver.dimension} carries the drop, so this is not data still loading.`
+				: "One part of it carries the drop, so this is not data still loading.";
+		case "landed":
+			return "Its data has loaded, so this is not data still to arrive.";
+		default:
+			return null;
+	}
+}
+
 function count(n: number, one: string, many: string): string {
 	return `${n === 1 ? "One" : n} ${n === 1 ? one : many}`;
 }
 
-// The sentence at the top of the page.
+// The sentence at the top of the page. Early signals are said apart from
+// confirmed figures and only softly, since they may still clear.
 export function headline(options: {
 	unusual: number;
+	early?: number;
 	moving: number;
 	late: number;
 	fired: number;
 	reading: boolean;
 }): string {
 	const { unusual, moving, late, fired, reading } = options;
+	const early = options.early ?? 0;
+	const soft =
+		early > 0
+			? `${count(early, "figure looks", "figures look")} low but may still be loading`
+			: "";
 	const parts: string[] = [];
 	if (unusual > 0)
 		parts.push(
@@ -104,6 +187,7 @@ export function headline(options: {
 		);
 	if (parts.length === 0) {
 		if (reading) return "Reading your figures";
+		if (soft) return `Nothing unusual so far. ${soft}`;
 		return moving > 0
 			? `Nothing unusual. ${count(moving, "figure is", "figures are")} on the move`
 			: "Everything is within its usual range";
@@ -112,5 +196,6 @@ export function headline(options: {
 		parts.length === 1
 			? parts[0]
 			: `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
-	return sentence.charAt(0).toUpperCase() + sentence.slice(1);
+	const said = sentence.charAt(0).toUpperCase() + sentence.slice(1);
+	return soft ? `${said}. ${soft}` : said;
 }

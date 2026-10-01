@@ -7,16 +7,19 @@ import { cleanState, type ExploreState } from "./state";
 // guessed or copied from somebody else's address opens nothing. Sharing is the
 // address itself, which carries the exploration and runs it under the reader's
 // own access.
+//
+// A view in the retention bin is left out of every read and write here. Its
+// owner restores it through lib/retention.
 
 export interface SavedView {
 	id: string;
 	name: string;
 	state: ExploreState;
 	modifiedOn: string;
+	// Its owner marked it to be kept however long it goes unused.
+	keep: boolean;
 }
 
-// Past this the oldest go, so the list stays one somebody can scan.
-export const maxViews = 100;
 const maxName = 120;
 
 const uuidPattern =
@@ -31,6 +34,7 @@ interface Row {
 	name: string;
 	state: unknown;
 	modified_on: string;
+	keep: boolean;
 }
 
 function toView(row: Row): SavedView | null {
@@ -41,18 +45,18 @@ function toView(row: Row): SavedView | null {
 				name: row.name,
 				state,
 				modifiedOn: new Date(row.modified_on).toISOString(),
+				keep: row.keep === true,
 			}
 		: null;
 }
 
 export async function listViews(email: string): Promise<SavedView[]> {
 	const rows = await sql<Row>(
-		`SELECT view_id::text AS view_id, name, state, modified_on
+		`SELECT view_id::text AS view_id, name, state, modified_on, keep
 		 FROM explore_views
-		 WHERE owner_email = $1
-		 ORDER BY modified_on DESC
-		 LIMIT $2`,
-		[owner(email), maxViews],
+		 WHERE owner_email = $1 AND removed_on IS NULL
+		 ORDER BY modified_on DESC`,
+		[owner(email)],
 	);
 	return rows.map(toView).filter((v): v is SavedView => v !== null);
 }
@@ -65,22 +69,12 @@ export async function createView(
 	const rows = await sql<Row>(
 		`INSERT INTO explore_views (owner_email, name, state)
 		 VALUES ($1, $2, $3::jsonb)
-		 RETURNING view_id::text AS view_id, name, state, modified_on`,
+		 RETURNING view_id::text AS view_id, name, state, modified_on, keep`,
 		[
 			owner(email),
 			name.trim().slice(0, maxName) || "Untitled",
 			JSON.stringify(state),
 		],
-	);
-	await sql(
-		`DELETE FROM explore_views
-		 WHERE owner_email = $1
-		   AND view_id NOT IN (
-		       SELECT view_id FROM explore_views
-		       WHERE owner_email = $1
-		       ORDER BY modified_on DESC
-		       LIMIT $2)`,
-		[owner(email), maxViews],
 	);
 	return rows[0] ? toView(rows[0]) : null;
 }
@@ -97,8 +91,8 @@ export async function updateView(
 		 SET name = COALESCE($3, name),
 		     state = COALESCE($4::jsonb, state),
 		     modified_on = now()
-		 WHERE view_id = $1 AND owner_email = $2
-		 RETURNING view_id::text AS view_id, name, state, modified_on`,
+		 WHERE view_id = $1 AND owner_email = $2 AND removed_on IS NULL
+		 RETURNING view_id::text AS view_id, name, state, modified_on, keep`,
 		[
 			id,
 			owner(email),
@@ -112,7 +106,8 @@ export async function updateView(
 export async function deleteView(email: string, id: string): Promise<boolean> {
 	if (!uuidPattern.test(id)) return false;
 	const rows = await sql<{ view_id: string }>(
-		`DELETE FROM explore_views WHERE view_id = $1 AND owner_email = $2
+		`DELETE FROM explore_views
+		 WHERE view_id = $1 AND owner_email = $2 AND removed_on IS NULL
 		 RETURNING view_id`,
 		[id, owner(email)],
 	);

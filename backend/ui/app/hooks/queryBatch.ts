@@ -1,5 +1,6 @@
 "use client";
 
+import { createLineReader } from "../../lib/query/ndjson";
 import type { QueryResponse } from "./useVisualQuery";
 
 // Gathers the queries a page fires into one request.
@@ -68,6 +69,28 @@ interface Slot {
 	rowCount?: number;
 	meta?: QueryResponse["meta"];
 	error?: string;
+	// Present only where the whole batch failed, carrying the status the
+	// response would otherwise have answered with.
+	status?: number;
+}
+
+// Answers every caller waiting on one slot.
+function answer(waiting: Waiting[], slot: Slot | undefined): void {
+	if (!slot || slot.error) {
+		const error: Error & { status?: number } = new Error(
+			slot?.error ?? "Query failed",
+		);
+		if (slot?.status !== undefined) error.status = slot.status;
+		for (const item of waiting) item.reject(error);
+		return;
+	}
+	const value: QueryResponse = {
+		rows: slot.rows ?? [],
+		columns: slot.columns ?? [],
+		rowCount: slot.rowCount ?? 0,
+		meta: slot.meta as QueryResponse["meta"],
+	};
+	for (const item of waiting) item.resolve(value);
 }
 
 async function send(batch: Waiting[]): Promise<void> {
@@ -85,10 +108,23 @@ async function send(batch: Waiting[]): Promise<void> {
 		order.push(item.body);
 	}
 
+	// Slots already answered, so the end of the body can fail only the rest.
+	const answered = new Set<number>();
+	const settleSlot = (index: number, slot: Slot | undefined) => {
+		if (answered.has(index) || index < 0 || index >= order.length) return;
+		answered.add(index);
+		answer(waitingFor.get(order[index]) ?? [], slot);
+	};
+
 	try {
 		const response = await fetch("/api/query/batch", {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: {
+				"Content-Type": "application/json",
+				// Asks for one line per query as each settles, so a cached
+				// visual draws without waiting for a cold one beside it.
+				Accept: "application/x-ndjson",
+			},
 			body: `{"queries":[${order.join(",")}]}`,
 		});
 
@@ -101,31 +137,51 @@ async function send(batch: Waiting[]): Promise<void> {
 			throw error;
 		}
 
-		const payload = (await response.json()) as { results?: Slot[] };
-		const results = payload.results ?? [];
+		const contentType = response.headers.get("Content-Type") ?? "";
+		if (!contentType.includes("application/x-ndjson") || !response.body) {
+			// A server answering with one JSON body, as one that does not
+			// stream does.
+			const payload = (await response.json()) as { results?: Slot[] };
+			const results = payload.results ?? [];
+			order.forEach((_, index) => settleSlot(index, results[index]));
+			return;
+		}
 
-		order.forEach((body, index) => {
-			const waiting = waitingFor.get(body) ?? [];
-			const slot = results[index];
-			if (!slot || slot.error) {
-				const error: Error & { status?: number } = new Error(
-					slot?.error ?? "Query failed",
-				);
-				for (const item of waiting) item.reject(error);
+		const lines = createLineReader((line) => {
+			let parsed: (Slot & { i?: number }) | null = null;
+			try {
+				parsed = JSON.parse(line) as Slot & { i?: number };
+			} catch {
 				return;
 			}
-			const answer: QueryResponse = {
-				rows: slot.rows ?? [],
-				columns: slot.columns ?? [],
-				rowCount: slot.rowCount ?? 0,
-				meta: slot.meta as QueryResponse["meta"],
-			};
-			for (const item of waiting) item.resolve(answer);
+			if (typeof parsed?.i !== "number") return;
+			const { i, ...slot } = parsed;
+			settleSlot(i, slot);
 		});
+		const reader = response.body.getReader();
+		const decoder = new TextDecoder();
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			lines.push(decoder.decode(value, { stream: true }));
+		}
+		lines.push(decoder.decode());
+		lines.end();
+
+		// A body that ended without a line for some query answers it as a
+		// failure rather than leaving its caller waiting.
+		order.forEach((_, index) => settleSlot(index, undefined));
 	} catch (error) {
-		// One failed batch fails only the callers it carried. Each of them
-		// reports it the way it would have reported its own request.
-		for (const item of batch) item.reject(error as Error);
+		// One failed batch fails only the callers it carried that were not
+		// already answered. Each of them reports it the way it would have
+		// reported its own request.
+		order.forEach((body, index) => {
+			if (answered.has(index)) return;
+			answered.add(index);
+			for (const item of waitingFor.get(body) ?? []) {
+				item.reject(error as Error);
+			}
+		});
 	}
 }
 

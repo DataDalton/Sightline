@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+	maxMessageIdLength,
+	maxMessageLength,
+	saveBatchLength,
+} from "@/lib/assistant/conversationSave";
+import {
 	deleteConversation,
 	getConversation,
-	maxTranscriptBytes,
 	renameConversation,
 	saveConversation,
+	type StoredMessage,
 } from "@/lib/assistant/store";
 import { assistantCaller } from "../../guard";
 
@@ -28,35 +33,66 @@ export async function GET(request: NextRequest, { params }: Context) {
 	return response;
 }
 
+// The largest request body a save is read from. The browser splits a save
+// across requests well under this, and one message alone may be as large as a
+// message is allowed to be.
+const maxSaveBody = maxMessageLength + saveBatchLength;
+
+function isMessageId(value: unknown): value is string {
+	return (
+		typeof value === "string" &&
+		value.length > 0 &&
+		value.length <= maxMessageIdLength
+	);
+}
+
+// Saves the messages that are new or changed since the browser last saved, and
+// drops the ones it lists as removed. The title is used when the save creates
+// the conversation.
 export async function PUT(request: NextRequest, { params }: Context) {
 	const caller = await assistantCaller(request);
 	if (caller instanceof NextResponse) return caller;
 	const { id } = await params;
 
-	const text = await request.text();
-	if (text.length > maxTranscriptBytes) {
-		return NextResponse.json(
-			{
-				error: "This conversation is too long to keep. Start a new one.",
-			},
+	const malformed = () =>
+		NextResponse.json({ error: "Malformed request" }, { status: 400 });
+	const tooLarge = () =>
+		NextResponse.json(
+			{ error: "A message in this conversation is too large to keep" },
 			{ status: 413 },
 		);
-	}
 
-	let title = "";
-	let messages: unknown[] = [];
+	const text = await request.text();
+	if (text.length > maxSaveBody) return tooLarge();
+
+	let body: { title?: unknown; messages?: unknown; removed?: unknown };
 	try {
-		const body = JSON.parse(text);
-		title = String(body?.title ?? "").trim() || "Untitled";
-		messages = Array.isArray(body?.messages) ? body.messages : [];
+		body = JSON.parse(text);
 	} catch {
-		return NextResponse.json(
-			{ error: "Malformed request" },
-			{ status: 400 },
-		);
+		return malformed();
+	}
+	if (!body || typeof body !== "object") return malformed();
+
+	const messages: StoredMessage[] = [];
+	for (const m of Array.isArray(body.messages) ? body.messages : []) {
+		if (!m || typeof m !== "object" || Array.isArray(m)) return malformed();
+		const { id: messageId, role } = m as { id?: unknown; role?: unknown };
+		if (!isMessageId(messageId) || typeof role !== "string") {
+			return malformed();
+		}
+		const json = JSON.stringify(m);
+		if (json.length > maxMessageLength) return tooLarge();
+		messages.push({ id: messageId, role, json });
 	}
 
-	const saved = await saveConversation(caller.email, id, title, messages);
+	const removed = Array.isArray(body.removed) ? body.removed : [];
+	if (!removed.every(isMessageId)) return malformed();
+
+	const saved = await saveConversation(caller.email, id, {
+		title: typeof body.title === "string" ? body.title : undefined,
+		messages,
+		removed,
+	});
 	return saved ? NextResponse.json({ saved: true }) : notFound();
 }
 

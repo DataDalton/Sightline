@@ -27,6 +27,8 @@ const subjectTypes = ["group", "user"] as const;
 // on a single page, so one is refused rather than stored with no effect.
 const resourceTypes = ["category", "report"] as const;
 const permissions = ["view", "edit", "admin"] as const;
+// How many grants one response carries unless more are asked for.
+const defaultGrantPage = 200;
 
 type SubjectType = (typeof subjectTypes)[number];
 type ResourceType = (typeof resourceTypes)[number];
@@ -129,43 +131,68 @@ export async function GET(request: NextRequest) {
 	const auth = await requireAdmin(request);
 	if (auth.error) return auth.error;
 
-	const grants = await sql<{
-		policy_id: string;
-		subject_type: string;
-		subject_id: string;
-		resource_type: string;
-		resource_id: string;
-		permission: Permission;
-		granted_by: string | null;
-		granted_on: string;
-		resource_name: string | null;
-	}>(
-		`SELECT p.policy_id, p.subject_type, p.subject_id, p.resource_type,
-		        p.resource_id, p.permission, p.granted_by, p.granted_on,
-		        COALESCE(c.name, r.title, pg.title) AS resource_name
-		 FROM access_policies p
-		 LEFT JOIN categories c
-		   ON p.resource_type = 'category' AND c.category_id = p.resource_id
-		 LEFT JOIN reports r
-		   ON p.resource_type = 'report' AND r.report_id::text = p.resource_id
-		 LEFT JOIN report_pages pg
-		   ON p.resource_type = 'page' AND pg.page_id::text = p.resource_id
-		 WHERE p.is_active = TRUE
-		 ORDER BY p.subject_type, p.subject_id, p.resource_type, resource_name`,
+	// Grants a page at a time, in a fixed order, with the total so the pane
+	// can offer the rest.
+	const asked = request.nextUrl.searchParams;
+	const limit = Math.max(
+		1,
+		Math.floor(Number(asked.get("limit")) || defaultGrantPage),
 	);
+	const offset = Math.max(0, Math.floor(Number(asked.get("offset")) || 0));
 
-	// Everything grantable, so the form offers choices rather than asking for
-	// an id to be typed correctly.
-	const categories = await sql<{ id: string; name: string }>(
-		`SELECT category_id AS id, name FROM categories
-		 WHERE is_active = TRUE ORDER BY sort_order, name`,
-	);
-	const reports = await sql<{ id: string; name: string }>(
-		`SELECT report_id::text AS id, title AS name
-		 FROM reports WHERE is_active = TRUE ORDER BY title`,
-	);
+	const [grants, total, categories, reports] = await Promise.all([
+		sql<{
+			policy_id: string;
+			subject_type: string;
+			subject_id: string;
+			resource_type: string;
+			resource_id: string;
+			permission: Permission;
+			granted_by: string | null;
+			granted_on: string;
+			resource_name: string | null;
+		}>(
+			`SELECT p.policy_id, p.subject_type, p.subject_id, p.resource_type,
+			        p.resource_id, p.permission, p.granted_by, p.granted_on,
+			        COALESCE(c.name, r.title, pg.title) AS resource_name
+			 FROM access_policies p
+			 LEFT JOIN categories c
+			   ON p.resource_type = 'category' AND c.category_id = p.resource_id
+			 LEFT JOIN reports r
+			   ON p.resource_type = 'report' AND r.report_id::text = p.resource_id
+			 LEFT JOIN report_pages pg
+			   ON p.resource_type = 'page' AND pg.page_id::text = p.resource_id
+			 WHERE p.is_active = TRUE
+			 ORDER BY p.subject_type, p.subject_id, p.resource_type,
+			          resource_name, p.policy_id
+			 LIMIT $1 OFFSET $2`,
+			[limit, offset],
+		),
+		sql<{ n: string }>(
+			`SELECT count(*)::text AS n FROM access_policies WHERE is_active = TRUE`,
+		),
+		// Everything grantable, so the form offers choices rather than asking
+		// for an id to be typed correctly.
+		sql<{ id: string; name: string }>(
+			`SELECT category_id AS id, name FROM categories
+			 WHERE is_active = TRUE ORDER BY sort_order, name`,
+		),
+		// Curated reports only. A personal page is shared by its owner with
+		// named people, and listing every person's pages here would grow with
+		// the number of people using the app.
+		sql<{ id: string; name: string }>(
+			`SELECT report_id::text AS id, title AS name
+			 FROM reports WHERE is_active = TRUE AND is_personal = FALSE
+			 ORDER BY title`,
+		),
+	]);
 
-	const response = NextResponse.json({ grants, categories, reports });
+	const response = NextResponse.json({
+		grants,
+		grantsTotal: Number(total[0]?.n ?? 0),
+		categories,
+		reports,
+	});
 	response.headers.set("Cache-Control", "private, no-store");
 	return response;
 }

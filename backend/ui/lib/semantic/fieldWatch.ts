@@ -7,6 +7,7 @@ import {
 	type DependentKind,
 	type DependentReport,
 } from "../platform/dependents";
+import { routineLooksAllowed } from "../freshness/warehouse";
 import { demoMode } from "../runtime";
 import { syncSourceFields, type FieldSyncResult } from "./fieldSync";
 import { loadRegistry } from "./registry";
@@ -336,10 +337,15 @@ const dailyFieldSyncLockKey = 8577425;
 // How long a source's fields are trusted before they are read again.
 const syncEveryMs = 24 * 60 * 60 * 1000;
 
+// How long past due a source may go before it is read even with the warehouse
+// stopped, which starts it. Until then a source waits for the warehouse to be
+// up on a reader's account.
+const forceAfterMs = 36 * 60 * 60 * 1000;
+
 // A source whose sync failed is not retried on every tick. The failure is
 // usually a privilege the application lacks, which a few hours do not change.
+// Kept on the source, so no replica retries it before then.
 const retryAfterMs = 6 * 60 * 60 * 1000;
-const failedAt = new Map<string, number>();
 
 let running = false;
 
@@ -354,7 +360,10 @@ export async function runDailyFieldSync(): Promise<void> {
 	if (demoMode || running) return;
 	running = true;
 	try {
-		await tryAdvisoryLock(dailyFieldSyncLockKey, syncDueSources);
+		const warehouseUp = await routineLooksAllowed();
+		await tryAdvisoryLock(dailyFieldSyncLockKey, () =>
+			syncDueSources(warehouseUp),
+		);
 	} catch (error) {
 		console.warn("The daily field sync did not run:", error);
 	} finally {
@@ -362,23 +371,29 @@ export async function runDailyFieldSync(): Promise<void> {
 	}
 }
 
-async function syncDueSources(): Promise<void> {
+async function syncDueSources(warehouseUp: boolean): Promise<void> {
 	const due = await sql<{ source_key: string }>(
 		`SELECT source_key FROM data_sources
 		 WHERE is_active
 		   AND (fields_synced_on IS NULL
 		        OR fields_synced_on < now() - make_interval(secs => $1))
+		   AND (fields_sync_failed_on IS NULL
+		        OR fields_sync_failed_on < now() - make_interval(secs => $2))
+		   AND ($3 OR coalesce(fields_synced_on, created_on)
+		                < now() - make_interval(secs => $4))
 		 ORDER BY fields_synced_on NULLS FIRST, source_key`,
-		[syncEveryMs / 1000],
+		[
+			syncEveryMs / 1000,
+			retryAfterMs / 1000,
+			warehouseUp,
+			forceAfterMs / 1000,
+		],
 	);
 
-	const now = Date.now();
 	const results: FieldSyncResult[] = [];
 	// One at a time, as an administrator's sync does, so a burst of catalogue
 	// reads does not compete with readers for warehouse slots.
 	for (const { source_key } of due) {
-		const failed = failedAt.get(source_key);
-		if (failed && now - failed < retryAfterMs) continue;
 		const result = await syncSourceFields(null, source_key).catch(
 			(error): FieldSyncResult | null => {
 				console.warn(
@@ -388,16 +403,24 @@ async function syncDueSources(): Promise<void> {
 				return null;
 			},
 		);
-		if (!result || result.error) {
-			failedAt.set(source_key, now);
-			if (result?.error) {
-				console.warn(
-					`Daily field sync of ${source_key} did not complete: ${result.error}`,
-				);
-			}
-		} else {
-			failedAt.delete(source_key);
+		const failed = !result || Boolean(result.error);
+		if (result?.error) {
+			console.warn(
+				`Daily field sync of ${source_key} did not complete: ${result.error}`,
+			);
 		}
+		await sql(
+			`UPDATE data_sources
+			 SET fields_sync_failed_on = CASE WHEN $2 THEN now() END
+			 WHERE source_key = $1
+			   AND (fields_sync_failed_on IS NOT NULL OR $2)`,
+			[source_key, failed],
+		).catch((error) => {
+			console.warn(
+				`Could not record the field sync of ${source_key}:`,
+				error,
+			);
+		});
 		if (result) results.push(result);
 	}
 

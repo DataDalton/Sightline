@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import type { SearchTarget, TargetKind } from "../../lib/platform/search";
 import { rankTarget } from "../../lib/platform/searchMatch";
-import { useAssistant } from "../assist/AssistantContext";
+import { useAssistantActions } from "../assist/AssistantContext";
 import { useUser } from "../context/UserContext";
 import styles from "./CommandPalette.module.css";
 
@@ -142,7 +142,7 @@ export function CommandPalette({
 	// list so arrowing runs straight through the groups.
 	// Anything typed can also be asked of the assistant, when it is on.
 	const { user } = useUser();
-	const { ask } = useAssistant();
+	const { ask } = useAssistantActions();
 	const asking = Boolean(user?.assistant);
 
 	const grouped = useMemo(() => {

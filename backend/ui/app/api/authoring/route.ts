@@ -20,7 +20,6 @@ import {
 import { assertCanEdit } from "@/lib/platform/editing";
 import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
 import { reachableSet, readableSourceList } from "@/lib/platform/sources";
-import { checkWriteRateLimit } from "@/lib/rateLimit";
 import { sql } from "@/lib/data/lakebase";
 import type { BuiltVisual } from "@/lib/visuals/templates";
 import { warmReport } from "@/lib/query/warm";
@@ -159,9 +158,6 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-	const limited = checkWriteRateLimit(request);
-	if (limited) return limited;
-
 	const checked = await guard(request);
 	if (checked.error) return checked.error;
 	const { identity, policy } = checked;

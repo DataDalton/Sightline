@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useAssistant } from "../assist/AssistantContext";
+import { useAssistantPanel } from "../assist/AssistantContext";
 import { useShell } from "../context/ShellContext";
 import { useUser } from "../context/UserContext";
 import { CountBadge } from "../notify/CountBadge";
@@ -46,7 +46,7 @@ export function MobileTabBar() {
 	const pathname = usePathname() ?? "/";
 	const { user } = useUser();
 	const { navOpen, toggleNav, closeNav, openPalette } = useShell();
-	const { panelOpen, setPanelOpen } = useAssistant();
+	const { panelOpen, setPanelOpen } = useAssistantPanel();
 	const { unread } = useNotify();
 
 	if (!user) return null;

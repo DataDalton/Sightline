@@ -266,25 +266,26 @@ async function runJob(
 		// once they are all in.
 		const held: Record<string, unknown>[] = [];
 
+		// Each chunk is written with the job's progress in one statement, so
+		// a batch costs one round trip to Lakebase. Progress lets a page
+		// watching this show a count rather than a spinner that means nothing,
+		// and lets the sweep tell a slow export from an abandoned one.
 		const write = async (usable: Record<string, unknown>[]) => {
 			const body = csvRows(columns, usable);
+			const nextWritten = written + usable.length;
+			const nextBytes = bytes + Buffer.byteLength(body);
 			await sql(
-				`INSERT INTO export_chunks (job_id, seq, body) VALUES ($1, $2, $3)`,
-				[jobId, seq++, body],
+				`WITH chunk AS (
+				   INSERT INTO export_chunks (job_id, seq, body)
+				   VALUES ($1::uuid, $2, $3)
+				 )
+				 UPDATE export_jobs
+				 SET row_count = $4, byte_count = $5, progress_on = now()
+				 WHERE job_id = $1::uuid`,
+				[jobId, seq++, body, nextWritten, nextBytes],
 			);
-
-			written += usable.length;
-			bytes += Buffer.byteLength(body);
-
-			// Progress, so a page watching this can show a count rather than a
-			// spinner that means nothing, and so the sweep can tell a slow
-			// export from an abandoned one.
-			await sql(
-				`UPDATE export_jobs
-				 SET row_count = $2, byte_count = $3, progress_on = now()
-				 WHERE job_id = $1`,
-				[jobId, written, bytes],
-			);
+			written = nextWritten;
+			bytes = nextBytes;
 		};
 
 		const consume = async (batch: Record<string, unknown>[]) => {
@@ -308,12 +309,15 @@ async function runJob(
 		};
 
 		if (identity.userToken) {
+			// On the reader's pooled session, keyed as every other read keys
+			// it, so an export reuses the connection their page already holds.
 			await queryAsUserBatches(
 				identity.userToken,
 				compiled.sql,
 				compiled.params,
 				batchRows,
 				consume,
+				identity.email.toLowerCase(),
 			);
 		} else {
 			// Development only. Runs as the local Databricks credentials, so

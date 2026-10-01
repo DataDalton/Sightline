@@ -1,32 +1,40 @@
 import { sql, transaction, tryAdvisoryLock } from "../data/lakebase";
 import { knownMembers } from "../messages/store";
 import {
-	notifyInTransaction,
-	pushNotification,
-	type InboxItem,
+	notifyManyInTransaction,
+	pushNotifications,
 	type NewNotification,
 } from "../notify/store";
 import { categoryRoleId } from "../platform/roles";
 import {
+	customPattern,
 	describePattern,
 	describeSpan,
 	judge,
 	learnPattern,
 	learningWindowMs,
+	needsRelearning,
 	readLatenessSetting,
 	type ArrivalPattern,
 	type LateState,
 	type LatenessSetting,
 } from "./arrivals";
+import { claimRun } from "./claim";
 import { lateSubscribers } from "./status";
 
 // Whether each source's data has arrived when it usually does.
 //
 // Judged from the arrivals the checker records for each table a source reads,
-// so it needs no warehouse and runs on every replica. A source reading several
-// tables is as late as the latest of them. The first replica to see a source
-// go late is the one that tells people, since the change of state is claimed
-// in the same transaction that writes the notices.
+// so it needs no warehouse. Every replica ticks, and one judges each period,
+// claimed in the platform store. A source reading several tables is as late
+// as the latest of them. The first replica to see a source go late is the one
+// that tells people, since the change of state is claimed in the same
+// transaction that writes the notices.
+//
+// What each table's history says about when it loads is kept in
+// table_patterns with the newest load it was learned from, and learned again
+// only once a newer load arrives or it has stood a day. Every other table is
+// judged from what was kept.
 
 // How late a state is, so a source reading several tables takes the worst.
 const rank: Record<LateState | "unwatched", number> = {
@@ -64,13 +72,18 @@ function tablesOf(row: SourceRow): string[] {
 	return [`${row.catalog_name}.${row.schema_name}.${row.object_name}`];
 }
 
-// Judged at most this often on one replica. What decides it moves with the
-// clock and with each look, neither of which changes much in a minute.
+// Judged at most this often. What decides it moves with the clock and with
+// each look, neither of which changes much in a minute.
 const everyMs = 60_000;
 let lastRun = 0;
 let running = false;
 
-// Identifies the lateness lock. Every replica ticks, one judges at a time.
+// How long one replica's claim on a period holds. Just under the period, so
+// a replica ticking a little early next time is not turned away.
+const claimHoldSeconds = everyMs / 1000 - 5;
+
+// Identifies the lateness lock, so a forced judgement never overlaps the
+// one claimed for the period.
 const latenessLockKey = 8577412;
 
 export async function evaluateLateness(force = false): Promise<void> {
@@ -79,10 +92,120 @@ export async function evaluateLateness(force = false): Promise<void> {
 	running = true;
 	lastRun = now;
 	try {
+		// A forced judgement follows an edit somebody is waiting to see, so
+		// it does not wait for the period.
+		if (!force && !(await claimRun("lateness", claimHoldSeconds))) return;
 		await tryAdvisoryLock(latenessLockKey, () => evaluate(now));
 	} finally {
 		running = false;
 	}
+}
+
+interface TableFacts {
+	// The newest load in the learning window, if any.
+	newest: number | null;
+	// How many loads the learning window holds.
+	arrivals: number;
+	// The pattern learned from the window without a hand set schedule.
+	learned: ArrivalPattern;
+}
+
+// What each table's loads say, learned again only where needsRelearning says
+// so, and kept for the next judgement.
+async function tableFacts(
+	tables: string[],
+	now: number,
+): Promise<Map<string, TableFacts>> {
+	const windowSeconds = learningWindowMs / 1000;
+	const [latest, stored] = await Promise.all([
+		sql<{ table_name: string; newest: string; arrivals: number }>(
+			`SELECT table_name, max(arrived_on)::text AS newest,
+			        count(*)::int AS arrivals
+			 FROM table_arrivals
+			 WHERE table_name = ANY($1::text[])
+			   AND arrived_on > now() - make_interval(secs => $2)
+			 GROUP BY table_name`,
+			[tables, windowSeconds],
+		),
+		sql<{
+			table_name: string;
+			pattern: ArrivalPattern;
+			newest_arrival: string | null;
+			learned_on: string;
+		}>(
+			`SELECT table_name, pattern, newest_arrival::text AS newest_arrival,
+			        learned_on::text AS learned_on
+			 FROM table_patterns WHERE table_name = ANY($1::text[])`,
+			[tables],
+		),
+	]);
+	const latestBy = new Map(latest.map((r) => [r.table_name, r]));
+	const storedBy = new Map(stored.map((r) => [r.table_name, r]));
+
+	const facts = new Map<string, TableFacts>();
+	const stale: string[] = [];
+	for (const table of tables) {
+		const row = latestBy.get(table);
+		const newest = row ? Date.parse(row.newest) : null;
+		const kept = storedBy.get(table);
+		const keptFacts = kept
+			? {
+					newestArrival: kept.newest_arrival
+						? Date.parse(kept.newest_arrival)
+						: null,
+					learnedOn: Date.parse(kept.learned_on),
+				}
+			: null;
+		if (kept && !needsRelearning(keptFacts, newest, now)) {
+			facts.set(table, {
+				newest,
+				arrivals: row?.arrivals ?? 0,
+				learned: kept.pattern,
+			});
+		} else {
+			stale.push(table);
+		}
+	}
+	if (stale.length === 0) return facts;
+
+	const arrivals = await sql<{ table_name: string; arrived_on: string }>(
+		`SELECT table_name, arrived_on::text FROM table_arrivals
+		 WHERE table_name = ANY($1::text[])
+		   AND arrived_on > now() - make_interval(secs => $2)`,
+		[stale, windowSeconds],
+	);
+	const byTable = new Map<string, number[]>();
+	for (const a of arrivals) {
+		const list = byTable.get(a.table_name) ?? [];
+		list.push(Date.parse(a.arrived_on));
+		byTable.set(a.table_name, list);
+	}
+
+	const patterns: string[] = [];
+	const newestList: (string | null)[] = [];
+	for (const table of stale) {
+		const seen = byTable.get(table) ?? [];
+		const newest = seen.length ? Math.max(...seen) : null;
+		const learned = learnPattern(seen, now);
+		facts.set(table, { newest, arrivals: seen.length, learned });
+		patterns.push(JSON.stringify(learned));
+		newestList.push(
+			newest === null ? null : new Date(newest).toISOString(),
+		);
+	}
+	await sql(
+		`INSERT INTO table_patterns
+		   (table_name, pattern, newest_arrival, learned_on)
+		 SELECT u.name, u.pattern::jsonb, u.newest, now()
+		 FROM unnest($1::text[], $2::text[], $3::timestamptz[])
+		      AS u(name, pattern, newest)
+		 ON CONFLICT (table_name) DO UPDATE SET
+		   pattern = EXCLUDED.pattern,
+		   newest_arrival = EXCLUDED.newest_arrival,
+		   learned_on = EXCLUDED.learned_on`,
+		[stale, patterns, newestList],
+	);
+	return facts;
 }
 
 async function evaluate(now: number): Promise<void> {
@@ -91,29 +214,27 @@ async function evaluate(now: number): Promise<void> {
 		        base_tables, freshness_mode, lateness, late_state
 		 FROM data_sources WHERE is_active`,
 	);
-	const tables = [...new Set(sources.flatMap(tablesOf))];
-	if (tables.length === 0) return;
-
-	const [arrivals, checks] = await Promise.all([
-		sql<{ table_name: string; arrived_on: string }>(
-			`SELECT table_name, arrived_on::text FROM table_arrivals
-			 WHERE table_name = ANY($1::text[])
-			   AND arrived_on > now() - make_interval(secs => $2)`,
-			[tables, learningWindowMs / 1000],
+	// Only the tables of watched sources are judged, so only theirs are
+	// learned.
+	const tables = [
+		...new Set(
+			sources
+				.filter((s) => s.freshness_mode === "checked")
+				.flatMap(tablesOf),
 		),
-		sql<{ table_name: string; checked_on: string | null }>(
-			`SELECT table_name, checked_on::text FROM source_checks
-			 WHERE table_name = ANY($1::text[])`,
-			[tables],
-		),
-	]);
+	];
 
-	const byTable = new Map<string, number[]>();
-	for (const a of arrivals) {
-		const list = byTable.get(a.table_name) ?? [];
-		list.push(Date.parse(a.arrived_on));
-		byTable.set(a.table_name, list);
-	}
+	const [facts, checks] =
+		tables.length === 0
+			? [new Map<string, TableFacts>(), []]
+			: await Promise.all([
+					tableFacts(tables, now),
+					sql<{ table_name: string; checked_on: string | null }>(
+						`SELECT table_name, checked_on::text FROM source_checks
+						 WHERE table_name = ANY($1::text[])`,
+						[tables],
+					),
+				]);
 	const checkedOn = new Map(
 		checks.map((c) => [
 			c.table_name,
@@ -136,9 +257,12 @@ async function evaluate(now: number): Promise<void> {
 		// A source on a timer has no history to learn from.
 		if (source.freshness_mode === "checked" && names.length > 0) {
 			for (const table of names) {
-				const seen = byTable.get(table) ?? [];
-				const last = seen.length ? Math.max(...seen) : null;
-				const learned = learnPattern(seen, now, setting);
+				const known = facts.get(table);
+				const last = known?.newest ?? null;
+				const learned =
+					setting.mode === "custom"
+						? customPattern(setting, known?.arrivals ?? 0)
+						: (known?.learned ?? learnPattern([], now));
 				const judged = judge(
 					learned,
 					last,
@@ -281,19 +405,12 @@ async function moveToLate(
 			values,
 		);
 		if (!moved.rowCount) return null;
-		const items: { email: string; item: InboxItem }[] = [];
-		for (const email of notice.people) {
-			items.push({
-				email,
-				item: await notifyInTransaction(client, email, notice.input),
-			});
-		}
-		return items;
+		return notifyManyInTransaction(client, notice.people, notice.input);
 	});
 	if (written === null) return false;
 	// Pushed once the entries are committed, so no device hears of one that
 	// rolled back.
-	for (const { email, item } of written) pushNotification(email, item);
+	pushNotifications(written);
 	return true;
 }
 

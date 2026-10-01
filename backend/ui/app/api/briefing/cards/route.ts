@@ -63,6 +63,12 @@ export async function POST(request: NextRequest) {
 	const timeZone = zoneOf(body?.tz);
 
 	const encoder = new TextEncoder();
+	// Aborted when the request ends or a write fails, so no new card is
+	// started for a reader who has left.
+	const closed = new AbortController();
+	const leave = () => closed.abort();
+	if (request.signal.aborted) leave();
+	else request.signal.addEventListener("abort", leave, { once: true });
 	const stream = new ReadableStream<Uint8Array>({
 		async start(controller) {
 			let open = true;
@@ -76,14 +82,31 @@ export async function POST(request: NextRequest) {
 					// The reader left. Work already started still finishes
 					// and is stored for the next visit.
 					open = false;
+					leave();
 				}
 			};
 			try {
-				await briefingCards(identity, items, timeZone, emit);
+				await briefingCards(
+					identity,
+					items,
+					timeZone,
+					emit,
+					closed.signal,
+				);
 			} catch (error) {
 				console.error("The briefing cards could not be read:", error);
 			}
-			if (open) controller.close();
+			request.signal.removeEventListener("abort", leave);
+			if (open) {
+				try {
+					controller.close();
+				} catch {
+					// The stream was cancelled by the reader.
+				}
+			}
+		},
+		cancel() {
+			leave();
 		},
 	});
 	return new Response(stream, {

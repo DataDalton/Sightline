@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { notify } from "@/lib/notify/store";
-import { checkWriteRateLimit } from "@/lib/rateLimit";
 import { listShares, shareSheet, unshareSheet } from "@/lib/sheets/store";
 import { privateJson, readJson } from "../../../notifications/guard";
 import { failure, sheetFor, type IdContext } from "../../respond";
@@ -15,8 +14,6 @@ export async function GET(request: NextRequest, { params }: IdContext) {
 
 // { email, permission: "edit" | "view" }
 export async function POST(request: NextRequest, { params }: IdContext) {
-	const limited = checkWriteRateLimit(request);
-	if (limited) return limited;
 	const found = await sheetFor(request, (await params).id);
 	if (found instanceof NextResponse) return found;
 	const body = ((await readJson(request)) ?? {}) as Record<string, unknown>;

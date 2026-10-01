@@ -15,7 +15,9 @@ import { maxSplits, type WatchItem } from "./watch";
 //     and their current class
 //
 // The reader's grant on the dataset is checked before any card is handed
-// over, whichever of these it is.
+// over, whichever of these it is. What a figure read as while it settled is
+// kept under the same scope, so one class never learns from another's
+// figures.
 
 export function cardScope(
 	protection: { shareable: boolean; filtered: boolean },
@@ -39,6 +41,20 @@ export function cardDigest(item: WatchItem): string {
 				item.splitBy.slice(0, maxSplits),
 			]),
 		)
+		.digest("hex")
+		.slice(0, 32);
+}
+
+// The figure alone, a measure of a dataset over a date field, whatever it is
+// broken down by. An unusual alert on the same figure reads what the cards
+// learned about how it settles.
+export function figureDigest(
+	sourceKey: string,
+	measure: string,
+	timeField: string,
+): string {
+	return createHash("sha256")
+		.update(JSON.stringify([sourceKey, measure, timeField]))
 		.digest("hex")
 		.slice(0, 32);
 }

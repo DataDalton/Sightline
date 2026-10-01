@@ -4,7 +4,6 @@ import { cleanText, limits, pickRecipients } from "@/lib/messages/rules";
 import { listThreads, MessageError, startThread } from "@/lib/messages/store";
 import { getCategory, getReport } from "@/lib/platform/reports";
 import { categoryContacts } from "@/lib/platform/roles";
-import { checkWriteRateLimit } from "@/lib/rateLimit";
 import { caller, privateJson, readJson } from "../notifications/guard";
 
 // The caller's conversations, and starting a new one.
@@ -33,8 +32,6 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
 	const identity = await caller(request);
 	if (identity instanceof NextResponse) return identity;
-	const limited = checkWriteRateLimit(request);
-	if (limited) return limited;
 
 	const input = ((await readJson(request)) ?? {}) as Record<string, unknown>;
 	const body = cleanText(input.body, limits.body);

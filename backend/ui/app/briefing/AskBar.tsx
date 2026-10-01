@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useAssistant } from "../assist/AssistantContext";
+import { useAssistantActions } from "../assist/AssistantContext";
 import styles from "./Briefing.module.css";
 
 // The question box on the home page. The briefing says what moved, and this
@@ -10,7 +10,7 @@ import styles from "./Briefing.module.css";
 // can be pinned to a board or watched as an alert from there.
 
 export function AskBar({ suggestions }: { suggestions: string[] }) {
-	const { ask } = useAssistant();
+	const { ask } = useAssistantActions();
 	const [question, setQuestion] = useState("");
 
 	const submit = (asked: string) => {

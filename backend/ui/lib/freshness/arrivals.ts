@@ -156,18 +156,86 @@ export function learnActiveDays(loads: number[], now: number): number[] {
 	return active.length ? active : allDays;
 }
 
-// The minute of the day most daily loads have landed by, in UTC. Taken over
-// the times turned so the day starts at the quietest hour, so loads either
-// side of midnight are not averaged into midday.
-function usualMinute(loads: number[]): number {
-	const minutes = loads.map((t) => Math.floor((t % day) / minute));
+// The first load of each day, as times turned so the day starts at the
+// quietest hour of the loads, so loads either side of midnight fall on one
+// day. A table that loads at noon and sometimes again in the evening has its
+// data by noon, so the evening loads say nothing about when it arrives.
+function firstLoadEachDay(loads: number[]): {
+	quietest: number;
+	firsts: number[];
+} {
 	const byHour = new Array(24).fill(0);
-	for (const m of minutes) byHour[Math.floor(m / 60)]++;
-	const quietest = byHour.indexOf(Math.min(...byHour)) * 60;
-	const turned = minutes
-		.map((m) => (m - quietest + 1440) % 1440)
+	for (const t of loads) byHour[Math.floor((t % day) / hour)]++;
+	const quietest = byHour.indexOf(Math.min(...byHour)) * hour;
+	const firstOfDay = new Map<number, number>();
+	for (const t of loads) {
+		const turned = t - quietest;
+		const dayIndex = Math.floor(turned / day);
+		const held = firstOfDay.get(dayIndex);
+		if (held === undefined || turned < held)
+			firstOfDay.set(dayIndex, turned);
+	}
+	return {
+		quietest,
+		firsts: [...firstOfDay.values()].sort((a, b) => a - b),
+	};
+}
+
+// Whether the first loads of each day come about a day apart, which makes a
+// table daily even when it sometimes loads again later the same day.
+function dailyByFirstLoads(loads: number[]): boolean {
+	const { firsts } = firstLoadEachDay(loads);
+	const gaps = firsts.slice(1).map((t, i) => t - firsts[i]);
+	if (gaps.length === 0) return false;
+	const middle = quantile(gaps, 0.5);
+	return middle >= 20 * hour && middle <= 28 * hour;
+}
+
+// The minute of the day most daily loads have landed by, in UTC, from the
+// first load of each day.
+function usualMinute(loads: number[]): number {
+	const { quietest, firsts } = firstLoadEachDay(loads);
+	const minutes = firsts
+		.map((t) => Math.floor((((t % day) + day) % day) / minute))
 		.sort((a, b) => a - b);
-	return (quantile(turned, 0.9) + quietest) % 1440;
+	return (quantile(minutes, 0.9) + quietest / minute) % 1440;
+}
+
+// How long a stored pattern stands without a new load before it is learned
+// again, so loads ageing out of the window and weeks passing without a load
+// on some weekday still change it.
+export const relearnEveryMs = day;
+
+// Whether a table's stored pattern has to be learned again: it was never
+// learned, its newest load in the window is not the one it was learned with,
+// or it is older than relearnEveryMs.
+export function needsRelearning(
+	stored: { newestArrival: number | null; learnedOn: number } | null,
+	newestArrival: number | null,
+	now: number,
+): boolean {
+	if (!stored) return true;
+	if (stored.newestArrival !== newestArrival) return true;
+	return now - stored.learnedOn >= relearnEveryMs;
+}
+
+// A schedule set by hand, which needs no history beyond how many loads the
+// learning window holds.
+export function customPattern(
+	setting: Extract<LatenessSetting, { mode: "custom" }>,
+	arrivals: number,
+): ArrivalPattern {
+	const gap = setting.everyHours * hour;
+	return {
+		kind: "regular",
+		arrivals,
+		activeDays: setting.weekdaysOnly ? [1, 2, 3, 4, 5] : allDays,
+		usualGapMs: gap,
+		lateAfterMs: gap,
+		usualMinute: null,
+		stream: false,
+		setBy: "custom",
+	};
 }
 
 export function learnPattern(
@@ -179,19 +247,7 @@ export function learnPattern(
 		(t) => t > now - learningWindowMs && t <= now,
 	);
 
-	if (setting.mode === "custom") {
-		const gap = setting.everyHours * hour;
-		return {
-			kind: "regular",
-			arrivals: recent.length,
-			activeDays: setting.weekdaysOnly ? [1, 2, 3, 4, 5] : allDays,
-			usualGapMs: gap,
-			lateAfterMs: gap,
-			usualMinute: null,
-			stream: false,
-			setBy: "custom",
-		};
-	}
+	if (setting.mode === "custom") return customPattern(setting, recent.length);
 
 	const learning = (count: number): ArrivalPattern => ({
 		kind: "learning",
@@ -255,7 +311,13 @@ export function learnPattern(
 	const margin = streaming
 		? Math.max(30 * minute, 3 * long)
 		: Math.max(hour, 0.1 * usual);
-	const daily = !streaming && usual >= 20 * hour && usual <= 28 * hour;
+	// A daily table with an occasional second load has a usual gap a little
+	// under a day. One loading several times a day, hourly or twice daily, is
+	// not daily and keeps no usual time.
+	const daily =
+		!streaming &&
+		((usual >= 20 * hour && usual <= 28 * hour) ||
+			(usual >= 16 * hour && dailyByFirstLoads(loads)));
 
 	return {
 		kind: "regular",

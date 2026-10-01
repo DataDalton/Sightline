@@ -155,9 +155,16 @@ async function recordBaseTables(
 		// A list read from a view with a source that is not a table is only
 		// part of what it reads. Written down, the walk would take it as the
 		// whole, so it is cleared instead and the walk reads the view itself.
+		// The freshness checker is told the definition was read and found
+		// incomplete, so it does not read it again until a sync finds a whole
+		// list.
 		const complete = metricViewSourcesComplete(statement);
 		await sql(
-			`UPDATE data_sources SET base_tables = $2::jsonb WHERE source_key = $1`,
+			`UPDATE data_sources
+			 SET base_tables = $2::jsonb,
+			     base_tables_checked_on = CASE WHEN $2::jsonb IS NULL
+			                                   THEN now() END
+			 WHERE source_key = $1`,
 			[source.source_key, complete ? JSON.stringify(tables) : null],
 		);
 	} catch (error) {

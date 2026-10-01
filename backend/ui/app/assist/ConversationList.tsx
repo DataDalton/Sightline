@@ -3,7 +3,7 @@
 import { useState } from "react";
 import useSWR from "swr";
 import { ago } from "../admin/when";
-import { conversationsKey, useAssistant } from "./AssistantContext";
+import { conversationsKey, useAssistantStatus } from "./AssistantContext";
 import styles from "./Assist.module.css";
 
 // The person's past conversations, newest first. Opening one puts it back
@@ -54,7 +54,7 @@ export function ConversationList({
 		conversationsKey,
 	);
 	const { conversationId, openConversation, deleteConversation, busy } =
-		useAssistant();
+		useAssistantStatus();
 	const [term, setTerm] = useState("");
 	// Asked before deleting, on the row itself, so a stray click on the bin
 	// does not lose a conversation.

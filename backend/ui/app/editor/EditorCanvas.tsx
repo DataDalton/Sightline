@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+	memo,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import {
 	canvasRows,
 	fillToViewport,
@@ -471,23 +478,70 @@ export function EditorCanvas({
 			? groupUnder(state.id, state.rect)
 			: null;
 
-	const itemContext: ItemContext = {
-		readOnly,
+	// The latest handlers, read when an event fires. Events arrive after the
+	// render that drew them has committed, so the ref holds that render's
+	// handlers by then.
+	const handlers = useRef({
+		onSelect,
+		onContentChange,
+		onMoveControl,
+		startGesture,
+		finishGesture,
+		move,
+		cancelGesture,
+	});
+	useLayoutEffect(() => {
+		handlers.current = {
+			onSelect,
+			onContentChange,
+			onMoveControl,
+			startGesture,
+			finishGesture,
+			move,
+			cancelGesture,
+		};
+	});
+
+	// What every item does, held steady across renders so an item whose own
+	// props have not changed is not drawn again when another visual is edited.
+	const actions = useMemo<ItemActions>(
+		() => ({
+			readOnly,
+			sources,
+			onSelect: (visualId, additive) =>
+				handlers.current.onSelect(visualId, additive),
+			onContentChange: (visualId, html) =>
+				handlers.current.onContentChange?.(visualId, html),
+			onMoveControl: (visualId, delta) =>
+				handlers.current.onMoveControl?.(visualId, delta),
+			startGesture: (event, kind, id, rect, gridMetrics) =>
+				handlers.current.startGesture(
+					event,
+					kind,
+					id,
+					rect,
+					gridMetrics,
+				),
+			finishGesture: (event, id) =>
+				handlers.current.finishGesture(event, id),
+			move: (event) => handlers.current.move(event),
+			cancel: () => handlers.current.cancelGesture(),
+			observeFit,
+		}),
+		[readOnly, sources, observeFit],
+	);
+
+	// What changes as the author selects and drags. Only a group is handed
+	// this, since it draws the items it holds. Every other item is handed the
+	// few flags that concern it.
+	const live: ItemLive = {
 		selectedId,
 		selectedIds,
-		sources,
 		draggingId: state?.id ?? null,
 		dropTargetId,
 		childrenOf,
 		remoteSelections,
-		onSelect,
-		onContentChange,
-		startGesture,
-		finishGesture,
-		move,
-		cancel: cancelGesture,
 		rectFor,
-		observeFit,
 	};
 
 	// Drawn at the exact height of their content, as the published page draws
@@ -622,13 +676,19 @@ export function EditorCanvas({
 											visual={visual}
 											index={index}
 											total={controls.length}
-											selectedId={selectedId}
+											isSelected={
+												selectedId === visual.visualId
+											}
 											sources={sources}
 											remoteBy={remoteSelections?.get(
 												visual.visualId,
 											)}
-											onSelect={onSelect}
-											onMoveControl={onMoveControl}
+											onSelect={actions.onSelect}
+											onMoveControl={
+												onMoveControl
+													? actions.onMoveControl
+													: undefined
+											}
 										/>
 									))}
 								</FilterBar>
@@ -669,7 +729,8 @@ export function EditorCanvas({
 												rectFor(other),
 											),
 									)}
-									ctx={itemContext}
+									actions={actions}
+									{...itemFlags(live, visual)}
 								/>
 							))}
 						</div>
@@ -680,21 +741,16 @@ export function EditorCanvas({
 	);
 }
 
-// The context every item on the canvas needs, gathered once rather than
-// threaded through as a dozen props. An item inside a group is the same
-// component as one on the page, so both are handed the same thing.
-interface ItemContext {
+// What every item on the canvas can do, gathered once rather than threaded
+// through as a dozen props, and held steady across renders. An item inside a
+// group is the same component as one on the page, so both are handed the same
+// thing.
+interface ItemActions {
 	readOnly: boolean;
-	selectedId: string | null;
-	selectedIds: string[];
 	sources: Record<string, SourceMeta>;
-	draggingId: string | null;
-	// The group a visual being dragged would land in if released now.
-	dropTargetId: string | null;
-	childrenOf: Map<string, EditableVisual[]>;
-	remoteSelections?: Map<string, string>;
 	onSelect: (visualId: string | null, additive?: boolean) => void;
-	onContentChange?: (visualId: string, html: string) => void;
+	onContentChange: (visualId: string, html: string) => void;
+	onMoveControl: (visualId: string, delta: -1 | 1) => void;
 	startGesture: (
 		event: React.PointerEvent,
 		kind: GestureKind,
@@ -705,25 +761,40 @@ interface ItemContext {
 	finishGesture: (event: React.PointerEvent, id: string) => void;
 	move: (event: React.PointerEvent) => void;
 	cancel: () => void;
-	rectFor: (visual: EditableVisual) => Rect;
 	// Measures a content-sized visual, so it can be given the rows it needs.
 	observeFit: (element: HTMLElement | null) => (() => void) | undefined;
 }
 
-// One visual on the canvas, wherever it sits.
-//
-// A group renders its own children through this same component, measured
-// against the grid the group hands down rather than the page's. That is the
-// whole of what nesting costs here: the box a rectangle is measured from
-// changes, and nothing else does.
-function CanvasItem({
-	visual,
-	rect,
-	pixels,
-	metrics,
-	clashes,
-	ctx,
-}: {
+// The selection and gesture as they stand on this render.
+interface ItemLive {
+	selectedId: string | null;
+	selectedIds: string[];
+	draggingId: string | null;
+	// The group a visual being dragged would land in if released now.
+	dropTargetId: string | null;
+	childrenOf: Map<string, EditableVisual[]>;
+	remoteSelections?: Map<string, string>;
+	rectFor: (visual: EditableVisual) => Rect;
+}
+
+// The part of the live state one item shows. A group is handed the whole of
+// it as well, because the items it holds are drawn from it.
+function itemFlags(live: ItemLive, visual: EditableVisual) {
+	const id = visual.visualId;
+	const isSelected = live.selectedId === id;
+	return {
+		isSelected,
+		// Along for an alignment rather than the subject of the panel, so it
+		// is outlined but not treated as the thing being edited.
+		inSelection: !isSelected && live.selectedIds.includes(id),
+		isDragging: live.draggingId === id,
+		isDropTarget: live.dropTargetId === id,
+		remoteBy: live.remoteSelections?.get(id),
+		live: visual.visualType === "group" ? live : undefined,
+	};
+}
+
+interface CanvasItemProps {
 	visual: EditableVisual;
 	// The stored rectangle, which gestures start from and write back to. What
 	// is drawn is derived from the stored arrangement, by fitting content,
@@ -736,16 +807,62 @@ function CanvasItem({
 	// The grid this item is laid out on: the page's, or its group's.
 	metrics: CanvasMetrics;
 	clashes: boolean;
-	ctx: ItemContext;
-}) {
-	const isSelected = ctx.selectedId === visual.visualId;
-	// Along for an alignment rather than the subject of the panel, so it is
-	// outlined but not treated as the thing being edited.
-	const inSelection =
-		!isSelected && ctx.selectedIds.includes(visual.visualId);
-	const isDragging = ctx.draggingId === visual.visualId;
+	actions: ItemActions;
+	isSelected: boolean;
+	inSelection: boolean;
+	isDragging: boolean;
+	isDropTarget: boolean;
+	remoteBy: string | undefined;
+	// Only for a group, which draws what it holds.
+	live: ItemLive | undefined;
+}
+
+// Pixels, metrics and the rectangle are worked out afresh on every render, so
+// they are compared by value. Everything else is compared by identity.
+function sameItemProps(a: CanvasItemProps, b: CanvasItemProps): boolean {
+	for (const key of Object.keys(a) as (keyof CanvasItemProps)[]) {
+		if (key === "pixels" || key === "metrics" || key === "rect") continue;
+		if (!Object.is(a[key], b[key])) return false;
+	}
+	return (
+		a.pixels.left === b.pixels.left &&
+		a.pixels.top === b.pixels.top &&
+		a.pixels.width === b.pixels.width &&
+		a.pixels.height === b.pixels.height &&
+		a.metrics.width === b.metrics.width &&
+		a.metrics.columnWidth === b.metrics.columnWidth &&
+		a.rect.x === b.rect.x &&
+		a.rect.y === b.rect.y &&
+		a.rect.w === b.rect.w &&
+		a.rect.h === b.rect.h
+	);
+}
+
+// One visual on the canvas, wherever it sits.
+//
+// A group renders its own children through this same component, measured
+// against the grid the group hands down rather than the page's. That is the
+// whole of what nesting costs here. The box a rectangle is measured from
+// changes, and nothing else does.
+//
+// Memoised, so typing into one visual's properties draws that visual again
+// and leaves the rest of the canvas alone.
+const CanvasItem = memo(function CanvasItem({
+	visual,
+	rect,
+	pixels,
+	metrics,
+	clashes,
+	actions: ctx,
+	isSelected,
+	inSelection,
+	isDragging,
+	isDropTarget,
+	remoteBy,
+	live,
+}: CanvasItemProps) {
 	const isGroup = visual.visualType === "group";
-	const isDropTarget = ctx.dropTargetId === visual.visualId;
+	const spec = useMemo(() => toVisualSpec(visual), [visual]);
 
 	// A selected text panel is a text field: its body takes real clicks, so it
 	// cannot also be the drag target and keeps a bar of its own at the head.
@@ -754,8 +871,7 @@ function CanvasItem({
 	const editingText =
 		!ctx.readOnly && visual.visualType === "textPanel" && isSelected;
 
-	const held = ctx.childrenOf.get(visual.visualId) ?? [];
-	const remoteBy = ctx.remoteSelections?.get(visual.visualId);
+	const held = live?.childrenOf.get(visual.visualId) ?? [];
 
 	return (
 		<div
@@ -881,15 +997,20 @@ function CanvasItem({
 						) : null
 					}
 					renderChildren={(inner) =>
+						live &&
 						held.map((child) => (
 							<CanvasItem
 								key={child.visualId}
 								visual={child}
-								rect={ctx.rectFor(child)}
-								pixels={rectToPixels(ctx.rectFor(child), inner)}
+								rect={live.rectFor(child)}
+								pixels={rectToPixels(
+									live.rectFor(child),
+									inner,
+								)}
 								metrics={inner}
 								clashes={false}
-								ctx={ctx}
+								actions={ctx}
+								{...itemFlags(live, child)}
 							/>
 						))
 					}
@@ -905,7 +1026,7 @@ function CanvasItem({
 						}
 						placeholder="Write a note, caveat or definition"
 						onChange={(html) =>
-							ctx.onContentChange?.(visual.visualId, html)
+							ctx.onContentChange(visual.visualId, html)
 						}
 					/>
 				</div>
@@ -918,7 +1039,7 @@ function CanvasItem({
 							ref={ctx.observeFit}
 						>
 							<VisualRenderer
-								visual={toVisualSpec(visual)}
+								visual={spec}
 								sources={ctx.sources}
 							/>
 						</div>
@@ -927,7 +1048,7 @@ function CanvasItem({
 						// tells it. Left to its own default a chart drew taller
 						// than the box and lost its axis to the clipping.
 						<VisualRenderer
-							visual={toVisualSpec(visual)}
+							visual={spec}
 							sources={ctx.sources}
 							frameHeight={pixels.height}
 						/>
@@ -975,18 +1096,18 @@ function CanvasItem({
 				))}
 		</div>
 	);
-}
+}, sameItemProps);
 
 // One control in the strip.
 //
 // Pulled out so a control drawn loose and a control drawn inside a panel are
 // the same thing: the panel changes where it sits, not what it is or what can
 // be done to it.
-function ControlSlot({
+const ControlSlot = memo(function ControlSlot({
 	visual,
 	index,
 	total,
-	selectedId,
+	isSelected,
 	sources,
 	remoteBy,
 	onSelect,
@@ -997,13 +1118,13 @@ function ControlSlot({
 	// reorder operation writes.
 	index: number;
 	total: number;
-	selectedId: string | null;
+	isSelected: boolean;
 	sources: Record<string, SourceMeta>;
 	remoteBy: string | undefined;
 	onSelect: (visualId: string | null, additive?: boolean) => void;
 	onMoveControl?: (visualId: string, delta: -1 | 1) => void;
 }) {
-	const isSelected = selectedId === visual.visualId;
+	const spec = useMemo(() => toVisualSpec(visual), [visual]);
 	const label = visualByType[visual.visualType]?.label ?? visual.visualType;
 
 	return (
@@ -1092,13 +1213,10 @@ function ControlSlot({
 			{/* Interaction is off while editing, so a click selects the
 			    control rather than filtering the page underneath. */}
 			<div className={styles.controlPreview}>
-				<VisualRenderer
-					visual={toVisualSpec(visual)}
-					sources={sources}
-				/>
+				<VisualRenderer visual={spec} sources={sources} />
 			</div>
 		</div>
 	);
-}
+});
 
 export { gridColumns };

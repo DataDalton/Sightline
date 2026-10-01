@@ -5,7 +5,6 @@ import {
 	listDeliveries,
 	subscribe,
 } from "@/lib/deliveries/store";
-import { checkWriteRateLimit } from "@/lib/rateLimit";
 import { settings } from "@/lib/settings";
 import { caller, privateJson, readJson } from "../notifications/guard";
 
@@ -34,8 +33,6 @@ export async function GET(request: NextRequest) {
 
 // { reportSlug, pageId, schedule: { frequency, hour, weekday, timeZone } }
 export async function POST(request: NextRequest) {
-	const limited = checkWriteRateLimit(request);
-	if (limited) return limited;
 	const identity = await caller(request);
 	if (identity instanceof NextResponse) return identity;
 	if (!settings().alertsEnabled) {

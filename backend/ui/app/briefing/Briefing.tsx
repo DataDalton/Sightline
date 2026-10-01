@@ -5,13 +5,18 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { flushSync } from "react-dom";
 import useSWR from "swr";
-import { chooseShown, standingOf, type Card } from "../../lib/briefing/card";
+import {
+	alongside,
+	chooseShown,
+	standingOf,
+	type Card,
+} from "../../lib/briefing/card";
 import type { BriefingChoice } from "../../lib/briefing/choices";
 import type { BriefingPlan } from "../../lib/briefing/plan";
 import type { WatchItem } from "../../lib/briefing/watch";
 import { headline, movementText, periodLabel } from "../../lib/briefing/words";
 import { formatCompact } from "../../lib/format";
-import { useAssistant } from "../assist/AssistantContext";
+import { useAssistantActions } from "../assist/AssistantContext";
 import { useUser } from "../context/UserContext";
 import { AskBar } from "./AskBar";
 import { BriefingCard } from "./BriefingCard";
@@ -181,18 +186,20 @@ export function Briefing({ firstName }: { firstName: string | null }) {
 		[choices],
 	);
 
-	// The figures to read. Keyed by their ids, so a pin, which changes only
-	// how a figure is shown, does not start the reading again.
+	// The figures to read, hidden ones included. Keyed by their ids, so a pin
+	// or a hide, which changes only how a figure is shown, does not start the
+	// reading again.
 	const planItems = plan?.items;
-	const itemKey = (planItems ?? [])
-		.filter((i) => !hiddenIds.has(i.id))
-		.map((i) => i.id)
-		.join("|");
-	const items = useMemo(
-		() =>
-			(planItems ?? []).filter((i) => itemKey.split("|").includes(i.id)),
+	const itemKey = (planItems ?? []).map((i) => i.id).join("|");
+	const streamed = useMemo(
+		() => planItems ?? [],
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 		[itemKey],
+	);
+	// The figures shown, which leaves out the hidden ones.
+	const items = useMemo(
+		() => streamed.filter((i) => !hiddenIds.has(i.id)),
+		[streamed, hiddenIds],
 	);
 
 	const save = async (
@@ -254,6 +261,7 @@ export function Briefing({ firstName }: { firstName: string | null }) {
 	};
 
 	useEffect(() => {
+		const items = streamed;
 		if (items.length === 0) return;
 		const controller = new AbortController();
 		const day = todayKey();
@@ -292,14 +300,26 @@ export function Briefing({ firstName }: { firstName: string | null }) {
 			});
 		}).then(settle, settle);
 		return () => controller.abort();
-	}, [items, tz]);
+	}, [streamed, tz]);
 
 	const byId = useMemo(() => new Map(items.map((i) => [i.id, i])), [items]);
 	const read = items.filter((i) => i.id in cards);
 	const reading = !plan || read.length < items.length;
-	const shown = read
-		.map((item) => ({ item, card: cards[item.id] }))
-		.filter((x): x is { item: WatchItem; card: Card } => x.card !== null);
+	// Each card read again beside the others on its dataset, so figures that
+	// all fell together read as data still loading. See alongside.
+	const shown = alongside(
+		read
+			.map((item) => ({
+				item,
+				card: cards[item.id],
+				sourceKey: item.sourceKey,
+			}))
+			.filter(
+				(x): x is { item: WatchItem; card: Card; sourceKey: string } =>
+					x.card !== null,
+			),
+	);
+	const judged = new Map(shown.map((x) => [x.item.id, x.card]));
 
 	// The reader's pins, in their order. A pin whose figure the plan does not
 	// carry, such as one made before this page loaded and since unpinned
@@ -347,8 +367,14 @@ export function Briefing({ firstName }: { firstName: string | null }) {
 	const unusualCount =
 		shown.filter((x) => pinnedSet.has(x.item.id) && x.card.unusual).length +
 		chosen.filter((x) => x.card.unusual).length;
+	const earlyCount =
+		shown.filter((x) => pinnedSet.has(x.item.id) && x.card.early).length +
+		chosen.filter((x) => x.card.early).length;
 	const lead = chosen
 		.filter((x) => standingOf(x.card) === "unusual")
+		.sort((a, b) => b.card.weight - a.card.weight);
+	const early = chosen
+		.filter((x) => standingOf(x.card) === "early")
 		.sort((a, b) => b.card.weight - a.card.weight);
 	const moving = chosen
 		.filter((x) => standingOf(x.card) === "moving")
@@ -370,6 +396,7 @@ export function Briefing({ firstName }: { firstName: string | null }) {
 
 	const sentence = headline({
 		unusual: unusualCount,
+		early: earlyCount,
 		moving: moving.length,
 		late: late.length,
 		fired: fired.length,
@@ -382,7 +409,7 @@ export function Briefing({ firstName }: { firstName: string | null }) {
 	// question names the figure, its report, its period and how far it moved,
 	// so the answer starts from what the card already showed.
 	const { user } = useUser();
-	const { ask } = useAssistant();
+	const { ask } = useAssistantActions();
 	const assistantOn = Boolean(user?.assistant);
 	const askAbout = (item: WatchItem, card: Card) =>
 		ask(
@@ -440,7 +467,8 @@ export function Briefing({ firstName }: { firstName: string | null }) {
 							</div>
 							<div className={styles.leadGrid}>
 								{pinned.map((item, i) => {
-									const card = cards[item.id];
+									const card =
+										judged.get(item.id) ?? cards[item.id];
 									return (
 										<div
 											key={item.id}
@@ -596,6 +624,47 @@ export function Briefing({ firstName }: { firstName: string | null }) {
 												? "hero"
 												: "lead"
 										}
+										onExplain={() =>
+											setExplaining({ item, card })
+										}
+										onAsk={
+											assistantOn
+												? () => askAbout(item, card)
+												: undefined
+										}
+										onPin={() =>
+											void choose(
+												item,
+												item.pinned ? null : "pin",
+											)
+										}
+										onHide={() => void choose(item, "hide")}
+									/>
+								))}
+							</div>
+						</section>
+					)}
+
+					{early.length > 0 && (
+						<section className={styles.section}>
+							<div className={styles.sectionHead}>
+								<h2 className={styles.sectionTitle}>
+									Early signals
+								</h2>
+								<span className={styles.sectionHint}>
+									Far below where they usually are by now,
+									though their data may still be loading.
+								</span>
+							</div>
+							<div className={styles.movingGrid}>
+								{early.map(({ item, card }) => (
+									<BriefingCard
+										key={item.id}
+										transition={transitionName(item.id)}
+										item={item}
+										card={card}
+										updating={updating.has(item.id)}
+										size="moving"
 										onExplain={() =>
 											setExplaining({ item, card })
 										}

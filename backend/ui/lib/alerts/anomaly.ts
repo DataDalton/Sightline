@@ -12,7 +12,8 @@ import { median } from "../stats";
 //
 // The period judged is the latest one that has finished. Today is still
 // filling up, and half a day's orders against whole days would read as a
-// collapse every morning.
+// collapse every morning. A finished period can still be short of rows that
+// have not arrived, which lib/alerts/completeness weighs on top of this.
 //
 // Pure, so every rule here can be tested with rows written out by hand.
 
@@ -33,6 +34,11 @@ export interface AnomalySettings {
 	// A group whose usual figure is smaller than this is left alone, since a
 	// handful of orders swinging by half is not news.
 	minimum: number | null;
+	// Also tell somebody about an early signal, a figure far below where it
+	// usually is by now in a period that may still be filling in. Off unless
+	// set, so only confirmed figures are sent. Absent from definitions saved
+	// before it existed. See lib/alerts/completeness.
+	earlySignals?: boolean;
 }
 
 export class AnomalySettingsError extends Error {}
@@ -49,6 +55,7 @@ export function defaultAnomaly(timeField: string): AnomalySettings {
 		percent: null,
 		direction: "either",
 		minimum: null,
+		earlySignals: false,
 	};
 }
 
@@ -95,6 +102,7 @@ export function cleanAnomaly(raw: unknown): AnomalySettings {
 				: Number.isFinite(minimum) && minimum > 0
 					? minimum
 					: null,
+		earlySignals: r.earlySignals === true,
 	};
 }
 
@@ -381,7 +389,8 @@ export function describeComparison(settings: AnomalySettings): string {
 			: settings.direction === "down"
 				? ", downward only"
 				: "";
-	return `against ${against}, ${sensitivity}${way}`;
+	const early = settings.earlySignals ? ", early signals too" : "";
+	return `against ${against}, ${sensitivity}${way}${early}`;
 }
 
 const weekdayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];

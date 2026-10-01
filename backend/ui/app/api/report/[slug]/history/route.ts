@@ -5,7 +5,6 @@ import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
 import { EditForbiddenError } from "@/lib/platform/editing";
 import { listHistory, restoreVersion } from "@/lib/platform/history";
 import { getReport } from "@/lib/platform/reports";
-import { checkWriteRateLimit } from "@/lib/rateLimit";
 
 // The edit history of a report, and putting a version back.
 //
@@ -54,9 +53,6 @@ export async function POST(
 	{ params }: { params: Promise<{ slug: string }> },
 ) {
 	await ensureReadyOrDegrade();
-
-	const limited = checkWriteRateLimit(request);
-	if (limited) return limited;
 
 	const identity = getIdentity(request);
 	if (!identity) {

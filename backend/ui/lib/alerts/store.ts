@@ -236,17 +236,6 @@ export async function createAlert(
 ): Promise<AlertRecord> {
 	const { definition } = await checkDefinition(identity, raw);
 
-	const count = await sql<{ n: string }>(
-		`SELECT count(*)::text AS n FROM alert_rules WHERE owner_email = $1`,
-		[identity.email.toLowerCase()],
-	);
-	const limit = settings().maxAlertsPerUser;
-	if (Number(count[0]?.n ?? 0) >= limit) {
-		throw new AlertDefinitionError(
-			`You have ${limit} alerts, which is the most one person can keep. Delete one to add another.`,
-		);
-	}
-
 	// Checked straight away rather than at the next scheduled hour, so the
 	// owner sees at once whether it works and what the value is now.
 	const rows = await sql<AlertRow>(

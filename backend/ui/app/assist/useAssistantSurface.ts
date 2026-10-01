@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { useUser } from "../context/UserContext";
-import { useAssistant, type SurfaceBinding } from "./AssistantContext";
+import { useAssistantActions, type SurfaceBinding } from "./AssistantContext";
 
 // Registers the screen that calls it with the assistant for as long as it is
 // open, so a question asked from the assistant panel carries the screen's
@@ -13,7 +13,7 @@ import { useAssistant, type SurfaceBinding } from "./AssistantContext";
 // one, so registering happens once rather than on every keystroke.
 export function useAssistantSurface(binding: SurfaceBinding | null): void {
 	const { user } = useUser();
-	const { registerSurface } = useAssistant();
+	const { registerSurface } = useAssistantActions();
 	const latest = useRef(binding);
 	latest.current = binding;
 

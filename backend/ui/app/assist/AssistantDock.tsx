@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useUser } from "../context/UserContext";
-import { useAssistant } from "./AssistantContext";
+import { useAssistantStatus } from "./AssistantContext";
 import { AssistantComposer } from "./AssistantComposer";
 import { AssistantPreferences } from "./AssistantPreferences";
 import { AssistantThread } from "./AssistantThread";
@@ -110,7 +110,7 @@ export function AssistantDock() {
 	const { user } = useUser();
 	const pathname = usePathname() ?? "";
 	const { panelOpen, setPanelOpen, busy, newConversation, picking, surface } =
-		useAssistant();
+		useAssistantStatus();
 	const [view, setView] = useState<View>("chat");
 	const [sidebar, setSidebar] = useState(false);
 

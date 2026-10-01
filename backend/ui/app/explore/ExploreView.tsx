@@ -15,13 +15,13 @@ import {
 	type ExploreState,
 } from "../../lib/explore/state";
 import { ExploreBar } from "./ExploreBar";
-import { SavedViews, type SavedView } from "./SavedViews";
+import { SavedViews, viewsKey, type SavedView } from "./SavedViews";
 import { AlertDialog } from "../alerts/AlertDialog";
 import { AddToBoard } from "../boards/AddToBoard";
 import { createSheet } from "../sheets/SheetsList";
 import type { AlertRecord } from "../../lib/alerts/store";
 import { useNotify } from "../notify/NotifyContext";
-import { useAssistant } from "../assist/AssistantContext";
+import { useAssistantActions } from "../assist/AssistantContext";
 import { useAssistantSurface } from "../assist/useAssistantSurface";
 import { useUser } from "../context/UserContext";
 import styles from "./Explore.module.css";
@@ -83,6 +83,13 @@ export default function ExploreView() {
 		setConditions(state.conditions);
 	};
 
+	// A saved view named in the address, such as from a retention warning,
+	// opened once the list of saved views has loaded.
+	const [pendingView, setPendingView] = useState<string | null>(null);
+	const { data: savedViews } = useSWR<{ views: SavedView[] }>(
+		pendingView ? viewsKey : null,
+	);
+
 	// Read once on arrival, after mount so the server render and the first
 	// client render agree.
 	useEffect(() => {
@@ -91,6 +98,7 @@ export default function ExploreView() {
 		const state = q ? decodeState(q) : null;
 		if (state) apply(state);
 		setAlertId(params.get("alert"));
+		setPendingView(params.get("view"));
 		setRestored(true);
 	}, []);
 
@@ -101,7 +109,7 @@ export default function ExploreView() {
 	// The assistant can set the table up from a description, and change it
 	// with a follow-up, since it is told what the bar holds each time.
 	const { user } = useUser();
-	const { setPanelOpen } = useAssistant();
+	const { setPanelOpen } = useAssistantActions();
 	useAssistantSurface({
 		kind: "explore",
 		// One Explore screen. What it holds is sent with each question.
@@ -140,7 +148,31 @@ export default function ExploreView() {
 			name: view.name,
 			saved: encodeState(view.state),
 		});
+		// Opening a saved view counts as use, so retention passes it by.
+		void fetch("/api/retention", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				action: "opened",
+				kind: "exploreView",
+				id: view.id,
+			}),
+		}).catch(() => {});
 	};
+
+	// The named view is opened once, and the name taken out of the address so
+	// a reload keeps what is on screen rather than reopening it.
+	useEffect(() => {
+		if (!pendingView || !savedViews) return;
+		const view = savedViews.views.find((v) => v.id === pendingView);
+		if (view) openSaved(view);
+		setPendingView(null);
+		const url = new URL(window.location.href);
+		url.searchParams.delete("view");
+		window.history.replaceState(null, "", url.toString());
+		// openSaved is redefined each render and only reads setters.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [pendingView, savedViews]);
 
 	const sources = useMemo(
 		() =>

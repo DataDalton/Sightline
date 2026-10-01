@@ -29,7 +29,7 @@ import { addMemory, type Profile } from "./store";
 import type { Surface } from "./surfaces";
 import { buildNewBoard, createBoardTool } from "./surfaces/board";
 import { refusal } from "./surfaces/shared";
-import { createBoard, updateBoard } from "../boards/store";
+import { createBoard } from "../boards/store";
 import {
 	ProposalRejected,
 	validateProposal,
@@ -504,11 +504,12 @@ export async function runAgent(
 				return refused.result;
 			}
 			try {
-				const board = await createBoard(identity, built.title, []);
-				await updateBoard(identity, board.id, {
-					definition: built.definition,
-					baseVersion: board.version,
-				});
+				const board = await createBoard(
+					identity,
+					built.title,
+					[],
+					built.definition,
+				);
 				const href = `/boards/${board.id}/`;
 				emit({
 					type: "created",

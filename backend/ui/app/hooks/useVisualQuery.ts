@@ -59,9 +59,17 @@ export function useVisualQuery(query: VisualQuery | null) {
 	// Zero for a source on a schedule. A live one names its own interval,
 	// which stops while the visual is out of sight. SWR restarts its timer
 	// when this function changes, so it is rebuilt only when that does.
+	//
+	// The delay runs to the next wall clock multiple of the interval rather
+	// than a full interval from when this answer arrived. Every live visual on
+	// the page then asks at the same moment, inside one batch, and the timers
+	// do not drift apart as answers land at different times.
 	const refreshInterval = useCallback(
-		(latest: QueryResponse | undefined) =>
-			onScreen ? (latest?.meta?.refreshAfterMs ?? 0) : 0,
+		(latest: QueryResponse | undefined) => {
+			const interval = onScreen ? (latest?.meta?.refreshAfterMs ?? 0) : 0;
+			if (interval <= 0) return 0;
+			return interval - (Date.now() % interval);
+		},
 		[onScreen],
 	);
 

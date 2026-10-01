@@ -2,13 +2,14 @@ import { sql } from "../data/lakebase";
 import type { Identity } from "../auth/identity";
 import type { PolicyClass } from "../auth/policy";
 import { cachedDefinition } from "./definitionCache";
+import { curatedReports } from "./curated";
 import {
 	getAccessContext,
 	resolveCategoryAccess,
 	resolveReportAccess,
 	type AccessContext,
 } from "./access";
-import type { Capability } from "./accessRules";
+import { grantKey, type Capability } from "./accessRules";
 
 // What a person can navigate to, in one answer.
 //
@@ -121,26 +122,21 @@ export async function searchTargets(
 	const context = await getAccessContext(policy, identity);
 	const email = context.email.toLowerCase();
 
-	// The rows themselves are the same for everybody, so they are cached once
-	// and filtered per caller below. Caching the filtered answer instead would
-	// key the cache on the reader, which is a cache entry per person.
-	const [reports, categories] = await cachedDefinition(
-		"search:content",
-		async () =>
-			await Promise.all([
-				sql<ReportRow>(
-					`SELECT report_id::text AS report_id, slug, title, description,
-					        category_id, is_personal, owner_email
-					 FROM reports
-					 WHERE is_active = TRUE`,
-				),
-				sql<CategoryRow>(
+	// The curated rows are the same for everybody, so they are held once and
+	// filtered per caller below. Caching the filtered answer instead would key
+	// the cache on the reader, which is a cache entry per person.
+	const [curated, categories] = await Promise.all([
+		curatedReports(),
+		cachedDefinition(
+			"search:categories",
+			async () =>
+				await sql<CategoryRow>(
 					`SELECT category_id, name, description
 					 FROM categories
 					 WHERE is_active = TRUE`,
 				),
-			]),
-	);
+		),
+	]);
 
 	// Built once per reader rather than on every keystroke that reaches the
 	// server.
@@ -150,11 +146,62 @@ export async function searchTargets(
 	// resolver call per active report and category, per request, and search is
 	// the one endpoint a person hits repeatedly in a few seconds.
 	//
+	// Personal pages are not in the shared rows. The ones this reader could
+	// open are read here, for this reader alone, so no replica holds every
+	// person's pages.
+	//
 	// Carried under the search prefix so publishing or removing content drops
 	// it with the rows it came from.
 	return await cachedDefinition(
 		`search:targets:${policy.id}|${email}`,
-		async () => buildTargets(context, policy, email, reports, categories),
+		async () => {
+			const personal = await personalCandidates(
+				context,
+				email,
+				new Set(curated.map((row) => row.report_id)),
+			);
+			return buildTargets(
+				context,
+				policy,
+				email,
+				[...curated, ...personal],
+				categories,
+			);
+		},
+	);
+}
+
+const uuidPattern =
+	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// The personal pages a reader might open: their own, any named in one of
+// their grants, and every one for a global administrator, who can open any.
+// The resolver still decides each one in buildTargets, so this only has to
+// hold every page that could pass, never only those that do.
+async function personalCandidates(
+	context: AccessContext,
+	email: string,
+	curatedIds: Set<string>,
+): Promise<ReportRow[]> {
+	const prefix = grantKey("report", "");
+	const named: string[] = [];
+	for (const key of context.grants.keys()) {
+		if (!key.startsWith(prefix)) continue;
+		const id = key.slice(prefix.length);
+		// Grants on curated reports, which catalogue reachability adds in
+		// bulk, name nothing personal.
+		if (curatedIds.has(id) || !uuidPattern.test(id)) continue;
+		named.push(id.toLowerCase());
+	}
+	return await sql<ReportRow>(
+		`SELECT report_id::text AS report_id, slug, title, description,
+		        category_id, is_personal, owner_email
+		 FROM reports
+		 WHERE is_active = TRUE AND is_personal = TRUE
+		   AND (lower(owner_email) = $1
+		        OR report_id = ANY($2::uuid[])
+		        OR $3)`,
+		[email, named, context.baseline === "admin"],
 	);
 }
 

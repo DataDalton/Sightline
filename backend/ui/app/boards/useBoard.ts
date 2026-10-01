@@ -1,5 +1,6 @@
 "use client";
 
+import { refreshBoardList } from "./boardList";
 import { useCallback, useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import type { BoardDefinition } from "../../lib/boards/definition";
@@ -11,11 +12,15 @@ import type { Board } from "../../lib/boards/store";
 // Changes are drawn at once and saved shortly after the last of a burst, so
 // dragging a note across the board is one save rather than one per frame.
 // Saves go one at a time against the version this page last saw, and one
-// refused because somebody else saved first drops the draft and reloads.
+// refused because somebody else saved first drops the draft and reloads. One
+// that failed for a passing reason, such as a lost connection or a busy
+// server, keeps the change and is sent again after a growing wait.
 // While nothing is waiting to save, the page checks now and then for a newer
 // version, so a board two people have open stays the same for both.
 
 const saveDelay = 600;
+const retryFirstMs = 2000;
+const retryCeilingMs = 30000;
 const checkEvery = 10_000;
 
 export interface BoardState {
@@ -52,6 +57,21 @@ export function useBoard(id: string): BoardState {
 	} | null>(null);
 	const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const inFlight = useRef(false);
+	// The wait before the next attempt at a save that could not land, zero
+	// when the last one did.
+	const retryDelay = useRef(0);
+	const flushRef = useRef<() => Promise<void>>(async () => {});
+
+	const retryLater = useCallback(() => {
+		retryDelay.current = retryDelay.current
+			? Math.min(retryDelay.current * 2, retryCeilingMs)
+			: retryFirstMs;
+		if (timer.current) clearTimeout(timer.current);
+		timer.current = setTimeout(() => {
+			timer.current = null;
+			void flushRef.current();
+		}, retryDelay.current);
+	}, []);
 
 	const flush = useCallback(async () => {
 		if (inFlight.current) return;
@@ -70,6 +90,16 @@ export function useBoard(id: string): BoardState {
 				}),
 			});
 			const body = await response.json().catch(() => null);
+			const passing =
+				response.status === 408 ||
+				response.status === 429 ||
+				response.status >= 500;
+			if (!response.ok && passing) {
+				pending.current = { ...change, ...(pending.current ?? {}) };
+				setNotice("The change has not saved yet. Trying again.");
+				retryLater();
+				return;
+			}
 			if (!response.ok) {
 				pending.current = null;
 				setDraft(null);
@@ -85,6 +115,11 @@ export function useBoard(id: string): BoardState {
 			}
 			version.current = body.board.version;
 			await mutate({ board: body.board }, false);
+			refreshBoardList();
+			if (retryDelay.current) {
+				retryDelay.current = 0;
+				setNotice(null);
+			}
 			if (!pending.current) {
 				setDraft(null);
 				setTitle(null);
@@ -93,17 +128,26 @@ export function useBoard(id: string): BoardState {
 			// Never landed. Put back under anything newer so the next save
 			// carries both.
 			pending.current = { ...change, ...(pending.current ?? {}) };
-			setNotice("The change could not be saved. Check the connection.");
+			setNotice(
+				"The change has not saved yet. Check the connection. Trying again.",
+			);
+			retryLater();
 		} finally {
 			inFlight.current = false;
 			setSaving(false);
 			if (pending.current && !timer.current) void flush();
 		}
-	}, [key, mutate]);
+	}, [key, mutate, retryLater]);
+	useEffect(() => {
+		flushRef.current = flush;
+	}, [flush]);
 
 	const schedule = useCallback(
 		(change: { definition?: BoardDefinition; title?: string }) => {
 			pending.current = { ...(pending.current ?? {}), ...change };
+			// A save waiting to be retried keeps its own timing and carries
+			// this change with it.
+			if (retryDelay.current && timer.current) return;
 			if (timer.current) clearTimeout(timer.current);
 			timer.current = setTimeout(() => {
 				timer.current = null;
@@ -125,7 +169,9 @@ export function useBoard(id: string): BoardState {
 					baseVersion: version.current,
 				}),
 				keepalive: true,
-			}).catch(() => {});
+			})
+				.then(refreshBoardList)
+				.catch(() => {});
 		};
 		window.addEventListener("pagehide", leave);
 		return () => {
@@ -150,8 +196,11 @@ export function useBoard(id: string): BoardState {
 				return;
 			void (async () => {
 				try {
-					const response = await fetch(key);
-					if (!response.ok) return;
+					// Answered with no body while the board is unchanged.
+					const response = await fetch(
+						`${key}?since=${version.current}`,
+					);
+					if (!response.ok || response.status === 204) return;
 					const body = (await response.json()) as { board: Board };
 					if (
 						body.board.version > version.current &&

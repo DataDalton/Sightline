@@ -5,7 +5,9 @@ import {
 	cleanDefinition,
 	displayColumns,
 	emptyDefinition,
+	parseRowKey,
 	pivotGroupings,
+	queryFingerprint,
 	rowKey,
 } from "./definition";
 
@@ -160,4 +162,86 @@ test("several measures label their columns, and no across field is a summary", (
 		["Revenue", "Units"],
 	);
 	assert.deepEqual(table.rows.at(-1)?.cells, [12, 3]);
+});
+
+test("a row key reads back as the values it was made from", () => {
+	const row = { Region: "West", Year: 2024, Code: null };
+	const key = rowKey(row, ["Region", "Year", "Code"]);
+	assert.deepEqual(parseRowKey(key, 3), ["West", "2024", null]);
+	assert.deepEqual(parseRowKey("*", 0), []);
+	// The wrong number of fields, text that is not a key, and values that are
+	// not text are all refused.
+	assert.equal(parseRowKey(key, 2), null);
+	assert.equal(parseRowKey("not json", 1), null);
+	assert.equal(parseRowKey("[1]", 1), null);
+	assert.equal(parseRowKey('{"a":1}', 1), null);
+	assert.equal(parseRowKey("*", 1), null);
+});
+
+test("the data fingerprint follows only what the rows are read from", () => {
+	const base = cleanDefinition({
+		sourceKey: "sales",
+		columns: ["Region", "Revenue"],
+		conditions: [{ field: "Region", op: "eq", value: "West", join: "and" }],
+		formulas: [{ id: "f1", name: "Double", formula: "[Revenue] * 2" }],
+		notes: [{ id: "n1", name: "Comment" }],
+		sort: { column: "Revenue", direction: "desc" },
+	});
+	const print = queryFingerprint(base);
+	assert.match(print, /^[0-9a-f]{16}$/);
+
+	// Layout, formulas and notes leave the rows alone.
+	assert.equal(
+		queryFingerprint({
+			...base,
+			settings: { "field:Region": { width: 300 } },
+			frozen: 2,
+			order: ["field:Revenue", "field:Region"],
+			formulas: [],
+			notes: [],
+		}),
+		print,
+	);
+	// A sort on a formula column is applied in the page.
+	const onFormula = {
+		...base,
+		sort: { column: "Double", direction: "asc" as const },
+	};
+	assert.equal(
+		queryFingerprint(onFormula),
+		queryFingerprint({ ...base, sort: null }),
+	);
+
+	// The fields, the conditions, a sort on a field and the mode all change
+	// the rows.
+	assert.notEqual(queryFingerprint({ ...base, columns: ["Region"] }), print);
+	assert.notEqual(queryFingerprint({ ...base, conditions: [] }), print);
+	assert.notEqual(
+		queryFingerprint({
+			...base,
+			sort: { column: "Revenue", direction: "asc" },
+		}),
+		print,
+	);
+	assert.notEqual(queryFingerprint({ ...base, mode: "pivot" }), print);
+});
+
+test("a pivot's fingerprint follows its layout rather than its columns", () => {
+	const base = cleanDefinition({
+		sourceKey: "sales",
+		mode: "pivot",
+		columns: ["Region"],
+		pivot: { rows: ["Region"], columns: null, values: ["Revenue"] },
+	});
+	assert.equal(
+		queryFingerprint({ ...base, columns: ["Region", "Year"] }),
+		queryFingerprint(base),
+	);
+	assert.notEqual(
+		queryFingerprint({
+			...base,
+			pivot: { rows: ["Region"], columns: "Year", values: ["Revenue"] },
+		}),
+		queryFingerprint(base),
+	);
 });

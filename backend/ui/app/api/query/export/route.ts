@@ -4,7 +4,6 @@ import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
 import { parseQuerySpec, QuerySpecError } from "@/lib/query/spec";
 import { QueryAccessError } from "@/lib/query/execute";
 import { getExportJob, listExportJobs, startExport } from "@/lib/query/export";
-import { checkWriteRateLimit } from "@/lib/rateLimit";
 import { isUuid } from "@/lib/alerts/store";
 
 // Starting an export, and asking how one is going.
@@ -14,13 +13,8 @@ import { isUuid } from "@/lib/alerts/store";
 // meant a reader who navigated away lost the work, and a proxy timeout could
 // discard a finished file nobody ever saw.
 
-// Export is rate limited like a write, not a read. It is the most expensive
-// thing a user can ask for and the only one that takes data off the platform.
 export async function POST(request: NextRequest) {
 	await ensureReadyOrDegrade();
-
-	const limited = checkWriteRateLimit(request);
-	if (limited) return limited;
 
 	const identity = getIdentity(request);
 	if (!identity) {

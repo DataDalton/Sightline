@@ -128,6 +128,11 @@ const tool = {
 							description:
 								"Ignore groups whose usual figure is below this.",
 						},
+						earlySignals: {
+							type: "boolean",
+							description:
+								"Also alert on an early signal, a figure far below where it usually is by now in a period whose data may still be loading. Off unless asked for.",
+						},
 					},
 				},
 				name: {

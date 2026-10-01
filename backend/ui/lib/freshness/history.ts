@@ -87,6 +87,23 @@ export function readHistory(
 	return { latest, changed };
 }
 
+// How many commits to read for the page to reach back to the version last
+// seen, when the page read fell short of it. Null when it did reach it. A
+// load followed by many housekeeping commits, such as a comment set on every
+// column, pushes the load itself out of the page, and without reading back
+// to it the load is noticed as a change but never timed.
+export function commitsSinceSeen(
+	entries: HistoryEntry[],
+	lastSeen: SeenVersion | null,
+): number | null {
+	if (entries.length === 0 || lastSeen === null) return null;
+	const newest = Math.max(...entries.map((e) => e.version));
+	const oldest = Math.min(...entries.map((e) => e.version));
+	if (newest <= lastSeen.version || oldest <= lastSeen.version + 1)
+		return null;
+	return newest - lastSeen.version;
+}
+
 // Rows from DESCRIBE HISTORY, in whatever types the warehouse returned them.
 export function toHistory(rows: Record<string, unknown>[]): HistoryEntry[] {
 	return rows

@@ -125,10 +125,18 @@ export async function POST(request: NextRequest) {
 		);
 	}
 
+	// Lookups that depend only on who is asking, run together. Their
+	// standing instructions and memories go with the question, and a profile
+	// that cannot be read is left out rather than failing the question.
+	const [reachable, policy, profile] = await Promise.all([
+		reachableSet(identity),
+		resolvePolicyClass(identity),
+		getProfile(identity.email).catch(() => null),
+	]);
+
 	// Only datasets this person can already read. The model is never told
 	// about one they could not query, so it cannot propose it and have the
 	// refusal reveal that it exists.
-	const reachable = await reachableSet(identity);
 	const available = listSources().filter(
 		(s) => !reachable || reachable.has(s.sourceKey),
 	);
@@ -148,7 +156,6 @@ export async function POST(request: NextRequest) {
 		? (available.find((s) => s.sourceKey === preferredKey) ?? null)
 		: null;
 
-	const policy = await resolvePolicyClass(identity);
 	const context = path
 		? await describePage(identity, policy, path, title, available).catch(
 				() => null,
@@ -174,10 +181,6 @@ export async function POST(request: NextRequest) {
 				})
 				.join("\n")
 		: null;
-
-	// Their standing instructions and memories. A profile that cannot be read
-	// is left out rather than failing the question.
-	const profile = await getProfile(identity.email).catch(() => null);
 
 	// Cancelled when the reader stops the answer or closes the page, which
 	// stops the model call and any query still waiting to start.

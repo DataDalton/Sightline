@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { usePageTitle } from "../hooks/usePageTitle";
-import { useAssistant } from "./AssistantContext";
+import { useAssistantStatus } from "./AssistantContext";
 import { AssistantComposer } from "./AssistantComposer";
 import { AssistantPreferences } from "./AssistantPreferences";
 import { AssistantThread } from "./AssistantThread";
@@ -22,7 +22,7 @@ const examples = [
 
 export default function AssistView() {
 	usePageTitle("Assistant");
-	const { newConversation, busy } = useAssistant();
+	const { newConversation, busy } = useAssistantStatus();
 	const [preferences, setPreferences] = useState(false);
 	// Below the width where the list sits beside the conversation, it opens
 	// over it instead.

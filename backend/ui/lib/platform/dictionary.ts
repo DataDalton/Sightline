@@ -24,6 +24,7 @@ import {
 	type Dependent,
 	type DependentKind,
 } from "./dependents";
+import { countsBySource, mergeCounts } from "./fieldCounts";
 
 // What every field means, and what depends on it.
 //
@@ -230,14 +231,73 @@ export async function fieldUsage(
 		.usage;
 }
 
-// Counts per source set, held briefly. The list page asks for every field at
-// once and is reopened often, and the walk reads every stored item on those
+// Counts per source, held briefly. The list page asks for every field at once
+// and is reopened often, and the walk reads every stored item on those
 // sources.
+//
+// Held per source rather than per set of sources, so readers with different
+// access share the walk of every source they have in common. A count says how
+// many items name a field, whoever they belong to, and is only served for a
+// source the reader may read.
 const countTtlMs = 60 * 1000;
 const heldCounts = new Map<
 	string,
 	{ at: number; counts: Map<string, number> }
 >();
+// Walks in progress per source, so readers arriving together share one.
+const countingNow = new Map<string, Promise<Map<string, number>>>();
+
+async function countSources(
+	keys: string[],
+): Promise<Map<string, Map<string, number>>> {
+	const out = new Map<string, Map<string, number>>();
+	const missing: string[] = [];
+	const waiting: Promise<void>[] = [];
+	const now = Date.now();
+	for (const key of keys) {
+		const held = heldCounts.get(key);
+		if (held && now - held.at < countTtlMs) {
+			out.set(key, held.counts);
+			continue;
+		}
+		const running = countingNow.get(key);
+		if (running) {
+			waiting.push(running.then((counts) => void out.set(key, counts)));
+			continue;
+		}
+		missing.push(key);
+	}
+
+	// One walk for every source not already held, split by source. Held per
+	// source, so the map grows with the catalogue and not with readers.
+	const loading = (async () => {
+		if (missing.length === 0) return;
+		const walk = collectDependents(missing).then((dependents) =>
+			countsBySource(dependents, missing, dependentKey),
+		);
+		for (const key of missing) {
+			const one = walk.then(
+				(bySource) => bySource.get(key) ?? new Map<string, number>(),
+			);
+			countingNow.set(key, one);
+			void one
+				.finally(() => {
+					if (countingNow.get(key) === one) countingNow.delete(key);
+				})
+				.catch(() => {});
+		}
+		const bySource = await walk;
+		const at = Date.now();
+		for (const key of missing) {
+			const counts = bySource.get(key) ?? new Map<string, number>();
+			heldCounts.set(key, { at, counts });
+			out.set(key, counts);
+		}
+	})();
+
+	await Promise.all([loading, ...waiting]);
+	return out;
+}
 
 // How many items name each field, for every field on the readable sources.
 //
@@ -254,23 +314,8 @@ export async function usageCounts(
 		...(readable ?? new Set(listSources().map((s) => s.sourceKey))),
 	].sort();
 
-	const cacheKey = keys.join("\u0000");
-	const held = heldCounts.get(cacheKey);
-	if (held && Date.now() - held.at < countTtlMs) return held.counts;
-
-	// Each item counted once per field, however many places in it name it.
-	const seen = new Set<string>();
-	const counts = new Map<string, number>();
-	for (const d of await collectDependents(keys)) {
-		const key = dependentKey(d.sourceKey, d.field);
-		const item = `${key}\u0000${d.kind}\u0000${d.id}`;
-		if (seen.has(item)) continue;
-		seen.add(item);
-		counts.set(key, (counts.get(key) ?? 0) + 1);
-	}
-	if (heldCounts.size > 50) heldCounts.clear();
-	heldCounts.set(cacheKey, { at: Date.now(), counts });
-	return counts;
+	const bySource = await countSources(keys);
+	return mergeCounts(keys.map((key) => bySource.get(key) ?? new Map()));
 }
 
 // Source and field together, since a field name is only unique within a source.

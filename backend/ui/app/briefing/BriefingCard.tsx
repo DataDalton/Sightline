@@ -7,8 +7,10 @@ import {
 	driverText,
 	movementText,
 	periodLabel,
+	settlingText,
 	toneOf,
 	usualLabel,
+	waitingText,
 } from "../../lib/briefing/words";
 import { formatCompact } from "../../lib/format";
 import { AddToBoard } from "../boards/AddToBoard";
@@ -42,6 +44,65 @@ function Arrow({ up }: { up: boolean }) {
 			aria-hidden="true"
 		>
 			<path d={up ? "M12 19V5M6 11l6-6 6 6" : "M12 5v14M6 13l6 6 6-6"} />
+		</svg>
+	);
+}
+
+// A clock, for a period still waiting for its load.
+function Clock() {
+	return (
+		<svg
+			width="14"
+			height="14"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<circle cx="12" cy="12" r="9" />
+			<path d="M12 7v5l3 2" />
+		</svg>
+	);
+}
+
+// A circle with a mark in it, for why the figure reads the way it does.
+function Info() {
+	return (
+		<svg
+			width="14"
+			height="14"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<circle cx="12" cy="12" r="9" />
+			<path d="M12 11v5M12 8h.01" />
+		</svg>
+	);
+}
+
+// An hourglass, for a figure that may still fill in.
+function Filling() {
+	return (
+		<svg
+			width="12"
+			height="12"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="M6 3h12M6 21h12M7 3v4a5 5 0 0 0 10 0V3M7 21v-4a5 5 0 0 1 10 0v4" />
 		</svg>
 	);
 }
@@ -206,6 +267,12 @@ export function BriefingCard({
 		</span>
 	) : null;
 
+	// What the card is waiting for, and why it reads the way it does.
+	const waiting = card.waiting
+		? waitingText(card.waiting, card.spacing)
+		: null;
+	const why = settlingText(card);
+
 	if (size === "steady") {
 		return (
 			<div className={styles.tile} style={named}>
@@ -221,6 +288,9 @@ export function BriefingCard({
 						tone={tone}
 						compact
 					/>
+					{waiting && (
+						<span className={styles.tileNote}>{waiting}</span>
+					)}
 					<span className={styles.tileMeta}>
 						{item.reportTitle}
 						{updatingMark}
@@ -245,6 +315,7 @@ export function BriefingCard({
 			className={`${styles.card} ${size !== "moving" ? styles.cardLead : ""} ${size === "hero" ? styles.cardHero : ""}`}
 			data-tone={tone}
 			data-unusual={card.unusual || undefined}
+			data-early={card.early || undefined}
 			style={named}
 		>
 			{size === "hero" && <div className={styles.heroTrend}>{trend}</div>}
@@ -255,6 +326,15 @@ export function BriefingCard({
 				<span className={styles.cardMarks}>
 					{card.unusual && (
 						<span className={styles.flag}>Unusual</span>
+					)}
+					{card.early && (
+						<span
+							className={styles.flagEarly}
+							title="Far below where it usually is by now, though its data may still be loading"
+						>
+							<Filling />
+							Early signal
+						</span>
 					)}
 					{tools}
 				</span>
@@ -280,6 +360,18 @@ export function BriefingCard({
 				)}
 				{updatingMark}
 			</div>
+			{why && (
+				<p className={styles.note}>
+					<Info />
+					<span>{why}</span>
+				</p>
+			)}
+			{waiting && (
+				<p className={styles.note}>
+					<Clock />
+					<span>{waiting}</span>
+				</p>
+			)}
 			{size !== "hero" && trend}
 			{card.driver && (
 				<p className={styles.driver}>

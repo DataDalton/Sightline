@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { sql, withAdvisoryLock } from "../data/lakebase";
 
 // Transactional schema, in Lakebase Postgres.
@@ -521,8 +522,6 @@ const statements: string[] = [
 
 	`CREATE INDEX IF NOT EXISTS usage_events_time_idx
 		ON usage_events (occurred_on DESC)`,
-	`CREATE INDEX IF NOT EXISTS usage_events_report_idx
-		ON usage_events (report_id, occurred_on DESC)`,
 	`CREATE INDEX IF NOT EXISTS usage_events_user_idx
 		ON usage_events (user_email, occurred_on DESC)`,
 
@@ -703,10 +702,12 @@ const statements: string[] = [
 	// Conversations with the data assistant, one row each, private to the
 	// person who had them.
 	//
-	// The transcript is kept whole as JSON, including the steps each answer
-	// took and the first rows they returned, because reopening a conversation
-	// is reopening what was seen, not a replay: the queries would run again
-	// against today's data and could say something else.
+	// Each message is kept in assistant_messages, including the steps each
+	// answer took and the first rows they returned, because reopening a
+	// conversation is reopening what was seen, not a replay. The queries would
+	// run again against today's data and could say something else. The
+	// messages column holds transcripts from before those rows existed, until
+	// each is moved.
 	`CREATE TABLE IF NOT EXISTS assistant_conversations (
 		conversation_id UUID PRIMARY KEY,
 		owner_email     TEXT NOT NULL,
@@ -1183,8 +1184,12 @@ const migrations: string[] = [
 	// that does not exist yet from being created.
 	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS protect_add_page BOOLEAN NOT NULL DEFAULT FALSE`,
 
-	`CREATE INDEX IF NOT EXISTS reports_owner_idx
-		ON reports (owner_email, is_personal) WHERE is_personal = TRUE`,
+	// Somebody's own pages and the reports they authored, matched without
+	// regard to case, newest first. Those lookups compare lowercased
+	// addresses, so an index on the raw address goes unused and is dropped.
+	`CREATE INDEX IF NOT EXISTS reports_owner_lower_idx
+		ON reports (lower(owner_email), modified_on DESC) WHERE is_active`,
+	`DROP INDEX IF EXISTS reports_owner_idx`,
 
 	// Records which personal page an exploration became.
 	//
@@ -1385,6 +1390,214 @@ const migrations: string[] = [
 	`CREATE INDEX IF NOT EXISTS briefing_cards_source_idx
 		ON briefing_cards (source_key)`,
 	`CREATE INDEX IF NOT EXISTS briefing_cards_day_idx ON briefing_cards (day)`,
+
+	// How many questions each conversation holds, so the history lists them
+	// without unpacking every transcript. Set by saveConversation. Rows saved
+	// before the column existed are counted once, and a row already counted
+	// is not matched again. See lib/assistant/store.
+	`ALTER TABLE assistant_conversations ADD COLUMN IF NOT EXISTS questions INTEGER`,
+	`UPDATE assistant_conversations
+	 SET questions = (SELECT count(*) FROM jsonb_array_elements(
+	                    CASE WHEN jsonb_typeof(messages) = 'array'
+	                         THEN messages ELSE '[]'::jsonb END) m
+	                  WHERE m->>'role' = 'user')
+	 WHERE questions IS NULL`,
+
+	// Page views by policy class, newest first, carrying the report and the
+	// reader, so the ranking of what people with the same access open reads
+	// the index alone. See popularWithPeers in lib/briefing/plan.
+	//
+	// Built concurrently, as is the next, because usage_events is written on
+	// every page view and a plain build holds those writes for as long as it
+	// takes. Each statement runs outside a transaction, which this needs.
+	`CREATE INDEX CONCURRENTLY IF NOT EXISTS usage_events_peer_views_idx
+		ON usage_events (policy_class, occurred_on DESC)
+		INCLUDE (report_id, user_email) WHERE event_type = 'page_view'`,
+	// One reader's page views, newest first, without the queries, exports
+	// and other events the per reader index also holds. Read for recents and
+	// for what a reader opens most.
+	`CREATE INDEX CONCURRENTLY IF NOT EXISTS usage_events_user_views_idx
+		ON usage_events (lower(user_email), occurred_on DESC)
+		INCLUDE (report_id) WHERE event_type = 'page_view'`,
+	// Every lookup by report also names the event type, which
+	// usage_events_page_idx leads with after the report.
+	`DROP INDEX IF EXISTS usage_events_report_idx`,
+	// Each version's change summary, written with the version so the history
+	// list reads it rather than comparing snapshots. Older rows are filled in
+	// when first listed. See lib/platform/history.
+	`ALTER TABLE report_versions ADD COLUMN IF NOT EXISTS changes JSONB`,
+
+	// Background work one replica does for all of them, claimed by name. See
+	// lib/freshness/claim.
+	`CREATE TABLE IF NOT EXISTS background_claims (
+		name       TEXT PRIMARY KEY,
+		claimed_on TIMESTAMPTZ NOT NULL
+	)`,
+	// When the freshness checker read a metric view's definition and found
+	// it names something other than tables, so it is not read again until
+	// the catalogue sync records a list. See lib/freshness/checker.
+	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS base_tables_checked_on TIMESTAMPTZ`,
+	// When the daily field sync of a source last failed, so no replica
+	// retries it before the wait is over. See lib/semantic/fieldWatch.
+	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS fields_sync_failed_on TIMESTAMPTZ`,
+	// When anything the freshness marks read about a source last changed,
+	// stamped by a trigger whoever writes it, so each replica reads only the
+	// sources that moved. See lib/freshness/marks.
+	`ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS marks_changed_on TIMESTAMPTZ NOT NULL DEFAULT now()`,
+	`DO $$ BEGIN
+	   IF NOT EXISTS (
+	     SELECT 1 FROM pg_proc p
+	     JOIN pg_namespace n ON n.oid = p.pronamespace
+	     WHERE p.proname = 'data_sources_marks_stamp'
+	       AND n.nspname = current_schema()
+	   ) THEN
+	     EXECUTE $f$
+	       CREATE FUNCTION data_sources_marks_stamp() RETURNS trigger
+	       LANGUAGE plpgsql AS $b$
+	       BEGIN
+	         IF TG_OP = 'INSERT' OR
+	            (NEW.is_active, NEW.freshness_mode, NEW.data_changed_on,
+	             NEW.has_row_filter, NEW.kind, NEW.base_tables,
+	             NEW.catalog_name, NEW.schema_name, NEW.object_name)
+	            IS DISTINCT FROM
+	            (OLD.is_active, OLD.freshness_mode, OLD.data_changed_on,
+	             OLD.has_row_filter, OLD.kind, OLD.base_tables,
+	             OLD.catalog_name, OLD.schema_name, OLD.object_name)
+	         THEN
+	           NEW.marks_changed_on := clock_timestamp();
+	         END IF;
+	         RETURN NEW;
+	       END
+	       $b$
+	     $f$;
+	   END IF;
+	   IF NOT EXISTS (
+	     SELECT 1 FROM pg_trigger
+	     WHERE tgname = 'data_sources_marks_stamp'
+	       AND tgrelid = 'data_sources'::regclass
+	   ) THEN
+	     CREATE TRIGGER data_sources_marks_stamp
+	       BEFORE INSERT OR UPDATE ON data_sources
+	       FOR EACH ROW EXECUTE FUNCTION data_sources_marks_stamp();
+	   END IF;
+	 END $$`,
+	// What each watched table's loads say about when it usually loads,
+	// with the newest load it was learned from, so it is learned again only
+	// once a newer one lands. See lib/freshness/lateness.
+	`CREATE TABLE IF NOT EXISTS table_patterns (
+		table_name     TEXT PRIMARY KEY,
+		pattern        JSONB NOT NULL,
+		newest_arrival TIMESTAMPTZ,
+		learned_on     TIMESTAMPTZ NOT NULL
+	)`,
+	// The last row filter walk, for every replica to take rather than walk
+	// again. One row. See lib/semantic/filterDiscovery.
+	`CREATE TABLE IF NOT EXISTS filter_walks (
+		walk_id    SMALLINT PRIMARY KEY,
+		started_on TIMESTAMPTZ NOT NULL,
+		walked_on  TIMESTAMPTZ NOT NULL,
+		result     JSONB NOT NULL,
+		covered    JSONB NOT NULL
+	)`,
+
+	// Each assistant conversation's messages, one row each, so a save writes
+	// only the messages that are new or changed. Keyed by the id the browser
+	// gives a message, so a resent message replaces itself rather than
+	// appearing twice, and read in position order. See lib/assistant/store.
+	`CREATE TABLE IF NOT EXISTS assistant_messages (
+		conversation_id UUID NOT NULL
+			REFERENCES assistant_conversations (conversation_id)
+			ON DELETE CASCADE,
+		message_id      TEXT NOT NULL,
+		position        BIGINT NOT NULL,
+		role            TEXT NOT NULL,
+		message         JSONB NOT NULL,
+		created_on      TIMESTAMPTZ NOT NULL DEFAULT now(),
+		PRIMARY KEY (conversation_id, message_id)
+	)`,
+	`CREATE INDEX IF NOT EXISTS assistant_messages_order_idx
+		ON assistant_messages (conversation_id, position)`,
+	// Whether a conversation's transcript column has been moved into rows.
+	// The column itself is left in place and no longer read once moved.
+	`ALTER TABLE assistant_conversations ADD COLUMN IF NOT EXISTS messages_moved BOOLEAN NOT NULL DEFAULT false`,
+	// Moves every transcript not yet moved, flagging each in the same
+	// statement so it is moved once however often this runs.
+	`WITH moved AS (
+	     UPDATE assistant_conversations SET messages_moved = true
+	     WHERE NOT messages_moved
+	     RETURNING conversation_id, messages)
+	 INSERT INTO assistant_messages
+	     (conversation_id, message_id, position, role, message)
+	 SELECT moved.conversation_id,
+	        coalesce(m.elem->>'id', 'moved-' || m.ord),
+	        m.ord,
+	        coalesce(m.elem->>'role', ''),
+	        m.elem
+	 FROM moved,
+	      jsonb_array_elements(
+	          CASE WHEN jsonb_typeof(moved.messages) = 'array'
+	               THEN moved.messages ELSE '[]'::jsonb END)
+	          WITH ORDINALITY AS m(elem, ord)
+	 WHERE jsonb_typeof(m.elem) = 'object'
+	 ON CONFLICT (conversation_id, message_id) DO NOTHING`,
+
+	// Retention of personal items. keep is the owner's mark exempting an item,
+	// removed_on puts it in the bin, and last_opened_on is written on open at
+	// most about once a day. A personal page reads its opens from usage
+	// events, and restored_on counts as use after it leaves the bin. An access
+	// grant switched off because its page went to the bin is marked, so a
+	// restore switches back exactly those. See lib/retention.
+	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS keep BOOLEAN NOT NULL DEFAULT FALSE`,
+	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS removed_on TIMESTAMPTZ`,
+	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS restored_on TIMESTAMPTZ`,
+	`ALTER TABLE sheets ADD COLUMN IF NOT EXISTS keep BOOLEAN NOT NULL DEFAULT FALSE`,
+	`ALTER TABLE sheets ADD COLUMN IF NOT EXISTS removed_on TIMESTAMPTZ`,
+	`ALTER TABLE sheets ADD COLUMN IF NOT EXISTS last_opened_on TIMESTAMPTZ`,
+	`ALTER TABLE boards ADD COLUMN IF NOT EXISTS keep BOOLEAN NOT NULL DEFAULT FALSE`,
+	`ALTER TABLE boards ADD COLUMN IF NOT EXISTS removed_on TIMESTAMPTZ`,
+	`ALTER TABLE boards ADD COLUMN IF NOT EXISTS last_opened_on TIMESTAMPTZ`,
+	`ALTER TABLE explore_views ADD COLUMN IF NOT EXISTS keep BOOLEAN NOT NULL DEFAULT FALSE`,
+	`ALTER TABLE explore_views ADD COLUMN IF NOT EXISTS removed_on TIMESTAMPTZ`,
+	`ALTER TABLE explore_views ADD COLUMN IF NOT EXISTS last_opened_on TIMESTAMPTZ`,
+	`ALTER TABLE access_policies ADD COLUMN IF NOT EXISTS retention_held BOOLEAN NOT NULL DEFAULT FALSE`,
+	`CREATE INDEX IF NOT EXISTS reports_removed_idx
+		ON reports (lower(owner_email), removed_on) WHERE removed_on IS NOT NULL`,
+	`CREATE INDEX IF NOT EXISTS sheets_removed_idx
+		ON sheets (owner_email, removed_on) WHERE removed_on IS NOT NULL`,
+	`CREATE INDEX IF NOT EXISTS boards_removed_idx
+		ON boards (owner_email, removed_on) WHERE removed_on IS NOT NULL`,
+	`CREATE INDEX IF NOT EXISTS explore_views_removed_idx
+		ON explore_views (owner_email, removed_on) WHERE removed_on IS NOT NULL`,
+	// Each warning sent, by the due date it announced, so the same date is
+	// never announced twice and removal can wait out the warning period.
+	`CREATE TABLE IF NOT EXISTS retention_warnings (
+		kind      TEXT NOT NULL,
+		item_id   TEXT NOT NULL,
+		due_on    DATE NOT NULL,
+		warned_on TIMESTAMPTZ NOT NULL DEFAULT now(),
+		PRIMARY KEY (kind, item_id, due_on)
+	)`,
+
+	// What each home page figure read as for each recent period, every time
+	// its card was worked out, with how long after the period ended, so how
+	// complete a young period usually is can be learned. Kept under the
+	// card's own scope. figure names the measure and date field alone, for
+	// an unusual alert on the same figure. See lib/briefing/observations.
+	`CREATE TABLE IF NOT EXISTS figure_observations (
+		scope       TEXT NOT NULL,
+		card_digest TEXT NOT NULL,
+		figure      TEXT NOT NULL,
+		source_key  TEXT NOT NULL,
+		period      DATE NOT NULL,
+		observed_on TIMESTAMPTZ NOT NULL,
+		value       DOUBLE PRECISION NOT NULL,
+		age_hours   DOUBLE PRECISION NOT NULL,
+		PRIMARY KEY (scope, card_digest, period, observed_on)
+	)`,
+	`CREATE INDEX IF NOT EXISTS figure_observations_figure_idx
+		ON figure_observations (scope, figure, period)`,
+	`CREATE INDEX IF NOT EXISTS figure_observations_time_idx
+		ON figure_observations (observed_on)`,
 ];
 
 // Creates anything missing. Safe to run on every startup.
@@ -1505,6 +1718,22 @@ export function schemaStatus(): {
 // that could differ between builds.
 const schemaLockKey = 8577402;
 
+// What the statements and migrations amount to, so a process can tell whether
+// the store already holds exactly this schema. Any change to either list,
+// including its order, changes the hash.
+function schemaHash(): string {
+	return createHash("sha256")
+		.update(JSON.stringify({ statements, migrations }))
+		.digest("hex");
+}
+
+// One row recording the hash of the last pass that applied every statement.
+const stateTable = `CREATE TABLE IF NOT EXISTS platform_schema_state (
+	id         INTEGER PRIMARY KEY CHECK (id = 1),
+	hash       TEXT NOT NULL,
+	applied_on TIMESTAMPTZ NOT NULL DEFAULT now()
+)`;
+
 export async function initPlatformSchema(): Promise<void> {
 	// One initialiser at a time, across every process and every replica.
 	//
@@ -1531,6 +1760,28 @@ export async function initPlatformSchema(): Promise<void> {
 		// the next request because the memo is cleared on failure.
 		await sql("SELECT 1");
 
+		// Every process runs this, usually against a store that already holds
+		// the same schema. A matching hash means the last full pass applied
+		// every statement in these lists, so the pass is skipped.
+		//
+		// A state table that cannot be read is not a reason to stop. The full
+		// pass runs instead, as it would with no record at all.
+		const hash = schemaHash();
+		const stored = await (async () => {
+			await sql(stateTable);
+			return await sql<{ hash: string }>(
+				`SELECT hash FROM platform_schema_state WHERE id = 1`,
+			);
+		})().catch((error) => {
+			console.warn("Schema state could not be read:", error);
+			return [] as { hash: string }[];
+		});
+		if (stored[0]?.hash === hash) {
+			lastFailures = [];
+			lastAppliedAt = Date.now();
+			return;
+		}
+
 		await applyAll("setup", statements);
 
 		// Between the two, because a migration is an ALTER TABLE and that is the
@@ -1548,6 +1799,20 @@ export async function initPlatformSchema(): Promise<void> {
 
 		await applyAll("migration", migrations);
 		lastAppliedAt = Date.now();
+
+		// Recorded only after a pass with no failures, so a statement that did
+		// not apply is tried again on the next start.
+		if (lastFailures.length === 0) {
+			await sql(
+				`INSERT INTO platform_schema_state (id, hash, applied_on)
+				 VALUES (1, $1, now())
+				 ON CONFLICT (id) DO UPDATE
+				 SET hash = EXCLUDED.hash, applied_on = EXCLUDED.applied_on`,
+				[hash],
+			).catch((error) => {
+				console.warn("Schema state could not be recorded:", error);
+			});
+		}
 	});
 }
 
@@ -1563,6 +1828,11 @@ export async function sweepExpired(): Promise<void> {
 	// A card from a week ago is no longer what anyone is shown first.
 	await sql(
 		`DELETE FROM briefing_cards WHERE day < current_date - interval '7 days'`,
+	);
+	// Readings are learned from over five weeks. Older ones say nothing more.
+	await sql(
+		`DELETE FROM figure_observations
+		 WHERE observed_on < now() - interval '45 days'`,
 	);
 	await sql(`DELETE FROM reader_access WHERE expires_on < now()`);
 	await sql(`DELETE FROM reader_policy WHERE expires_on < now()`);

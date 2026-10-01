@@ -17,7 +17,7 @@ import { createPageAlert, setSubscription } from "../alerts/pageStore";
 import { resolvePolicyClass } from "../auth/policy";
 import { notify } from "../notify/store";
 import { createSheet } from "../sheets/store";
-import { createBoard, updateBoard } from "../boards/store";
+import { createBoard } from "../boards/store";
 import type { BoardItem } from "../boards/definition";
 import { demoBoard } from "./board";
 import {
@@ -418,10 +418,9 @@ async function seedBoard(): Promise<void> {
 		];
 	});
 	const author = identityOf(localIdentityEmail);
-	const board = await createBoard(author, demoBoard.title, []);
-	await updateBoard(author, board.id, {
-		definition: { items, links: demoBoard.links },
-		baseVersion: board.version,
+	await createBoard(author, demoBoard.title, [], {
+		items,
+		links: demoBoard.links,
 	});
 }
 

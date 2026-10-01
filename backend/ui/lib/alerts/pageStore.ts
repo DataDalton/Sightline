@@ -65,9 +65,6 @@ export class PageAlertError extends Error {
 // is a warehouse read per scope on its schedule.
 export const maxPerPage = 25;
 
-// How many page alerts one person may follow.
-export const maxSubscriptions = 200;
-
 // How long a confirmation that a subscriber can read a dataset stands before a
 // visit writes it again, as for personal alerts. See confirmationRefresh in
 // lib/alerts/runner.
@@ -577,15 +574,6 @@ export async function deletePageAlert(
 
 // --- Following -------------------------------------------------------------
 
-async function subscriptionCount(email: string): Promise<number> {
-	const rows = await sql<{ n: number }>(
-		`SELECT count(*)::int AS n FROM page_alert_subscriptions
-		 WHERE email = $1`,
-		[email],
-	);
-	return rows[0]?.n ?? 0;
-}
-
 // Writes or refreshes subscriptions. The confirmation of access is taken from
 // the caller's own grant on each dataset, as a personal alert's is, and a mute
 // is only changed when one is given.
@@ -637,14 +625,6 @@ export async function setSubscription(
 			[row.alert_id, email],
 		);
 	} else {
-		if (
-			!row.subscribed &&
-			(await subscriptionCount(email)) >= maxSubscriptions
-		) {
-			throw new PageAlertError(
-				`You follow ${maxSubscriptions} page alerts, the most one person can. Stop following one to add another.`,
-			);
-		}
 		await upsertSubscriptions(
 			identity,
 			[{ alertId: row.alert_id, sourceKey: row.source_key }],
@@ -665,15 +645,6 @@ export async function subscribeAll(
 ): Promise<PageAlertList> {
 	const list = await listPageAlerts(identity, policy, pageId);
 	const missing = list.alerts.filter((a) => !a.subscribed);
-	const email = identity.email.toLowerCase();
-	if (
-		missing.length > 0 &&
-		(await subscriptionCount(email)) + missing.length > maxSubscriptions
-	) {
-		throw new PageAlertError(
-			`That would take you past ${maxSubscriptions} page alerts, the most one person can follow.`,
-		);
-	}
 	await upsertSubscriptions(
 		identity,
 		missing.map((a) => ({

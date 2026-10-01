@@ -7,6 +7,12 @@ import { listPersonalPages } from "../platform/personal";
 import { listReports } from "../platform/reports";
 import { listFavourites } from "../platform/search";
 import { reachableSet } from "../platform/sources";
+import { cachedDefinition, peekDefinition } from "../platform/definitionCache";
+import {
+	peerUsage,
+	rankByPeers,
+	type PeerUsage,
+} from "../platform/peerRanking";
 import { getSource } from "../semantic/registry";
 import type { SemanticSource } from "../semantic/types";
 import { listChoices, type BriefingChoice } from "./choices";
@@ -76,74 +82,85 @@ async function mostOpened(email: string): Promise<string[]> {
 // Reports most opened by other people resolved to the reader's policy class,
 // which is everyone with the same access. Counted by people first, so one
 // enthusiast opening a report all day does not outrank one a whole team reads.
+//
+// The opens per report and reader are the same for everyone in the class, so
+// they are read once per class and held briefly. Each reader's own opens are
+// taken out in memory.
 async function popularWithPeers(
 	email: string,
 	policyId: string,
 ): Promise<string[]> {
-	const rows = await sql<{ report_id: string }>(
-		`SELECT report_id::text AS report_id
-		 FROM usage_events
-		 WHERE policy_class = $2 AND lower(user_email) <> $1
-		   AND event_type = 'page_view' AND report_id IS NOT NULL
-		   AND occurred_on > now() - make_interval(days => $3)
-		 GROUP BY report_id
-		 ORDER BY count(DISTINCT lower(user_email)) DESC, count(*) DESC
-		 LIMIT 20`,
-		[email, policyId, usageDays],
+	const usage = await cachedDefinition<PeerUsage>(
+		`briefing:peers:${policyId}`,
+		async () => {
+			const rows = await sql<{
+				report_id: string;
+				email: string;
+				opens: string;
+			}>(
+				`SELECT report_id::text AS report_id, lower(user_email) AS email,
+				        count(*)::text AS opens
+				 FROM usage_events
+				 WHERE policy_class = $1
+				   AND event_type = 'page_view' AND report_id IS NOT NULL
+				   AND occurred_on > now() - make_interval(days => $2)
+				 GROUP BY report_id, lower(user_email)`,
+				[policyId, usageDays],
+			);
+			return peerUsage(
+				rows.map((r) => ({
+					reportId: r.report_id,
+					email: r.email,
+					opens: Number(r.opens),
+				})),
+			);
+		},
 	);
-	return rows.map((r) => r.report_id);
+	return rankByPeers(usage, email, 20);
 }
 
-// The parts of each report the selection reads, for every report at once.
-// One question for all of them rather than several per report. A visual with no dataset of its own reads its page's, and a page
-// with none reads its report's, as on the report itself.
-async function reportShapes(reportIds: string[]): Promise<WatchReport[]> {
-	if (reportIds.length === 0) return [];
-	const rows = await sql<{
-		report_id: string;
-		slug: string;
-		title: string;
-		report_source: string | null;
-		page_id: string;
-		page_source: string | null;
-		visual_type: string | null;
-		visual_source: string | null;
-		dimensions: string[] | null;
-		measures: string[] | null;
-		targets: Record<string, unknown> | null;
-	}>(
-		`SELECT r.report_id::text AS report_id, r.slug, r.title,
-		        r.source_key AS report_source,
-		        p.page_id::text AS page_id, p.source_key AS page_source,
-		        v.visual_type, v.source_key AS visual_source,
-		        v.config->'dimensions' AS dimensions,
-		        v.config->'measures' AS measures,
-		        v.config->'options'->'targets' AS targets
-		 FROM reports r
-		 JOIN report_pages p ON p.report_id = r.report_id AND p.is_active
-		 LEFT JOIN report_visuals v ON v.page_id = p.page_id AND v.is_active
-		 WHERE r.report_id = ANY($1::uuid[]) AND r.is_active
-		 ORDER BY r.report_id, p.sort_order, p.title, v.sort_order`,
-		[reportIds],
-	);
-	const reports = new Map<string, WatchReport>();
+// The pages and visuals of one report as the selection reads them, before
+// a missing source is filled in from the page or the report.
+interface ShapeRow {
+	page_id: string;
+	page_source: string | null;
+	visual_type: string | null;
+	visual_source: string | null;
+	dimensions: string[] | null;
+	measures: string[] | null;
+	targets: Record<string, unknown> | null;
+}
+
+// What identifies one state of a report. Every save moves the version and the
+// modification time, and a move or rename moves the modification time, so a
+// held shape under an old stamp is never read again.
+interface ReportStamp {
+	report_id: string;
+	slug: string;
+	title: string;
+	source_key: string | null;
+	version: string;
+	modified_on: string;
+}
+
+function shapeKey(stamp: ReportStamp): string {
+	return `briefing:shape:${stamp.report_id}|${stamp.version}|${stamp.modified_on}`;
+}
+
+function toWatchReport(stamp: ReportStamp, rows: ShapeRow[]): WatchReport {
+	const report: WatchReport = {
+		reportId: stamp.report_id,
+		slug: stamp.slug,
+		title: stamp.title,
+		sourceKey: stamp.source_key,
+		pages: [],
+	};
 	const pages = new Map<string, WatchReport["pages"][number]>();
 	for (const row of rows) {
-		let report = reports.get(row.report_id);
-		if (!report) {
-			report = {
-				reportId: row.report_id,
-				slug: row.slug,
-				title: row.title,
-				sourceKey: row.report_source,
-				pages: [],
-			};
-			reports.set(row.report_id, report);
-		}
 		let page = pages.get(row.page_id);
 		if (!page) {
 			page = {
-				sourceKey: row.page_source ?? row.report_source,
+				sourceKey: row.page_source ?? stamp.source_key,
 				visuals: [],
 			};
 			pages.set(row.page_id, page);
@@ -164,10 +181,75 @@ async function reportShapes(reportIds: string[]): Promise<WatchReport[]> {
 			},
 		});
 	}
-	// In the order asked for, which is the reader's order.
-	return reportIds
-		.map((id) => reports.get(id))
-		.filter((r): r is WatchReport => r !== undefined);
+	return report;
+}
+
+// The parts of each report the selection reads. A visual with no dataset of
+// its own reads its page's, and a page with none reads its report's, as on the
+// report itself.
+//
+// One cheap question for every report's stamp, then the pages and visuals of
+// only the reports whose stamp has no shape held for it, in one question for
+// all of them. The rest come from memory.
+async function reportShapes(reportIds: string[]): Promise<WatchReport[]> {
+	if (reportIds.length === 0) return [];
+	const stamps = await sql<ReportStamp>(
+		`SELECT report_id::text AS report_id, slug, title, source_key,
+		        version::text AS version, modified_on::text AS modified_on
+		 FROM reports
+		 WHERE report_id = ANY($1::uuid[]) AND is_active`,
+		[reportIds],
+	);
+
+	const held = new Map<string, ShapeRow[]>();
+	const missing: string[] = [];
+	for (const stamp of stamps) {
+		const rows = peekDefinition<ShapeRow[]>(shapeKey(stamp));
+		if (rows) held.set(stamp.report_id, rows);
+		else missing.push(stamp.report_id);
+	}
+
+	if (missing.length > 0) {
+		const rows = await sql<ShapeRow & { report_id: string }>(
+			`SELECT p.report_id::text AS report_id,
+			        p.page_id::text AS page_id, p.source_key AS page_source,
+			        v.visual_type, v.source_key AS visual_source,
+			        v.config->'dimensions' AS dimensions,
+			        v.config->'measures' AS measures,
+			        v.config->'options'->'targets' AS targets
+			 FROM report_pages p
+			 LEFT JOIN report_visuals v ON v.page_id = p.page_id AND v.is_active
+			 WHERE p.report_id = ANY($1::uuid[]) AND p.is_active
+			 ORDER BY p.report_id, p.sort_order, p.title, v.sort_order`,
+			[missing],
+		);
+		const byReport = new Map<string, ShapeRow[]>(
+			missing.map((id) => [id, []]),
+		);
+		for (const { report_id, ...row } of rows) {
+			byReport.get(report_id)?.push(row);
+		}
+		for (const stamp of stamps) {
+			const loaded = byReport.get(stamp.report_id);
+			if (!loaded) continue;
+			held.set(stamp.report_id, loaded);
+			// Kept under the stamp it was read at. A report saved since the
+			// stamp was read is held under a stamp nobody asks for again.
+			void cachedDefinition(shapeKey(stamp), async () => loaded);
+		}
+	}
+
+	// In the order asked for, which is the reader's order. A report with no
+	// active page has nothing to read, as when the pages were joined in.
+	const byId = new Map(stamps.map((s) => [s.report_id, s]));
+	const out: WatchReport[] = [];
+	for (const id of reportIds) {
+		const stamp = byId.get(id);
+		const rows = held.get(id);
+		if (!stamp || !rows || rows.length === 0) continue;
+		out.push(toWatchReport(stamp, rows));
+	}
+	return out;
 }
 
 async function unusualAlerts(reportIds: string[]): Promise<WatchAlert[]> {

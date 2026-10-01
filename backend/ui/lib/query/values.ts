@@ -8,7 +8,12 @@ import { getSource } from "../semantic/registry";
 import { settings } from "../settings";
 import { QuerySpecError } from "./spec";
 import { assertCanReadSource, QueryAccessError } from "./execute";
-import { isShareable } from "./cache";
+import {
+	buildSharedKey,
+	isShareable,
+	sharedValueGet,
+	sharedValueSet,
+} from "./cache";
 import type { QueryFilter } from "./spec";
 import { compileQuery } from "./builder";
 import { changedSince } from "../freshness/marks";
@@ -62,7 +67,35 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<ValuesResult>>();
-const maxCacheEntries = 500;
+// Each policy class holds its own list for every field, search and page it
+// reads, and the ceiling leaves room for many classes using filters at once.
+// A list is at most one page of short strings.
+const maxCacheEntries = 2000;
+
+// Everything that changes which values come back, as one string.
+function requestIdentity(request: ValuesRequest): string {
+	return JSON.stringify({
+		s: request.sourceKey,
+		f: request.field,
+		q: request.search ?? "",
+		l: request.limit ?? defaultLimit,
+		o: request.offset ?? 0,
+		// Filters change the result set, so they belong in the key.
+		// Each condition as JSON, so a list of values cannot join to
+		// the same text as a different list, and a negated condition
+		// never shares a key with the plain one.
+		fl: (request.filters ?? [])
+			.map((x) =>
+				JSON.stringify([
+					x.field,
+					x.op,
+					x.values ?? x.value ?? "",
+					x.negate === true,
+				]),
+			)
+			.sort(),
+	});
+}
 
 function cacheKey(
 	request: ValuesRequest,
@@ -70,29 +103,7 @@ function cacheKey(
 	scoped: boolean,
 ): string {
 	const digest = createHash("sha256")
-		.update(
-			JSON.stringify({
-				s: request.sourceKey,
-				f: request.field,
-				q: request.search ?? "",
-				l: request.limit ?? defaultLimit,
-				o: request.offset ?? 0,
-				// Filters change the result set, so they belong in the key.
-				// Each condition as JSON, so a list of values cannot join to
-				// the same text as a different list, and a negated condition
-				// never shares a key with the plain one.
-				fl: (request.filters ?? [])
-					.map((x) =>
-						JSON.stringify([
-							x.field,
-							x.op,
-							x.values ?? x.value ?? "",
-							x.negate === true,
-						]),
-					)
-					.sort(),
-			}),
-		)
+		.update(requestIdentity(request))
 		.digest("hex")
 		.slice(0, 32);
 	// Policy scope is a literal prefix rather than hashed input, so no digest
@@ -178,12 +189,34 @@ export async function getDistinctValues(
 	const existing = shareable ? inflight.get(key) : undefined;
 	if (existing) return existing;
 
+	// The same question in the shared tier, so a list one replica read is
+	// reused on every other. Keyed and guarded exactly as answers are.
+	const sharedKey = buildSharedKey(
+		source,
+		policy,
+		"values",
+		requestIdentity(request),
+	);
+
 	// Finished in a callback rather than inside the body. The body can throw
 	// before its first await, on a filter naming an unknown field, and a
 	// finally there would run before the promise is registered below, leaving
 	// a rejected promise in the map that every later caller with the same key
 	// would be handed.
 	const pending = (async (): Promise<ValuesResult> => {
+		if (shareable) {
+			const held = await sharedValueGet<ValuesResult>(sharedKey);
+			if (held) {
+				cache.set(key, {
+					value: held.value,
+					computedAt: held.computedAt,
+					expiresAt: held.expiresAt,
+				});
+				evictIfNeeded();
+				return { ...held.value, source: "cache" };
+			}
+		}
+
 		// Reuse the compiler so the filter and identifier handling is the
 		// same as any other read, with one place deciding how a value is bound.
 		const filters = [...(request.filters ?? [])];
@@ -241,17 +274,23 @@ export async function getDistinctValues(
 		if (shareable) {
 			// Dated from here rather than from the start of the request, so
 			// a slow warehouse does not shorten the life of its own answer.
-			cache.set(key, {
-				value: result,
-				computedAt: Date.now(),
-				// Four times the result TTL, matching ranges. The set of
-				// values a column takes changes when the data lands, not
-				// while somebody is using a filter, so holding these as
-				// briefly as a query answer refetched them constantly for
-				// no change.
-				expiresAt: Date.now() + settings().resultTtlSeconds * 4 * 1000,
-			});
+			const computedAt = Date.now();
+			// Four times the result TTL, matching ranges. The set of values
+			// a column takes changes when the data lands, not while somebody
+			// is using a filter, so holding these as briefly as a query
+			// answer refetched them constantly for no change.
+			const expiresAt =
+				computedAt + settings().resultTtlSeconds * 4 * 1000;
+			cache.set(key, { value: result, computedAt, expiresAt });
 			evictIfNeeded();
+			sharedValueSet(
+				sharedKey,
+				policy,
+				source,
+				result,
+				computedAt,
+				expiresAt,
+			);
 		}
 		return result;
 	})().finally(() => {

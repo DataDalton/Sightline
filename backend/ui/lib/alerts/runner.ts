@@ -18,6 +18,14 @@ import {
 	todayIn,
 	windowStart,
 } from "./anomaly";
+import {
+	ageOf,
+	decideLoad,
+	evenness,
+	judgeSettling,
+	type LearnedSettling,
+	type LoadEvidence,
+} from "./completeness";
 import { isDatabricksApp } from "../runtime";
 import { getSource, listSources } from "../semantic/registry";
 import { settings } from "../settings";
@@ -25,13 +33,16 @@ import {
 	describeFirings,
 	evaluate,
 	maxGroups,
+	maxPending,
 	type AlertDefinition,
+	type AlertState,
 	type Firing,
 	type Reading,
 } from "./rule";
 import { BatchReads } from "./reads";
 import { confirmSubscriptions } from "./pageStore";
 import { nextRun } from "./schedule";
+import { unusualContext } from "./settlingContext";
 import type { RunIdentity } from "./shared";
 import {
 	recordAccess,
@@ -122,25 +133,65 @@ export function probeSpec(
 
 export type ReadSpec = (spec: QuerySpec) => Promise<Row[]>;
 
+// What an unusual alert knows besides its own rows. See
+// lib/alerts/settlingContext.
+export interface UnusualContext {
+	// When the dataset's tables last loaded, or null when not known.
+	load: LoadEvidence | null;
+	// How complete a young period of the figure usually is, when learned.
+	learned: LearnedSettling | null;
+	// Whether the measure is a plain sum or count.
+	additive: boolean;
+	now?: number;
+}
+
+// The latest period whose load has landed is judged, never one still waiting
+// for it. A low reading in a young period is then weighed as the briefing
+// weighs it, and comes back confirmed or as an early signal. Periods an
+// earlier check saw only as early signals are judged again first, from the
+// same read, so one that is confirmed later is still reported. See
+// lib/alerts/completeness.
 export async function readUnusual(
 	source: SemanticSource,
 	definition: AlertDefinition,
 	read: ReadSpec,
+	context: UnusualContext | null = null,
+	previous: AlertState = {},
 ): Promise<Reading[]> {
 	const settings = definition.anomaly;
 	const probe = probeSpec(source, definition);
 	if (!settings || !probe) return [];
 	const timeField = settings.timeField;
 	const base = alertSpec(source, definition);
+	const timeZone = definition.schedule.timeZone;
+	const now = context?.now ?? Date.now();
 
 	const recent = await read(probe);
 	const keys = recent
 		.map((row) => periodKey(row[timeField]))
 		.filter((k): k is string => k !== null);
-	const today = todayIn(definition.schedule.timeZone);
+	const today = todayIn(timeZone, new Date(now));
 	const spacing = spacingDays(keys);
 	const target = targetPeriod(keys, spacing, today);
 	if (!target) return [];
+
+	const decision = decideLoad(
+		context?.load ?? null,
+		keys,
+		target,
+		spacing,
+		timeZone,
+		today,
+	);
+	// Nothing read has loaded yet, so there is nothing to judge.
+	const judged = decision.judged;
+	if (!judged) return [];
+	const again = [
+		...new Set(Object.values(previous).flatMap((s) => s.pending ?? [])),
+	]
+		.filter((p) => p < judged)
+		.sort()
+		.slice(-maxPending);
 
 	const rows = await read(
 		parseQuerySpec({
@@ -153,23 +204,82 @@ export async function readUnusual(
 				{
 					field: timeField,
 					op: "gte",
-					value: windowStart(settings, spacing, target),
+					value: windowStart(settings, spacing, again[0] ?? judged),
 				},
-				{ field: timeField, op: "lte", value: target },
+				{ field: timeField, op: "lte", value: judged },
 			],
 			sort: [{ field: timeField, direction: "desc" }],
 			limit: maxLimit,
 			offset: 0,
 		}),
 	);
-	const { readings } = readAnomalies(rows, {
-		timeField,
-		groupBy: definition.groupBy,
-		measure: definition.measure,
-		settings,
-		today,
-	});
-	return readings.slice(0, maxGroups);
+
+	const judgePeriod = (period: string): Reading[] => {
+		const upTo = rows.filter((row) => {
+			const key = periodKey(row[timeField]);
+			return key !== null && key <= period;
+		});
+		const found = readAnomalies(upTo, {
+			timeField,
+			groupBy: definition.groupBy,
+			measure: definition.measure,
+			settings,
+			today,
+		});
+		if (found.period !== period) return [];
+		const readings = found.readings.slice(0, maxGroups);
+		const ageHours = ageOf(period, spacing, timeZone, now);
+		// Each group against its usual. A drop spread evenly over every
+		// group looks like a load gap, one in a single group does not.
+		const spread = definition.groupBy
+			? evenness(
+					new Map(
+						readings
+							.filter((r) => r.value !== null && r.usual !== null)
+							.map((r) => [r.group ?? "", r.value as number]),
+					),
+					new Map(
+						readings
+							.filter((r) => r.value !== null && r.usual !== null)
+							.map((r) => [r.group ?? "", r.usual as number]),
+					),
+				)
+			: null;
+		return readings.map((r) => {
+			if (r.value === null) return r;
+			const own =
+				spread?.kind === "led" && spread.top !== (r.group ?? "")
+					? { ...spread, kind: "mixed" as const }
+					: spread;
+			const settling = judgeSettling({
+				value: r.value,
+				usual: r.usual,
+				low: r.low,
+				unusual: r.unusual,
+				additive: context?.additive ?? false,
+				ageHours,
+				spacing,
+				landed: decision.known,
+				learned: context?.learned ?? null,
+				evenness: own,
+				settings,
+			});
+			return {
+				...r,
+				unusual: settling.level === "confirmed",
+				early: settling.level === "early",
+				reason: settling.reason,
+				ageHours,
+			};
+		});
+	};
+
+	return [
+		...again.flatMap((period) =>
+			judgePeriod(period).map((r) => ({ ...r, again: true })),
+		),
+		...judgePeriod(judged),
+	];
 }
 
 // Where a notification takes somebody: Explore, holding the same numbers the
@@ -234,7 +344,13 @@ async function check(
 		// the same scope share one warehouse query.
 		const read: ReadSpec = (spec) => reads.read(source, spec, restriction);
 		if (definition.condition === "unusual") {
-			readings = await readUnusual(source, definition, read);
+			readings = await readUnusual(
+				source,
+				definition,
+				read,
+				await unusualContext(source, definition),
+				state,
+			);
 		} else {
 			const rows = await read(alertSpec(source, definition));
 			readings = readingsFrom(definition, rows);
@@ -641,10 +757,15 @@ export async function previewAlert(
 	const { definition, source } = await checkDefinition(identity, raw);
 	let readings: Reading[];
 	if (definition.condition === "unusual") {
-		readings = await readUnusual(source, definition, (spec) => {
-			const compiled = compileQuery(source, spec);
-			return run(compiled.sql, compiled.params);
-		});
+		readings = await readUnusual(
+			source,
+			definition,
+			(spec) => {
+				const compiled = compileQuery(source, spec);
+				return run(compiled.sql, compiled.params);
+			},
+			await unusualContext(source, definition),
+		);
 	} else {
 		const compiled = compileQuery(source, alertSpec(source, definition));
 		const rows = await run(compiled.sql, compiled.params);

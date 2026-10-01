@@ -237,6 +237,7 @@ export default function AdminView() {
 			case "caching":
 			case "assistant":
 			case "notifications":
+			case "retention":
 				return <ConfigurationSection group={pane} />;
 		}
 
@@ -900,8 +901,8 @@ interface ConfigValues {
 	assistantEndpoint: string;
 	assistantEndpointUrl: string;
 	alertsEnabled: boolean;
-	maxAlertsPerUser: number;
 	pushEnabled: boolean;
+	retentionMonths: number;
 }
 
 // What an admin can change without a redeploy.
@@ -1535,13 +1536,6 @@ function ConfigurationSection({ group }: { group: PaneId }) {
 								checked={values.alertsEnabled}
 								onChange={(v) => set({ alertsEnabled: v })}
 							/>
-							<NumberSetting
-								label="Alerts per person"
-								hint="The most one person may keep."
-								unit="alerts"
-								value={values.maxAlertsPerUser}
-								onChange={(v) => set({ maxAlertsPerUser: v })}
-							/>
 						</SettingGroup>
 
 						<SettingGroup
@@ -1558,6 +1552,21 @@ function ConfigurationSection({ group }: { group: PaneId }) {
 
 						<NotificationsActivity />
 					</>
+				)}
+
+				{group === "retention" && (
+					<SettingGroup
+						title="Unused personal items"
+						blurb="Personal pages, sheets, boards and saved explorations nobody has opened for this long are removed. An item something still reads, such as a scheduled page or a page alert, counts as in use, and an owner can mark any of theirs Keep."
+					>
+						<NumberSetting
+							label="Remove after"
+							hint="Zero turns retention off. Owners are told about a month before, and a removed item waits under Recently removed in My pages for 30 days before it is deleted. Assistant conversations are deleted after the same time without a warning."
+							unit="months"
+							value={values.retentionMonths}
+							onChange={(v) => set({ retentionMonths: v })}
+						/>
+					</SettingGroup>
 				)}
 			</div>
 
@@ -1999,13 +2008,20 @@ interface AccessGrantRow {
 
 interface AccessResponse {
 	grants: AccessGrantRow[];
+	// Every active grant, of which grants holds the first page.
+	grantsTotal?: number;
 	categories: { id: string; name: string }[];
 	reports: { id: string; name: string }[];
 }
 
+// Grants listed at first, and added each time more are asked for.
+const grantPage = 200;
+
 function AccessGrants() {
-	const { data, isLoading, mutate } =
-		useSWR<AccessResponse>("/api/admin/access");
+	const [shown, setShown] = useState(grantPage);
+	const { data, isLoading, mutate } = useSWR<AccessResponse>(
+		`/api/admin/access?limit=${shown}`,
+	);
 
 	const showSkeleton = useDeferredLoading(isLoading);
 
@@ -2091,6 +2107,7 @@ function AccessGrants() {
 	};
 
 	const grants = data?.grants ?? [];
+	const grantsTotal = data?.grantsTotal ?? grants.length;
 	const ready = subjectId.trim() !== "" && resourceId !== "";
 
 	return (
@@ -2251,6 +2268,18 @@ function AccessGrants() {
 					</tbody>
 				</table>
 			</div>
+			{grantsTotal > grants.length && (
+				<div className={styles.rowActions}>
+					<button
+						type="button"
+						className={styles.linkButton}
+						onClick={() => setShown((n) => n + grantPage)}
+					>
+						Show more ({grants.length.toLocaleString()} of{" "}
+						{grantsTotal.toLocaleString()})
+					</button>
+				</div>
+			)}
 		</>
 	);
 }

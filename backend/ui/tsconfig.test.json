@@ -178,6 +178,17 @@
 		"lib/visuals/emptyState.ts",
 		"lib/visuals/emptyState.test.ts",
 		"lib/visuals/forecast.ts",
-		"lib/visuals/forecast.test.ts"
+		"lib/visuals/forecast.test.ts",
+		"lib/query/gate.test.ts",
+		"lib/platform/peerRanking.ts",
+		"lib/platform/peerRanking.test.ts",
+		"lib/platform/fieldCounts.ts",
+		"lib/platform/fieldCounts.test.ts",
+		"lib/semantic/catalogBatch.test.ts",
+		"lib/assistant/conversationSave.test.ts",
+		"lib/retention/rules.test.ts",
+		"lib/semantic/aggregation.ts",
+		"lib/alerts/completeness.ts",
+		"lib/alerts/completeness.test.ts"
 	]
 }

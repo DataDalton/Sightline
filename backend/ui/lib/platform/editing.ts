@@ -1,7 +1,8 @@
 import { sql, transaction } from "../data/lakebase";
 import type { PolicyClass } from "../auth/policy";
 import { insertLog } from "../activityLog";
-import { invalidateDefinitions } from "./definitionCache";
+import { invalidateReport } from "./curated";
+import { writeVersion } from "./versionWrite";
 import {
 	effective,
 	refuse,
@@ -560,15 +561,17 @@ export async function applyEdits(
 	await assertDefinitionsAreDrawable(request.operations);
 	await assertPagesAreUnlocked(request.reportId, request.operations);
 
+	let reportSlug: string | null = null;
 	const result = await transaction(async (client) => {
 		// Locking the report row serializes concurrent edits to it. Without
 		// this, two editors could both read version 4, both write version 5,
 		// and one change would vanish.
-		const current = await client.query<{ version: string }>(
-			`SELECT version FROM reports WHERE report_id = $1 FOR UPDATE`,
+		const current = await client.query<{ version: string; slug: string }>(
+			`SELECT version, slug FROM reports WHERE report_id = $1 FOR UPDATE`,
 			[request.reportId],
 		);
 		const currentVersion = Number(current.rows[0]?.version ?? 0);
+		reportSlug = current.rows[0]?.slug ?? null;
 
 		if (currentVersion !== request.baseVersion) {
 			throw new EditConflictError(
@@ -822,7 +825,7 @@ export async function applyEdits(
 		// position lost, which is worse than not offering one.
 		//
 		// Not for a personal page. A curated report is edited by several people
-		// and read by many, so the record of who changed what earns three
+		// and read by many, so the record of who changed what earns a few
 		// queries and a full copy on every save. A page somebody is building
 		// for themselves is saved constantly by one person, and the history
 		// would be a copy of the whole page per keystroke-sized change, kept
@@ -850,21 +853,16 @@ export async function applyEdits(
 			[request.reportId],
 		);
 
-		await client.query(
-			`INSERT INTO report_versions (report_id, version, snapshot, created_by)
-			 VALUES ($1, $2, $3, $4)
-			 ON CONFLICT (report_id, version) DO NOTHING`,
-			[
-				request.reportId,
-				nextVersion,
-				JSON.stringify({
-					visuals: snapshot.rows,
-					pages: pageSnapshot.rows,
-					report: reportSnapshot.rows[0] ?? null,
-				}),
-				email,
-			],
-		);
+		await writeVersion(client, {
+			reportId: request.reportId,
+			version: nextVersion,
+			snapshot: {
+				visuals: snapshot.rows,
+				pages: pageSnapshot.rows,
+				report: reportSnapshot.rows[0] ?? null,
+			},
+			createdBy: email,
+		});
 
 		// Notification is a hint. Delivery is guaranteed by the sequence above,
 		// so a listener that missed this still catches up on its next poll.
@@ -902,8 +900,7 @@ export async function applyEdits(
 	// landing before the commit would load the old rows and keep them.
 	// Another replica serves the previous definition until its entry lapses,
 	// which is the price of not asking the database whether it is current.
-	invalidateDefinitions(`report-body:${request.reportId}`);
-	invalidateDefinitions("report:");
+	invalidateReport(request.reportId, [reportSlug]);
 	return result;
 }
 

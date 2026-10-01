@@ -33,7 +33,6 @@ export const alertsKey = "/api/alerts";
 export interface AlertList {
 	alerts: AlertRecord[];
 	enabled: boolean;
-	limit?: number;
 }
 
 function lastReading(alert: AlertRecord): string | null {
@@ -528,7 +527,6 @@ export function AlertsPanel() {
 	}
 
 	const alerts = data?.alerts ?? [];
-	const atLimit = data?.limit !== undefined && alerts.length >= data.limit;
 	const on = alerts.filter((a) => a.enabled).length;
 	const failing = alerts.filter(
 		(a) => a.enabled && a.lastStatus === "error",
@@ -610,12 +608,6 @@ export function AlertsPanel() {
 							type="button"
 							className={styles.primary}
 							onClick={() => setDialog({ editing: null })}
-							disabled={atLimit}
-							title={
-								atLimit
-									? `You have ${data?.limit} alerts, the most one person can keep.`
-									: undefined
-							}
 						>
 							New alert
 						</button>

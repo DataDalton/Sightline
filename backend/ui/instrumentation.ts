@@ -27,6 +27,7 @@ export async function register() {
 	const { pruneOps } = await import("@/lib/platform/editing");
 	const { rollupUsage } = await import("@/lib/telemetry/rollup");
 	const { runDailyFieldSync } = await import("@/lib/semantic/fieldWatch");
+	const { runRetention } = await import("@/lib/retention/pass");
 	const { closePool, tryAdvisoryLock } = await import("@/lib/data/lakebase");
 	// Identifies the sweep lock, so one replica sweeps at a time.
 	const sweepLockKey = 8577411;
@@ -151,12 +152,30 @@ export async function register() {
 	// Each source's fields compared with the catalogue once a day, so a field
 	// dropped or renamed upstream is noticed and its dependents told without
 	// anybody running a sync. Each source is skipped until a day has passed,
-	// so an hourly tick only does the work that is due.
+	// so an hourly tick only does the work that is due. A due source waits for
+	// the warehouse to be up on a reader's account, unless it is well past
+	// due. See lib/semantic/fieldWatch.
 	const fieldSyncTimer = setInterval(
 		() => void runDailyFieldSync(),
 		60 * 60 * 1000,
 	);
 	fieldSyncTimer.unref?.();
+
+	// Personal items unused for the period set under Retention are warned
+	// about, moved to their owner's bin, and deleted once the bin period is
+	// over. Every replica asks on the hour and the claim in the pass lets one
+	// of them run it once a day. Postgres only, so it never starts a stopped
+	// warehouse. See lib/retention.
+	const retentionTick = () =>
+		void runRetention().catch((error) => {
+			console.warn("Retention pass failed:", error);
+		});
+	const retentionTimer = setInterval(retentionTick, 60 * 60 * 1000);
+	retentionTimer.unref?.();
+	// Once shortly after start, so a deployment that restarts often still
+	// gets its daily pass.
+	const firstRetention = setTimeout(retentionTick, 5 * 60 * 1000);
+	firstRetention.unref?.();
 
 	// Alerts that can run while their owners are away.
 	//
@@ -207,6 +226,8 @@ export async function register() {
 		clearInterval(sweepTimer);
 		clearInterval(rollupTimer);
 		clearInterval(fieldSyncTimer);
+		clearInterval(retentionTimer);
+		clearTimeout(firstRetention);
 		clearInterval(alertTimer);
 		clearTimeout(firstRollup);
 		stopSettingsPolling();

@@ -31,6 +31,7 @@ interface SourceStatus {
 	watched: boolean;
 	live: boolean;
 	lastChanged: string | null;
+	lateTable: string | null;
 	expectedBy: string | null;
 	checkedOn: string | null;
 	pattern: string | null;
@@ -114,6 +115,10 @@ function when(iso: string): string {
 function explanation(source: SourceStatus): string {
 	switch (source.state) {
 		case "late":
+			if (source.lateTable && source.lastChanged)
+				return source.expectedBy
+					? `The ${source.lateTable} table has not updated since ${when(source.lastChanged)}. It was expected by ${when(source.expectedBy)}.`
+					: `The ${source.lateTable} table has not updated since ${when(source.lastChanged)}.`;
 			return source.expectedBy
 				? `Expected by ${when(source.expectedBy)} and nothing new has arrived.`
 				: "Past the time it usually updates and nothing new has arrived.";

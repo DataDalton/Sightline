@@ -14,6 +14,7 @@ export async function POST(request: NextRequest, { params }: IdContext) {
 			found.identity,
 			found.board.id,
 			body.items,
+			found.board,
 		);
 		return privateJson({
 			board: { id: board.id, title: board.title },

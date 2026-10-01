@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { subscribeAll } from "@/lib/alerts/pageStore";
-import { checkWriteRateLimit } from "@/lib/rateLimit";
 import { privateJson } from "../../notifications/guard";
 import { badBody, failed, pageAlertCaller, readBody } from "../respond";
 
@@ -8,8 +7,6 @@ import { badBody, failed, pageAlertCaller, readBody } from "../respond";
 
 // { pageId }
 export async function POST(request: NextRequest) {
-	const limited = checkWriteRateLimit(request);
-	if (limited) return limited;
 	const who = await pageAlertCaller(request);
 	if (who instanceof NextResponse) return who;
 	const body = await readBody(request);

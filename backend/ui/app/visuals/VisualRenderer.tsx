@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { WatchAction } from "../alerts/WatchAction";
 
 import { Chart } from "./chartEntry";
@@ -148,7 +148,13 @@ function displayTitle(visual: VisualSpec): string | null {
 //
 // Also says which visual everything inside belongs to and how its fields are
 // named, so an empty state anywhere inside can describe the page's filters.
-export function VisualRenderer(props: VisualRendererProps) {
+//
+// Memoised, so a page drawing again for a reason that leaves a visual's props
+// alone, such as a window resize or an edit to a different visual, does not
+// draw that visual again. Anything it reads from context still reaches it.
+export const VisualRenderer = memo(function VisualRenderer(
+	props: VisualRendererProps,
+) {
 	const { visual, sources } = props;
 	const source = visual.sourceKey ? sources[visual.sourceKey] : undefined;
 	const scope = useMemo(() => {
@@ -170,7 +176,7 @@ export function VisualRenderer(props: VisualRendererProps) {
 			</VisualScopeProvider>
 		</ErrorBoundary>
 	);
-}
+});
 
 function VisualBody({
 	visual,

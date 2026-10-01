@@ -823,6 +823,37 @@ export function evaluate(node: Node, ctx: Context): Value {
 	}
 }
 
+// The functions that read every row of a column rather than the row they are
+// on.
+const wholeColumnFunctions = new Set([
+	"TOTAL",
+	"SHARE",
+	"RANK",
+	"PREVIOUS",
+	"RUNNING",
+]);
+
+// Whether any of these formulas reads down a whole column, so its values can
+// only be worked out once every row is in. A formula that cannot be parsed
+// reads nothing.
+export function readsWholeColumn(formulas: { formula: string }[]): boolean {
+	const walk = (n: Node): boolean => {
+		if (n.k === "call") {
+			return wholeColumnFunctions.has(n.fn) || n.args.some(walk);
+		}
+		if (n.k === "un") return walk(n.a);
+		if (n.k === "bin") return walk(n.a) || walk(n.b);
+		return false;
+	};
+	return formulas.some((f) => {
+		try {
+			return walk(parse(f.formula));
+		} catch {
+			return false;
+		}
+	});
+}
+
 // --- A sheet's worth ---------------------------------------------------------
 
 export interface FormulaColumn {

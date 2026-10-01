@@ -1,5 +1,6 @@
 "use client";
 
+import { boardListKey, refreshBoardList } from "./boardList";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -7,6 +8,7 @@ import useSWR from "swr";
 import type { BoardSummary } from "../../lib/boards/store";
 import { ConfirmDialog } from "../components/shared/ConfirmDialog";
 import { ShareDialog } from "../sheets/ShareDialog";
+import { KeptBadge, markKeep } from "../mine/Retention";
 import styles from "../mine/MyPages.module.css";
 
 // The boards part of My pages: the reader's own, those shared with them, and
@@ -22,7 +24,7 @@ function when(iso: string): string {
 
 export function BoardsSection() {
 	const router = useRouter();
-	const { data, mutate } = useSWR<{ boards: BoardSummary[] }>("/api/boards/");
+	const { data, mutate } = useSWR<{ boards: BoardSummary[] }>(boardListKey);
 	const [creating, setCreating] = useState(false);
 	const [failure, setFailure] = useState<string | null>(null);
 	const [removing, setRemoving] = useState<BoardSummary | null>(null);
@@ -37,7 +39,7 @@ export function BoardsSection() {
 		setCreating(true);
 		setFailure(null);
 		try {
-			const response = await fetch("/api/boards/", {
+			const response = await fetch(boardListKey, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ title: "Untitled board" }),
@@ -47,6 +49,7 @@ export function BoardsSection() {
 				setFailure(body?.error ?? "Could not create a board.");
 				return;
 			}
+			refreshBoardList();
 			router.push(`/boards/${body.board.id}/`);
 		} catch {
 			setFailure("Could not create a board. Check the connection.");
@@ -75,6 +78,14 @@ export function BoardsSection() {
 		}
 	};
 
+	// The Keep mark, which only the owner of a board sets.
+	const toggleKeep = async (board: BoardSummary) => {
+		setFailure(null);
+		const problem = await markKeep("board", board.id, !board.keep);
+		if (problem) setFailure(problem);
+		await mutate();
+	};
+
 	const card = (board: BoardSummary) => (
 		<div key={board.id} className={styles.card}>
 			<Link href={`/boards/${board.id}/`} className={styles.cardTitle}>
@@ -95,6 +106,7 @@ export function BoardsSection() {
 						{board.sharedWith === 1 ? " person" : " people"}
 					</span>
 				) : null}
+				{board.permission === "owner" && board.keep && <KeptBadge />}
 				<span>{when(board.modifiedOn)}</span>
 			</span>
 			<div className={styles.cardActions}>
@@ -105,6 +117,20 @@ export function BoardsSection() {
 						onClick={() => setSharing(board)}
 					>
 						Share
+					</button>
+				)}
+				{board.permission === "owner" && (
+					<button
+						type="button"
+						className={styles.cardAction}
+						onClick={() => void toggleKeep(board)}
+						title={
+							board.keep
+								? "Let it be removed if nobody uses it for a long time"
+								: "Never remove it for going unused"
+						}
+					>
+						{board.keep ? "Stop keeping" : "Keep"}
 					</button>
 				)}
 				<button

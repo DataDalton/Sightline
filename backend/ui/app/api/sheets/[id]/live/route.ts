@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { tableData } from "@/lib/sheets/data";
+import { visibleKeys } from "@/lib/sheets/data";
 import { heartbeat, leaveSheet } from "@/lib/sheets/store";
 import { privateJson, readJson } from "../../../notifications/guard";
 import { failure, sheetFor, type IdContext } from "../../respond";
@@ -35,8 +35,7 @@ export async function POST(request: NextRequest, { params }: IdContext) {
 // A row key is the row's dimension values, so another viewer's selection is
 // passed on only when the caller's own rows include it. Somebody whose row
 // filter hides a row does not learn its values from a colleague selecting it.
-// The keys come from the same query the sheet itself shows, which is normally
-// answered from the cache.
+// Only the selected rows are checked, under the caller's own access.
 async function withinReach(
 	found: Exclude<Awaited<ReturnType<typeof sheetFor>>, NextResponse>,
 	present: Awaited<ReturnType<typeof heartbeat>>,
@@ -45,10 +44,11 @@ async function withinReach(
 	if (selected.length === 0) return present;
 	let visible: Set<string>;
 	try {
-		visible =
-			found.sheet.definition.mode === "table"
-				? new Set((await tableData(found.identity, found.sheet)).keys)
-				: new Set();
+		visible = await visibleKeys(
+			found.identity,
+			found.sheet,
+			selected.map((p) => p.cell!.row),
+		);
 	} catch {
 		visible = new Set();
 	}

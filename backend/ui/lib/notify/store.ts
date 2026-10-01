@@ -1,6 +1,6 @@
 import type { PoolClient } from "pg";
 import { sql } from "../data/lakebase";
-import { deliverPush } from "./push";
+import { deliverPush, deliverPushMany } from "./push";
 
 // The inbox.
 //
@@ -116,6 +116,22 @@ export function pushNotification(ownerEmail: string, item: InboxItem): void {
 	});
 }
 
+// Starts the pushes for several entries already stored, reading every
+// owner's devices and preferences together. Not waited for, as above.
+export function pushNotifications(
+	written: { email: string; item: InboxItem }[],
+): void {
+	if (written.length === 0) return;
+	void deliverPushMany(
+		written.map(({ email, item }) => ({
+			ownerEmail: email.toLowerCase(),
+			item,
+		})),
+	).catch((error) => {
+		console.warn("Push delivery failed:", error);
+	});
+}
+
 // Writes one entry inside the caller's transaction and sends nothing. The
 // entry then commits or rolls back with whatever the caller wrote beside
 // it, so a crash cannot leave the one without the other. The caller passes
@@ -131,6 +147,32 @@ export async function notifyInTransaction(
 		insertParams(ownerEmail, input),
 	);
 	return toItem(result.rows[0]);
+}
+
+// Writes the same entry for each of several owners inside the caller's
+// transaction, in one statement, and sends nothing. An owner named twice gets
+// one entry. As with notifyInTransaction, the caller passes what this returns
+// to pushNotifications once the transaction has committed.
+export async function notifyManyInTransaction(
+	client: PoolClient,
+	ownerEmails: string[],
+	input: NewNotification,
+): Promise<{ email: string; item: InboxItem }[]> {
+	const owners = [...new Set(ownerEmails.map((e) => e.toLowerCase()))];
+	if (owners.length === 0) return [];
+	const [, ...shared] = insertParams("", input);
+	const result = await client.query<Row & { owner_email: string }>(
+		`INSERT INTO notifications (owner_email, kind, title, body, link, data)
+		 SELECT o, $2::text, $3::text, $4::text, $5::text, $6::jsonb
+		 FROM unnest($1::text[]) AS o
+		 RETURNING owner_email, notification_id::text, kind, title, body, link,
+		           data, created_on::text, read_on::text`,
+		[owners, ...shared],
+	);
+	return result.rows.map((row) => ({
+		email: row.owner_email,
+		item: toItem(row),
+	}));
 }
 
 // Writes one entry and starts the push behind it. Resolves once the entry is

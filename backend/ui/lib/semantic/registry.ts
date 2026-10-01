@@ -1,5 +1,11 @@
 import { sql } from "../data/lakebase";
 import { setTrackedGroups } from "../auth/policy";
+import {
+	marksReadAt,
+	onMarksRead,
+	protectedSources,
+	refreshMarks,
+} from "../freshness/marks";
 import { settings } from "../settings";
 import type {
 	AccessMode,
@@ -36,6 +42,7 @@ interface FieldRow {
 	display_name: string | null;
 	field_kind: string;
 	sql_expr: string | null;
+	expression: string | null;
 	data_type: string | null;
 	description: string | null;
 	format_hint: string | null;
@@ -61,7 +68,8 @@ let protectionTimer: ReturnType<typeof setInterval> | null = null;
 // How often the stored protection flags are reread, apart from the full
 // reload. Another replica can record a source as protected at any moment,
 // and until this one knows, it keys that source's answers as shared by
-// everyone. Only the flags are read, so it is a small query.
+// everyone. The flags come with the freshness marks, which are read on the
+// same period. See lib/freshness/marks.
 const protectionCheckMs = 5_000;
 
 // When each source was marked protected on this replica. A reload that read
@@ -89,6 +97,7 @@ function toField(row: FieldRow): SemanticField {
 		displayName: row.display_name,
 		kind: row.field_kind as FieldKind,
 		sqlExpr: row.sql_expr,
+		expression: row.expression,
 		dataType: row.data_type,
 		description: row.description,
 		formatHint: (row.format_hint as FormatHint | null) ?? null,
@@ -136,7 +145,8 @@ export async function loadRegistry(force = false): Promise<void> {
 				),
 				sql<FieldRow>(
 					`SELECT field_id, source_key, field_name, display_name, field_kind,
-					        sql_expr, data_type, description, format_hint, tags,
+					        sql_expr, fingerprint->>'expression' AS expression,
+					        data_type, description, format_hint, tags,
 					        folder, sort_order, is_default, status,
 					        missing_since::text AS missing_since, renamed_to,
 					        rename_candidate
@@ -293,6 +303,9 @@ async function discoverAndApply(
 	try {
 		const { discoverFilterGroups } = await import("./filterDiscovery");
 		const discovered = await discoverFilterGroups(null, force);
+		// Nothing newer than what is already tracked, because another
+		// replica is walking. The list set before this ran stays in place.
+		if (!discovered) return;
 
 		let filterGroups: {
 			accountGroups: string[];
@@ -347,20 +360,18 @@ export async function markProtected(sourceKey: string): Promise<void> {
 	forgetSourceInMemory(sourceKey);
 }
 
-// Rereads which sources are recorded as protected, and takes on any that this
-// replica still treats as unprotected. The full reload follows so the walk
-// reads the new filters.
+// Takes on any source recorded as protected that this replica still treats as
+// unprotected. What is recorded comes from the freshness marks, which read
+// every source's protection flag with the rest of its standing, so the flag
+// costs no query of its own. The full reload follows so the walk reads the
+// new filters.
 async function checkProtection(): Promise<void> {
 	try {
-		const rows = await sql<{ source_key: string }>(
-			`SELECT source_key FROM data_sources
-			 WHERE is_active = TRUE AND has_row_filter = TRUE`,
-		);
 		let changed = false;
-		for (const row of rows) {
-			const source = sources.get(row.source_key);
+		for (const key of protectedSources()) {
+			const source = sources.get(key);
 			if (source && !source.hasRowFilter) {
-				await markProtected(row.source_key);
+				await markProtected(key);
 				changed = true;
 			}
 		}
@@ -370,6 +381,20 @@ async function checkProtection(): Promise<void> {
 		// delays this replica's switch rather than leaking a shared answer.
 		console.warn("Protection check failed:", error);
 	}
+}
+
+// One function for the life of the module, so starting the polling again does
+// not add a second listener.
+const checkOnMarksRead = () => void checkProtection();
+
+// Reads the marks again when nothing else has for a while, such as when their
+// own polling is not running in this module instance. Each read runs the check
+// above when it lands.
+function rereadProtection(): void {
+	if (Date.now() - marksReadAt() < protectionCheckMs + 1_000) return;
+	void refreshMarks().catch((error) => {
+		console.warn("Protection check failed:", error);
+	});
 }
 
 export function getSource(sourceKey: string): SemanticSource | null {
@@ -397,10 +422,8 @@ export function startRegistryPolling(): void {
 	};
 	refreshTimer = setTimeout(tick, refreshIntervalMs());
 	refreshTimer.unref?.();
-	protectionTimer = setInterval(
-		() => void checkProtection(),
-		protectionCheckMs,
-	);
+	onMarksRead(checkOnMarksRead);
+	protectionTimer = setInterval(rereadProtection, protectionCheckMs);
 	protectionTimer.unref?.();
 }
 

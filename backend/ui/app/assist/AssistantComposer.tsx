@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { Select } from "../components/shared/Select";
 import type { SourceMeta } from "../visuals/types";
-import { useAssistant } from "./AssistantContext";
+import { useAssistantStatus } from "./AssistantContext";
 import styles from "./Assist.module.css";
 
 // Where a question is typed. While an answer is being written the send button
@@ -34,7 +34,7 @@ export function AssistantComposer({
 		picking,
 		setPicking,
 		surface,
-	} = useAssistant();
+	} = useAssistantStatus();
 	const { data } = useSWR<{ sources: SourceMeta[] }>("/api/authoring");
 	const sources = [...(data?.sources ?? [])].sort((a, b) =>
 		a.title.localeCompare(b.title),

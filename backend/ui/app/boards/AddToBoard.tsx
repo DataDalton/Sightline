@@ -1,5 +1,6 @@
 "use client";
 
+import { boardListKey, refreshBoardList } from "./boardList";
 import Link from "next/link";
 import { createContext, useContext, useState, type ReactNode } from "react";
 import useSWR from "swr";
@@ -36,7 +37,7 @@ function AddDialog({
 	piece: () => BoardPiece;
 	onClose: () => void;
 }) {
-	const { data, error } = useSWR<{ boards: BoardSummary[] }>("/api/boards/");
+	const { data, error } = useSWR<{ boards: BoardSummary[] }>(boardListKey);
 	const [title, setTitle] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [failed, setFailed] = useState<string | null>(null);
@@ -72,6 +73,7 @@ function AddDialog({
 				return;
 			}
 			const board = result?.board as { id: string; title: string };
+			refreshBoardList();
 			setAdded({ id: board.id, title: board.title });
 		} catch {
 			setFailed(
@@ -149,7 +151,7 @@ function AddDialog({
 						className={styles.addNew}
 						onSubmit={(e) => {
 							e.preventDefault();
-							void send("/api/boards/", {
+							void send(boardListKey, {
 								title: title.trim() || "Untitled board",
 								items: [item()],
 							});

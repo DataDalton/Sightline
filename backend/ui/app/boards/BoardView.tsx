@@ -1,7 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+	memo,
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import useSWR from "swr";
 import {
 	cleanDefinition,
@@ -70,6 +78,10 @@ const joinWithin = 1200;
 // Steps kept for undo. Older ones are let go, which only limits how far back
 // undo reaches in one sitting.
 const historyDepth = 200;
+
+// How long the wheel has to rest before the view it moved to is kept, which
+// draws the board again at that view.
+const wheelSettle = 150;
 
 const clampZoom = (z: number) => Math.min(maxZoom, Math.max(minZoom, z));
 
@@ -247,6 +259,157 @@ function Words({
 	);
 }
 
+// What an item on the canvas can ask the board to do. Each keeps one identity
+// for the life of the board, so an item is drawn again only when something of
+// its own changes.
+interface CardActions {
+	gesture: (
+		item: BoardItem,
+		mode: "move" | "resize",
+		e: React.PointerEvent<HTMLElement>,
+	) => void;
+	// A pointer down on a visual away from its bar.
+	pick: (item: BoardItem) => void;
+	open: (item: BoardItem) => void;
+	text: (itemId: string, text: string) => void;
+	done: (itemId: string) => void;
+}
+
+// One item on the canvas. Kept apart and memoised so moving or resizing one
+// item, or anything else that redraws the board, leaves the charts in the
+// others as they are.
+const ItemCard = memo(function ItemCard({
+	item,
+	live,
+	selected,
+	editing,
+	arrowFrom,
+	arrowMode,
+	editable,
+	sources,
+	sourcesLoaded,
+	actions,
+}: {
+	item: BoardItem;
+	// Where the item is drawn while it is being moved or resized.
+	live: Rect | undefined;
+	selected: boolean;
+	editing: boolean;
+	arrowFrom: boolean;
+	arrowMode: boolean;
+	editable: boolean;
+	sources: Record<string, SourceMeta>;
+	sourcesLoaded: boolean;
+	actions: CardActions;
+}) {
+	const r: Rect = live ?? item;
+	const isVisual = item.kind === "visual";
+	const source = item.visual ? sources[item.visual.sourceKey] : undefined;
+	const visual = useMemo(
+		() =>
+			item.visual
+				? {
+						visualId: item.id,
+						visualType: item.visual.visualType,
+						title: item.visual.title,
+						sourceKey: item.visual.sourceKey,
+						config: item.visual.config as never,
+					}
+				: null,
+		[item.id, item.visual],
+	);
+	return (
+		<div
+			className={`${styles.item} ${styles[`item_${item.kind}`] ?? ""}`}
+			data-selected={selected || undefined}
+			data-editing={editing || undefined}
+			data-arrow-from={arrowFrom || undefined}
+			data-arrow-mode={arrowMode || undefined}
+			data-color={item.kind === "note" ? item.color : undefined}
+			data-movable={(!isVisual && editable) || undefined}
+			style={{
+				left: r.x,
+				top: r.y,
+				width: r.w,
+				height: r.h,
+			}}
+			onPointerDown={
+				isVisual
+					? () => actions.pick(item)
+					: (e) => actions.gesture(item, "move", e)
+			}
+			onDoubleClick={isVisual ? undefined : () => actions.open(item)}
+		>
+			{isVisual ? (
+				<>
+					<div
+						className={styles.handle}
+						style={{ height: handleHeight }}
+						onPointerDown={(e) => actions.gesture(item, "move", e)}
+					>
+						<span className={styles.grip} aria-hidden="true" />
+						{item.origin?.slug ? (
+							<Link
+								href={`/r/${item.origin.slug}/`}
+								className={styles.origin}
+							>
+								{item.origin.title || "Open the report"}
+							</Link>
+						) : (
+							<span className={styles.origin}>
+								{item.origin?.title}
+							</span>
+						)}
+					</div>
+					<div className={styles.itemBody}>
+						{!item.visual || !visual ? null : !sourcesLoaded ? (
+							<div className={styles.itemLoading} />
+						) : source ? (
+							<VisualRenderer
+								visual={visual}
+								sources={sources}
+								reportId={item.origin?.reportId ?? null}
+								frameHeight={r.h - handleHeight}
+							/>
+						) : (
+							<div className={styles.noAccess}>
+								<strong>
+									{item.visual.title || "A visual"}
+								</strong>
+								<span>
+									It reads a dataset you do not have access
+									to, so nothing of it is shown.
+								</span>
+							</div>
+						)}
+					</div>
+				</>
+			) : (
+				<>
+					{item.kind === "shape" && (
+						<ShapeArt item={item} w={r.w} h={r.h} />
+					)}
+					<Words
+						item={item}
+						editing={editing}
+						selected={editable && selected}
+						onText={(text) => actions.text(item.id, text)}
+						onDone={() => actions.done(item.id)}
+					/>
+				</>
+			)}
+
+			{editable && (
+				<span
+					className={styles.resize}
+					onPointerDown={(e) => actions.gesture(item, "resize", e)}
+					aria-hidden="true"
+				/>
+			)}
+		</div>
+	);
+});
+
 export default function BoardView({ id }: { id: string }) {
 	const board = useBoard(id);
 	usePageTitle(board.title || "Board");
@@ -264,7 +427,14 @@ export default function BoardView({ id }: { id: string }) {
 	const definition = board.definition;
 	const editable = board.editable;
 	const canvasRef = useRef<HTMLDivElement>(null);
+	const worldRef = useRef<HTMLDivElement>(null);
+	// The view as drawn by React, and the view as it is now. A pan or a run of
+	// wheel turns moves the second and paints it straight onto the canvas once
+	// a frame, and the first catches up when the gesture ends, so the items
+	// are not drawn again for every pointer move or wheel turn. Every other
+	// change of view goes through commitView, which sets both.
 	const [view, setView] = useState<View>({ x: 40, y: 40, z: 1 });
+	const viewRef = useRef<View>(view);
 	const [selected, setSelected] = useState<Selection>(null);
 	const [tool, setTool] = useState<"select" | "arrow">("select");
 	const [arrowFrom, setArrowFrom] = useState<string | null>(null);
@@ -278,6 +448,47 @@ export default function BoardView({ id }: { id: string }) {
 	const [formatting, setFormatting] = useState(false);
 	const [snap, setSnap] = useSnapSettings();
 	const [snapOpen, setSnapOpen] = useState(false);
+	const dots = snap.grid ? Math.max(snap.gridSize, 16) : 24;
+
+	const commitView = useCallback((next: View) => {
+		viewRef.current = next;
+		setView(next);
+	}, []);
+
+	// Puts a view on the canvas directly, without drawing the items again.
+	const paintView = useCallback(
+		(v: View) => {
+			const canvas = canvasRef.current;
+			const world = worldRef.current;
+			if (!canvas || !world) return;
+			world.style.transform = `translate(${v.x}px, ${v.y}px) scale(${v.z})`;
+			canvas.style.setProperty("--grid-size", `${dots * v.z}px`);
+			canvas.style.backgroundPosition = `${v.x}px ${v.y}px`;
+		},
+		[dots],
+	);
+
+	const paintFrame = useRef(0);
+	const schedulePaint = useCallback(() => {
+		if (paintFrame.current) return;
+		paintFrame.current = requestAnimationFrame(() => {
+			paintFrame.current = 0;
+			paintView(viewRef.current);
+		});
+	}, [paintView]);
+
+	// A render in the middle of a gesture draws the view React last kept, so
+	// the view as it is now is painted back before the frame is shown.
+	useLayoutEffect(() => {
+		if (viewRef.current !== view) paintView(viewRef.current);
+	});
+
+	useEffect(
+		() => () => {
+			if (paintFrame.current) cancelAnimationFrame(paintFrame.current);
+		},
+		[],
+	);
 
 	const rectOf = useCallback(
 		(item: BoardItem): Rect =>
@@ -372,7 +583,7 @@ export default function BoardView({ id }: { id: string }) {
 		const cw = canvas.clientWidth;
 		const ch = canvas.clientHeight;
 		if (definition.items.length === 0) {
-			setView({ x: cw / 2 - 200, y: ch / 2 - 120, z: 1 });
+			commitView({ x: cw / 2 - 200, y: ch / 2 - 120, z: 1 });
 			return;
 		}
 		const minX = Math.min(...definition.items.map((i) => i.x));
@@ -387,12 +598,12 @@ export default function BoardView({ id }: { id: string }) {
 				(ch - pad * 2) / (maxY - minY),
 			),
 		);
-		setView({
+		commitView({
 			x: (cw - (maxX - minX) * z) / 2 - minX * z,
 			y: Math.max(pad, (ch - (maxY - minY) * z) / 2) - minY * z,
 			z,
 		});
-	}, [definition]);
+	}, [definition, commitView]);
 
 	const fitted = useRef(false);
 	useEffect(() => {
@@ -402,49 +613,70 @@ export default function BoardView({ id }: { id: string }) {
 	}, [definition, fit]);
 
 	// Zooms keeping the centre still.
-	const zoomTo = useCallback((z: number) => {
-		const canvas = canvasRef.current;
-		if (!canvas) return;
-		const point = { x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 };
-		setView((v) => {
+	const zoomTo = useCallback(
+		(z: number) => {
+			const canvas = canvasRef.current;
+			if (!canvas) return;
+			const point = {
+				x: canvas.clientWidth / 2,
+				y: canvas.clientHeight / 2,
+			};
+			const v = viewRef.current;
 			const next = clampZoom(z);
-			return {
+			commitView({
 				z: next,
 				x: point.x - ((point.x - v.x) * next) / v.z,
 				y: point.y - ((point.y - v.y) * next) / v.z,
-			};
-		});
-	}, []);
+			});
+		},
+		[commitView],
+	);
 
 	// Scroll pans, ctrl or command with scroll zooms around the pointer.
 	// Bound by hand because React's wheel handler cannot stop the page itself
-	// scrolling.
+	// scrolling. Each turn is painted on the next frame, and the view is kept
+	// once the wheel rests.
 	useEffect(() => {
 		const canvas = canvasRef.current;
 		if (!canvas) return;
+		let settle: ReturnType<typeof setTimeout> | null = null;
+		const moved = (next: View) => {
+			viewRef.current = next;
+			schedulePaint();
+			if (settle) clearTimeout(settle);
+			settle = setTimeout(() => {
+				settle = null;
+				commitView(viewRef.current);
+			}, wheelSettle);
+		};
 		const onWheel = (e: WheelEvent) => {
+			const v = viewRef.current;
 			if (e.ctrlKey || e.metaKey) {
 				e.preventDefault();
 				const box = canvas.getBoundingClientRect();
-				setView((v) => {
-					const next = clampZoom(v.z * Math.exp(-e.deltaY * 0.0015));
-					const px = e.clientX - box.left;
-					const py = e.clientY - box.top;
-					return {
-						z: next,
-						x: px - ((px - v.x) * next) / v.z,
-						y: py - ((py - v.y) * next) / v.z,
-					};
+				const next = clampZoom(v.z * Math.exp(-e.deltaY * 0.0015));
+				const px = e.clientX - box.left;
+				const py = e.clientY - box.top;
+				moved({
+					z: next,
+					x: px - ((px - v.x) * next) / v.z,
+					y: py - ((py - v.y) * next) / v.z,
 				});
 				return;
 			}
 			if (scrollsItself(e.target, canvas, e.deltaY)) return;
 			e.preventDefault();
-			setView((v) => ({ ...v, x: v.x - e.deltaX, y: v.y - e.deltaY }));
+			moved({ ...v, x: v.x - e.deltaX, y: v.y - e.deltaY });
 		};
 		canvas.addEventListener("wheel", onWheel, { passive: false });
-		return () => canvas.removeEventListener("wheel", onWheel);
-	}, []);
+		return () => {
+			canvas.removeEventListener("wheel", onWheel);
+			if (settle) {
+				clearTimeout(settle);
+				commitView(viewRef.current);
+			}
+		};
+	}, [schedulePaint, commitView]);
 
 	// Dragging the background pans, and a click on it lets go of everything.
 	const onBackgroundDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -455,21 +687,30 @@ export default function BoardView({ id }: { id: string }) {
 		setEditing(null);
 		setFormatting(false);
 		setSnapOpen(false);
-		const start = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y };
+		const start = {
+			x: e.clientX,
+			y: e.clientY,
+			vx: viewRef.current.x,
+			vy: viewRef.current.y,
+		};
 		e.preventDefault();
 		const target = e.currentTarget;
 		target.setPointerCapture(e.pointerId);
 		const release = holdSelection();
 		setPanning(true);
-		const move = (ev: PointerEvent) =>
-			setView((v) => ({
-				...v,
+		// Painted once a frame while dragging, and kept when it ends.
+		const move = (ev: PointerEvent) => {
+			viewRef.current = {
+				...viewRef.current,
 				x: start.vx + ev.clientX - start.x,
 				y: start.vy + ev.clientY - start.y,
-			}));
+			};
+			schedulePaint();
+		};
 		const end = () => {
 			release();
 			setPanning(false);
+			commitView(viewRef.current);
 			target.removeEventListener("pointermove", move);
 			target.removeEventListener("pointerup", end);
 			target.removeEventListener("pointercancel", end);
@@ -508,119 +749,121 @@ export default function BoardView({ id }: { id: string }) {
 			: {
 					grid: snap.grid ? snap.gridSize : null,
 					guides: snap.guides,
-					threshold: alignWithin / view.z,
+					threshold: alignWithin / viewRef.current.z,
 				};
 
 	// Moving an item, or resizing it by its corner. Drawn live and saved once,
 	// when the pointer lets go, so a drag is one step to undo.
-	const startGesture =
-		(item: BoardItem, mode: "move" | "resize") =>
-		(e: React.PointerEvent<HTMLElement>) => {
-			if (e.button !== 0) return;
-			if ((e.target as HTMLElement).closest("a, button, textarea, input"))
-				return;
-			e.stopPropagation();
-			if (tool === "arrow") {
-				chooseForArrow(item.id);
-				return;
+	const startGesture = (
+		item: BoardItem,
+		mode: "move" | "resize",
+		e: React.PointerEvent<HTMLElement>,
+	) => {
+		if (e.button !== 0) return;
+		if ((e.target as HTMLElement).closest("a, button, textarea, input"))
+			return;
+		e.stopPropagation();
+		if (tool === "arrow") {
+			chooseForArrow(item.id);
+			return;
+		}
+		setSelected({ kind: "item", id: item.id });
+		// Choosing something that can be formatted opens its formatting.
+		setFormatting(item.kind !== "visual");
+		if (editing && editing !== item.id) setEditing(null);
+		if (!editable || editing === item.id) return;
+		e.preventDefault();
+		const target = e.currentTarget;
+		target.setPointerCapture(e.pointerId);
+		const release = holdSelection();
+		const start = { x: e.clientX, y: e.clientY };
+		const from = { x: item.x, y: item.y, w: item.w, h: item.h };
+		const others = (definition?.items ?? [])
+			.filter((i) => i.id !== item.id)
+			.map((i) => ({ x: i.x, y: i.y, w: i.w, h: i.h }));
+		let last = from;
+		const move = (ev: PointerEvent) => {
+			let dx = (ev.clientX - start.x) / viewRef.current.z;
+			let dy = (ev.clientY - start.y) / viewRef.current.z;
+			const options = snapping(ev.altKey);
+			if (mode === "move") {
+				// Shift keeps the move to the direction it mostly went.
+				const lockX = ev.shiftKey && Math.abs(dy) > Math.abs(dx);
+				const lockY = ev.shiftKey && !lockX;
+				if (lockX) dx = 0;
+				if (lockY) dy = 0;
+				const landed = snapMove(
+					{ ...from, x: from.x + dx, y: from.y + dy },
+					others,
+					options,
+				);
+				last = {
+					...from,
+					x: lockX ? from.x : landed.x,
+					y: lockY ? from.y : landed.y,
+				};
+				setGuides(
+					landed.guides.filter(
+						(g) =>
+							!(lockX && g.axis === "x") &&
+							!(lockY && g.axis === "y"),
+					),
+				);
+			} else {
+				let w = from.w + dx;
+				let h = from.h + dy;
+				// Shift keeps the shape it had.
+				if (ev.shiftKey) {
+					const ratio = from.h / from.w;
+					if (Math.abs(dx) * ratio >= Math.abs(dy)) h = w * ratio;
+					else w = h / ratio;
+				}
+				const sized = snapResize(
+					{ ...from, w, h },
+					others,
+					ev.shiftKey
+						? { ...options, grid: null, guides: false }
+						: options,
+					minSizes[item.kind],
+				);
+				last = {
+					...from,
+					w: Math.round(sized.w),
+					h: Math.round(sized.h),
+				};
+				setGuides(sized.guides);
 			}
-			setSelected({ kind: "item", id: item.id });
-			// Choosing something that can be formatted opens its formatting.
-			setFormatting(item.kind !== "visual");
-			if (editing && editing !== item.id) setEditing(null);
-			if (!editable || editing === item.id) return;
-			e.preventDefault();
-			const target = e.currentTarget;
-			target.setPointerCapture(e.pointerId);
-			const release = holdSelection();
-			const start = { x: e.clientX, y: e.clientY };
-			const from = { x: item.x, y: item.y, w: item.w, h: item.h };
-			const others = (definition?.items ?? [])
-				.filter((i) => i.id !== item.id)
-				.map((i) => ({ x: i.x, y: i.y, w: i.w, h: i.h }));
-			let last = from;
-			const move = (ev: PointerEvent) => {
-				let dx = (ev.clientX - start.x) / view.z;
-				let dy = (ev.clientY - start.y) / view.z;
-				const options = snapping(ev.altKey);
-				if (mode === "move") {
-					// Shift keeps the move to the direction it mostly went.
-					const lockX = ev.shiftKey && Math.abs(dy) > Math.abs(dx);
-					const lockY = ev.shiftKey && !lockX;
-					if (lockX) dx = 0;
-					if (lockY) dy = 0;
-					const landed = snapMove(
-						{ ...from, x: from.x + dx, y: from.y + dy },
-						others,
-						options,
-					);
-					last = {
-						...from,
-						x: lockX ? from.x : landed.x,
-						y: lockY ? from.y : landed.y,
-					};
-					setGuides(
-						landed.guides.filter(
-							(g) =>
-								!(lockX && g.axis === "x") &&
-								!(lockY && g.axis === "y"),
-						),
-					);
-				} else {
-					let w = from.w + dx;
-					let h = from.h + dy;
-					// Shift keeps the shape it had.
-					if (ev.shiftKey) {
-						const ratio = from.h / from.w;
-						if (Math.abs(dx) * ratio >= Math.abs(dy)) h = w * ratio;
-						else w = h / ratio;
-					}
-					const sized = snapResize(
-						{ ...from, w, h },
-						others,
-						ev.shiftKey
-							? { ...options, grid: null, guides: false }
-							: options,
-						minSizes[item.kind],
-					);
-					last = {
-						...from,
-						w: Math.round(sized.w),
-						h: Math.round(sized.h),
-					};
-					setGuides(sized.guides);
-				}
-				setLive((prev) => ({ ...prev, [item.id]: last }));
-			};
-			const end = () => {
-				release();
-				setGuides([]);
-				target.removeEventListener("pointermove", move);
-				target.removeEventListener("pointerup", end);
-				target.removeEventListener("pointercancel", end);
-				setLive((prev) => {
-					const next = { ...prev };
-					delete next[item.id];
-					return next;
-				});
-				if (
-					last.x !== from.x ||
-					last.y !== from.y ||
-					last.w !== from.w ||
-					last.h !== from.h
-				) {
-					changeItem(item.id, () => ({
-						x: Math.round(last.x),
-						y: Math.round(last.y),
-						w: last.w,
-						h: last.h,
-					}));
-				}
-			};
-			target.addEventListener("pointermove", move);
-			target.addEventListener("pointerup", end);
-			target.addEventListener("pointercancel", end);
+			setLive((prev) => ({ ...prev, [item.id]: last }));
 		};
+		const end = () => {
+			release();
+			setGuides([]);
+			target.removeEventListener("pointermove", move);
+			target.removeEventListener("pointerup", end);
+			target.removeEventListener("pointercancel", end);
+			setLive((prev) => {
+				const next = { ...prev };
+				delete next[item.id];
+				return next;
+			});
+			if (
+				last.x !== from.x ||
+				last.y !== from.y ||
+				last.w !== from.w ||
+				last.h !== from.h
+			) {
+				changeItem(item.id, () => ({
+					x: Math.round(last.x),
+					y: Math.round(last.y),
+					w: last.w,
+					h: last.h,
+				}));
+			}
+		};
+		target.addEventListener("pointermove", move);
+		target.addEventListener("pointerup", end);
+		target.addEventListener("pointercancel", end);
+	};
 
 	const remove = useCallback(
 		(target: Selection) => {
@@ -727,11 +970,12 @@ export default function BoardView({ id }: { id: string }) {
 		const size = defaultSizes[kind];
 		const step = snap.grid ? snap.gridSize : 1;
 		const onGrid = (v: number) => Math.round(v / step) * step;
+		const at = viewRef.current;
 		const item: BoardItem = {
 			id: newId(),
 			kind,
-			x: onGrid((canvas.clientWidth / 2 - view.x) / view.z - size.w / 2),
-			y: onGrid((canvas.clientHeight / 2 - view.y) / view.z - size.h / 2),
+			x: onGrid((canvas.clientWidth / 2 - at.x) / at.z - size.w / 2),
+			y: onGrid((canvas.clientHeight / 2 - at.y) / at.z - size.h / 2),
 			...size,
 			text: "",
 			...(kind === "note" ? { color: "yellow" as NoteColor } : {}),
@@ -770,6 +1014,35 @@ export default function BoardView({ id }: { id: string }) {
 		setFormatting(true);
 	};
 
+	// The handlers of this render, reached through cardActions, which keeps
+	// one identity so the memoised items are not drawn again on its account.
+	const cardHandlers = useRef<CardActions | null>(null);
+	cardHandlers.current = {
+		gesture: startGesture,
+		pick: (item) => {
+			if (tool === "arrow") chooseForArrow(item.id);
+			else {
+				setSelected({ kind: "item", id: item.id });
+				setFormatting(false);
+			}
+		},
+		open: openItem,
+		text: (itemId, text) =>
+			changeItem(itemId, () => ({ text }), `text:${itemId}`),
+		done: (itemId) => setEditing((now) => (now === itemId ? null : now)),
+	};
+	const cardActions = useMemo<CardActions>(
+		() => ({
+			gesture: (item, mode, e) =>
+				cardHandlers.current?.gesture(item, mode, e),
+			pick: (item) => cardHandlers.current?.pick(item),
+			open: (item) => cardHandlers.current?.open(item),
+			text: (itemId, text) => cardHandlers.current?.text(itemId, text),
+			done: (itemId) => cardHandlers.current?.done(itemId),
+		}),
+		[],
+	);
+
 	if (board.error) {
 		return (
 			<div className={styles.missing}>
@@ -795,8 +1068,6 @@ export default function BoardView({ id }: { id: string }) {
 			: undefined;
 	const formattable =
 		(selectedItem && selectedItem.kind !== "visual") || selectedLink;
-	const dots = snap.grid ? Math.max(snap.gridSize, 16) : 24;
-
 	const icon = (d: string) => (
 		<svg
 			width="15"
@@ -1018,7 +1289,7 @@ export default function BoardView({ id }: { id: string }) {
 						<button
 							type="button"
 							className={styles.zoomButton}
-							onClick={() => zoomTo(view.z / 1.25)}
+							onClick={() => zoomTo(viewRef.current.z / 1.25)}
 							aria-label="Zoom out"
 						>
 							−
@@ -1034,7 +1305,7 @@ export default function BoardView({ id }: { id: string }) {
 						<button
 							type="button"
 							className={styles.zoomButton}
-							onClick={() => zoomTo(view.z * 1.25)}
+							onClick={() => zoomTo(viewRef.current.z * 1.25)}
 							aria-label="Zoom in"
 						>
 							+
@@ -1089,6 +1360,7 @@ export default function BoardView({ id }: { id: string }) {
 				}
 			>
 				<div
+					ref={worldRef}
 					className={styles.world}
 					data-surface
 					style={{
@@ -1114,179 +1386,24 @@ export default function BoardView({ id }: { id: string }) {
 						}}
 					/>
 
-					{items.map((item) => {
-						const r = rectOf(item);
-						const isSelected =
-							selected?.kind === "item" &&
-							selected.id === item.id;
-						const isVisual = item.kind === "visual";
-						const source = item.visual
-							? sources[item.visual.sourceKey]
-							: undefined;
-						return (
-							<div
-								key={item.id}
-								className={`${styles.item} ${styles[`item_${item.kind}`] ?? ""}`}
-								data-selected={isSelected || undefined}
-								data-editing={editing === item.id || undefined}
-								data-arrow-from={
-									arrowFrom === item.id || undefined
-								}
-								data-arrow-mode={tool === "arrow" || undefined}
-								data-color={
-									item.kind === "note"
-										? item.color
-										: undefined
-								}
-								data-movable={
-									(!isVisual && editable) || undefined
-								}
-								style={{
-									left: r.x,
-									top: r.y,
-									width: r.w,
-									height: r.h,
-								}}
-								onPointerDown={
-									isVisual
-										? () => {
-												if (tool === "arrow")
-													chooseForArrow(item.id);
-												else {
-													setSelected({
-														kind: "item",
-														id: item.id,
-													});
-													setFormatting(false);
-												}
-											}
-										: startGesture(item, "move")
-								}
-								onDoubleClick={
-									isVisual ? undefined : () => openItem(item)
-								}
-							>
-								{isVisual ? (
-									<>
-										<div
-											className={styles.handle}
-											style={{ height: handleHeight }}
-											onPointerDown={startGesture(
-												item,
-												"move",
-											)}
-										>
-											<span
-												className={styles.grip}
-												aria-hidden="true"
-											/>
-											{item.origin?.slug ? (
-												<Link
-													href={`/r/${item.origin.slug}/`}
-													className={styles.origin}
-												>
-													{item.origin.title ||
-														"Open the report"}
-												</Link>
-											) : (
-												<span className={styles.origin}>
-													{item.origin?.title}
-												</span>
-											)}
-										</div>
-										<div className={styles.itemBody}>
-											{!item.visual ? null : !sourceData ? (
-												<div
-													className={
-														styles.itemLoading
-													}
-												/>
-											) : source ? (
-												<VisualRenderer
-													visual={{
-														visualId: item.id,
-														visualType:
-															item.visual
-																.visualType,
-														title: item.visual
-															.title,
-														sourceKey:
-															item.visual
-																.sourceKey,
-														config: item.visual
-															.config as never,
-													}}
-													sources={sources}
-													reportId={
-														item.origin?.reportId ??
-														null
-													}
-													frameHeight={
-														r.h - handleHeight
-													}
-												/>
-											) : (
-												<div
-													className={styles.noAccess}
-												>
-													<strong>
-														{item.visual.title ||
-															"A visual"}
-													</strong>
-													<span>
-														It reads a dataset you
-														do not have access to,
-														so nothing of it is
-														shown.
-													</span>
-												</div>
-											)}
-										</div>
-									</>
-								) : (
-									<>
-										{item.kind === "shape" && (
-											<ShapeArt
-												item={item}
-												w={r.w}
-												h={r.h}
-											/>
-										)}
-										<Words
-											item={item}
-											editing={editing === item.id}
-											selected={editable && isSelected}
-											onText={(text) =>
-												changeItem(
-													item.id,
-													() => ({ text }),
-													`text:${item.id}`,
-												)
-											}
-											onDone={() =>
-												setEditing((now) =>
-													now === item.id
-														? null
-														: now,
-												)
-											}
-										/>
-									</>
-								)}
-
-								{editable && (
-									<span
-										className={styles.resize}
-										onPointerDown={startGesture(
-											item,
-											"resize",
-										)}
-										aria-hidden="true"
-									/>
-								)}
-							</div>
-						);
-					})}
+					{items.map((item) => (
+						<ItemCard
+							key={item.id}
+							item={item}
+							live={live[item.id]}
+							selected={
+								selected?.kind === "item" &&
+								selected.id === item.id
+							}
+							editing={editing === item.id}
+							arrowFrom={arrowFrom === item.id}
+							arrowMode={tool === "arrow"}
+							editable={editable}
+							sources={sources}
+							sourcesLoaded={Boolean(sourceData)}
+							actions={cardActions}
+						/>
+					))}
 				</div>
 
 				{definition && items.length === 0 && (

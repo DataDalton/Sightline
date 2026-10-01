@@ -23,11 +23,18 @@ interface Entry {
 }
 
 const entries = new Map<string, Entry>();
-const inflight = new Map<string, Promise<unknown>>();
 
-// Counts invalidations. A load that started before one may have read the rows
-// the write replaced, so it answers its own callers but is not kept.
-let generation = 0;
+// A load in progress, and whether an invalidation reached its key while it
+// ran. A load whose key was invalidated may have read the rows the write
+// replaced, so it answers its own callers but is not kept. Loads under other
+// keys are untouched, so an edit to one report does not discard a navigation
+// or search load running at the same moment.
+interface Pending {
+	promise: Promise<unknown>;
+	stale: boolean;
+}
+
+const inflight = new Map<string, Pending>();
 
 // An expired entry is never read, but it is still held: the map only ever grew,
 // one slot per report the installation has, each holding a full definition.
@@ -85,12 +92,12 @@ export async function cachedDefinition<T>(
 	// One load per key, however many requests arrive together. Without this a
 	// popular report opened by ten people at once is ten identical queries.
 	const existing = inflight.get(key);
-	if (existing) return existing as Promise<T>;
+	if (existing) return existing.promise as Promise<T>;
 
-	const startedIn = generation;
-	const pending = (async () => {
+	const pending = { stale: false } as Pending;
+	pending.promise = (async () => {
 		const value = await load();
-		if (generation === startedIn) {
+		if (!pending.stale) {
 			entries.set(key, { value, expiresAt: Date.now() + ttlMs });
 		}
 		return value;
@@ -99,7 +106,15 @@ export async function cachedDefinition<T>(
 	});
 
 	inflight.set(key, pending);
-	return pending as Promise<T>;
+	return pending.promise as Promise<T>;
+}
+
+// The held value for a key, without loading it. For a caller that gathers the
+// keys it is missing and reads them all in one question.
+export function peekDefinition<T>(key: string): T | undefined {
+	const held = entries.get(key);
+	if (!held || held.expiresAt <= Date.now()) return undefined;
+	return held.value as T;
 }
 
 // Called on the write path. Takes a prefix so one edit can drop everything
@@ -109,17 +124,20 @@ export async function cachedDefinition<T>(
 // request after the edit starts a fresh read rather than joining one that may
 // have read the rows before it.
 export function invalidateDefinitions(prefix?: string): void {
-	generation++;
-	if (!prefix) {
-		entries.clear();
-		inflight.clear();
-		return;
-	}
+	invalidateMatching(prefix ? (key) => key.startsWith(prefix) : () => true);
+}
+
+// Drops every entry and every load in progress whose key the test accepts.
+// For keys that carry a reader at the end rather than the start, such as the
+// per reader navigation and search entries.
+export function invalidateMatching(test: (key: string) => boolean): void {
 	for (const key of entries.keys()) {
-		if (key.startsWith(prefix)) entries.delete(key);
+		if (test(key)) entries.delete(key);
 	}
-	for (const key of inflight.keys()) {
-		if (key.startsWith(prefix)) inflight.delete(key);
+	for (const [key, pending] of inflight) {
+		if (!test(key)) continue;
+		pending.stale = true;
+		inflight.delete(key);
 	}
 }
 

@@ -1,21 +1,32 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
-import type { SheetDefinition } from "../../lib/sheets/definition";
+import {
+	queryFingerprint,
+	type SheetDefinition,
+} from "../../lib/sheets/definition";
 import type { PivotData, TableData } from "../../lib/sheets/data";
-import type { Present, Sheet } from "../../lib/sheets/store";
+import type { Note, Present, Sheet } from "../../lib/sheets/store";
 
 // One open sheet: what it asks, the rows it shows, the changes being saved,
 // and who else has it open.
 //
-// A change shows at once and is saved a moment later, so typing a formula or
-// dragging a column does not send a request per keystroke. A save names the
+// A change shows at once and is saved a moment after editing pauses, so typing
+// a formula or dragging a column does not send a request per keystroke. Steady
+// editing with no pause still saves at least every few seconds, so a long run
+// of changes is not held only in the page. A save names the
 // version it started from. When somebody else saved in between, the server
 // refuses it, the sheet reloads with their change, and this person is told,
 // rather than one of the two changes vanishing without anybody knowing.
 
-const saveDelayMs = 700;
+const saveDelayMs = 1000;
+// The longest a change waits while editing carries on without a pause.
+const saveMaxWaitMs = 5000;
+// A save the server could not take for a passing reason is sent again after
+// this, doubling each time up to the ceiling.
+const retryFirstMs = 2000;
+const retryCeilingMs = 30000;
 const pollMs = 4000;
 
 export interface SheetState {
@@ -43,6 +54,29 @@ export interface SheetState {
 		noteId: string,
 		value: string,
 	) => Promise<string | null>;
+}
+
+interface NotesRead {
+	notesVersion: number;
+	notes: Note[];
+	// Which set of rows held by the page these notes were read for.
+	tableId: number;
+}
+
+// The notes on the rows a table holds, as they stand now.
+async function readNotes(
+	url: string,
+	table: TableData,
+	tableId: number,
+): Promise<NotesRead> {
+	const response = await fetch(url, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ keys: [...new Set(table.keys)] }),
+	});
+	const body = await response.json().catch(() => null);
+	if (!response.ok) throw new Error(body?.error ?? "Could not load notes");
+	return { notesVersion: body.notesVersion, notes: body.notes, tableId };
 }
 
 function newSessionId(): string {
@@ -99,21 +133,80 @@ export function useSheet(id: string): SheetState {
 		sheet?.permission === "owner" || sheet?.permission === "edit";
 	const definition = draft ?? sheet?.definition ?? null;
 
-	const dataKey = sheet ? `/api/sheets/${id}/data?v=${sheet.version}` : null;
+	// Read again only when what the rows are read from changes. A width, a
+	// title, a formula or a note saved by anybody leaves them as they are.
+	const dataKey = sheet
+		? `/api/sheets/${id}/data?q=${queryFingerprint(sheet.definition)}`
+		: null;
 	const {
 		data: dataResponse,
 		error: dataError,
 		isLoading: dataLoading,
 		mutate: mutateData,
-	} = useSWR<{ data: TableData | PivotData }>(dataKey, {
+	} = useSWR<{ data: TableData | PivotData; notesVersion: number }>(dataKey, {
 		revalidateOnFocus: false,
 		keepPreviousData: true,
 	});
+
+	// Notes written since the rows were read, by anybody, are read on their
+	// own for the rows this page already holds.
+	const table =
+		dataResponse?.data.mode === "table" ? dataResponse.data : null;
+	const loadedNotes = dataResponse?.notesVersion ?? 0;
+	const notesVersion = sheet?.notesVersion ?? 0;
+	// Each set of rows held is told apart by a number, so notes read for one
+	// set are never laid over another.
+	const tableIds = useRef(new WeakMap<TableData, number>());
+	const nextTableId = useRef(0);
+	let tableId = 0;
+	if (table) {
+		tableId = tableIds.current.get(table) ?? ++nextTableId.current;
+		tableIds.current.set(table, tableId);
+	}
+	const { data: notesResponse } = useSWR<NotesRead>(
+		table && notesVersion > loadedNotes
+			? [`/api/sheets/${id}/notes`, notesVersion, tableId]
+			: null,
+		([url]: [string]) => readNotes(url, table!, tableId),
+		{ revalidateOnFocus: false, keepPreviousData: true },
+	);
+	const data = useMemo(() => {
+		if (!dataResponse) return undefined;
+		if (
+			!table ||
+			!notesResponse ||
+			notesResponse.tableId !== tableId ||
+			notesResponse.notesVersion <= loadedNotes
+		)
+			return dataResponse.data;
+		return { ...table, notes: notesResponse.notes };
+	}, [dataResponse, table, tableId, notesResponse, loadedNotes]);
 
 	// Whether a save is on its way. A second save sent alongside it would name
 	// the same base version and be refused as a conflict with this person's own
 	// change, so saves go one at a time.
 	const inFlight = useRef(false);
+	// When the change now waiting was first scheduled, for the longest wait.
+	const waitingSince = useRef<number | null>(null);
+	// The wait before the next attempt at a save that could not land, zero
+	// when the last one did.
+	const retryDelay = useRef(0);
+	const flushRef = useRef<(keepalive?: boolean) => Promise<void>>(
+		async () => {},
+	);
+
+	// Sends what is pending again after a failure that may pass, keeping the
+	// change rather than dropping it.
+	const retryLater = useCallback(() => {
+		retryDelay.current = retryDelay.current
+			? Math.min(retryDelay.current * 2, retryCeilingMs)
+			: retryFirstMs;
+		if (timer.current) clearTimeout(timer.current);
+		timer.current = setTimeout(() => {
+			timer.current = null;
+			void flushRef.current();
+		}, retryDelay.current);
+	}, []);
 
 	// keepalive lets the request outlive the page when it is sent on unload.
 	const flush = useCallback(
@@ -137,6 +230,18 @@ export function useSheet(id: string): SheetState {
 					keepalive,
 				});
 				const body = await response.json().catch(() => null);
+				// A busy or failing server, or a request that timed out, says
+				// nothing about the change itself. It is kept and sent again.
+				const passing =
+					response.status === 408 ||
+					response.status === 429 ||
+					response.status >= 500;
+				if (!response.ok && passing) {
+					pending.current = { ...change, ...(pending.current ?? {}) };
+					setNotice("The change has not saved yet. Trying again.");
+					if (!keepalive) retryLater();
+					return;
+				}
 				if (!response.ok) {
 					// Anything made on top of the refused draft goes with it,
 					// so it cannot overwrite somebody else's change later. The
@@ -160,6 +265,10 @@ export function useSheet(id: string): SheetState {
 				layoutRef.current.version = body.sheet.layoutVersion;
 				await mutateSheet({ sheet: body.sheet }, false);
 				saved = true;
+				if (retryDelay.current) {
+					retryDelay.current = 0;
+					setNotice(null);
+				}
 				// Kept only if something else was changed while this saved.
 				if (!pending.current) setDraft(null);
 			} catch {
@@ -167,8 +276,9 @@ export function useSheet(id: string): SheetState {
 				// newer, so the next save sends both.
 				pending.current = { ...change, ...(pending.current ?? {}) };
 				setNotice(
-					"The change could not be saved. Check the connection and edit again to retry.",
+					"The change has not saved yet. Check the connection. Trying again.",
 				);
+				if (!keepalive) retryLater();
 			} finally {
 				inFlight.current = false;
 				setSaving(false);
@@ -177,15 +287,30 @@ export function useSheet(id: string): SheetState {
 			// unless a scheduled save is about to send them anyway.
 			if (saved && pending.current && !timer.current) void flush();
 		},
-		[sheetKey, mutateSheet],
+		[sheetKey, mutateSheet, retryLater],
 	);
+	useEffect(() => {
+		flushRef.current = flush;
+	}, [flush]);
 
 	const schedule = useCallback(() => {
+		const now = Date.now();
+		waitingSince.current ??= now;
+		// Past the longest wait, the save already scheduled is left to go
+		// rather than pushed back again.
+		if (timer.current && now - waitingSince.current >= saveMaxWaitMs)
+			return;
+		// A save waiting to be retried keeps its own timing.
+		if (retryDelay.current && timer.current) return;
 		if (timer.current) clearTimeout(timer.current);
-		timer.current = setTimeout(() => {
-			timer.current = null;
-			void flush();
-		}, saveDelayMs);
+		timer.current = setTimeout(
+			() => {
+				timer.current = null;
+				waitingSince.current = null;
+				void flush();
+			},
+			Math.min(saveDelayMs, saveMaxWaitMs - (now - waitingSince.current)),
+		);
 	}, [flush]);
 
 	const change = useCallback(
@@ -322,7 +447,7 @@ export function useSheet(id: string): SheetState {
 		saving,
 		notice,
 		clearNotice: () => setNotice(null),
-		data: dataResponse?.data,
+		data,
 		dataError,
 		dataLoading,
 		reload: () => void mutateData(),

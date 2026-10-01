@@ -1,7 +1,7 @@
 "use client";
 
 import { BoardOriginContext } from "../boards/AddToBoard";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { describeFetchError } from "../../lib/swr";
@@ -408,6 +408,80 @@ export default function ReportView({
 		}
 	}, [loadedReport, activePageId, namedPageId, editing]);
 
+	// Held steady across renders, so the visuals on the page, which are
+	// memoised, are drawn again only when something they show has changed.
+	const onSizesChange = useCallback((next: Record<string, VisualSize>) => {
+		setVisualSizes(next);
+		// The arrangement no longer matches the saved view it started from.
+		setActiveViewId(null);
+	}, []);
+	const onColumnLayout = useCallback(
+		(next: {
+			columnOrder: string[];
+			pinnedColumns: string[];
+			columnWidths: Record<string, number>;
+		}) => {
+			setColumnLayout(next);
+			// The arrangement no longer matches the saved view it started
+			// from.
+			setActiveViewId(null);
+		},
+		[],
+	);
+	const boardOrigin = useMemo(
+		() =>
+			loadedReport
+				? {
+						reportId: loadedReport.reportId,
+						slug: loadedReport.slug,
+						title: loadedReport.title,
+					}
+				: null,
+		[loadedReport],
+	);
+	const shownPage = loadedReport
+		? pageOf(loadedReport, activePageId, namedPageId)
+		: undefined;
+
+	// The page's controls, lifted into the strip above the content, and the
+	// visuals laid out below it. Worked out once per page and column choice,
+	// so each visual keeps the same object from one render to the next.
+	//
+	// One inside a group is not among the lifted controls. A group lays out
+	// what it holds, and a control lifted out of its group into the strip
+	// would appear twice, once where the author put it and once above the
+	// page.
+	const { filterWidgets, visuals } = useMemo(() => {
+		const allVisuals = shownPage?.visuals ?? [];
+		const heldByGroup = new Set(
+			allVisuals
+				.filter((v) => typeof v.config.parentId === "string")
+				.map((v) => v.visualId),
+		);
+		const lifted = allVisuals.filter(
+			(v) => isPageControl(v.visualType) && !heldByGroup.has(v.visualId),
+		);
+		const onPage = allVisuals.filter((v) => !isPageControl(v.visualType));
+		const laidOut = (
+			lifted.length > 0 ? closeLiftedRows(onPage) : onPage
+		).map((v) =>
+			// Column choices apply to tables. A chart's encoding is part of
+			// its definition, so overriding it would produce something the
+			// author never designed.
+			custom && v.visualType === "table"
+				? {
+						...v,
+						config: {
+							...v.config,
+							dimensions: custom.dimensions,
+							measures: custom.measures,
+						},
+					}
+				: v,
+		);
+		return { filterWidgets: lifted, visuals: laidOut };
+	}, [shownPage, custom]);
+
 	if (error) {
 		return (
 			<div className={styles.page}>
@@ -484,45 +558,11 @@ export default function ReportView({
 		setVisualSizes({});
 		setActiveViewId(null);
 	};
-	const allVisuals = page?.visuals ?? [];
-	// Filter widgets are lifted into a strip above the content: a filter acts
+	// Filter widgets are lifted into a strip above the content. A filter acts
 	// on the whole page, so it belongs to the page chrome rather than sitting
-	// in the reading order between two charts.
-	// The dimension switcher sits with the filters: it changes what the whole
-	// page is broken down by, which is page chrome rather than a panel in the
-	// reading order.
-	// Controls the page lifts into the strip above the content.
-	//
-	// One inside a group is not among them: a group lays out what it holds, and
-	// a control lifted out of its group into the strip would appear twice, once
-	// where the author put it and once above the page.
-	const heldByGroup = new Set(
-		allVisuals
-			.filter((v) => typeof v.config.parentId === "string")
-			.map((v) => v.visualId),
-	);
-	const filterWidgets = allVisuals.filter(
-		(v) => isPageControl(v.visualType) && !heldByGroup.has(v.visualId),
-	);
-
-	const onPage = allVisuals.filter((v) => !isPageControl(v.visualType));
-	const visuals = (
-		filterWidgets.length > 0 ? closeLiftedRows(onPage) : onPage
-	).map((v) =>
-		// Column choices apply to tables. A chart's encoding is part of
-		// its definition, so overriding it would produce something the
-		// author never designed.
-		custom && v.visualType === "table"
-			? {
-					...v,
-					config: {
-						...v.config,
-						dimensions: custom.dimensions,
-						measures: custom.measures,
-					},
-				}
-			: v,
-	);
+	// in the reading order between two charts. The dimension switcher sits
+	// with the filters for the same reason. Both lists are worked out above,
+	// before the early returns.
 
 	// The data-through stamp. The source is whichever one the page is built on;
 	// the column is the editor's choice, falling back to the source's own time
@@ -673,21 +713,10 @@ export default function ReportView({
 			shared={sharedHere}
 			onShareableChange={setPageState}
 		>
-			<BoardOriginContext.Provider
-				value={{
-					reportId: report.reportId,
-					slug: report.slug,
-					title: report.title,
-				}}
-			>
+			<BoardOriginContext.Provider value={boardOrigin}>
 				<ViewScaleProvider
 					sizes={visualSizes}
-					onSizesChange={(next) => {
-						setVisualSizes(next);
-						// The arrangement no longer matches the saved view it started
-						// from.
-						setActiveViewId(null);
-					}}
+					onSizesChange={onSizesChange}
 				>
 					<div className={styles.page}>
 						<div className={styles.header}>
@@ -1001,12 +1030,7 @@ export default function ReportView({
 									columnOrder={columnLayout.columnOrder}
 									pinnedColumns={columnLayout.pinnedColumns}
 									columnWidths={columnLayout.columnWidths}
-									onColumnLayout={(next) => {
-										setColumnLayout(next);
-										// The arrangement no longer matches the saved view it
-										// started from.
-										setActiveViewId(null);
-									}}
+									onColumnLayout={onColumnLayout}
 								/>
 							)}
 						</ScaledArea>

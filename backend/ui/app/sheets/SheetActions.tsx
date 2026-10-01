@@ -3,11 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import type { Sheet, SheetPermission } from "../../lib/sheets/store";
 import { ConfirmDialog } from "../components/shared/ConfirmDialog";
+import { markKeep } from "../mine/Retention";
 import styles from "./Sheets.module.css";
 
-// What can be done to a whole sheet: copy it, or get rid of it. Its owner
-// deletes it for everybody. Somebody it was shared with only takes it off
-// their own list, and the owner and everyone else keep it.
+// What can be done to a whole sheet: copy it, keep it, or get rid of it. Its
+// owner deletes it for everybody. Somebody it was shared with only takes it
+// off their own list, and the owner and everyone else keep it. Only the owner
+// marks it Keep, which retention then passes by.
 
 export function SheetActions({
 	id,
@@ -15,12 +17,17 @@ export function SheetActions({
 	permission,
 	onDeleted,
 	onDuplicated,
+	keep,
+	onKeepChanged,
 }: {
 	id: string;
 	title: string;
 	permission: SheetPermission;
 	onDeleted: () => void;
 	onDuplicated: (newId: string) => void;
+	// Offered to the owner when given.
+	keep?: boolean;
+	onKeepChanged?: () => void;
 }) {
 	const [open, setOpen] = useState(false);
 	const [confirming, setConfirming] = useState(false);
@@ -70,6 +77,16 @@ export function SheetActions({
 		} finally {
 			setBusy(false);
 		}
+	};
+
+	const toggleKeep = async () => {
+		setOpen(false);
+		setBusy(true);
+		setProblem(null);
+		const failed = await markKeep("sheet", id, !keep);
+		setBusy(false);
+		if (failed) setProblem(failed);
+		onKeepChanged?.();
 	};
 
 	const remove = async () => {
@@ -140,6 +157,16 @@ export function SheetActions({
 					>
 						Make a copy
 					</button>
+					{owner && keep !== undefined && (
+						<button
+							type="button"
+							role="menuitem"
+							className={styles.menuItem}
+							onClick={toggleKeep}
+						>
+							{keep ? "Stop keeping" : "Keep"}
+						</button>
+					)}
 					<button
 						type="button"
 						role="menuitem"
