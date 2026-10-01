@@ -3,12 +3,17 @@ import { test } from "node:test";
 import type { SemanticSource } from "../semantic/types";
 import {
 	buildCard,
+	chooseShown,
 	historyStart,
 	latestFinished,
 	previousOf,
+	readProbe,
+	splitWindows,
 	windowOf,
 	worthExplaining,
+	type Card,
 } from "./card";
+import { cardKey, cardScope } from "./keys";
 import { orderReports } from "./order";
 import { timeFieldFor, watchList, type WatchReport } from "./watch";
 import {
@@ -319,4 +324,170 @@ test("reports are read in the order of the reader's own marks, then use", () => 
 			["a", null],
 		],
 	);
+});
+
+// --- One read for the latest period and its history -----------------------
+
+function dailyRows(days: number, endKey: string) {
+	const end = Date.parse(`${endKey}T00:00:00Z`);
+	return Array.from({ length: days }, (_, i) => ({
+		day: new Date(end - i * 86_400_000).toISOString().slice(0, 10),
+		sales: 100 + i,
+	}));
+}
+
+test("one read holds the latest finished day and its history", () => {
+	const rows = dailyRows(64, "2026-09-30");
+	const reading = readProbe(rows, "day", "2026-09-30", 64);
+	assert.equal(reading.kind, "ready");
+	if (reading.kind !== "ready") return;
+	assert.equal(reading.target, "2026-09-29");
+	assert.equal(reading.spacing, 1);
+	// Oldest first, from the start of the history to the finished day.
+	assert.equal(reading.rows[0].day, historyStart("2026-09-29", 1));
+	assert.equal(reading.rows.at(-1)?.day, "2026-09-29");
+});
+
+test("a read that filled its limit short of the history asks for it", () => {
+	const rows = dailyRows(20, "2026-09-30");
+	assert.equal(readProbe(rows, "day", "2026-09-30", 20).kind, "short");
+	// The same rows under the limit are all there is.
+	assert.equal(readProbe(rows, "day", "2026-09-30", 64).kind, "ready");
+});
+
+test("nothing finished yet reads as no card", () => {
+	const rows = [{ day: "2026-09-30", sales: 1 }];
+	assert.equal(readProbe(rows, "day", "2026-09-30", 64).kind, "none");
+});
+
+// --- Both windows of a breakdown from one read -----------------------------
+
+test("a breakdown read across both periods splits back into each", () => {
+	const rows = [
+		{ region: "East", day: "2026-09-22", sales: 5 },
+		{ region: "East", day: "2026-09-25", sales: 9 },
+		{ region: "East", day: "2026-09-29", sales: 7 },
+		{ region: "West", day: "2026-09-29", sales: 3 },
+	];
+	const split = splitWindows(
+		rows,
+		"day",
+		"region",
+		"sales",
+		{ gte: "2026-09-29", lt: "2026-09-30" },
+		{ gte: "2026-09-22", lt: "2026-09-23" },
+	);
+	assert.deepEqual(split, {
+		current: [
+			{ region: "East", sales: 7 },
+			{ region: "West", sales: 3 },
+		],
+		previous: [{ region: "East", sales: 5 }],
+	});
+});
+
+test("a window holding several periods is asked for on its own", () => {
+	const rows = [
+		{ region: "East", day: "2026-09-01", sales: 5 },
+		{ region: "East", day: "2026-09-15", sales: 9 },
+	];
+	const split = splitWindows(
+		rows,
+		"day",
+		"region",
+		"sales",
+		{ gte: "2026-09-01", lt: "2026-10-01" },
+		{ gte: "2026-08-01", lt: "2026-09-01" },
+	);
+	assert.equal(split, null);
+});
+
+// --- Who a stored card may be handed to ------------------------------------
+
+const watched = {
+	id: "r1:Sales",
+	reportId: "r1",
+	slug: "sales",
+	reportTitle: "Sales",
+	sourceKey: "orders",
+	measure: "Sales",
+	hint: "decimal" as const,
+	timeField: "Day",
+	splitBy: ["Region"],
+	better: null,
+	pinned: false,
+};
+
+test("an unfiltered dataset's card is held once for everyone", () => {
+	assert.equal(
+		cardScope({ shareable: true, filtered: false }, "p1", "A@x.com"),
+		"unfiltered",
+	);
+});
+
+test("a filtered dataset's card is held per policy class", () => {
+	assert.equal(
+		cardScope({ shareable: true, filtered: true }, "p1", "A@x.com"),
+		"p1",
+	);
+});
+
+test("a dataset whose filters are unread holds a card per reader", () => {
+	assert.equal(
+		cardScope({ shareable: false, filtered: true }, "p1", "A@x.com"),
+		"person:a@x.com:p1",
+	);
+});
+
+test("the same figure on two reports is one card, scopes never meet", () => {
+	const other = { ...watched, id: "r2:Sales", reportId: "r2", slug: "b" };
+	assert.equal(cardKey("p1", watched), cardKey("p1", other));
+	assert.notEqual(cardKey("p1", watched), cardKey("p2", watched));
+	assert.ok(cardKey("unfiltered", watched).startsWith("unfiltered:"));
+	// A different breakdown says something different about what moved it.
+	assert.notEqual(
+		cardKey("p1", watched),
+		cardKey("p1", { ...watched, splitBy: ["Product"] }),
+	);
+});
+
+// --- Choosing what the page shows once figures are read ---------------------
+
+function read(
+	id: string,
+	unusual: boolean,
+	againstUsual: number,
+	weight: number,
+) {
+	return { id, card: { unusual, againstUsual, weight } as Card };
+}
+
+test("a figure far from usual is shown however far down its report sits", () => {
+	const entries = [
+		read("first", false, 0.01, 0.1),
+		read("second", false, 0.02, 0.2),
+		read("third", false, 0.15, 1.5),
+		read("last", true, 27, 19),
+	];
+	assert.deepEqual(
+		chooseShown(entries, 2).map((e) => e.id),
+		["third", "last"],
+	);
+});
+
+test("steady figures fill what is left in the order given", () => {
+	const entries = [
+		read("a", false, 0.01, 0.1),
+		read("b", false, 0.05, 0.5),
+		read("c", false, 0.02, 0.2),
+	];
+	assert.deepEqual(
+		chooseShown(entries, 2).map((e) => e.id),
+		["a", "b"],
+	);
+});
+
+test("with room for everything nothing is left out", () => {
+	const entries = [read("a", true, 1, 15), read("b", false, 0, 0)];
+	assert.equal(chooseShown(entries, 16).length, 2);
 });

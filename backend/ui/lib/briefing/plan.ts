@@ -4,7 +4,7 @@ import { sql } from "../data/lakebase";
 import { statusOf, type SourceStatus } from "../freshness/status";
 import { listInbox, type InboxItem } from "../notify/store";
 import { listPersonalPages } from "../platform/personal";
-import { getReport, listReports } from "../platform/reports";
+import { listReports } from "../platform/reports";
 import { listFavourites } from "../platform/search";
 import { reachableSet } from "../platform/sources";
 import { getSource } from "../semantic/registry";
@@ -20,19 +20,25 @@ import {
 
 // What the briefing holds for one reader before any figure is read: the
 // figures to read, the sources running late, and the alerts that fired.
-// Everything here comes from the platform store, so it answers quickly and
-// the figures are read one by one behind it.
+// Everything here comes from the platform store in two rounds of questions
+// asked together, so it answers quickly and the figures are read behind it.
 
-// Figures read for one briefing. Each is a handful of warehouse questions,
-// most answered from the shared cache after the first reader of the morning.
-export const maxItems = 16;
+// Figures shown in one briefing, besides the reader's pins. Every report's
+// headline figures are read, and the page chooses these once it knows which
+// moved. Each is served from its stored card, and asks the warehouse only when
+// its data changed since that card was worked out. See lib/briefing/cards.
+export const shownItems = 16;
 // How far back fired alerts are shown.
 const alertDays = 3;
 
 export type { BriefingReport };
 
 export interface BriefingPlan {
+	// Every figure to read, pins first, then in the reader's order of
+	// reports.
 	items: WatchItem[];
+	// How many of the unpinned ones the page shows.
+	limit: number;
 	late: Pick<
 		SourceStatus,
 		"sourceKey" | "title" | "state" | "expectedBy" | "lastChanged"
@@ -88,6 +94,82 @@ async function popularWithPeers(
 	return rows.map((r) => r.report_id);
 }
 
+// The parts of each report the selection reads, for every report at once.
+// One question for all of them rather than several per report. A visual with no dataset of its own reads its page's, and a page
+// with none reads its report's, as on the report itself.
+async function reportShapes(reportIds: string[]): Promise<WatchReport[]> {
+	if (reportIds.length === 0) return [];
+	const rows = await sql<{
+		report_id: string;
+		slug: string;
+		title: string;
+		report_source: string | null;
+		page_id: string;
+		page_source: string | null;
+		visual_type: string | null;
+		visual_source: string | null;
+		dimensions: string[] | null;
+		measures: string[] | null;
+		targets: Record<string, unknown> | null;
+	}>(
+		`SELECT r.report_id::text AS report_id, r.slug, r.title,
+		        r.source_key AS report_source,
+		        p.page_id::text AS page_id, p.source_key AS page_source,
+		        v.visual_type, v.source_key AS visual_source,
+		        v.config->'dimensions' AS dimensions,
+		        v.config->'measures' AS measures,
+		        v.config->'options'->'targets' AS targets
+		 FROM reports r
+		 JOIN report_pages p ON p.report_id = r.report_id AND p.is_active
+		 LEFT JOIN report_visuals v ON v.page_id = p.page_id AND v.is_active
+		 WHERE r.report_id = ANY($1::uuid[]) AND r.is_active
+		 ORDER BY r.report_id, p.sort_order, p.title, v.sort_order`,
+		[reportIds],
+	);
+	const reports = new Map<string, WatchReport>();
+	const pages = new Map<string, WatchReport["pages"][number]>();
+	for (const row of rows) {
+		let report = reports.get(row.report_id);
+		if (!report) {
+			report = {
+				reportId: row.report_id,
+				slug: row.slug,
+				title: row.title,
+				sourceKey: row.report_source,
+				pages: [],
+			};
+			reports.set(row.report_id, report);
+		}
+		let page = pages.get(row.page_id);
+		if (!page) {
+			page = {
+				sourceKey: row.page_source ?? row.report_source,
+				visuals: [],
+			};
+			pages.set(row.page_id, page);
+			report.pages.push(page);
+		}
+		if (!row.visual_type) continue;
+		page.visuals.push({
+			visualType: row.visual_type,
+			sourceKey: row.visual_source ?? page.sourceKey,
+			config: {
+				dimensions: Array.isArray(row.dimensions)
+					? row.dimensions
+					: undefined,
+				measures: Array.isArray(row.measures)
+					? row.measures
+					: undefined,
+				options: row.targets ? { targets: row.targets } : undefined,
+			},
+		});
+	}
+	// In the order asked for, which is the reader's order.
+	return reportIds
+		.map((id) => reports.get(id))
+		.filter((r): r is WatchReport => r !== undefined);
+}
+
 async function unusualAlerts(reportIds: string[]): Promise<WatchAlert[]> {
 	if (reportIds.length === 0) return [];
 	const rows = await sql<{
@@ -129,6 +211,7 @@ export async function briefingPlan(
 		popular,
 		choices,
 		reachable,
+		inbox,
 	] = await Promise.all([
 		listReports(policy, identity),
 		listPersonalPages(identity, policy).catch(() => null),
@@ -137,6 +220,9 @@ export async function briefingPlan(
 		popularWithPeers(email, policy.id).catch(none),
 		listChoices(email).catch(() => [] as BriefingChoice[]),
 		reachableSet(identity),
+		listInbox(email, { kind: "alert", limit: 20 }).catch(
+			() => [] as InboxItem[],
+		),
 	]);
 	const own = personal?.mine ?? [];
 	const reports = orderReports(
@@ -166,19 +252,20 @@ export async function briefingPlan(
 		},
 	);
 
-	const details = await Promise.all(
-		reports.map((r) =>
-			getReport(policy, identity, r.slug).catch(() => null),
+	// Only reports already found readable above are asked about.
+	const reportIds = reports.map((r) => r.reportId);
+	const [watchReports, alerts, status] = await Promise.all([
+		reportShapes(reportIds),
+		unusualAlerts(reportIds).catch(() => [] as WatchAlert[]),
+		statusOf(reachable ? [...reachable] : null, email, timeZone).catch(
+			() => [] as SourceStatus[],
 		),
-	);
+	]);
 	const sources = new Map<string, SemanticSource>();
-	const watchReports: WatchReport[] = [];
-	for (const detail of details) {
-		if (!detail) continue;
-		watchReports.push(detail);
+	for (const report of watchReports) {
 		for (const key of [
-			detail.sourceKey,
-			...detail.pages.flatMap((p) => [
+			report.sourceKey,
+			...report.pages.flatMap((p) => [
 				p.sourceKey,
 				...p.visuals.map((v) => v.sourceKey),
 			]),
@@ -189,24 +276,19 @@ export async function briefingPlan(
 			if (source) sources.set(key, source);
 		}
 	}
+	const items = watchList(
+		watchReports,
+		sources,
+		alerts,
+		Number.MAX_SAFE_INTEGER,
+		choices,
+	);
 
-	const alerts = await unusualAlerts(
-		watchReports.map((r) => r.reportId),
-	).catch(() => [] as WatchAlert[]);
-	const items = watchList(watchReports, sources, alerts, maxItems, choices);
-
-	const [status, inbox] = await Promise.all([
-		statusOf(reachable ? [...reachable] : null, email, timeZone).catch(
-			() => [] as SourceStatus[],
-		),
-		listInbox(email, { kind: "alert", limit: 20 }).catch(
-			() => [] as InboxItem[],
-		),
-	]);
 	const since = Date.now() - alertDays * 86_400_000;
 
 	return {
 		items,
+		limit: shownItems,
 		late: status
 			.filter((s) => s.state === "late" || s.state === "overdue")
 			.map(({ sourceKey, title, state, expectedBy, lastChanged }) => ({

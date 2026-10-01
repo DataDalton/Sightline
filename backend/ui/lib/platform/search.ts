@@ -338,18 +338,19 @@ export async function removeFavourite(
 	);
 }
 
-// The reports this person opened most recently, with the address each is at.
+// The reports this person opens most, with the address each is at. Counted
+// over the last month, with the most recent visit breaking ties and reports
+// opened only before that following, newest first.
 //
 // Separate from recentReports, which answers with ids for the palette to match
 // against a list it already holds. Warming has no such list and would otherwise
 // resolve every id to a slug one query at a time.
-export async function recentReportTargets(
+export async function frequentReportTargets(
 	email: string,
 	limit = 5,
 ): Promise<{ reportId: string; slug: string }[]> {
 	const rows = await sql<{ report_id: string; slug: string }>(
-		`SELECT r.report_id::text AS report_id, r.slug,
-		        max(e.occurred_on) AS seen
+		`SELECT r.report_id::text AS report_id, r.slug
 		 FROM usage_events e
 		 JOIN reports r ON r.report_id = e.report_id
 		 WHERE lower(e.user_email) = $1
@@ -357,7 +358,9 @@ export async function recentReportTargets(
 		   AND e.event_type = 'page_view'
 		   AND r.is_active = TRUE
 		 GROUP BY r.report_id, r.slug
-		 ORDER BY seen DESC
+		 ORDER BY count(*) FILTER (
+		            WHERE e.occurred_on > now() - interval '30 days') DESC,
+		          max(e.occurred_on) DESC
 		 LIMIT $2`,
 		[email.toLowerCase(), limit],
 	).catch(() => [] as { report_id: string; slug: string }[]);

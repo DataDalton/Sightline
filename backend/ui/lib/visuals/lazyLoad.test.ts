@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { scrollRootFor, type ScrollNode, type ScrollStyle } from "./lazyLoad";
+import {
+	scrollRootFor,
+	withinReach,
+	type ScrollNode,
+	type ScrollStyle,
+} from "./lazyLoad";
 
 interface FakeNode extends ScrollNode {
 	name: string;
@@ -135,4 +140,17 @@ test("the document body is left to the viewport", () => {
 	const frame = node("frame", body);
 	const isDocument = (n: FakeNode) => n.name === "html" || n.name === "body";
 	assert.equal(scrollRootFor(frame, styleOf, isDocument), null);
+});
+
+test("a visual on screen or within a screen of it is in reach", () => {
+	const view = { top: 100, bottom: 900 };
+	assert.equal(withinReach({ top: 200, bottom: 400 }, view), true);
+	assert.equal(withinReach({ top: 1500, bottom: 1700 }, view), true);
+	assert.equal(withinReach({ top: -650, bottom: -600 }, view), true);
+});
+
+test("a visual more than a screen away waits for the observer", () => {
+	const view = { top: 100, bottom: 900 };
+	assert.equal(withinReach({ top: 1800, bottom: 2000 }, view), false);
+	assert.equal(withinReach({ top: -1000, bottom: -800 }, view), false);
 });

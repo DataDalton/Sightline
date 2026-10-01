@@ -1368,6 +1368,23 @@ const migrations: string[] = [
 	 FROM reader_policy
 	 ORDER BY user_email, computed_on DESC
 	 ON CONFLICT (user_email) DO NOTHING`,
+
+	// Home page cards kept between visits, one per figure, scope and day.
+	// The scope says who a card may be handed to, as policy_class does for
+	// result_cache. See lib/briefing/store.
+	`CREATE TABLE IF NOT EXISTS briefing_cards (
+		card_key    TEXT NOT NULL,
+		day         DATE NOT NULL,
+		scope       TEXT NOT NULL,
+		source_key  TEXT NOT NULL,
+		card        JSONB,
+		computed_on TIMESTAMPTZ NOT NULL,
+		expires_on  TIMESTAMPTZ NOT NULL,
+		PRIMARY KEY (card_key, day)
+	)`,
+	`CREATE INDEX IF NOT EXISTS briefing_cards_source_idx
+		ON briefing_cards (source_key)`,
+	`CREATE INDEX IF NOT EXISTS briefing_cards_day_idx ON briefing_cards (day)`,
 ];
 
 // Creates anything missing. Safe to run on every startup.
@@ -1543,6 +1560,10 @@ export async function sweepExpired(): Promise<void> {
 		`DELETE FROM table_arrivals WHERE arrived_on < now() - interval '60 days'`,
 	);
 	await sql(`DELETE FROM result_cache WHERE expires_on < now()`);
+	// A card from a week ago is no longer what anyone is shown first.
+	await sql(
+		`DELETE FROM briefing_cards WHERE day < current_date - interval '7 days'`,
+	);
 	await sql(`DELETE FROM reader_access WHERE expires_on < now()`);
 	await sql(`DELETE FROM reader_policy WHERE expires_on < now()`);
 

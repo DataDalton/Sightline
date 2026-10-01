@@ -54,6 +54,8 @@ export type StepKind =
 	| "run_query"
 	// Filling in the screen the question was asked from.
 	| "draft"
+	// Making a new board and saving it.
+	| "create_board"
 	| "unknown";
 
 export type AssistantEvent =
@@ -74,6 +76,9 @@ export type AssistantEvent =
 	// a formula, a table, edits to a page. Checked before it is sent, and
 	// applied by the screen as an unsaved change.
 	| { type: "draft"; kind: string; draft: unknown }
+	// Something the assistant made and saved, such as a new board, with where
+	// to open it.
+	| { type: "created"; kind: "board"; title: string; href: string }
 	| { type: "done"; ranAs: "caller" | "app" }
 	| { type: "error"; message: string };
 

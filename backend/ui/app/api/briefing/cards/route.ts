@@ -1,0 +1,95 @@
+import { NextRequest, NextResponse } from "next/server";
+import { briefingCards } from "@/lib/briefing/cards";
+import type { WatchItem } from "@/lib/briefing/watch";
+import { caller, privateJson, readJson } from "../../notifications/guard";
+
+// The cards of the caller's briefing, one line of JSON each, written as each
+// becomes known. Stored cards come first, then each one worked out afresh.
+// Every item names a dataset, a measure and fields, and is read like any other
+// query the caller sends, under their own access, with every name checked
+// against the dataset. See lib/briefing/cards.
+
+function text(value: unknown, max = 200): string {
+	return typeof value === "string" ? value.slice(0, max) : "";
+}
+
+function itemOf(raw: unknown): WatchItem | null {
+	if (!raw || typeof raw !== "object") return null;
+	const r = raw as Record<string, unknown>;
+	const item: WatchItem = {
+		id: text(r.id, 400),
+		reportId: text(r.reportId),
+		slug: text(r.slug),
+		reportTitle: text(r.reportTitle),
+		sourceKey: text(r.sourceKey),
+		measure: text(r.measure),
+		hint: "decimal",
+		timeField: text(r.timeField),
+		splitBy: Array.isArray(r.splitBy)
+			? r.splitBy
+					.filter((s): s is string => typeof s === "string")
+					.slice(0, 2)
+			: [],
+		better: null,
+		pinned: false,
+	};
+	return item.id && item.sourceKey && item.measure && item.timeField
+		? item
+		: null;
+}
+
+function zoneOf(raw: unknown): string {
+	const zone = text(raw, 64);
+	if (!zone) return "UTC";
+	try {
+		new Intl.DateTimeFormat("en-US", { timeZone: zone });
+		return zone;
+	} catch {
+		return "UTC";
+	}
+}
+
+// { items, tz }
+export async function POST(request: NextRequest) {
+	const identity = await caller(request);
+	if (identity instanceof NextResponse) return identity;
+	const body = (await readJson(request)) as Record<string, unknown> | null;
+	const items = Array.isArray(body?.items)
+		? body.items
+				.map(itemOf)
+				.filter((item): item is WatchItem => item !== null)
+		: null;
+	if (!items) return privateJson({ error: "Expected briefing items." }, 400);
+	const timeZone = zoneOf(body?.tz);
+
+	const encoder = new TextEncoder();
+	const stream = new ReadableStream<Uint8Array>({
+		async start(controller) {
+			let open = true;
+			const emit = (event: unknown) => {
+				if (!open) return;
+				try {
+					controller.enqueue(
+						encoder.encode(`${JSON.stringify(event)}\n`),
+					);
+				} catch {
+					// The reader left. Work already started still finishes
+					// and is stored for the next visit.
+					open = false;
+				}
+			};
+			try {
+				await briefingCards(identity, items, timeZone, emit);
+			} catch (error) {
+				console.error("The briefing cards could not be read:", error);
+			}
+			if (open) controller.close();
+		},
+	});
+	return new Response(stream, {
+		headers: {
+			"Content-Type": "application/x-ndjson",
+			"Cache-Control": "private, no-store",
+		},
+	});
+}

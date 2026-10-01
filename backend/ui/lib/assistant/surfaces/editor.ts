@@ -262,7 +262,7 @@ function newId(): string {
 }
 
 // A visual as the model described it, over what it was before, checked.
-function buildVisual(
+export function buildVisual(
 	args: Record<string, unknown>,
 	base: EditorVisual | null,
 	fallbackSource: string | null,

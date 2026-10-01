@@ -48,10 +48,99 @@
 	color: var(--text-muted);
 }
 
-.standfirst {
+/* --- Asking ------------------------------------------------------------------ */
+
+.ask {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	max-width: 760px;
+}
+
+.askForm {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	padding: 6px 6px 6px var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-full);
+	background: var(--surface-raised);
+	box-shadow: var(--shadow-sm);
+}
+
+.askForm:focus-within {
+	border-color: var(--focus-ring);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus-ring) 18%, transparent);
+}
+
+.askIcon {
+	flex-shrink: 0;
+	color: var(--brand-strong);
+}
+
+.askInput {
+	flex: 1;
+	min-width: 0;
+	border: none;
+	background: transparent;
+	color: var(--text-primary);
 	font-size: var(--text-md);
+	padding: var(--space-1) 0;
+}
+
+.askInput:focus {
+	outline: none;
+}
+
+.askSend {
+	flex-shrink: 0;
+	font-size: var(--text-sm);
+	font-weight: 600;
+	padding: 6px var(--space-4);
+	border: none;
+	border-radius: var(--radius-full);
+	background: var(--brand);
+	color: var(--brand-contrast);
+	cursor: pointer;
+}
+
+.askSend:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.askSuggestions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+}
+
+.askChip {
+	font-size: var(--text-sm);
+	padding: 4px var(--space-3);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-full);
+	background: transparent;
 	color: var(--text-secondary);
-	max-width: 62ch;
+	cursor: pointer;
+}
+
+.askChip:hover {
+	border-color: var(--border-default);
+	color: var(--text-primary);
+	background: var(--state-hover);
+}
+
+.askSend:focus-visible,
+.askChip:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: 2px;
+}
+
+.cardButtons {
+	display: inline-flex;
+	flex-wrap: wrap;
+	gap: var(--space-2);
 }
 
 .progress {
@@ -612,6 +701,42 @@
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+/* A card shown from before while newer figures are worked out. */
+.updating {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	margin-left: var(--space-2);
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+	white-space: nowrap;
+}
+
+.updating::before {
+	content: "";
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--brand);
+	animation: updatingPulse 1.4s ease-in-out infinite;
+}
+
+@keyframes updatingPulse {
+	0%,
+	100% {
+		opacity: 0.35;
+	}
+	50% {
+		opacity: 1;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.updating::before {
+		animation: none;
+	}
 }
 
 /* --- Loading ------------------------------------------------------------- */

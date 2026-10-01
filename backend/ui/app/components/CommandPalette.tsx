@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import type { SearchTarget, TargetKind } from "../../lib/platform/search";
 import { rankTarget } from "../../lib/platform/searchMatch";
+import { useAssistant } from "../assist/AssistantContext";
+import { useUser } from "../context/UserContext";
 import styles from "./CommandPalette.module.css";
 
 // Everything reachable, one keystroke away.
@@ -32,6 +34,26 @@ const kindIcons: Record<TargetKind, string> = {
 	view: "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z",
 	action: "M9 18l6-6-6-6",
 };
+
+// The row that hands what was typed to the assistant, kept apart from the
+// search targets by its id.
+const askId = "ask:assistant";
+const askIcon =
+	"M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM19 17l.8 2.2L22 20l-2.2.8L19 23l-.8-2.2L16 20l2.2-.8z";
+
+// Whether what was typed reads as a question rather than a name. A question
+// is offered to the assistant first, a name is looked up first.
+export function readsAsQuestion(query: string): boolean {
+	const q = query.trim().toLowerCase();
+	if (q.endsWith("?")) return true;
+	if (
+		/^(what|why|how|which|who|when|where|show|compare|list|is|are|did|does|do|can|find|give|tell|build|make|create)\b/.test(
+			q,
+		)
+	)
+		return true;
+	return q.split(/\s+/).length >= 5;
+}
 
 const groupOrder: { kind: TargetKind; label: string }[] = [
 	{ kind: "report", label: "Reports" },
@@ -118,19 +140,41 @@ export function CommandPalette({
 
 	// Grouped for display, flat for the keyboard. The cursor indexes the flat
 	// list so arrowing runs straight through the groups.
+	// Anything typed can also be asked of the assistant, when it is on.
+	const { user } = useUser();
+	const { ask } = useAssistant();
+	const asking = Boolean(user?.assistant);
+
 	const grouped = useMemo(() => {
 		if (!query.trim()) {
 			return results.length
 				? [{ label: "Jump back in", items: results }]
 				: [];
 		}
-		return groupOrder
+		const found = groupOrder
 			.map(({ kind, label }) => ({
 				label,
 				items: results.filter((t) => t.kind === kind),
 			}))
 			.filter((group) => group.items.length > 0);
-	}, [results, query]);
+		if (!asking) return found;
+		const askRow = {
+			label: "Ask the assistant",
+			items: [
+				{
+					id: askId,
+					kind: "action" as TargetKind,
+					title: query.trim(),
+					context: "Answered from your data, in the assistant panel",
+					href: "",
+					keywords: "",
+				} satisfies SearchTarget,
+			],
+		};
+		return readsAsQuestion(query) || found.length === 0
+			? [askRow, ...found]
+			: [...found, askRow];
+	}, [results, query, asking]);
 
 	const flat = useMemo(
 		() => grouped.flatMap((group) => group.items),
@@ -154,9 +198,10 @@ export function CommandPalette({
 	const go = useCallback(
 		(target: SearchTarget) => {
 			onClose();
-			router.push(target.href);
+			if (target.id === askId) ask(target.title);
+			else router.push(target.href);
 		},
-		[onClose, router],
+		[onClose, router, ask],
 	);
 
 	const onKeyDown = (event: React.KeyboardEvent) => {
@@ -243,7 +288,9 @@ export function CommandPalette({
 								? "Loading"
 								: query.trim()
 									? `Nothing matches "${query.trim()}"`
-									: "Open a report and it appears here."}
+									: asking
+										? "Open a report and it appears here, or type a question to ask the assistant."
+										: "Open a report and it appears here."}
 						</div>
 					) : (
 						grouped.map((group) => (
@@ -286,9 +333,12 @@ export function CommandPalette({
 												>
 													<path
 														d={
-															kindIcons[
-																target.kind
-															]
+															target.id === askId
+																? askIcon
+																: kindIcons[
+																		target
+																			.kind
+																	]
 														}
 													/>
 												</svg>

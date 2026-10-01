@@ -465,10 +465,11 @@ export async function shellPayload(identity: Identity): Promise<{
 	// did not previously reach: it ran only for the report somebody had already
 	// asked for, so the second report of the morning was as cold as the first.
 	//
-	// Their marked reports first, then what they opened recently. Started and
-	// not awaited, guarded inside so it runs once per policy class rather than
-	// once per page load, and the answers it leaves serve everybody who sees
-	// the same rows rather than only the reader who paid for them.
+	// Their marked reports first, then what they open most. Started and not
+	// awaited, guarded inside so it runs once per reader per interval rather
+	// than once per page load, asks only for answers not already held, and the
+	// answers it leaves serve everybody who sees the same rows rather than only
+	// the reader who paid for them.
 	warmForReader(
 		identity,
 		navigation.favourites.map((f) => ({

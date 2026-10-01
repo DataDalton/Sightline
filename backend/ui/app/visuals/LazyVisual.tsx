@@ -5,12 +5,17 @@ import {
 	useContext,
 	useEffect,
 	useId,
+	useLayoutEffect,
 	useMemo,
 	useState,
 	useSyncExternalStore,
 	type ReactNode,
 } from "react";
-import { nearMargin, scrollRootFor } from "../../lib/visuals/lazyLoad";
+import {
+	nearMargin,
+	scrollRootFor,
+	withinReach,
+} from "../../lib/visuals/lazyLoad";
 import { pendingQueries } from "../hooks/queryBatch";
 import styles from "./Visual.module.css";
 
@@ -147,6 +152,28 @@ export function useNearScreen(
 	useEffect(() => {
 		hookPrinting();
 	}, []);
+
+	// Measured before the first paint. The observer reports only after it, so
+	// a visual already on screen, whose answer is often already held, showed
+	// its placeholder for a frame every time a report was opened.
+	useLayoutEffect(() => {
+		if (!enabled || !element || near) return;
+		const root = scrollRootFor(
+			element,
+			(node) => getComputedStyle(node),
+			(node) =>
+				node === document.body || node === document.documentElement,
+		);
+		const view = root
+			? root.getBoundingClientRect()
+			: { top: 0, bottom: window.innerHeight };
+		if (withinReach(element.getBoundingClientRect(), view)) {
+			setNear(true);
+			setOnScreen(true);
+		}
+		// Only as the frame mounts. The observer follows it from there.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [element, enabled]);
 
 	useEffect(() => {
 		if (!enabled || !element) return;

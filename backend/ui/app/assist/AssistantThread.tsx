@@ -1,5 +1,6 @@
 "use client";
 
+import { WatchAction } from "../alerts/WatchAction";
 import { AddToBoard } from "../boards/AddToBoard";
 import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
@@ -205,28 +206,45 @@ function ChartBlock({
 		<figure className={styles.result}>
 			<figcaption className={styles.chartHead}>
 				<span className={styles.chartTitle}>{chart.title}</span>
-				<AddToBoard
-					variant="text"
-					piece={() => ({
-						visual: {
-							visualType: chart.visualType,
-							title: chart.title,
+				<span className={styles.chartActions}>
+					<WatchAction
+						visual={{
 							sourceKey: chart.sourceKey,
 							config: {
 								dimensions: chart.dimensions,
 								measures: chart.measures,
 								filters: chart.filters,
-								sort: chart.sort,
-								...(chart.limit ? { limit: chart.limit } : {}),
 							},
-						},
-						origin: {
-							reportId: null,
-							slug: null,
-							title: "From the assistant",
-						},
-					})}
-				/>
+						}}
+						sources={Object.fromEntries(
+							sources.map((s) => [s.sourceKey, s]),
+						)}
+					/>
+					<AddToBoard
+						variant="text"
+						piece={() => ({
+							visual: {
+								visualType: chart.visualType,
+								title: chart.title,
+								sourceKey: chart.sourceKey,
+								config: {
+									dimensions: chart.dimensions,
+									measures: chart.measures,
+									filters: chart.filters,
+									sort: chart.sort,
+									...(chart.limit
+										? { limit: chart.limit }
+										: {}),
+								},
+							},
+							origin: {
+								reportId: null,
+								slug: null,
+								title: "From the assistant",
+							},
+						})}
+					/>
+				</span>
 			</figcaption>
 			{chart.visualType === "table" ? (
 				<DataGrid
@@ -312,6 +330,14 @@ function AnswerBlock({
 			{message.status === "stopped" && (
 				<p className={styles.stopped}>Stopped.</p>
 			)}
+			{(message.created ?? []).map((made) => (
+				<a key={made.href} href={made.href} className={styles.created}>
+					<span className={styles.createdKind}>New board</span>
+					<span className={styles.createdTitle}>{made.title}</span>
+					<span className={styles.createdOpen}>Open the board</span>
+				</a>
+			))}
+
 			{message.heldDrafts && message.heldDrafts.length > 0 && (
 				<p className={styles.stopped}>
 					The change was written for a screen that was closed before

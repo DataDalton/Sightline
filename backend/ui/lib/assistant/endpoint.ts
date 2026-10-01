@@ -1,4 +1,4 @@
-import { workspaceHost } from "../runtime";
+import { isDatabricksApp, workspaceHost } from "../runtime";
 import { settings } from "../settings";
 import { readChatStream, type ToolCall } from "./chatStream";
 
@@ -118,7 +118,7 @@ async function post(
 	const response = await fetch(url, {
 		method: "POST",
 		headers: {
-			Authorization: authorization,
+			...(authorization ? { Authorization: authorization } : {}),
 			"Content-Type": "application/json",
 			Accept: "text/event-stream",
 		},
@@ -189,7 +189,13 @@ export async function converse(
 	const url = endpointUrl();
 	if (!url) throw new AssistantOff();
 
-	if (!callerToken) {
+	// Run locally there is no signed-in person's token to forward. A model on
+	// this same machine is then called with no credential at all, which
+	// grants it nothing, so local development and the demonstration can use
+	// one. A deployed app always forwards the caller's own token.
+	const onThisMachine =
+		/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/)/.test(url);
+	if (!callerToken && !(onThisMachine && !isDatabricksApp)) {
 		throw new AssistantFailed(
 			"The assistant needs the signed-in person's own token and none was forwarded",
 		);
@@ -197,7 +203,7 @@ export async function converse(
 	return {
 		...(await post(
 			url,
-			`Bearer ${callerToken}`,
+			callerToken ? `Bearer ${callerToken}` : "",
 			messages,
 			tools,
 			maxTokens,

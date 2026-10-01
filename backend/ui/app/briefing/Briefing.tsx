@@ -5,12 +5,15 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { flushSync } from "react-dom";
 import useSWR from "swr";
-import type { Card } from "../../lib/briefing/card";
+import { chooseShown, standingOf, type Card } from "../../lib/briefing/card";
 import type { BriefingChoice } from "../../lib/briefing/choices";
 import type { BriefingPlan } from "../../lib/briefing/plan";
 import type { WatchItem } from "../../lib/briefing/watch";
-import { headline } from "../../lib/briefing/words";
+import { headline, movementText, periodLabel } from "../../lib/briefing/words";
 import { formatCompact } from "../../lib/format";
+import { useAssistant } from "../assist/AssistantContext";
+import { useUser } from "../context/UserContext";
+import { AskBar } from "./AskBar";
 import { BriefingCard } from "./BriefingCard";
 import { Trend } from "./Trend";
 import { useReorder } from "./useReorder";
@@ -28,13 +31,6 @@ const ExplainDialog = dynamic(
 // waiting on the slowest. A figure that moves outside its usual range leads,
 // one that moved noticeably follows, and the rest sit in a strip of tiles
 // below.
-
-// Figures read at once. The reader's warehouse session answers a few
-// questions at a time, and the rest queue behind them either way.
-const parallel = 4;
-
-// A figure moving this far from usual counts as on the move.
-const movingAt = 0.1;
 
 // Answers kept for the rest of the day, so returning to the home page shows
 // them at once. The key carries the date, so a new day reads afresh.
@@ -102,17 +98,45 @@ function ago(iso: string): string {
 	return `${Math.round(hours / 24)}d ago`;
 }
 
-async function readCard(item: WatchItem, tz: string): Promise<Card | null> {
-	const response = await fetch("/api/briefing/item/", {
+interface CardEvent {
+	id: string;
+	card: Card | null;
+	updating: boolean;
+}
+
+// Reads every card in one request, handing each over as its line arrives.
+// Stored cards come first, then each one worked out afresh. See
+// lib/briefing/cards.
+async function readCards(
+	items: WatchItem[],
+	tz: string,
+	signal: AbortSignal,
+	onEvent: (event: CardEvent) => void,
+): Promise<void> {
+	const response = await fetch("/api/briefing/cards/", {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ item, tz }),
+		body: JSON.stringify({ items, tz }),
+		signal,
 	});
-	if (!response.ok) return null;
-	const body = (await response.json().catch(() => null)) as {
-		card?: Card | null;
-	} | null;
-	return body?.card ?? null;
+	if (!response.ok || !response.body)
+		throw new Error(`The briefing cards answered ${response.status}`);
+	const reader = response.body
+		.pipeThrough(new TextDecoderStream())
+		.getReader();
+	let buffer = "";
+	for (;;) {
+		const { value, done } = await reader.read();
+		if (done) break;
+		buffer += value;
+		let end = buffer.indexOf("\n");
+		while (end >= 0) {
+			const line = buffer.slice(0, end).trim();
+			buffer = buffer.slice(end + 1);
+			if (line) onEvent(JSON.parse(line) as CardEvent);
+			end = buffer.indexOf("\n");
+		}
+	}
 }
 
 export function Briefing({ firstName }: { firstName: string | null }) {
@@ -125,6 +149,8 @@ export function Briefing({ firstName }: { firstName: string | null }) {
 		revalidateOnFocus: false,
 	});
 	const [cards, setCards] = useState<Record<string, Card | null>>({});
+	// Cards shown from before while newer figures are worked out.
+	const [updating, setUpdating] = useState<Set<string>>(new Set());
 	const [explaining, setExplaining] = useState<{
 		item: WatchItem;
 		card: Card;
@@ -229,7 +255,7 @@ export function Briefing({ firstName }: { firstName: string | null }) {
 
 	useEffect(() => {
 		if (items.length === 0) return;
-		let live = true;
+		const controller = new AbortController();
 		const day = todayKey();
 		const keyOf = (item: WatchItem) => `${day}|${tz}|${item.id}`;
 		const held: Record<string, Card | null> = {};
@@ -238,24 +264,34 @@ export function Briefing({ firstName }: { firstName: string | null }) {
 				held[item.id] = answered.get(keyOf(item)) ?? null;
 		}
 		setCards(held);
-		const queue = items.filter((item) => !answered.has(keyOf(item)));
-		const work = async () => {
-			while (live && queue.length > 0) {
-				const item = queue.shift() as WatchItem;
-				let card: Card | null = null;
-				try {
-					card = await readCard(item, tz);
-				} catch {
-					card = null;
-				}
-				answered.set(keyOf(item), card);
-				if (live) setCards((prev) => ({ ...prev, [item.id]: card }));
-			}
+		setUpdating(new Set());
+		const wanted = new Map(items.map((item) => [item.id, item]));
+		// Anything the stream never answered is shown as read with nothing,
+		// so the page does not wait on it for ever.
+		const settle = () => {
+			if (controller.signal.aborted) return;
+			setCards((prev) => {
+				const next = { ...prev };
+				for (const item of items)
+					if (!(item.id in next)) next[item.id] = null;
+				return next;
+			});
+			setUpdating(new Set());
 		};
-		void Promise.all(Array.from({ length: parallel }, work));
-		return () => {
-			live = false;
-		};
+		readCards(items, tz, controller.signal, (event) => {
+			const item = wanted.get(event.id);
+			if (!item) return;
+			if (!event.updating) answered.set(keyOf(item), event.card);
+			setCards((prev) => ({ ...prev, [event.id]: event.card }));
+			setUpdating((prev) => {
+				if (prev.has(event.id) === event.updating) return prev;
+				const next = new Set(prev);
+				if (event.updating) next.add(event.id);
+				else next.delete(event.id);
+				return next;
+			});
+		}).then(settle, settle);
+		return () => controller.abort();
 	}, [items, tz]);
 
 	const byId = useMemo(() => new Map(items.map((i) => [i.id, i])), [items]);
@@ -305,20 +341,19 @@ export function Briefing({ firstName }: { firstName: string | null }) {
 	const automatic = shown
 		.filter((x) => !pinnedSet.has(x.item.id))
 		.map((x) => ({ ...x, item: { ...x.item, pinned: false } }));
-	const unusualCount = shown.filter((x) => x.card.unusual).length;
-	const lead = automatic
-		.filter((x) => x.card.unusual)
+	// Chosen once read, so a figure far from usual is shown however far down
+	// the reader's reports it sits. See chooseShown.
+	const chosen = chooseShown(automatic, plan?.limit ?? automatic.length);
+	const unusualCount =
+		shown.filter((x) => pinnedSet.has(x.item.id) && x.card.unusual).length +
+		chosen.filter((x) => x.card.unusual).length;
+	const lead = chosen
+		.filter((x) => standingOf(x.card) === "unusual")
 		.sort((a, b) => b.card.weight - a.card.weight);
-	const moving = automatic
-		.filter(
-			(x) =>
-				!x.card.unusual &&
-				Math.abs(x.card.againstUsual ?? 0) >= movingAt,
-		)
+	const moving = chosen
+		.filter((x) => standingOf(x.card) === "moving")
 		.sort((a, b) => b.card.weight - a.card.weight);
-	const steady = automatic.filter(
-		(x) => !x.card.unusual && Math.abs(x.card.againstUsual ?? 0) < movingAt,
-	);
+	const steady = chosen.filter((x) => standingOf(x.card) === "steady");
 
 	const hidden = choices.filter((c) => c.choice === "hide");
 	const titleOf = new Map(
@@ -342,6 +377,24 @@ export function Briefing({ firstName }: { firstName: string | null }) {
 	});
 
 	const progress = items.length ? read.length / items.length : 0;
+
+	// Questions for the assistant, from the figures that moved most. The
+	// question names the figure, its report, its period and how far it moved,
+	// so the answer starts from what the card already showed.
+	const { user } = useUser();
+	const { ask } = useAssistant();
+	const assistantOn = Boolean(user?.assistant);
+	const askAbout = (item: WatchItem, card: Card) =>
+		ask(
+			`${item.measure} on the ${item.reportTitle} report was ${formatCompact(card.value, item.hint)} for ${periodLabel(card.period, card.spacing)}, ${movementText(card).toLowerCase()}. Why, and what should I look at next?`,
+			item.sourceKey,
+		);
+	const suggestions = [...lead, ...moving]
+		.slice(0, 3)
+		.map(
+			({ item, card }) =>
+				`Why did ${item.measure} ${(card.againstUsual ?? 0) >= 0 ? "rise" : "fall"} ${card.spacing <= 1 ? "on" : "in"} ${periodLabel(card.period, card.spacing)}?`,
+		);
 
 	return (
 		<section className={styles.briefing} aria-label="Your briefing">
@@ -369,13 +422,7 @@ export function Briefing({ firstName }: { firstName: string | null }) {
 						<span style={{ width: `${progress * 100}%` }} />
 					</div>
 				)}
-				{plan && (
-					<p className={styles.standfirst}>
-						{reading
-							? `Reading ${items.length} headline figures from your reports.`
-							: `${items.length} headline figures from your reports, each judged against its own history.`}
-					</p>
-				)}
+				{assistantOn && <AskBar suggestions={suggestions} />}
 			</header>
 
 			<div className={styles.layout}>
@@ -421,6 +468,9 @@ export function Briefing({ firstName }: { firstName: string | null }) {
 												<BriefingCard
 													item={item}
 													card={card}
+													updating={updating.has(
+														item.id,
+													)}
 													size={
 														i === 0
 															? "hero"
@@ -431,6 +481,15 @@ export function Briefing({ firstName }: { firstName: string | null }) {
 															item,
 															card,
 														})
+													}
+													onAsk={
+														assistantOn
+															? () =>
+																	askAbout(
+																		item,
+																		card,
+																	)
+															: undefined
 													}
 													onPin={() =>
 														void choose(item, null)
@@ -531,6 +590,7 @@ export function Briefing({ firstName }: { firstName: string | null }) {
 										transition={transitionName(item.id)}
 										item={item}
 										card={card}
+										updating={updating.has(item.id)}
 										size={
 											i === 0 && pinned.length === 0
 												? "hero"
@@ -538,6 +598,11 @@ export function Briefing({ firstName }: { firstName: string | null }) {
 										}
 										onExplain={() =>
 											setExplaining({ item, card })
+										}
+										onAsk={
+											assistantOn
+												? () => askAbout(item, card)
+												: undefined
 										}
 										onPin={() =>
 											void choose(
@@ -562,9 +627,15 @@ export function Briefing({ firstName }: { firstName: string | null }) {
 										transition={transitionName(item.id)}
 										item={item}
 										card={card}
+										updating={updating.has(item.id)}
 										size="moving"
 										onExplain={() =>
 											setExplaining({ item, card })
+										}
+										onAsk={
+											assistantOn
+												? () => askAbout(item, card)
+												: undefined
 										}
 										onPin={() =>
 											void choose(
@@ -582,9 +653,16 @@ export function Briefing({ firstName }: { firstName: string | null }) {
 					{reading && (
 						<div className={styles.placeholders} aria-hidden="true">
 							{Array.from({
+								// Only for room still to fill. Figures read from
+								// further down once the page is full replace
+								// what is there rather than adding to it.
 								length:
 									Math.min(
 										Math.max(items.length - read.length, 0),
+										Math.max(
+											(plan?.limit ?? 0) - chosen.length,
+											0,
+										),
 										4,
 									) || (plan ? 0 : 4),
 							}).map((_, i) => (
@@ -603,9 +681,15 @@ export function Briefing({ firstName }: { firstName: string | null }) {
 										transition={transitionName(item.id)}
 										item={item}
 										card={card}
+										updating={updating.has(item.id)}
 										size="steady"
 										onExplain={() =>
 											setExplaining({ item, card })
+										}
+										onAsk={
+											assistantOn
+												? () => askAbout(item, card)
+												: undefined
 										}
 										onPin={() =>
 											void choose(

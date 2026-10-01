@@ -5,6 +5,7 @@ import { alertSurface, type AlertDraft } from "./alert";
 import { editorSurface, textToHtml, type EditorOp } from "./editor";
 import { exploreSurface } from "./explore";
 import { formulaSurface, type FormulaDraft } from "./formula";
+import { applyBoardEdit, boardSurface, buildNewBoard } from "./board";
 import { buildSurface } from "./index";
 import { sheetSurface, type SheetDraft } from "./sheet";
 
@@ -489,4 +490,152 @@ test("only settings the visual declares are taken from the model", () => {
 			| undefined;
 		assert.equal(options?.html, undefined);
 	}
+});
+
+// --- Boards -------------------------------------------------------------------
+
+test("charts, notes and arrows go on a board in rows under what is there", () => {
+	const current = {
+		items: [
+			{
+				id: "old",
+				kind: "note" as const,
+				x: 0,
+				y: 0,
+				w: 300,
+				h: 200,
+				text: "Kept",
+			},
+		],
+		links: [],
+	};
+	const { definition, summary } = applyBoardEdit(
+		current,
+		{
+			add: [
+				{ ref: "h", kind: "text", text: "By region" },
+				{
+					ref: "c",
+					kind: "chart",
+					visualType: "barChart",
+					sourceKey: "sales",
+					dimensions: ["Region"],
+					measures: ["Revenue"],
+				},
+				{
+					ref: "n",
+					kind: "note",
+					text: "Europe leads",
+					color: "green",
+				},
+				{ ref: "b", kind: "box", text: "Decide", fill: "teal" },
+			],
+			connect: [{ from: "n", to: "c", route: "orthogonal", flow: true }],
+		},
+		available,
+		null,
+	);
+	assert.match(summary, /added 4/);
+	const [kept, heading, chart, note, box] = definition.items;
+	assert.equal(kept.id, "old");
+	// The heading starts a row under the note, and the rest fill the row after it.
+	assert.ok(heading.y > kept.y + kept.h);
+	assert.equal(chart.y, note.y);
+	assert.ok(note.x > chart.x);
+	assert.equal(chart.visual?.sourceKey, "sales");
+	assert.equal(note.color, "green");
+	assert.equal(box.kind, "shape");
+	assert.equal(box.style?.fill, "teal");
+	assert.deepEqual(
+		definition.links.map((l) => [l.from, l.to, l.route, l.flow]),
+		[[note.id, chart.id, "orthogonal", true]],
+	);
+});
+
+test("a chart on a field the dataset does not have is refused", () => {
+	const surface = boardSurface(
+		{ title: "B", definition: { items: [], links: [] } },
+		available,
+	);
+	const out = surface.run("edit_board", {
+		add: [
+			{
+				kind: "chart",
+				visualType: "barChart",
+				sourceKey: "sales",
+				dimensions: ["Planet"],
+				measures: ["Revenue"],
+			},
+		],
+	});
+	assert.equal(out.ok, false);
+	assert.match(out.result, /Planet/);
+});
+
+test("a page filter is not a chart on a board", () => {
+	assert.throws(
+		() =>
+			applyBoardEdit(
+				{ items: [], links: [] },
+				{
+					add: [
+						{
+							kind: "chart",
+							visualType: "dropdownFilter",
+							sourceKey: "sales",
+							dimensions: ["Region"],
+						},
+					],
+				},
+				available,
+				null,
+			),
+		/does nothing on a board/,
+	);
+});
+
+test("an arrow to something that is not there is refused", () => {
+	assert.throws(
+		() =>
+			applyBoardEdit(
+				{ items: [], links: [] },
+				{
+					add: [{ ref: "n", kind: "note", text: "x" }],
+					connect: [{ from: "n", to: "ghost" }],
+				},
+				available,
+				null,
+			),
+		/ghost/,
+	);
+});
+
+test("a new board needs a title and something on it", () => {
+	assert.throws(
+		() =>
+			buildNewBoard(
+				{ add: [{ kind: "note", text: "x" }] },
+				available,
+				null,
+			),
+		/title/,
+	);
+	const made = buildNewBoard(
+		{
+			title: "Q3",
+			add: [
+				{
+					kind: "chart",
+					visualType: "lineChart",
+					sourceKey: "sales",
+					dimensions: ["Order Date"],
+					measures: ["Revenue"],
+				},
+			],
+		},
+		available,
+		null,
+	);
+	assert.equal(made.title, "Q3");
+	assert.equal(made.definition.items.length, 1);
 });

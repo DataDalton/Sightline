@@ -244,23 +244,23 @@ export function warmReport(identity: Identity, report: WarmableReport): void {
 // Warming stopped at the report somebody was already looking at, so the second
 // report of the morning was as cold as the first. Everything reachable is too
 // much to warm on a whim, so this warms what the reader has actually said they
-// want: the reports they marked, then the ones they opened most recently.
+// want: the reports they marked, then the ones they open most.
 //
-// Once per policy class rather than once per request. The cache is keyed by
-// class, so the first reader in a class pays for everybody in it, and repeating
-// the walk for the second reader would spend warehouse time filling entries
-// that are already there.
-const warmedClasses = new Map<string, number>();
+// Once per reader per interval rather than once per request. Each reader's
+// own reports are walked, and only answers missing from their class are
+// asked for, so a reader whose reports a colleague in the same class already
+// warmed costs one cache check and no warehouse time.
+const warmedReaders = new Map<string, number>();
 
 // Long enough that browsing does not retrigger it, short enough that a session
 // spanning a morning is warmed more than once. Deliberately longer than the
 // result TTL: this decides how often the walk runs, not how long an answer
 // lives, and running it more often than the answers expire would mean warming
 // the same entries repeatedly for a reader who never opened them.
-const classWarmIntervalMs = 10 * 60 * 1000;
+const readerWarmIntervalMs = 10 * 60 * 1000;
 
-// How many class stamps are held before the stale ones are swept.
-const maxTrackedClasses = 1000;
+// How many reader stamps are held before the stale ones are swept.
+const maxTrackedReaders = 1000;
 
 // How many unopened reports one walk will consider.
 //
@@ -291,18 +291,19 @@ export function warmForReader(
 			if (policy.degraded) return;
 
 			const now = Date.now();
-			const last = warmedClasses.get(policy.id) ?? 0;
-			if (now - last < classWarmIntervalMs) return;
+			const reader = identity.email.toLowerCase();
+			const last = warmedReaders.get(reader) ?? 0;
+			if (now - last < readerWarmIntervalMs) return;
 			// Stamped before the work rather than after, so two requests
 			// arriving together do not both start the same walk.
-			warmedClasses.set(policy.id, now);
+			warmedReaders.set(reader, now);
 			// A stamp older than the interval decides nothing, so those are
 			// dropped as the map grows rather than kept for every class the
 			// replica has ever seen.
-			if (warmedClasses.size > maxTrackedClasses) {
-				for (const [id, at] of warmedClasses) {
-					if (now - at >= classWarmIntervalMs)
-						warmedClasses.delete(id);
+			if (warmedReaders.size > maxTrackedReaders) {
+				for (const [id, at] of warmedReaders) {
+					if (now - at >= readerWarmIntervalMs)
+						warmedReaders.delete(id);
 				}
 			}
 
@@ -312,19 +313,20 @@ export function warmForReader(
 			const { getReport } = await import("../platform/reports");
 
 			// Appended after the guard, so this query runs at most once per
-			// class per interval rather than on every page load.
-			const { recentReportTargets } = await import("../platform/search");
-			const recent = await recentReportTargets(
+			// reader per interval rather than on every page load.
+			const { frequentReportTargets } =
+				await import("../platform/search");
+			const frequent = await frequentReportTargets(
 				identity.email,
 				maxReports,
 			).catch(() => []);
 
-			// Marked first, then recently opened. A mark is a statement of
+			// Marked first, then most opened. A mark is a statement of
 			// intent and a visit is only evidence, so the two are not ranked
 			// together. Deduplicated, because the report somebody marked is
-			// usually also the one they opened last.
+			// usually also one they open most.
 			const seen = new Set<string>();
-			const ordered = [...candidates, ...recent].filter((c) => {
+			const ordered = [...candidates, ...frequent].filter((c) => {
 				if (seen.has(c.reportId)) return false;
 				seen.add(c.reportId);
 				return true;

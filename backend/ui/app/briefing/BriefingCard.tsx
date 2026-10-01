@@ -157,8 +157,10 @@ function Tools({
 export function BriefingCard({
 	item,
 	card,
+	updating = false,
 	size,
 	onExplain,
+	onAsk,
 	onPin,
 	onHide,
 	onMove,
@@ -166,8 +168,12 @@ export function BriefingCard({
 }: {
 	item: WatchItem;
 	card: Card;
+	// Shown from before while newer figures are worked out.
+	updating?: boolean;
 	size: CardSize;
 	onExplain: () => void;
+	// Asks the assistant about this figure, when the assistant is on.
+	onAsk?: () => void;
 	onPin: () => void;
 	onHide: () => void;
 	// Only on a pinned card, which the reader orders.
@@ -191,6 +197,14 @@ export function BriefingCard({
 	);
 	const tone = toneOf(card, item.better);
 	const href = `/r/${item.slug}/`;
+	const updatingMark = updating ? (
+		<span
+			className={styles.updating}
+			title="These are the last figures. Newer ones are being worked out."
+		>
+			Updating
+		</span>
+	) : null;
 
 	if (size === "steady") {
 		return (
@@ -207,7 +221,10 @@ export function BriefingCard({
 						tone={tone}
 						compact
 					/>
-					<span className={styles.tileMeta}>{item.reportTitle}</span>
+					<span className={styles.tileMeta}>
+						{item.reportTitle}
+						{updatingMark}
+					</span>
 				</Link>
 				{tools}
 			</div>
@@ -261,6 +278,7 @@ export function BriefingCard({
 						· usual {formatCompact(card.usual, item.hint)}
 					</span>
 				)}
+				{updatingMark}
 			</div>
 			{size !== "hero" && trend}
 			{card.driver && (
@@ -269,15 +287,27 @@ export function BriefingCard({
 				</p>
 			)}
 			<div className={styles.cardActions}>
-				{card.previousWindow && (
-					<button
-						type="button"
-						className={styles.why}
-						onClick={onExplain}
-					>
-						Why did it move?
-					</button>
-				)}
+				<span className={styles.cardButtons}>
+					{card.previousWindow && (
+						<button
+							type="button"
+							className={styles.why}
+							onClick={onExplain}
+						>
+							Why did it move?
+						</button>
+					)}
+					{onAsk && (
+						<button
+							type="button"
+							className={styles.why}
+							onClick={onAsk}
+							title="Ask the assistant about this figure"
+						>
+							Ask about it
+						</button>
+					)}
+				</span>
 				<Link href={href} className={styles.open}>
 					Open report
 					<svg

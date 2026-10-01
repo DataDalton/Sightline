@@ -445,14 +445,8 @@ export async function cacheFresh(keys: string[]): Promise<Set<string>> {
 	return fresh;
 }
 
-export async function cacheSet(
-	key: string,
-	policy: PolicyClass,
-	source: SemanticSource,
-	rows: Record<string, unknown>[],
-	columns: string[],
-): Promise<CacheEntry> {
-	const now = Date.now();
+// How long an answer from this source is kept.
+export function answerTtlSeconds(source: SemanticSource): number {
 	// A source may set its own, and zero means it does not.
 	//
 	// Every source row carried 300 by default and any positive number wins
@@ -468,9 +462,20 @@ export async function cacheSet(
 		: source.cacheTtlSeconds > 0
 			? source.cacheTtlSeconds
 			: settings().resultTtlSeconds;
-	const ttlSeconds = isChecked(source.sourceKey)
+	return isChecked(source.sourceKey)
 		? Math.max(interval, watchedBackstopSeconds)
 		: interval;
+}
+
+export async function cacheSet(
+	key: string,
+	policy: PolicyClass,
+	source: SemanticSource,
+	rows: Record<string, unknown>[],
+	columns: string[],
+): Promise<CacheEntry> {
+	const now = Date.now();
+	const ttlSeconds = answerTtlSeconds(source);
 	const entry: CacheEntry = {
 		rows,
 		columns,
@@ -500,13 +505,17 @@ export function forgetSourceInMemory(sourceKey: string): void {
 	}
 }
 
-// Drops cached results for one source across both tiers. Called when a dataset
-// is refreshed or its semantic definition changes.
+// Drops cached results for one source across both tiers, and the home page
+// cards worked out from them. Called when a dataset is refreshed or its
+// semantic definition changes.
 export async function invalidateSource(sourceKey: string): Promise<void> {
 	forgetSourceInMemory(sourceKey);
 	try {
-		await sql(`DELETE FROM result_cache WHERE source_key = $1`, [
-			sourceKey,
+		await Promise.all([
+			sql(`DELETE FROM result_cache WHERE source_key = $1`, [sourceKey]),
+			sql(`DELETE FROM briefing_cards WHERE source_key = $1`, [
+				sourceKey,
+			]),
 		]);
 	} catch (error) {
 		console.warn("Shared cache invalidation failed:", error);

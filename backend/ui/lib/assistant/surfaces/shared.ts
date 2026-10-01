@@ -15,7 +15,13 @@ import type { SemanticSource } from "../../semantic/types";
 // Kept free of network and registry imports, so each screen's checks can be
 // tested with a source written out by hand.
 
-export type SurfaceKind = "alert" | "formula" | "sheet" | "explore" | "editor";
+export type SurfaceKind =
+	| "alert"
+	| "formula"
+	| "sheet"
+	| "explore"
+	| "editor"
+	| "board";
 
 export const surfaceKinds: SurfaceKind[] = [
 	"alert",
@@ -23,6 +29,7 @@ export const surfaceKinds: SurfaceKind[] = [
 	"sheet",
 	"explore",
 	"editor",
+	"board",
 ];
 
 // The tool shape every chat endpoint takes. Written out here rather than

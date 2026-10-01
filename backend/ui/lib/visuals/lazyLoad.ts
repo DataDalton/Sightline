@@ -11,6 +11,18 @@
 // reader scrolls it into view.
 export const nearMargin = "100% 0px 100% 0px";
 
+// Whether a box is within one screen of the area it scrolls through, the
+// same reach nearMargin gives the observer. Measured once as a frame mounts,
+// so a visual already in view loads before the page is first painted rather
+// than showing its placeholder until the observer first reports.
+export function withinReach(
+	box: { top: number; bottom: number },
+	view: { top: number; bottom: number },
+): boolean {
+	const height = view.bottom - view.top;
+	return box.bottom >= view.top - height && box.top <= view.bottom + height;
+}
+
 export interface ScrollNode {
 	parentElement: ScrollNode | null;
 	scrollHeight: number;

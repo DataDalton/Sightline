@@ -46,7 +46,7 @@ export const conversationsKey = "/api/assist/conversations";
 // table, a sheet, the report editor. Its state goes with each question, and a
 // draft that comes back is handed to it to apply as an unsaved change.
 export interface SurfaceBinding {
-	kind: "sheet" | "explore" | "editor";
+	kind: "sheet" | "explore" | "editor" | "board";
 	// Which screen of that kind it is, such as the sheet id or the report and
 	// page. A draft is applied only to the screen it was asked on.
 	id: string;
@@ -64,6 +64,10 @@ interface AssistantState {
 	messages: Message[];
 	busy: boolean;
 	send: (question: string, sourceKey?: string) => void;
+	// A question asked from elsewhere on the page, such as the home page or
+	// search. Starts a new conversation, opens the panel and asks, in one
+	// step, so nothing of the conversation before goes with it.
+	ask: (question: string, sourceKey?: string) => void;
 	stop: () => void;
 	retry: (id: string) => void;
 	newConversation: () => void;
@@ -466,6 +470,19 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 		setAttachments([]);
 	}, []);
 
+	const ask = useCallback(
+		(question: string, sourceKey?: string) => {
+			const asked = question.trim();
+			if (!asked) return;
+			abortRef.current?.abort();
+			setConversationId(newConversationId());
+			setAttachments([]);
+			setPanelOpen(true);
+			void run(asked, [], sourceKey, []);
+		},
+		[run],
+	);
+
 	const openConversation = useCallback(async (id: string) => {
 		abortRef.current?.abort();
 		const request = ++openRequest.current;
@@ -517,6 +534,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 			messages,
 			busy,
 			send,
+			ask,
 			stop,
 			retry,
 			newConversation,
@@ -537,6 +555,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 			messages,
 			busy,
 			send,
+			ask,
 			stop,
 			retry,
 			newConversation,

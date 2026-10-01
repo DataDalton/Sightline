@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import {
+	cleanDefinition,
 	defaultSizes,
 	minSizes,
 	type BoardDefinition,
@@ -34,6 +35,7 @@ import {
 	textOf,
 	textPixels,
 } from "./palette";
+import { useAssistantSurface } from "../assist/useAssistantSurface";
 import { useBoard } from "./useBoard";
 import { gridSizes, useSnapSettings, type GridSize } from "./useSnapSettings";
 import styles from "./Boards.module.css";
@@ -739,6 +741,26 @@ export default function BoardView({ id }: { id: string }) {
 		setSelected({ kind: "item", id: item.id });
 		setEditing(item.id);
 	};
+
+	// The assistant can arrange the board as well. What it sends is the whole
+	// board with its change made, checked on the server, and it lands as one
+	// step that undo takes back.
+	useAssistantSurface(
+		definition && editable && board.board
+			? {
+					kind: "board",
+					id: board.board.id,
+					state: () => ({ title: board.title, definition }),
+					apply: (draft) => update(() => cleanDefinition(draft)),
+					placeholder: "Add charts, notes or arrows to this board",
+					examples: [
+						"Add a chart of revenue by channel next to the trend",
+						"Add a note on each chart saying what to look at",
+						"Join the notes to the charts they talk about with arrows",
+					],
+				}
+			: null,
+	);
 
 	// Writing in an item opens its formatting with it.
 	const openItem = (item: BoardItem) => {

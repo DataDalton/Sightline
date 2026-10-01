@@ -185,3 +185,143 @@ export function buildCard(
 export function worthExplaining(card: Card): boolean {
 	return card.unusual || Math.abs(card.againstUsual ?? 0) >= 0.1;
 }
+
+// What one read of the latest periods, newest first, gives a card.
+//
+// The same read answers which period finished last, how far apart periods
+// are, and in nearly every case the whole history the card is drawn from, so
+// a card costs one question rather than two. "short" means the read stopped
+// before reaching back far enough and the history has to be asked for on its
+// own.
+export type ProbeReading =
+	| { kind: "none" }
+	| { kind: "short"; target: string; spacing: number }
+	| {
+			kind: "ready";
+			target: string;
+			spacing: number;
+			rows: Record<string, unknown>[];
+	  };
+
+export function readProbe(
+	rows: Record<string, unknown>[],
+	timeField: string,
+	today: string,
+	limit: number,
+): ProbeReading {
+	const keyed = rows
+		.map((row) => ({ row, key: periodKey(row[timeField]) }))
+		.filter((r): r is { row: Record<string, unknown>; key: string } =>
+			Boolean(r.key),
+		);
+	const latest = latestFinished(
+		keyed.map((r) => r.key),
+		today,
+	);
+	if (!latest) return { kind: "none" };
+	const start = historyStart(latest.target, latest.spacing);
+	// A read that came back under its limit holds every period there is. One
+	// that filled it reached as far back as its oldest row and no further.
+	const complete = rows.length < limit;
+	const oldest = keyed.reduce(
+		(min, r) => (r.key < min ? r.key : min),
+		latest.target,
+	);
+	if (!complete && oldest > start)
+		return {
+			kind: "short",
+			target: latest.target,
+			spacing: latest.spacing,
+		};
+	return {
+		kind: "ready",
+		target: latest.target,
+		spacing: latest.spacing,
+		rows: keyed
+			.filter((r) => r.key >= start && r.key <= latest.target)
+			.map((r) => r.row)
+			.reverse(),
+	};
+}
+
+type Window = { gte: string; lt: string };
+
+// One breakdown read across both windows, grouped by member and period, split
+// back into the two windows. Only exact when each window holds one period,
+// because a measure such as a rate or a distinct count cannot be added up
+// across periods. Anything else answers null and the windows are asked for
+// one at a time.
+export function splitWindows(
+	rows: Record<string, unknown>[],
+	timeField: string,
+	dimension: string,
+	measure: string,
+	current: Window,
+	previous: Window,
+): {
+	current: Record<string, unknown>[];
+	previous: Record<string, unknown>[];
+} | null {
+	const sides = {
+		current: {
+			window: current,
+			keys: new Set<string>(),
+			rows: [] as Record<string, unknown>[],
+		},
+		previous: {
+			window: previous,
+			keys: new Set<string>(),
+			rows: [] as Record<string, unknown>[],
+		},
+	};
+	for (const row of rows) {
+		const key = periodKey(row[timeField]);
+		if (!key) continue;
+		for (const side of [sides.current, sides.previous]) {
+			if (key < side.window.gte || key >= side.window.lt) continue;
+			side.keys.add(key);
+			side.rows.push({
+				[dimension]: row[dimension],
+				[measure]: row[measure],
+			});
+		}
+	}
+	if (sides.current.keys.size > 1 || sides.previous.keys.size > 1)
+		return null;
+	return { current: sides.current.rows, previous: sides.previous.rows };
+}
+
+// A figure moving this far from usual counts as on the move.
+export const movingAt = 0.1;
+
+export type Standing = "unusual" | "moving" | "steady";
+
+export function standingOf(card: Card): Standing {
+	if (card.unusual) return "unusual";
+	return Math.abs(card.againstUsual ?? 0) >= movingAt ? "moving" : "steady";
+}
+
+// Which figures the page has room for, chosen once they have been read.
+// Anything outside its usual range comes first, then anything on the move,
+// each by how much it asks for attention, then steady figures in the order
+// given, which is the reader's order of reports. So a figure far from usual
+// is shown however rarely its report is opened. Answers the chosen entries in
+// the order given.
+export function chooseShown<T extends { card: Card }>(
+	entries: T[],
+	limit: number,
+): T[] {
+	const rank = (standing: Standing) =>
+		entries
+			.filter((e) => standingOf(e.card) === standing)
+			.sort((a, b) =>
+				standing === "steady" ? 0 : b.card.weight - a.card.weight,
+			);
+	const chosen = new Set(
+		[...rank("unusual"), ...rank("moving"), ...rank("steady")].slice(
+			0,
+			limit,
+		),
+	);
+	return entries.filter((e) => chosen.has(e));
+}

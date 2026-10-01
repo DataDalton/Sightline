@@ -1,5 +1,6 @@
 import type { SemanticSource } from "../../semantic/types";
 import { alertSurface } from "./alert";
+import { boardSurface } from "./board";
 import { editorSurface } from "./editor";
 import { exploreSurface } from "./explore";
 import { formulaSurface } from "./formula";
@@ -34,5 +35,7 @@ export function buildSurface(
 			return exploreSurface(r.state, available);
 		case "editor":
 			return editorSurface(r.state, available);
+		case "board":
+			return boardSurface(r.state, available);
 	}
 }

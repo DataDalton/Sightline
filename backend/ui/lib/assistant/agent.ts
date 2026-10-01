@@ -27,6 +27,9 @@ import { trimToolResults } from "./rounds";
 import { asksToRemember } from "./memoryIntent";
 import { addMemory, type Profile } from "./store";
 import type { Surface } from "./surfaces";
+import { buildNewBoard, createBoardTool } from "./surfaces/board";
+import { refusal } from "./surfaces/shared";
+import { createBoard, updateBoard } from "../boards/store";
 import {
 	ProposalRejected,
 	validateProposal,
@@ -477,6 +480,53 @@ export async function runAgent(
 			return outcome.result;
 		}
 
+		// A new board, built and checked as the board on screen is, then
+		// saved under the person's own name. The charts on it are read by
+		// whoever opens it, under their own access, so saving it shares no
+		// figures.
+		if (call.function.name === "create_board") {
+			emit({
+				type: "step",
+				id,
+				kind: "create_board",
+				label: `Making the board ${String(args.title ?? "").slice(0, 80)}`,
+			});
+			let built: ReturnType<typeof buildNewBoard>;
+			try {
+				built = buildNewBoard(
+					args,
+					available,
+					preferredSource?.sourceKey ?? null,
+				);
+			} catch (error) {
+				const refused = refusal(error);
+				done(false, refused.summary);
+				return refused.result;
+			}
+			try {
+				const board = await createBoard(identity, built.title, []);
+				await updateBoard(identity, board.id, {
+					definition: built.definition,
+					baseVersion: board.version,
+				});
+				const href = `/boards/${board.id}/`;
+				emit({
+					type: "created",
+					kind: "board",
+					title: board.title,
+					href,
+				});
+				done(
+					true,
+					`Made ${board.title} with ${built.definition.items.length} items`,
+				);
+				return `Saved the board "${board.title}" at ${href}. Tell the person it is ready and what is on it.`;
+			} catch {
+				done(false, "The board could not be saved");
+				return "Error: the board could not be saved.";
+			}
+		}
+
 		const kind = stepKind(call.function.name);
 
 		if (kind === "remember") {
@@ -729,6 +779,7 @@ export async function runAgent(
 				: [
 						...tools,
 						...(surface?.tools ?? []),
+						createBoardTool,
 						...(mayRemember ? [rememberTool] : []),
 					],
 			{ onText: (delta) => emit({ type: "text", delta }), signal },

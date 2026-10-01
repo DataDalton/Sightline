@@ -56,6 +56,8 @@ export type Message =
 			// Drafts written for a screen that was no longer open when they
 			// arrived. Kept with the answer rather than applied elsewhere.
 			heldDrafts?: { kind: string; draft: unknown }[];
+			// What the answer made and saved, with where to open it.
+			created?: { kind: "board"; title: string; href: string }[];
 			startedAt: number;
 			finishedAt?: number;
 	  };
@@ -114,6 +116,14 @@ export function applyEvent(
 		// says what it was.
 		case "draft":
 			return message;
+		case "created":
+			return {
+				...message,
+				created: [
+					...(message.created ?? []),
+					{ kind: event.kind, title: event.title, href: event.href },
+				],
+			};
 		case "done":
 			return {
 				...message,
