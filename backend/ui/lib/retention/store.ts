@@ -1,3 +1,4 @@
+import { catalogueChanged } from "../platform/curated";
 import { insertLog } from "../activityLog";
 import { sql, transaction } from "../data/lakebase";
 import { invalidateAccessCache } from "../platform/access";
@@ -39,10 +40,15 @@ function owner(email: string): string {
 // within their cache lifetime, as for a page deleted by hand.
 export function forgetPages(reportId?: string): void {
 	invalidateAccessCache();
-	invalidateDefinitions("navigation:");
+	catalogueChanged();
 	invalidateDefinitions("report:");
-	if (reportId) invalidateDefinitions(`report-body:${reportId}`);
-	else invalidateDefinitions("report-body:");
+	if (reportId) {
+		invalidateDefinitions(`report-body:${reportId}`);
+		invalidateDefinitions(`report-subject:${reportId.toLowerCase()}`);
+	} else {
+		invalidateDefinitions("report-body:");
+		invalidateDefinitions("report-subject:");
+	}
 	invalidateDefinitions("search:");
 }
 

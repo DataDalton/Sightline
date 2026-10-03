@@ -1,3 +1,4 @@
+import { catalogueChanged } from "./curated";
 import { sql, transaction } from "../data/lakebase";
 import type { Identity } from "../auth/identity";
 import type { PolicyClass } from "../auth/policy";
@@ -472,11 +473,12 @@ export async function deletePersonalPage(
 		changedBy: identity.email,
 	});
 	invalidateAccessCache();
-	invalidateDefinitions("navigation:");
+	catalogueChanged();
 	// The page itself as well, or its owner and the people it was shared with
 	// go on opening it from the cached definition after it was deleted.
 	invalidateDefinitions("report:");
 	invalidateDefinitions(`report-body:${reportId}`);
+	invalidateDefinitions(`report-subject:${reportId.toLowerCase()}`);
 	invalidateDefinitions("search:");
 }
 
@@ -564,8 +566,9 @@ export async function publishPage(
 	// The ownership rule no longer applies to it, so every cached answer about
 	// who can reach it is now wrong in the direction of too narrow.
 	invalidateAccessCache();
-	invalidateDefinitions("navigation:");
+	catalogueChanged();
 	invalidateDefinitions(`report:${report.slug}`);
+	invalidateDefinitions(`report-subject:${reportId.toLowerCase()}`);
 
 	return { slug: report.slug, title: report.title };
 }
@@ -707,7 +710,7 @@ export async function migrateExplorations(): Promise<number> {
 
 	if (converted > 0) {
 		console.log(`Converted ${converted} saved exploration(s) into pages.`);
-		invalidateDefinitions("navigation:");
+		catalogueChanged();
 	}
 	return converted;
 }

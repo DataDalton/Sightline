@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { cachedDefinition } from "@/lib/platform/definitionCache";
 import { getIdentity, type Identity } from "@/lib/auth/identity";
 import { resolvePolicyClass, type PolicyClass } from "@/lib/auth/policy";
 import { canDo, getExplicitContext } from "@/lib/platform/access";
@@ -135,9 +136,15 @@ export async function GET(request: NextRequest) {
 
 	const context = await getExplicitContext(policy, identity.email);
 
-	const rows = await sql<CategoryRow>(
-		`SELECT category_id, name FROM categories
-		 WHERE is_active = TRUE ORDER BY sort_order, name`,
+	// The same for everybody, held with the navigation so an edit to the
+	// categories drops it.
+	const rows = await cachedDefinition(
+		"navigation:authoring-categories",
+		async () =>
+			await sql<CategoryRow>(
+				`SELECT category_id, name FROM categories
+				 WHERE is_active = TRUE ORDER BY sort_order, name`,
+			),
 	);
 
 	// A category is offered only where the caller holds report.create in it.

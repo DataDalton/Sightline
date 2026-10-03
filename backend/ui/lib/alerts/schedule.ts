@@ -30,14 +30,28 @@ export function isFrequency(value: unknown): value is Frequency {
 	return frequencies.includes(value as Frequency);
 }
 
+// Zones already checked, and whether each was valid. Checking one means
+// making a formatter, which is far more costly than looking it up, and every
+// request that judges a figure sends one. Bounded, since a zone is text a
+// browser sends.
+const checkedZones = new Map<string, boolean>();
+const maxCheckedZones = 2000;
+
 export function validTimeZone(zone: unknown): string {
-	if (typeof zone !== "string" || zone === "") return "UTC";
-	try {
-		new Intl.DateTimeFormat("en-US", { timeZone: zone });
-		return zone;
-	} catch {
+	if (typeof zone !== "string" || zone === "" || zone.length > 64)
 		return "UTC";
+	let valid = checkedZones.get(zone);
+	if (valid === undefined) {
+		try {
+			new Intl.DateTimeFormat("en-US", { timeZone: zone });
+			valid = true;
+		} catch {
+			valid = false;
+		}
+		if (checkedZones.size >= maxCheckedZones) checkedZones.clear();
+		checkedZones.set(zone, valid);
 	}
+	return valid ? zone : "UTC";
 }
 
 export function cleanSchedule(raw: unknown): Schedule {

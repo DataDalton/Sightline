@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import Link from "../components/AppLink";
 import type { Card } from "../../lib/briefing/card";
 import type { WatchItem } from "../../lib/briefing/watch";
 import {

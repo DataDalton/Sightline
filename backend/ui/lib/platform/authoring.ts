@@ -13,7 +13,7 @@ import {
 	validateVisual,
 } from "../visuals/validate";
 import { invalidateDefinitions } from "./definitionCache";
-import { invalidateReport } from "./curated";
+import { invalidateReport, catalogueChanged } from "./curated";
 import { writeVersion } from "./versionWrite";
 import type { EditOperation } from "./editing";
 import { refuseAddPage, refuseReportDelete } from "./pageProtection";
@@ -130,7 +130,7 @@ export async function createCategory(
 
 	// Navigation is cached against a key of its own, and a category nobody can
 	// see for thirty seconds reads as a create that did not work.
-	invalidateDefinitions("navigation:");
+	catalogueChanged();
 	await keepCategoryRoles();
 
 	return rows[0].category_id;
@@ -167,7 +167,7 @@ export async function updateCategory(
 		changedBy: identity.email,
 		newValue: name ?? null,
 	});
-	invalidateDefinitions("navigation:");
+	catalogueChanged();
 	await keepCategoryRoles();
 }
 
@@ -198,7 +198,7 @@ export async function deactivateCategory(
 		action: "remove_category",
 		changedBy: identity.email,
 	});
-	invalidateDefinitions("navigation:");
+	catalogueChanged();
 	await keepCategoryRoles();
 }
 
@@ -233,7 +233,7 @@ export async function reorderCategories(
 		changedBy: identity.email,
 		newValue: categoryIds.join(","),
 	});
-	invalidateDefinitions("navigation:");
+	catalogueChanged();
 }
 
 // --- Placing a report --------------------------------------------------------
@@ -335,7 +335,7 @@ export async function updateReportPlacement(
 		newValue: `${input.categoryId ?? current.category_id ?? "none"}/${slug}`,
 	});
 
-	invalidateDefinitions("navigation:");
+	catalogueChanged();
 	invalidateReport(reportId, [current.slug, slug]);
 	invalidateDefinitions("search:");
 	return { slug };
@@ -369,7 +369,7 @@ export async function reorderReports(
 	});
 	// The order is held in the curated list under the navigation prefix. A
 	// report's own cached header carries no order, so it is left alone.
-	invalidateDefinitions("navigation:");
+	catalogueChanged();
 	invalidateDefinitions("search:");
 }
 
@@ -595,7 +595,7 @@ export async function createReport(
 		}),
 	});
 
-	invalidateDefinitions("navigation:");
+	catalogueChanged();
 
 	return created;
 }
@@ -665,9 +665,10 @@ export async function removeReport(
 		oldValue: rows[0].title,
 	});
 
-	invalidateDefinitions("navigation:");
+	catalogueChanged();
 	invalidateDefinitions(`report:${rows[0].slug}`);
 	invalidateDefinitions(`report-body:${reportId}`);
+	invalidateDefinitions(`report-subject:${reportId.toLowerCase()}`);
 }
 
 // --- A page added to a report that already exists ---------------------------

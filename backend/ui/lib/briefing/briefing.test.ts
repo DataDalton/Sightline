@@ -5,6 +5,7 @@ import {
 	buildCard,
 	chooseShown,
 	historyStart,
+	outgrown,
 	latestFinished,
 	previousOf,
 	readProbe,
@@ -539,4 +540,25 @@ test("a load past its usual time is called late", () => {
 		waitingText(waiting, 1, at + 3_600_000, "UTC"),
 		/running late\.$/,
 	);
+});
+
+test("a card waiting on a late load is judged again once, not on every visit", () => {
+	const due = Date.parse("2026-10-01T18:00:00Z");
+	const card = {
+		period: "2026-09-01",
+		spacing: 30,
+		waiting: {
+			period: "2026-09-01",
+			through: "2026-09-01",
+			expectedBy: due,
+		},
+	} as unknown as Card;
+	const later = due + 3_600_000;
+	// Judged before the load was due, so passing that moment calls for a
+	// fresh judgement.
+	assert.equal(outgrown(card, "UTC", later, due - 60_000), true);
+	// Judged after it, still waiting, so nothing new has happened since.
+	assert.equal(outgrown(card, "UTC", later + 60_000, later), false);
+	// Stored before judgements were timed, judged once more.
+	assert.equal(outgrown(card, "UTC", later, null), true);
 });

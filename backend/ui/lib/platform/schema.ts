@@ -1598,6 +1598,11 @@ const migrations: string[] = [
 		ON figure_observations (scope, figure, period)`,
 	`CREATE INDEX IF NOT EXISTS figure_observations_time_idx
 		ON figure_observations (observed_on)`,
+
+	// When each home page card was last judged, as opposed to when the
+	// answers it was built from were computed, so a card is judged again
+	// only once time has moved past something it was judged before.
+	`ALTER TABLE briefing_cards ADD COLUMN IF NOT EXISTS judged_on TIMESTAMPTZ`,
 ];
 
 // Creates anything missing. Safe to run on every startup.

@@ -1,4 +1,11 @@
 import { headers } from "next/headers";
+import { NextRequest } from "next/server";
+import { GET as authoringGet } from "../../api/authoring/route";
+import { GET as deliveriesGet } from "../../api/deliveries/route";
+import { GET as notesGet } from "../../api/notes/route";
+import { GET as pageAlertsGet } from "../../api/page-alerts/route";
+import { GET as viewsGet } from "../../api/views/route";
+import { settings } from "../../../lib/settings";
 import ReportView from "../ReportView";
 import { getIdentityFromHeaders } from "../../../lib/auth/identity";
 import { resolvePolicyClass } from "../../../lib/auth/policy";
@@ -25,8 +32,54 @@ import {
 //
 // The visuals still fetch their own rows, because those depend on filters the
 // client owns. What they no longer wait for is finding out that they exist.
+// The opening page's other requests, answered here by the same handlers the
+// browser would reach, under the same headers, so the answers carry the same
+// access checks and the same shape. Keyed as the client asks for each. One
+// that fails or refuses is left out and the client asks for it as before.
+async function openingResponses(
+	incoming: Headers,
+	reportId: string,
+	pageId: string | undefined,
+): Promise<Record<string, unknown>> {
+	const asks: [string, (request: NextRequest) => Promise<Response>][] = [
+		["/api/authoring", authoringGet],
+		["/api/deliveries", deliveriesGet],
+	];
+	if (pageId) {
+		asks.push(
+			[
+				`/api/notes?reportId=${encodeURIComponent(reportId)}&pageId=${encodeURIComponent(pageId)}`,
+				notesGet,
+			],
+			[`/api/views?pageId=${encodeURIComponent(pageId)}`, viewsGet],
+		);
+		if (settings().alertsEnabled)
+			asks.push([
+				`/api/page-alerts/?pageId=${encodeURIComponent(pageId)}`,
+				pageAlertsGet,
+			]);
+	}
+	const answered = await Promise.all(
+		asks.map(async ([key, handle]) => {
+			try {
+				const response = await handle(
+					new NextRequest(new URL(key, "http://localhost"), {
+						headers: incoming,
+					}),
+				);
+				if (!response.ok) return null;
+				return [key, await response.json()] as const;
+			} catch {
+				return null;
+			}
+		}),
+	);
+	return Object.fromEntries(answered.filter((a) => a !== null));
+}
+
 async function definitionFor(slug: string) {
-	const identity = getIdentityFromHeaders(await headers());
+	const incoming = await headers();
+	const identity = getIdentityFromHeaders(incoming);
 	if (!identity) return undefined;
 
 	return withinSeedBudget(async () => {
@@ -53,13 +106,17 @@ async function definitionFor(slug: string) {
 		//
 		// Cached answers only, so this cannot make the document slower than the
 		// budget it already runs under.
-		const seeded = await seedPageQueries(
-			identity,
-			payload.report as WarmableReport,
-			null,
-		);
+		const report = payload.report as WarmableReport;
+		const [seeded, responses] = await Promise.all([
+			seedPageQueries(identity, report, null),
+			openingResponses(
+				new Headers(incoming),
+				report.reportId,
+				report.pages[0]?.pageId,
+			),
+		]);
 
-		return { ...payload, seeded };
+		return { ...payload, seeded, responses };
 	}, undefined);
 }
 

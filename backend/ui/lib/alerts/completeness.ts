@@ -45,18 +45,32 @@ function toTime(key: string): number {
 	return Date.parse(`${key}T00:00:00Z`);
 }
 
+// One formatter per time zone, made once. Making one is far more costly than
+// using it, and the cards ask for a zone's clock on every point of every
+// series they draw.
+const clocks = new Map<string, Intl.DateTimeFormat>();
+
+function clockFor(timeZone: string): Intl.DateTimeFormat {
+	let clock = clocks.get(timeZone);
+	if (!clock) {
+		clock = new Intl.DateTimeFormat("en-US", {
+			timeZone,
+			hourCycle: "h23",
+			year: "numeric",
+			month: "2-digit",
+			day: "2-digit",
+			hour: "2-digit",
+			minute: "2-digit",
+			second: "2-digit",
+		});
+		clocks.set(timeZone, clock);
+	}
+	return clock;
+}
+
 // How far a time zone's clock is ahead of UTC at a moment.
 function offsetAt(time: number, timeZone: string): number {
-	const parts = new Intl.DateTimeFormat("en-US", {
-		timeZone,
-		hourCycle: "h23",
-		year: "numeric",
-		month: "2-digit",
-		day: "2-digit",
-		hour: "2-digit",
-		minute: "2-digit",
-		second: "2-digit",
-	}).formatToParts(new Date(time));
+	const parts = clockFor(timeZone).formatToParts(new Date(time));
 	const get = (type: string) =>
 		Number(parts.find((p) => p.type === type)?.value ?? 0);
 	const local = Date.UTC(
@@ -72,16 +86,29 @@ function offsetAt(time: number, timeZone: string): number {
 
 // The moment a day starts in a time zone. A period's dates are read as the
 // reader's own days, as "today" is.
+//
+// The answer for a day and zone never changes, so it is remembered. The
+// number of days asked about is bounded by the periods on the cards, and the
+// zones by where readers are, so this stays small.
+const midnights = new Map<string, number>();
+const maxMidnights = 50_000;
+
 export function zoneMidnight(key: string, timeZone: string): number {
+	const remembered = midnights.get(`${timeZone}|${key}`);
+	if (remembered !== undefined) return remembered;
 	const utc = toTime(key);
+	let answer = utc;
 	try {
 		// Asked twice, so a day that starts on the far side of a clock change
 		// lands on the right offset.
 		const first = utc - offsetAt(utc, timeZone);
-		return utc - offsetAt(first, timeZone);
+		answer = utc - offsetAt(first, timeZone);
 	} catch {
-		return utc;
+		answer = utc;
 	}
+	if (midnights.size >= maxMidnights) midnights.clear();
+	midnights.set(`${timeZone}|${key}`, answer);
+	return answer;
 }
 
 // The moment a period ends, where the reader is.

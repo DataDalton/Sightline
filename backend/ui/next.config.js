@@ -5,7 +5,7 @@
 // It carries a per-response nonce so the page can run its own two inline
 // scripts without naming 'unsafe-inline', which would permit any injected one.
 // A nonce has to be minted per request, and this file is read once at startup,
-// so the policy is set in middleware.ts instead. Everything below is constant
+// so the policy is set in proxy.ts instead. Everything below is constant
 // and can be declared here.
 
 const securityHeaders = [

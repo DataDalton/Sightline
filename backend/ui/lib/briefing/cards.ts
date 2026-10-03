@@ -247,7 +247,7 @@ export async function briefingCards(
 		// data may not have changed.
 		const current =
 			held?.fresh === true &&
-			!(held.card && outgrown(held.card, timeZone, now));
+			!(held.card && outgrown(held.card, timeZone, now, held.judgedAt));
 		if (held)
 			emit({
 				id: entry.item.id,

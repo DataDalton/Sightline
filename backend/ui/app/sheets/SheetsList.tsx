@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
+import Link from "../components/AppLink";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import type { SheetSummary } from "../../lib/sheets/store";

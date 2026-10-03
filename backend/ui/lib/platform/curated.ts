@@ -68,5 +68,43 @@ export function invalidateReport(
 	for (const slug of known) invalidateDefinitions(`report:${slug}`);
 	invalidateDefinitions(`report-body:${reportId}`);
 	invalidateDefinitions(`report-slug:${reportId.toLowerCase()}`);
+	invalidateDefinitions(`report-subject:${reportId.toLowerCase()}`);
 	invalidateDefinitions(curatedKey);
+}
+
+// Drops everything built from the catalogue as a whole: the navigation, the
+// curated list and every reader's home page plan, which chooses its figures
+// from the reports a reader can open. Called when a report or category is
+// created, removed, moved, renamed or published, not when one is only
+// edited, so a busy editor does not empty everyone's held plan on each save.
+export function catalogueChanged(): void {
+	invalidateDefinitions("navigation:");
+	invalidateDefinitions("briefing-plan:");
+}
+
+export interface ReportSubject {
+	category_id: string | null;
+	is_personal: boolean;
+	owner_email: string | null;
+}
+
+// What an access check needs to know about one report, its category, whether
+// it is personal and who owns it, held like the rest of its definition so a
+// page that checks it on each of its requests reads it once. The check itself
+// still runs per request, against the reader's own grants. Null when there is
+// no such active report.
+export async function reportSubject(
+	reportId: string,
+): Promise<ReportSubject | null> {
+	const rows = await cachedDefinition(
+		`report-subject:${reportId.toLowerCase()}`,
+		async () =>
+			await sql<ReportSubject>(
+				`SELECT category_id, is_personal, owner_email
+				 FROM reports
+				 WHERE report_id = $1 AND is_active = TRUE`,
+				[reportId],
+			),
+	);
+	return rows[0] ?? null;
 }

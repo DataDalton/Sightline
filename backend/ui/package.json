@@ -5,6 +5,7 @@
 	"scripts": {
 		"dev": "next dev -p 3000",
 		"dev2": "node scripts/demo.mjs",
+		"loadtest": "node scripts/loadtest.mjs",
 		"screenshots": "node scripts/screenshots.mjs",
 		"build": "next build",
 		"//lint": "No lint script. next lint was removed in Next 16, and every ESLint path for a TypeScript project goes through typescript-eslint, which refuses to load against TypeScript 7 (typescript-eslint#10940). Until that lands, typecheck is the static check: it catches what the type system can see, and the tests cover the rest.",

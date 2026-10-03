@@ -10,7 +10,7 @@ import { NextRequest, NextResponse } from "next/server";
 // not change anything, and any that does is a bug this would only hide.
 const unsafeMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
-// Authentication here is ambient: the proxy in front of the app resolves the
+// Authentication here is ambient. The proxy in front of the app resolves the
 // reader's session and injects their identity, so any request a browser can be
 // made to send arrives authenticated. That is what makes cross-site request
 // forgery possible, and it is not theoretical here. A cross-origin form post
@@ -93,12 +93,20 @@ function policy(nonce: string, development: boolean): string {
 	].join("; ");
 }
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
 	if (unsafeMethods.has(request.method) && !sameOrigin(request)) {
 		// Deliberately terse. Naming the check tells an attacker which header to
 		// try next, and a caller who hits this legitimately is a developer with
 		// access to this file.
 		return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+	}
+
+	// Only a document runs scripts, so only a document needs a policy and a
+	// nonce. An answer from the API is data the page reads, and minting both
+	// for it, with a copy of every request header, was work with nothing to
+	// protect.
+	if (request.nextUrl.pathname.startsWith("/api/")) {
+		return NextResponse.next();
 	}
 
 	const nonce = makeNonce();

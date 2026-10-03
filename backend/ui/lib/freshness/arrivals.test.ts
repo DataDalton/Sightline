@@ -254,3 +254,20 @@ test("a second load later in the day does not move the usual time", () => {
 		`usual minute ${usual} should sit at the first load of the day`,
 	);
 });
+
+test("a few runs by hand over two or three days are still learning", () => {
+	// A new table run several times while it was built, then once more.
+	const history = [
+		monday + 16 * hour + 7 * minute,
+		monday + 17 * hour + 34 * minute,
+		monday + day + 11 * hour + 19 * minute,
+		monday + day + 20 * hour + 33 * minute,
+		monday + day + 21 * hour + 43 * minute,
+		monday + day + 22 * hour + 35 * minute,
+		monday + 2 * day + 16 * hour + 33 * minute,
+	];
+	const now = monday + 3 * day + 13 * hour;
+	const pattern = learnPattern(history, now);
+	assert.equal(pattern.kind, "learning");
+	assert.equal(judge(pattern, history[6], now, now).state, "learning");
+});

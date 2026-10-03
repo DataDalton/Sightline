@@ -238,6 +238,9 @@ export function customPattern(
 	};
 }
 
+// Loads in the window that show a rhythm whatever days they fell on.
+const denseLoads = 24;
+
 export function learnPattern(
 	arrivals: number[],
 	now: number,
@@ -283,6 +286,15 @@ export function learnPattern(
 	// a few of them show the pattern as clearly as five daily ones.
 	const needed = activeDays.length <= 2 || usual >= 3 * day ? 4 : 5;
 	if (loads.length < needed || gaps.length < needed - 1) {
+		return learning(loads.length);
+	}
+	// Enough loads, but they have to have landed on enough separate days too.
+	// A table being built is often run by hand several times in a day or two,
+	// and those runs look like a load every few hours that then never comes
+	// again. Many loads in a short span, such as an hourly table's first day,
+	// show their rhythm without waiting for more days.
+	const loadDays = new Set(loads.map((t) => Math.floor(t / day))).size;
+	if (!streaming && loadDays < needed && loads.length < denseLoads) {
 		return learning(loads.length);
 	}
 

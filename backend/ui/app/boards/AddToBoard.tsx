@@ -1,7 +1,7 @@
 "use client";
 
 import { boardListKey, refreshBoardList } from "./boardList";
-import Link from "next/link";
+import Link from "../components/AppLink";
 import { createContext, useContext, useState, type ReactNode } from "react";
 import useSWR from "swr";
 import type { BoardOrigin, BoardVisual } from "../../lib/boards/definition";

@@ -419,14 +419,24 @@ export function describePeriod(key: string): string {
 
 // Today's date where the alert's owner is, since "the latest finished day"
 // depends on whose day it is.
+//
+// One formatter per zone, made once, since making one costs far more than
+// using it and this is asked on every request that judges a figure.
+const dayFormats = new Map<string, Intl.DateTimeFormat>();
+
 export function todayIn(timeZone: string, now = new Date()): string {
 	try {
-		return new Intl.DateTimeFormat("en-CA", {
-			timeZone,
-			year: "numeric",
-			month: "2-digit",
-			day: "2-digit",
-		}).format(now);
+		let format = dayFormats.get(timeZone);
+		if (!format) {
+			format = new Intl.DateTimeFormat("en-CA", {
+				timeZone,
+				year: "numeric",
+				month: "2-digit",
+				day: "2-digit",
+			});
+			dayFormats.set(timeZone, format);
+		}
+		return format.format(now);
 	} catch {
 		return now.toISOString().slice(0, 10);
 	}

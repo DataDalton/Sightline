@@ -1,6 +1,8 @@
 "use client";
 
-import { SWRConfig } from "swr";
+import { usePathname } from "next/navigation";
+import { useEffect, useRef } from "react";
+import { SWRConfig, type Middleware } from "swr";
 import { cache, SWRGlobalState } from "swr/_internal";
 import { swrDefaults } from "../../lib/swr";
 
@@ -70,12 +72,44 @@ function boundCache() {
 
 if (typeof window !== "undefined") boundCache();
 
+// Keys the server answered while rendering this document. Those answers are
+// as fresh as anything a request could fetch, so a hook mounting with one is
+// not sent to fetch it again. SWR otherwise treats a seeded value as stale and
+// asks for it the moment the page mounts, which made every page load ask the
+// server for what it had just sent. Cleared on the first move to another
+// page, after which those keys are fetched on mount as any other key is.
+const seededFresh = new Set<string>();
+
+// Answers a page rendered on the server handed over for its own requests,
+// keyed as the client asks for them. A hook asking one of these starts from it
+// and does not fetch it again, as with the shell's keys above.
+const pageSeeds = new Map<string, unknown>();
+
+// Called while the page renders, before the hooks under it mount.
+export function seedResponses(answers: Record<string, unknown>): void {
+	for (const [key, value] of Object.entries(answers)) {
+		pageSeeds.set(key, value);
+		seededFresh.add(key);
+	}
+}
+
+const trustSeeded: Middleware = (useSWRNext) => (key, fetcher, config) => {
+	if (typeof key !== "string" || !seededFresh.has(key))
+		return useSWRNext(key, fetcher, config);
+	return useSWRNext(key, fetcher, {
+		...config,
+		revalidateOnMount: false,
+		...(pageSeeds.has(key)
+			? { fallbackData: pageSeeds.get(key) as typeof config.fallbackData }
+			: {}),
+	});
+};
+
 // Seeded with what the server already knew.
 //
 // Every key here is one request the browser does not have to make before it can
 // render. SWR treats fallback data as the first value rather than as a cache
-// entry, so the component renders with it immediately and revalidates in the
-// background if it is configured to.
+// entry, so the component renders with it immediately.
 export default function SWRProvider({
 	fallback,
 	children,
@@ -83,8 +117,27 @@ export default function SWRProvider({
 	fallback?: Record<string, unknown>;
 	children: React.ReactNode;
 }) {
+	const seeded = useRef(false);
+	if (!seeded.current) {
+		seeded.current = true;
+		for (const key of Object.keys(fallback ?? {})) seededFresh.add(key);
+	}
+	const pathname = usePathname();
+	const firstPath = useRef(pathname);
+	useEffect(() => {
+		if (pathname !== firstPath.current) {
+			seededFresh.clear();
+			pageSeeds.clear();
+		}
+	}, [pathname]);
 	return (
-		<SWRConfig value={{ ...swrDefaults, fallback: fallback ?? {} }}>
+		<SWRConfig
+			value={{
+				...swrDefaults,
+				fallback: fallback ?? {},
+				use: [trustSeeded],
+			}}
+		>
 			{children}
 		</SWRConfig>
 	);

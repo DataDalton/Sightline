@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import Link from "./AppLink";
 import { usePathname } from "next/navigation";
 import { useAssistantPanel } from "../assist/AssistantContext";
 import { useShell } from "../context/ShellContext";

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { validTimeZone } from "@/lib/alerts/schedule";
 import { briefingCards } from "@/lib/briefing/cards";
 import type { WatchItem } from "@/lib/briefing/watch";
 import { caller, privateJson, readJson } from "../../notifications/guard";
@@ -39,14 +40,7 @@ function itemOf(raw: unknown): WatchItem | null {
 }
 
 function zoneOf(raw: unknown): string {
-	const zone = text(raw, 64);
-	if (!zone) return "UTC";
-	try {
-		new Intl.DateTimeFormat("en-US", { timeZone: zone });
-		return zone;
-	} catch {
-		return "UTC";
-	}
+	return validTimeZone(text(raw, 64));
 }
 
 // { items, tz }

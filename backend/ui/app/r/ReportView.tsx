@@ -1,8 +1,9 @@
 "use client";
 
+import { seedResponses } from "../components/SWRProvider";
 import { BoardOriginContext } from "../boards/AddToBoard";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
+import Link from "../components/AppLink";
 import useSWR from "swr";
 import { describeFetchError } from "../../lib/swr";
 import { primeBatchCache } from "../hooks/queryBatch";
@@ -132,6 +133,9 @@ interface ReportResponse {
 	// Answers the server already had for this page's opening visuals, keyed the
 	// same way the client asks for them.
 	seeded?: Record<string, unknown>;
+	// The page's other opening requests, its notes, saved views, alerts and the
+	// like, answered by the server and keyed as the client asks for them.
+	responses?: Record<string, unknown>;
 }
 
 // initial is the definition the server resolved while rendering the document.
@@ -202,7 +206,9 @@ export default function ReportView({
 }) {
 	const { data, error, isLoading, mutate } = useSWR<ReportResponse>(
 		`/api/report/${encodeURIComponent(slug)}`,
-		{ fallbackData: initial },
+		// A definition that came with the document was read for this request,
+		// so asking for it again on mount returns the same thing.
+		{ fallbackData: initial, revalidateOnMount: !initial },
 	);
 	const { user } = useUser();
 
@@ -210,6 +216,10 @@ export default function ReportView({
 	// came with the document never issues a request for it. Done during render
 	// rather than in an effect: an effect runs after the visuals have already
 	// mounted and asked, which is the round trip this exists to remove.
+	if (initial?.responses) {
+		seedResponses(initial.responses);
+		initial.responses = undefined;
+	}
 	if (initial?.seeded) {
 		primeBatchCache(initial.seeded);
 		initial.seeded = undefined;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
+import Link from "../components/AppLink";
 import { useSWRConfig } from "swr";
 import { Modal } from "../components/shared/Modal";
 import type { CategoryContact } from "../components/CategoryContacts";

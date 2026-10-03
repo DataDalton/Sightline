@@ -439,7 +439,12 @@ export async function categoryPayload(
 ): Promise<unknown | null> {
 	const category = await getCategory(policy, identity, categoryId);
 	if (!category) return null;
-	return { ...category, contacts: await categoryContacts(categoryId) };
+	// Held under the category summary key, which a role change drops.
+	const contacts = await cachedDefinition(
+		`navigation:category-summary:${categoryId}:contacts`,
+		() => categoryContacts(categoryId),
+	);
+	return { ...category, contacts };
 }
 
 // Everything the shell needs, resolved once for a document request.

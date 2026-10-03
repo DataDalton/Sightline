@@ -5,7 +5,13 @@ import { catalogAccessEnabled, readableSources } from "../auth/sourceAccess";
 import { effectiveAdminGroups, settings } from "../settings";
 import { isDatabricksApp } from "../runtime";
 import { loadAssignments } from "./roles";
-import { invalidateDefinitions, invalidateMatching } from "./definitionCache";
+import { announce, onChange } from "./changes";
+import {
+	cachedDefinition,
+	dropDefinitionsLocally,
+	dropMatchingLocally,
+	invalidateDefinitions,
+} from "./definitionCache";
 import { curatedReports } from "./curated";
 import {
 	can,
@@ -222,26 +228,51 @@ function floorContext(policy: PolicyClass, email: string): AccessContext {
 	return { grants: new Map(), baseline: configured, capabilities, email };
 }
 
-// Per-resource grants, including personal shares.
+interface PolicyRow {
+	resource_type: string;
+	resource_id: string;
+	permission: Permission;
+}
+
+// Every active per-resource grant, personal shares included, grouped by the
+// group or person it names. Held once for everybody rather than asked per
+// person, so a morning of first visits works out each person's grants from
+// memory. A grant made, changed or withdrawn drops it on every instance,
+// through the access change announced with it.
+async function policyIndex(): Promise<Map<string, PolicyRow[]>> {
+	return cachedDefinition("access-index:policies", async () => {
+		const rows = await sql<
+			PolicyRow & { subject_type: string; subject: string }
+		>(
+			`SELECT subject_type, lower(subject_id) AS subject,
+			        resource_type, resource_id, permission
+			 FROM access_policies
+			 WHERE is_active = TRUE`,
+		);
+		const index = new Map<string, PolicyRow[]>();
+		for (const row of rows) {
+			const key = `${row.subject_type}|${row.subject}`;
+			const list = index.get(key) ?? [];
+			list.push(row);
+			index.set(key, list);
+		}
+		return index;
+	});
+}
+
+// Per-resource grants, including personal shares. Group names compared
+// without case, the same as role assignments.
 async function loadPolicies(
 	policy: PolicyClass,
 	email: string,
 ): Promise<Map<string, Permission>> {
-	const rows = await sql<{
-		resource_type: string;
-		resource_id: string;
-		permission: Permission;
-	}>(
-		`SELECT resource_type, resource_id, permission
-		 FROM access_policies
-		 WHERE is_active = TRUE
-		   AND (
-		     (subject_type = 'group' AND lower(subject_id) = ANY($1))
-		     OR (subject_type = 'user' AND lower(subject_id) = $2)
-		   )`,
-		// Group names compared without case, the same as role assignments.
-		[policy.grants.map((g) => g.toLowerCase()), email.toLowerCase()],
-	);
+	const index = await policyIndex();
+	const rows = [
+		...policy.grants.flatMap(
+			(group) => index.get(`group|${group.toLowerCase()}`) ?? [],
+		),
+		...(index.get(`user|${email.toLowerCase()}`) ?? []),
+	];
 
 	const grants = new Map<string, Permission>();
 	for (const row of rows) {
@@ -494,22 +525,42 @@ export async function canAdminister(
 }
 
 // Also drops what was derived from a context, the per reader navigation counts
-// and search targets, which would otherwise go on offering what was withdrawn.
+// and search targets, which would otherwise go on offering what was withdrawn,
+// and every held home page plan, which is chosen from what a reader can open.
+// Applied here and announced to every other instance. See lib/platform/changes.
 export function invalidateAccessCache(): void {
+	dropAllAccessLocally();
+	announce("access", "*");
+}
+
+function dropAllAccessLocally(): void {
 	cache.clear();
 	for (const pending of inflight.values()) pending.stale = true;
 	inflight.clear();
-	invalidateDefinitions("navigation:visible:");
-	invalidateDefinitions("search:targets:");
+	dropDefinitionsLocally("navigation:visible:");
+	dropDefinitionsLocally("search:targets:");
 	// A category's contacts are the holders of its editor role, so a role
 	// change can change who is listed.
-	invalidateDefinitions("navigation:category-summary:");
+	dropDefinitionsLocally("navigation:category-summary:");
+	dropDefinitionsLocally("briefing-plan:");
+	dropDefinitionsLocally("access-index:");
 }
 
 // The same, for one person. Used when a grant names that person alone, so
 // everybody else keeps what they were holding. Context keys end in the
 // lowercased email, and so do the derived navigation and search keys.
 export function invalidateAccessFor(email: string): void {
+	dropAccessForLocally(email);
+	announce("access", email.trim().toLowerCase());
+}
+
+onChange(
+	"access",
+	(key) => (key === "*" ? dropAllAccessLocally() : dropAccessForLocally(key)),
+	dropAllAccessLocally,
+);
+
+function dropAccessForLocally(email: string): void {
 	const suffix = `|${email.trim().toLowerCase()}`;
 	for (const key of cache.keys()) {
 		if (key.endsWith(suffix)) cache.delete(key);
@@ -519,10 +570,13 @@ export function invalidateAccessFor(email: string): void {
 		pending.stale = true;
 		inflight.delete(key);
 	}
-	invalidateMatching(
+	dropMatchingLocally(
 		(key) =>
 			(key.startsWith("navigation:visible:") ||
 				key.startsWith("search:targets:")) &&
 			key.endsWith(suffix),
 	);
+	dropDefinitionsLocally(`briefing-plan:${email.trim().toLowerCase()}|`);
+	// The grant that named this person is a row in the shared index.
+	dropDefinitionsLocally("access-index:");
 }

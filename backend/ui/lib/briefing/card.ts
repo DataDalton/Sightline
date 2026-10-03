@@ -263,16 +263,31 @@ export function settleCard(
 
 // Whether time alone has overtaken a stored card's judgement. Its period has
 // grown past the age it was young until, or the load it was waiting for was
-// due to have landed.
-export function outgrown(card: Card, timeZone: string, now: number): boolean {
+// due to have landed, since the card was last judged. A card judged again
+// after that moment has already taken it into account, so a load that stays
+// late does not have its card judged again on every visit.
+export function outgrown(
+	card: Card,
+	timeZone: string,
+	now: number,
+	judgedAt: number | null,
+): boolean {
+	const since = judgedAt ?? 0;
 	const settling = card.settling;
 	if (settling?.young) {
 		const limit = settling.settleHours ?? defaultSettleHours(card.spacing);
-		if (ageOf(card.period, card.spacing, timeZone, now) >= limit)
+		if (
+			ageOf(card.period, card.spacing, timeZone, now) >= limit &&
+			ageOf(card.period, card.spacing, timeZone, since) < limit
+		)
 			return true;
 	}
 	const expectedBy = card.waiting?.expectedBy;
-	return typeof expectedBy === "number" && now >= expectedBy;
+	return (
+		typeof expectedBy === "number" &&
+		now >= expectedBy &&
+		since < expectedBy
+	);
 }
 
 // What a card read for each recent period, to learn from how a period fills

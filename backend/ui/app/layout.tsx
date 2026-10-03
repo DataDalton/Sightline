@@ -2,6 +2,9 @@ import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
 import "./globals.css";
 import { getIdentityFromHeaders } from "../lib/auth/identity";
+import { pushPublicKey } from "../lib/notify/push";
+import { inboxSummary } from "../lib/notify/store";
+import { settings } from "../lib/settings";
 import {
 	shellPayload,
 	withinSeedBudget,
@@ -77,13 +80,29 @@ async function resolveShell(): Promise<Shell> {
 	if (!identity) return empty;
 
 	return withinSeedBudget<Shell>(async () => {
-		const shell = await shellPayload(identity);
+		const [shell, inbox, pushKey] = await Promise.all([
+			shellPayload(identity),
+			inboxSummary(identity.email).catch(() => null),
+			pushPublicKey().catch(() => null),
+		]);
 		return {
 			user: shell.user,
 			fallback: {
 				"/api/user": shell.user,
 				"/api/navigation": shell.navigation,
 				"/api/info": shell.info,
+				// The same shape the summary route answers, so the badge draws
+				// from the document and asks again only on its own schedule.
+				...(inbox
+					? {
+							"/api/notifications/summary": {
+								unread: inbox.unread,
+								latest: inbox.latest,
+								pushKey,
+								alerts: settings().alertsEnabled,
+							},
+						}
+					: {}),
 			},
 		};
 	}, empty);
@@ -95,7 +114,7 @@ export default async function RootLayout({
 	children: React.ReactNode;
 }) {
 	const shell = await resolveShell();
-	// Minted per response in middleware.ts and read back here.
+	// Minted per response in proxy.ts and read back here.
 	const nonce = (await headers()).get("x-nonce") ?? undefined;
 
 	return (

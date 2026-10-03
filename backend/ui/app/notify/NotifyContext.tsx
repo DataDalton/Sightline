@@ -10,7 +10,7 @@ import {
 	useState,
 	type ReactNode,
 } from "react";
-import Link from "next/link";
+import Link from "../components/AppLink";
 import useSWR, { useSWRConfig } from "swr";
 import type { InboxItem } from "../../lib/notify/store";
 import { useUser } from "../context/UserContext";

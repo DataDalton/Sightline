@@ -254,7 +254,7 @@ async function probeGrants(
 	}
 
 	// Imported lazily so the auth layer does not pull the Databricks driver
-	// into contexts that never query, such as the middleware bundle.
+	// into contexts that never query, such as the proxy bundle.
 	const { queryAsUser } = await import("../data/userSession");
 
 	// Each group is asked about with the function the thing that named it uses,
@@ -348,55 +348,72 @@ async function readStoredPolicy(
 	}
 }
 
-async function writeStoredPolicy(
-	email: string,
-	grants: string[],
-	setKey: string,
-): Promise<void> {
-	try {
-		const { sql } = await import("../data/lakebase");
+// Answers to store, written together. A burst of people signing in at once,
+// a morning's first visits, would otherwise write two rows each, every one
+// taking a connection the requests are waiting on. Gathered and written as one
+// statement per table about once a second. The answer is already in use from
+// memory, so the write only lets another replica skip the probe, and one that
+// fails costs that replica a probe, never correctness.
+const storeEveryMs = 1000;
+const policiesToStore = new Map<
+	string,
+	{ email: string; setKey: string; grants: string[] }
+>();
+const groupsToStore = new Map<string, string[]>();
+let storeTimer: ReturnType<typeof setTimeout> | null = null;
+
+function queueStored(email: string, grants: string[], setKey: string): void {
+	policiesToStore.set(`${email}|${setKey}`, { email, setKey, grants });
+	// Keeps the groups a person was just found in after the stored policy
+	// has expired. Only messages read it, to know who is in a group without
+	// asking the workspace directory. It grants nothing, since every read of
+	// a conversation checks membership again.
+	groupsToStore.set(email, grants);
+	storeTimer ??= setTimeout(() => {
+		storeTimer = null;
+		void storeQueued();
+	}, storeEveryMs);
+	storeTimer.unref?.();
+}
+
+async function storeQueued(): Promise<void> {
+	const policies = [...policiesToStore.values()];
+	const groups = [...groupsToStore.entries()];
+	policiesToStore.clear();
+	groupsToStore.clear();
+	const { sql } = await import("../data/lakebase");
+	if (policies.length > 0) {
 		await sql(
 			`INSERT INTO reader_policy
 			   (user_email, group_set, grants, computed_on, expires_on)
-			 VALUES ($1, $2, $3::jsonb, now(),
-			         now() + make_interval(secs => $4))
+			 SELECT e, k, g::jsonb, now(), now() + make_interval(secs => $4)
+			 FROM unnest($1::text[], $2::text[], $3::text[]) AS u(e, k, g)
 			 ON CONFLICT (user_email, group_set) DO UPDATE SET
 			   grants = EXCLUDED.grants,
 			   computed_on = EXCLUDED.computed_on,
 			   expires_on = EXCLUDED.expires_on`,
 			[
-				email,
-				setKey,
-				JSON.stringify(grants),
+				policies.map((p) => p.email),
+				policies.map((p) => p.setKey),
+				policies.map((p) => JSON.stringify(p.grants)),
 				settings().groupCacheTtlSeconds,
 			],
-		);
-	} catch (error) {
-		// Costs the next replica a probe, never correctness.
-		console.warn("Stored policy write failed:", error);
+		).catch((error) => {
+			console.warn("Stored policy write failed:", error);
+		});
 	}
-}
-
-// Keeps the groups a person was just found in after the stored policy above
-// has expired. Only messages read it, to know who is in a group without asking
-// the workspace directory. It grants nothing, since every read of a
-// conversation checks membership again.
-async function recordMemberGroups(
-	email: string,
-	grants: string[],
-): Promise<void> {
-	try {
-		const { sql } = await import("../data/lakebase");
+	if (groups.length > 0) {
 		await sql(
 			`INSERT INTO member_groups (user_email, grants, checked_on)
-			 VALUES ($1, $2::jsonb, now())
+			 SELECT e, g::jsonb, now()
+			 FROM unnest($1::text[], $2::text[]) AS u(e, g)
 			 ON CONFLICT (user_email) DO UPDATE SET
 			   grants = EXCLUDED.grants,
 			   checked_on = EXCLUDED.checked_on`,
-			[email, JSON.stringify(grants)],
-		);
-	} catch (error) {
-		console.warn("Member groups write failed:", error);
+			[groups.map(([e]) => e), groups.map(([, g]) => JSON.stringify(g))],
+		).catch((error) => {
+			console.warn("Member groups write failed:", error);
+		});
 	}
 }
 
@@ -446,10 +463,7 @@ export async function resolvePolicyClass(
 				groups = trackedGroups;
 				setKey = currentKey;
 			}
-			if (!stored) {
-				void writeStoredPolicy(key, grants, setKey);
-				void recordMemberGroups(key, grants);
-			}
+			if (!stored) queueStored(key, grants, setKey);
 			const value: PolicyClass = {
 				id: policyIdFor(grants),
 				grants,

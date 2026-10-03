@@ -1,5 +1,9 @@
 import type { PoolClient } from "pg";
 import { sql } from "../data/lakebase";
+import {
+	cachedDefinition,
+	invalidateDefinitions,
+} from "../platform/definitionCache";
 import { deliverPush, deliverPushMany } from "./push";
 
 // The inbox.
@@ -111,6 +115,7 @@ function insertParams(ownerEmail: string, input: NewNotification): unknown[] {
 // that fails is recorded against the device rather than against the
 // notification.
 export function pushNotification(ownerEmail: string, item: InboxItem): void {
+	forgetSummary(ownerEmail);
 	void deliverPush(ownerEmail.toLowerCase(), item).catch((error) => {
 		console.warn("Push delivery failed:", error);
 	});
@@ -122,6 +127,7 @@ export function pushNotifications(
 	written: { email: string; item: InboxItem }[],
 ): void {
 	if (written.length === 0) return;
+	for (const { email } of written) forgetSummary(email);
 	void deliverPushMany(
 		written.map(({ email, item }) => ({
 			ownerEmail: email.toLowerCase(),
@@ -146,6 +152,7 @@ export async function notifyInTransaction(
 		insertStatement,
 		insertParams(ownerEmail, input),
 	);
+	forgetSummary(ownerEmail);
 	return toItem(result.rows[0]);
 }
 
@@ -169,6 +176,7 @@ export async function notifyManyInTransaction(
 		           data, created_on::text, read_on::text`,
 		[owners, ...shared],
 	);
+	for (const owner of owners) forgetSummary(owner);
 	return result.rows.map((row) => ({
 		email: row.owner_email,
 		item: toItem(row),
@@ -221,6 +229,31 @@ export async function listInbox(
 	return rows.map(toItem);
 }
 
+// How many are unread and the newest entry, which every open page asks for
+// when it loads and then once a minute. Held per person until an entry
+// arrives for them or one is read or removed, which drops it on every
+// instance. See lib/platform/changes.
+
+function summaryKey(ownerEmail: string): string {
+	return `inbox-summary:${ownerEmail.toLowerCase()}`;
+}
+
+export function forgetSummary(ownerEmail: string): void {
+	invalidateDefinitions(summaryKey(ownerEmail));
+}
+
+export async function inboxSummary(
+	ownerEmail: string,
+): Promise<{ unread: number; latest: InboxItem | null }> {
+	return cachedDefinition(summaryKey(ownerEmail), async () => {
+		const [unread, latest] = await Promise.all([
+			unreadCount(ownerEmail),
+			listInbox(ownerEmail, { limit: 1 }),
+		]);
+		return { unread, latest: latest[0] ?? null };
+	});
+}
+
 export async function unreadCount(ownerEmail: string): Promise<number> {
 	const rows = await sql<{ n: string }>(
 		`SELECT count(*)::text AS n FROM notifications
@@ -246,6 +279,7 @@ export async function markRead(
 		 RETURNING notification_id::text`,
 		[ownerEmail.toLowerCase(), ids === "all" ? null : ids, read],
 	);
+	forgetSummary(ownerEmail);
 	return rows.length;
 }
 
@@ -265,6 +299,7 @@ export async function removeNotifications(
 			? [ownerEmail.toLowerCase()]
 			: [ownerEmail.toLowerCase(), ids],
 	);
+	forgetSummary(ownerEmail);
 	return rows.length;
 }
 

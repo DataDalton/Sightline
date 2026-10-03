@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { validTimeZone } from "@/lib/alerts/schedule";
 import { resolvePolicyClass } from "@/lib/auth/policy";
 import { briefingPlan } from "@/lib/briefing/plan";
 import { caller, privateJson } from "../notifications/guard";
@@ -7,13 +8,7 @@ import { caller, privateJson } from "../notifications/guard";
 // See lib/briefing/plan.
 
 function zoneOf(raw: string | null): string {
-	if (!raw) return "UTC";
-	try {
-		new Intl.DateTimeFormat("en-US", { timeZone: raw });
-		return raw;
-	} catch {
-		return "UTC";
-	}
+	return validTimeZone(raw);
 }
 
 // ?tz=

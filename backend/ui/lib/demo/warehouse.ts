@@ -1,7 +1,6 @@
-import { types } from "pg";
-import { getPool } from "../data/lakebase";
+import { types, type Pool } from "pg";
 import type { QueryParams, Row } from "../data/types";
-import { localIdentityEmail } from "../runtime";
+import { lakebase, localIdentityEmail } from "../runtime";
 import { toPostgres } from "./dialect";
 
 // The demonstration's warehouse. Runs what the platform would send to a
@@ -25,13 +24,38 @@ function parserFor(oid: number, format?: string): (value: string) => unknown {
 	return types.getTypeParser(oid, format as "text");
 }
 
+// The sample tables are read through a pool of their own, as a real
+// warehouse is reached over connections of its own, so a load on the sample
+// data does not take connections the platform tables need.
+let warehousePool: Promise<Pool> | null = null;
+
+function getWarehousePool(): Promise<Pool> {
+	warehousePool ??= import("pg").then(
+		({ Pool: PgPool }) =>
+			new PgPool({
+				connectionString: lakebase.localUrl,
+				max: lakebase.poolMax,
+				idleTimeoutMillis: 30000,
+				connectionTimeoutMillis: 10000,
+			}),
+	);
+	return warehousePool;
+}
+
+// How long each sample query is held before it runs, from
+// DEMO_WAREHOUSE_DELAY_MS. Zero unless set. Sample tables answer in a few
+// milliseconds where a warehouse takes seconds, so without this a load test
+// would show a query the caches missed as nearly free.
+const delayMs = Math.max(0, Number(process.env.DEMO_WAREHOUSE_DELAY_MS) || 0);
+
 export async function queryDemo(
 	statement: string,
 	params?: QueryParams,
 	asEmail?: string,
 ): Promise<Row[]> {
+	if (delayMs > 0) await new Promise((done) => setTimeout(done, delayMs));
 	const { text, values } = toPostgres(statement, params ?? {});
-	const pool = await getPool();
+	const pool = await getWarehousePool();
 	const client = await pool.connect();
 	try {
 		await client.query("BEGIN READ ONLY");

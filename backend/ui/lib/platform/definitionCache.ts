@@ -1,3 +1,5 @@
+import { announce, onChange } from "./changes";
+
 // What a report is, as opposed to who may see it or what it currently says.
 //
 // A report definition is the same object for every reader: the pages, the
@@ -10,12 +12,13 @@
 // Lakebase. Reading it back from there would replace three round trips with
 // one, and reading it from here replaces them with none.
 //
-// A short lifetime rather than a version check, because checking the version is
-// itself the round trip this exists to avoid. The replica that handles an edit
-// drops its own entry immediately, so an editor never sees their own change
-// lag. Another replica serves the previous definition for at most this long.
+// Held until what it holds changes. The instance that makes a change drops
+// its own entries at once and announces the change, and every other replica
+// and module instance drops theirs as the announcement arrives. See
+// lib/platform/changes. The lifetime below is only a backstop, for a change
+// written without being announced.
 
-const ttlMs = 2 * 60 * 1000;
+const ttlMs = 60 * 60 * 1000;
 
 interface Entry {
 	value: unknown;
@@ -81,6 +84,9 @@ function trim(): void {
 export async function cachedDefinition<T>(
 	key: string,
 	load: () => Promise<T>,
+	// A different backstop for an entry built from something that drifts
+	// without being announced. Defaults to the definition lifetime.
+	lifetimeMs = ttlMs,
 ): Promise<T> {
 	const now = Date.now();
 
@@ -98,7 +104,7 @@ export async function cachedDefinition<T>(
 	pending.promise = (async () => {
 		const value = await load();
 		if (!pending.stale) {
-			entries.set(key, { value, expiresAt: Date.now() + ttlMs });
+			entries.set(key, { value, expiresAt: Date.now() + lifetimeMs });
 		}
 		return value;
 	})().finally(() => {
@@ -124,13 +130,27 @@ export function peekDefinition<T>(key: string): T | undefined {
 // request after the edit starts a fresh read rather than joining one that may
 // have read the rows before it.
 export function invalidateDefinitions(prefix?: string): void {
-	invalidateMatching(prefix ? (key) => key.startsWith(prefix) : () => true);
+	dropDefinitionsLocally(prefix);
+	announce("definitions", prefix ?? "");
 }
 
-// Drops every entry and every load in progress whose key the test accepts.
-// For keys that carry a reader at the end rather than the start, such as the
-// per reader navigation and search entries.
-export function invalidateMatching(test: (key: string) => boolean): void {
+// The same, on this instance only, for applying a change announced by
+// another, which must not be announced again.
+export function dropDefinitionsLocally(prefix?: string): void {
+	dropMatchingLocally(prefix ? (key) => key.startsWith(prefix) : () => true);
+}
+
+onChange(
+	"definitions",
+	(prefix) => dropDefinitionsLocally(prefix || undefined),
+	() => dropDefinitionsLocally(),
+);
+
+// Drops every entry and every load in progress whose key the test accepts, on
+// this instance only. A caller that needs the change seen everywhere
+// announces it in a form other instances can apply, as access does with its
+// own kind of change.
+export function dropMatchingLocally(test: (key: string) => boolean): void {
 	for (const key of entries.keys()) {
 		if (test(key)) entries.delete(key);
 	}

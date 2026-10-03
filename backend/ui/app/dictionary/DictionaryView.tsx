@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import Link from "../components/AppLink";
 import { useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { Select } from "../components/shared/Select";

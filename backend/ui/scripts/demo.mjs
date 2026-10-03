@@ -1,8 +1,14 @@
 // Runs Sightline as a self-contained demonstration, with no Databricks
 // workspace.
 //
-//   npm run dev2            start, keeping whatever the last run left
-//   npm run dev2 -- --reset start again from the sample data alone
+//   npm run dev2                 start, keeping whatever the last run left
+//   npm run dev2 -- --reset      start again from the sample data alone
+//   npm run dev2 -- --production build once and serve the built app, as a
+//                                deployment does, for measuring speed
+//
+// DEMO_WAREHOUSE_DELAY_MS, when set, holds every sample query for that long
+// before it runs, so a query the caches do not answer costs about what a
+// real warehouse query does. See lib/demo/warehouse.
 //
 // Starts a Postgres of its own and the development server against it. The
 // Postgres holds the platform tables as usual, plus sample tables that stand
@@ -145,12 +151,27 @@ async function stop(code) {
 }
 
 const nextBin = createRequire(import.meta.url).resolve("next/dist/bin/next");
+
+// A production build is kept apart from the development server's output, and
+// under .demo so git ignores it.
+const production = process.argv.includes("--production");
+const env = production
+	? { ...serverEnv(), NEXT_DIST_DIR: ".demo/next-build" }
+	: serverEnv();
+if (production) {
+	const build = spawnSync(process.execPath, [nextBin, "build"], {
+		env,
+		stdio: "inherit",
+	});
+	if (build.status !== 0) await stop(build.status ?? 1);
+}
+
 console.log(`Sightline demo at http://localhost:${appPort}`);
 const server = spawn(
 	process.execPath,
-	[nextBin, "dev", "-p", String(appPort)],
+	[nextBin, production ? "start" : "dev", "-p", String(appPort)],
 	{
-		env: serverEnv(),
+		env,
 		stdio: "inherit",
 	},
 );

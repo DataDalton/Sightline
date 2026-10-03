@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { runAlertsForOwner } from "@/lib/alerts/runner";
 import { runDeliveriesForOwner } from "@/lib/deliveries/runner";
 import { pushPublicKey } from "@/lib/notify/push";
-import { listInbox, unreadCount } from "@/lib/notify/store";
+import { inboxSummary } from "@/lib/notify/store";
 import { settings } from "@/lib/settings";
 import { caller, privateJson } from "../guard";
 
@@ -20,14 +20,13 @@ export async function GET(request: NextRequest) {
 	runDeliveriesForOwner(identity);
 
 	try {
-		const [unread, latest, publicKey] = await Promise.all([
-			unreadCount(identity.email),
-			listInbox(identity.email, { limit: 1 }),
+		const [summary, publicKey] = await Promise.all([
+			inboxSummary(identity.email),
 			pushPublicKey().catch(() => null),
 		]);
 		return privateJson({
-			unread,
-			latest: latest[0] ?? null,
+			unread: summary.unread,
+			latest: summary.latest,
 			pushKey: publicKey,
 			alerts: settings().alertsEnabled,
 		});

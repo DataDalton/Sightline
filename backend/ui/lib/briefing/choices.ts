@@ -1,4 +1,11 @@
 import { sql, transaction } from "../data/lakebase";
+import { invalidateDefinitions } from "../platform/definitionCache";
+
+// Drops the reader's held home page plan, which carries their choices. See
+// briefingPlan in lib/briefing/plan.
+export function forgetPlan(email: string): void {
+	invalidateDefinitions(`briefing-plan:${email.toLowerCase()}|`);
+}
 
 // Figures a reader pinned to their briefing or hid from it. Pins keep the
 // order the reader put them in, which is the order the briefing shows them.
@@ -47,6 +54,7 @@ export async function setChoice(
 			 WHERE user_email = $1 AND report_id = $2::uuid AND measure = $3`,
 			[owner, reportId, measure],
 		);
+		forgetPlan(owner);
 		return;
 	}
 	await sql(
@@ -61,6 +69,7 @@ export async function setChoice(
 		   chosen_on = now()`,
 		[owner, reportId, measure, choice],
 	);
+	forgetPlan(owner);
 }
 
 // Puts the reader's pins in the order given. Pins not named keep their place
@@ -86,4 +95,5 @@ export async function orderPins(
 			);
 		}
 	});
+	forgetPlan(owner);
 }

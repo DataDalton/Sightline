@@ -2,6 +2,7 @@ import type { PoolClient } from "pg";
 import { displayNameFromEmail } from "../auth/names";
 import { sql, transaction } from "../data/lakebase";
 import {
+	forgetSummary,
 	notifyInTransaction,
 	pushNotification,
 	type InboxItem,
@@ -355,6 +356,7 @@ export async function openThread(
 		   AND kind = 'message' AND data->>'threadId' = $2`,
 		[me, threadId],
 	);
+	forgetSummary(me);
 
 	return {
 		thread: { ...thread, unread: false },

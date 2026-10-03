@@ -1,4 +1,5 @@
 import { sql, transaction } from "../data/lakebase";
+import { cachedDefinition } from "./definitionCache";
 import { toContacts, type CategoryContact } from "./categoryContacts";
 import type { PolicyClass } from "../auth/policy";
 import { effectiveAdminGroups, settings } from "../settings";
@@ -231,38 +232,59 @@ interface AssignmentRow {
 	capabilities: string[] | null;
 }
 
-// Every assignment reaching this caller, as a group member or by name.
+// Every active assignment, grouped by the group or person it names. Held
+// once for everybody rather than asked per person, so a morning of first
+// visits works out each person's roles from memory. Any change to roles or
+// assignments drops it on every instance, through the access change it
+// already announces. See invalidateAccessCache in lib/platform/access.
 //
 // Grouped by assignment rather than by role, so two assignments of the same
 // role in different scopes stay distinct. Collapsing them would lose the scope,
 // which is the whole point of having one.
+async function assignmentIndex(): Promise<Map<string, AssignmentRow[]>> {
+	return cachedDefinition("access-index:roles", async () => {
+		const rows = await sql<
+			AssignmentRow & { subject_type: string; subject: string }
+		>(
+			`SELECT ra.subject_type, lower(ra.subject_id) AS subject,
+			        r.permission, ra.scope_type, ra.scope_id,
+			        coalesce(
+			          array_agg(rc.capability) FILTER (WHERE rc.capability IS NOT NULL),
+			          '{}'
+			        ) AS capabilities
+			 FROM role_assignments ra
+			 JOIN roles r ON r.role_id = ra.role_id AND r.is_active = TRUE
+			 LEFT JOIN role_capabilities rc ON rc.role_id = ra.role_id
+			 WHERE ra.is_active = TRUE
+			 GROUP BY ra.assignment_id, ra.subject_type, ra.subject_id,
+			          r.permission, ra.scope_type, ra.scope_id`,
+		);
+		const index = new Map<string, AssignmentRow[]>();
+		for (const row of rows) {
+			const key = `${row.subject_type}|${row.subject}`;
+			const list = index.get(key) ?? [];
+			list.push(row);
+			index.set(key, list);
+		}
+		return index;
+	});
+}
+
+// Every assignment reaching this caller, as a group member or by name. Group
+// names are compared without case. The tracked list keeps the first spelling
+// it met, which can be a filter's rather than the one an assignment was
+// written with, and the directory itself ignores case.
 export async function loadAssignments(
 	policy: PolicyClass,
 	email: string,
 ): Promise<ResolvedAssignment[]> {
-	const rows = await sql<AssignmentRow>(
-		`SELECT r.permission,
-		        ra.scope_type,
-		        ra.scope_id,
-		        coalesce(
-		          array_agg(rc.capability) FILTER (WHERE rc.capability IS NOT NULL),
-		          '{}'
-		        ) AS capabilities
-		 FROM role_assignments ra
-		 JOIN roles r ON r.role_id = ra.role_id AND r.is_active = TRUE
-		 LEFT JOIN role_capabilities rc ON rc.role_id = ra.role_id
-		 WHERE ra.is_active = TRUE
-		   AND (
-		     (ra.subject_type = 'group' AND lower(ra.subject_id) = ANY($1))
-		     OR (ra.subject_type = 'user' AND lower(ra.subject_id) = $2)
-		   )
-		 GROUP BY ra.assignment_id, r.permission, ra.scope_type, ra.scope_id`,
-		// Group names compared without case. The tracked list keeps the first
-		// spelling it met, which can be a filter's rather than the one an
-		// assignment was written with, and the directory itself ignores case.
-		[policy.grants.map((g) => g.toLowerCase()), email.toLowerCase()],
-	);
-
+	const index = await assignmentIndex();
+	const rows = [
+		...policy.grants.flatMap(
+			(group) => index.get(`group|${group.toLowerCase()}`) ?? [],
+		),
+		...(index.get(`user|${email.toLowerCase()}`) ?? []),
+	];
 	return rows.map((row) => ({
 		permission: row.permission,
 		// Filtered against the closed list, so a capability written into the
@@ -273,8 +295,6 @@ export async function loadAssignments(
 		scopeId: row.scope_id,
 	}));
 }
-
-// --- Administration --------------------------------------------------------
 
 export async function listRoles(): Promise<RoleRecord[]> {
 	const rows = await sql<{

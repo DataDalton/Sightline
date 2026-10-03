@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useEffect, useState } from "react";
-import Link from "next/link";
+import Link from "./AppLink";
 import { usePathname } from "next/navigation";
 import useSWR from "swr";
 import { useUser } from "../context/UserContext";

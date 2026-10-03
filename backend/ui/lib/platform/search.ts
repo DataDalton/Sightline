@@ -1,7 +1,7 @@
 import { sql } from "../data/lakebase";
 import type { Identity } from "../auth/identity";
 import type { PolicyClass } from "../auth/policy";
-import { cachedDefinition } from "./definitionCache";
+import { cachedDefinition, invalidateDefinitions } from "./definitionCache";
 import { curatedReports } from "./curated";
 import {
 	getAccessContext,
@@ -350,15 +350,23 @@ export async function recentReports(
 	return rows.map((row) => row.report_id);
 }
 
+// Held per person until they mark or unmark a report, which drops it on
+// every instance. See lib/platform/changes.
+function favouritesKey(email: string): string {
+	return `favourites:${email.toLowerCase()}`;
+}
+
 export async function listFavourites(email: string): Promise<string[]> {
-	const rows = await sql<{ report_id: string }>(
-		`SELECT report_id::text AS report_id
-		 FROM favourites
-		 WHERE lower(user_email) = $1
-		 ORDER BY created_on DESC`,
-		[email.toLowerCase()],
-	).catch(() => [] as { report_id: string }[]);
-	return rows.map((row) => row.report_id);
+	return cachedDefinition(favouritesKey(email), async () => {
+		const rows = await sql<{ report_id: string }>(
+			`SELECT report_id::text AS report_id
+				 FROM favourites
+				 WHERE lower(user_email) = $1
+				 ORDER BY created_on DESC`,
+			[email.toLowerCase()],
+		).catch(() => [] as { report_id: string }[]);
+		return rows.map((row) => row.report_id);
+	});
 }
 
 // Adding one twice is not an error. The button is a toggle and a double click
@@ -373,6 +381,8 @@ export async function addFavourite(
 		 ON CONFLICT (user_email, report_id) DO NOTHING`,
 		[email.toLowerCase(), reportId],
 	);
+	invalidateDefinitions(favouritesKey(email));
+	invalidateDefinitions(`briefing-plan:${email.toLowerCase()}|`);
 }
 
 export async function removeFavourite(
@@ -383,6 +393,8 @@ export async function removeFavourite(
 		`DELETE FROM favourites WHERE lower(user_email) = $1 AND report_id = $2`,
 		[email.toLowerCase(), reportId],
 	);
+	invalidateDefinitions(favouritesKey(email));
+	invalidateDefinitions(`briefing-plan:${email.toLowerCase()}|`);
 }
 
 // The reports this person opens most, with the address each is at. Counted

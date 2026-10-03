@@ -1,7 +1,7 @@
 "use client";
 
 import { boardListKey, refreshBoardList } from "./boardList";
-import Link from "next/link";
+import Link from "../components/AppLink";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import useSWR from "swr";

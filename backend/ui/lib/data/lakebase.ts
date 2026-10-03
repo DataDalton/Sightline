@@ -1,4 +1,5 @@
-import type { Pool, PoolClient } from "pg";
+import { monitorEventLoopDelay } from "node:perf_hooks";
+import type { Client as PgClient, Pool, PoolClient } from "pg";
 import { randomUUID } from "node:crypto";
 import { lakebase } from "../runtime";
 import type { QueryParams } from "./types";
@@ -111,7 +112,7 @@ async function createPool(): Promise<Pool> {
 		return watchIdleFailures(
 			new PgPool({
 				connectionString: lakebase.localUrl,
-				max: 10,
+				max: lakebase.poolMax,
 				idleTimeoutMillis: 30000,
 				connectionTimeoutMillis: 10000,
 			}),
@@ -151,6 +152,33 @@ async function createPool(): Promise<Pool> {
 	return watchIdleFailures(pool);
 }
 
+// A connection of its own, outside the pool, for a caller that holds it open
+// for a long time, such as one listening for notifications. Made the way the
+// pool makes its connections, with the same credentials and settings. The
+// caller ends it.
+export async function openDedicatedClient(): Promise<PgClient> {
+	const { Client } = await import("pg");
+	if (lakebase.localUrl) {
+		const client = new Client({ connectionString: lakebase.localUrl });
+		await client.connect();
+		return client;
+	}
+	if (!lakebase.host || !lakebase.instanceName) {
+		throw new Error("Lakebase is not configured.");
+	}
+	const client = new Client({
+		host: lakebase.host,
+		port: lakebase.port,
+		database: lakebase.database,
+		user: lakebase.user,
+		options: `-c search_path=${lakebase.schema},public`,
+		password: await getToken(),
+		ssl: { rejectUnauthorized: true },
+	});
+	await client.connect();
+	return client;
+}
+
 export function getPool(): Promise<Pool> {
 	if (!poolPromise) {
 		poolPromise = createPool().catch((err) => {
@@ -171,8 +199,66 @@ export async function sql<T = Record<string, unknown>>(
 	params?: SqlParams,
 ): Promise<T[]> {
 	const pool = await getPool();
-	const result = await pool.query(text, params);
-	return result.rows as T[];
+	if (!queryStats) {
+		const result = await pool.query(text, params);
+		return result.rows as T[];
+	}
+	const started = performance.now();
+	try {
+		const result = await pool.query(text, params);
+		return result.rows as T[];
+	} finally {
+		noteQuery(text, performance.now() - started, pool.waitingCount);
+	}
+}
+
+// Counts of every statement this process sends, for finding what fills the
+// pool under load. Off unless SQL_QUERY_STATS is set, and then printed to the
+// log every minute, slowest in total first. Time includes waiting for a
+// connection, which is what a full pool costs each statement.
+const queryStats = process.env.SQL_QUERY_STATS === "1";
+const statementTotals = new Map<
+	string,
+	{ count: number; totalMs: number; queuedPeak: number }
+>();
+let statsTimer: ReturnType<typeof setInterval> | null = null;
+const loopDelay = monitorEventLoopDelay({ resolution: 20 });
+
+function noteQuery(text: string, ms: number, waiting: number): void {
+	const key = text.replace(/\s+/g, " ").trim().slice(0, 110);
+	const held = statementTotals.get(key) ?? {
+		count: 0,
+		totalMs: 0,
+		queuedPeak: 0,
+	};
+	held.count++;
+	held.totalMs += ms;
+	held.queuedPeak = Math.max(held.queuedPeak, waiting);
+	statementTotals.set(key, held);
+	if (!statsTimer) {
+		loopDelay.enable();
+	}
+	statsTimer ??= setInterval(() => {
+		const top = [...statementTotals.entries()]
+			.sort((a, b) => b[1].totalMs - a[1].totalMs)
+			.slice(0, 25);
+		// How late the request thread ran callbacks, which is how long every
+		// request and every statement result waited behind other work.
+		console.log(
+			`Request thread delay in the last minute, typical ${Math.round(loopDelay.percentile(50) / 1e6)}ms, ` +
+				`slowest 1% ${Math.round(loopDelay.percentile(99) / 1e6)}ms`,
+		);
+		loopDelay.reset();
+		console.log("Statements in the last minute, by total time:");
+		for (const [statement, t] of top) {
+			console.log(
+				`  ${Math.round(t.totalMs)}ms total, ${t.count}x, ` +
+					`${Math.round(t.totalMs / t.count)}ms each, ` +
+					`${t.queuedPeak} waiting at most  ${statement}`,
+			);
+		}
+		statementTotals.clear();
+	}, 60_000);
 }
 
 // Runs several statements in one transaction, rolling back on any failure.

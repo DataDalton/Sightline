@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { validTimeZone } from "@/lib/alerts/schedule";
 import { getIdentity } from "@/lib/auth/identity";
 import { requestCheck } from "@/lib/freshness/checker";
 import { setLateSubscription, statusOf } from "@/lib/freshness/status";
@@ -10,13 +11,7 @@ import { getSource } from "@/lib/semantic/registry";
 // choice to be told when one of them is late.
 
 function zoneOf(raw: string | null): string {
-	if (!raw) return "UTC";
-	try {
-		new Intl.DateTimeFormat("en-US", { timeZone: raw });
-		return raw;
-	} catch {
-		return "UTC";
-	}
+	return validTimeZone(raw);
 }
 
 export async function GET(request: NextRequest) {

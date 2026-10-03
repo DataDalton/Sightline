@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import Link from "next/link";
+import Link from "../components/AppLink";
 import { useEffect, useMemo, useState } from "react";
 import { flushSync } from "react-dom";
 import useSWR from "swr";

@@ -2,6 +2,7 @@ import type { Identity } from "../auth/identity";
 import { resolvePolicyClass, type PolicyClass } from "../auth/policy";
 import { insertLog } from "../activityLog";
 import { sql } from "../data/lakebase";
+import { invalidateDefinitions } from "../platform/definitionCache";
 import { pageLink } from "../deliveries/store";
 import { assertCanEdit, EditForbiddenError } from "../platform/editing";
 import { effective, refuse } from "../platform/pageProtection";
@@ -462,6 +463,7 @@ export async function createPageAlert(
 	);
 	const record = await loadOne(identity, id, true);
 	if (!record) throw new PageAlertError("The alert could not be saved.", 500);
+	planInputsChanged();
 	return record;
 }
 
@@ -546,6 +548,7 @@ export async function updatePageAlert(
 	);
 	const record = await loadOne(identity, row.alert_id, true);
 	if (!record) throw new PageAlertError("Alert not found", 404);
+	planInputsChanged();
 	return record;
 }
 
@@ -570,6 +573,13 @@ export async function deletePageAlert(
 		row.definition,
 		null,
 	);
+	planInputsChanged();
+}
+
+// An unusual alert names the date field a page's figures are judged across,
+// which every reader's home page plan reads, so a change to one drops them.
+function planInputsChanged(): void {
+	invalidateDefinitions("briefing-plan:");
 }
 
 // --- Following -------------------------------------------------------------

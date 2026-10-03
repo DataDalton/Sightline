@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import Link from "../components/AppLink";
 import useSWR from "swr";
 import styles from "./LateData.module.css";
 

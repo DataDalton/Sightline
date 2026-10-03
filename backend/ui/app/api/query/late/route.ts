@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { validTimeZone } from "@/lib/alerts/schedule";
 import { getIdentity } from "@/lib/auth/identity";
 import { requestCheck } from "@/lib/freshness/checker";
 import { latenessOf } from "@/lib/freshness/lateness";
@@ -16,13 +17,7 @@ import { reachableSet } from "@/lib/platform/sources";
 const maxSources = 20;
 
 function zoneOf(raw: string | null): string {
-	if (!raw) return "UTC";
-	try {
-		new Intl.DateTimeFormat("en-US", { timeZone: raw });
-		return raw;
-	} catch {
-		return "UTC";
-	}
+	return validTimeZone(raw);
 }
 
 export async function GET(request: NextRequest) {

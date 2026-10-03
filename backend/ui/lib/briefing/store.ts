@@ -18,6 +18,9 @@ export interface StoredCard {
 	key: string;
 	card: Card | null;
 	fresh: boolean;
+	// When the card was last judged, or null for one stored before that was
+	// recorded.
+	judgedAt: number | null;
 }
 
 // The most recent card for each key on or before the day given. An earlier
@@ -34,8 +37,10 @@ export async function readCards(
 			card_key: string;
 			card: Card | null;
 			fresh: boolean;
+			judged_on: string | null;
 		}>(
 			`SELECT DISTINCT ON (c.card_key) c.card_key, c.card,
+			        c.judged_on::text AS judged_on,
 			        (c.day = $2::date AND c.expires_on > now()
 			         AND c.computed_on >= coalesce(d.data_changed_on, '-infinity'))
 			          AS fresh
@@ -51,6 +56,7 @@ export async function readCards(
 				key: row.card_key,
 				card: row.card,
 				fresh: row.fresh === true,
+				judgedAt: row.judged_on ? Date.parse(row.judged_on) : null,
 			});
 		}
 	} catch (error) {
@@ -76,17 +82,19 @@ export async function writeCard(entry: {
 	try {
 		await sql(
 			`INSERT INTO briefing_cards
-			   (card_key, day, scope, source_key, card, computed_on, expires_on)
+			   (card_key, day, scope, source_key, card, computed_on, expires_on,
+			    judged_on)
 			 SELECT $1::text, $2::date, $3::text, $4::text, $5::jsonb,
 			        to_timestamp($6::double precision),
-			        to_timestamp($7::double precision)
+			        to_timestamp($7::double precision), now()
 			 WHERE $3::text <> 'unfiltered' OR NOT EXISTS (
 			   SELECT 1 FROM data_sources d
 			   WHERE d.source_key = $4::text AND d.has_row_filter)
 			 ON CONFLICT (card_key, day) DO UPDATE SET
 			   card = EXCLUDED.card,
 			   computed_on = EXCLUDED.computed_on,
-			   expires_on = EXCLUDED.expires_on
+			   expires_on = EXCLUDED.expires_on,
+			   judged_on = EXCLUDED.judged_on
 			 WHERE briefing_cards.computed_on <= EXCLUDED.computed_on`,
 			[
 				entry.key,

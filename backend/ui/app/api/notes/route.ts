@@ -12,6 +12,7 @@ import {
 	removeNote,
 } from "@/lib/platform/notes";
 import { sql } from "@/lib/data/lakebase";
+import { reportSubject } from "@/lib/platform/curated";
 import { isUuid } from "@/lib/alerts/store";
 
 // Commentary on a visual.
@@ -46,17 +47,7 @@ async function reach(
 	const policy = await resolvePolicyClass(identity);
 	const context = await getAccessContext(policy, identity);
 
-	const rows = await sql<{
-		category_id: string | null;
-		is_personal: boolean;
-		owner_email: string | null;
-	}>(
-		`SELECT category_id, is_personal, owner_email
-		 FROM reports
-		 WHERE report_id = $1 AND is_active = TRUE`,
-		[reportId],
-	);
-	const report = rows[0];
+	const report = await reportSubject(reportId);
 
 	// The same answer for a report that is not there and one this caller may
 	// not open, so asking is not a way to learn a report exists.

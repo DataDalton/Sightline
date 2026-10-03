@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
+import Link from "../components/AppLink";
 import useSWR from "swr";
 import type { AlertEvent, AlertRecord } from "../../lib/alerts/store";
 import { describeConditions } from "../../lib/explore/conditions";

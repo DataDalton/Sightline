@@ -211,6 +211,25 @@ async function onlyCold(
 	return cold;
 }
 
+// When each report was last warmed for each class. A report is rendered for
+// every visit and every prefetch of a link to it, and warming it for the same
+// class again within the interval only repeats the check that finds it warm.
+const warmedReports = new Map<string, number>();
+const reportWarmIntervalMs = 60 * 1000;
+const maxTrackedReports = 5000;
+
+function warmedRecently(key: string, now: number): boolean {
+	const last = warmedReports.get(key) ?? 0;
+	if (now - last < reportWarmIntervalMs) return true;
+	warmedReports.set(key, now);
+	if (warmedReports.size > maxTrackedReports) {
+		for (const [k, at] of warmedReports) {
+			if (now - at >= reportWarmIntervalMs) warmedReports.delete(k);
+		}
+	}
+	return false;
+}
+
 // Fills the cache for this reader's partition with what the report will ask
 // for. Never awaited by a caller, never throws.
 export function warmReport(identity: Identity, report: WarmableReport): void {
@@ -224,6 +243,8 @@ export function warmReport(identity: Identity, report: WarmableReport): void {
 		try {
 			const policy = await resolvePolicyClass(identity);
 			if (policy.degraded) return;
+			if (warmedRecently(`${policy.id}|${report.reportId}`, Date.now()))
+				return;
 
 			// Stamped once for the whole walk, so two visuals on one page cannot
 			// resolve "the last ninety days" to different days.

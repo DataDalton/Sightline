@@ -185,14 +185,20 @@ export async function getCategory(
 		return null;
 	}
 
-	const rows = await sql<{
-		category_id: string;
-		name: string;
-		description: string | null;
-	}>(
-		`SELECT category_id, name, description
-		 FROM categories WHERE category_id = $1 AND is_active = TRUE`,
-		[categoryId],
+	// The same row for everybody, held with the rest of the navigation so an
+	// edit to categories drops it.
+	const rows = await cachedDefinition(
+		`navigation:category:${categoryId}`,
+		async () =>
+			await sql<{
+				category_id: string;
+				name: string;
+				description: string | null;
+			}>(
+				`SELECT category_id, name, description
+				 FROM categories WHERE category_id = $1 AND is_active = TRUE`,
+				[categoryId],
+			),
 	);
 	const category = rows[0];
 	if (!category) return null;

@@ -278,11 +278,77 @@ async function unusualAlerts(reportIds: string[]): Promise<WatchAlert[]> {
 		}));
 }
 
+// What a reader's plan is built from that changes only when something about
+// it changes: the figures, the order of their reports and their choices.
+interface PlanCore {
+	items: WatchItem[];
+	reports: BriefingReport[];
+	choices: BriefingChoice[];
+	reachable: string[] | null;
+}
+
+// The core is held per reader and class until something it was built from
+// changes, and every such change drops it on every instance: a pin, hide or
+// reorder, a report marked or unmarked, a change of access, a report or
+// personal page edited, published or removed, a page alert set or removed.
+// See lib/platform/changes. How often the reader and their colleagues open
+// each report also orders it, and that drifts too slowly to announce, so the
+// core is built again after this long regardless.
+const coreLifetimeMs = 3 * 60 * 60 * 1000;
+
+// Sources running late and alerts that fired change on their own schedule, so
+// they are read on every visit. Each is one indexed question.
 export async function briefingPlan(
 	identity: Identity,
 	policy: PolicyClass,
 	timeZone: string,
 ): Promise<BriefingPlan> {
+	const email = identity.email.toLowerCase();
+	const core = await cachedDefinition(
+		`briefing-plan:${email}|${policy.id}`,
+		() => buildCore(identity, policy),
+		coreLifetimeMs,
+	);
+	const [status, inbox] = await Promise.all([
+		statusOf(core.reachable, email, timeZone).catch(
+			() => [] as SourceStatus[],
+		),
+		listInbox(email, { kind: "alert", limit: 20 }).catch(
+			() => [] as InboxItem[],
+		),
+	]);
+	const since = Date.now() - alertDays * 86_400_000;
+	return {
+		items: core.items,
+		limit: shownItems,
+		late: status
+			.filter((s) => s.state === "late" || s.state === "overdue")
+			.map(({ sourceKey, title, state, expectedBy, lastChanged }) => ({
+				sourceKey,
+				title,
+				state,
+				expectedBy,
+				lastChanged,
+			})),
+		alerts: inbox
+			.filter((a) => Date.parse(a.createdOn) >= since)
+			.map(({ id, title, body, link, createdOn, readOn }) => ({
+				id,
+				title,
+				body,
+				link,
+				createdOn,
+				readOn,
+			})),
+		reports: core.reports,
+		choices: core.choices,
+	};
+}
+
+async function buildCore(
+	identity: Identity,
+	policy: PolicyClass,
+): Promise<PlanCore> {
 	const email = identity.email.toLowerCase();
 	const none = () => [] as string[];
 	const [
@@ -293,7 +359,6 @@ export async function briefingPlan(
 		popular,
 		choices,
 		reachable,
-		inbox,
 	] = await Promise.all([
 		listReports(policy, identity),
 		listPersonalPages(identity, policy).catch(() => null),
@@ -302,9 +367,6 @@ export async function briefingPlan(
 		popularWithPeers(email, policy.id).catch(none),
 		listChoices(email).catch(() => [] as BriefingChoice[]),
 		reachableSet(identity),
-		listInbox(email, { kind: "alert", limit: 20 }).catch(
-			() => [] as InboxItem[],
-		),
 	]);
 	const own = personal?.mine ?? [];
 	const reports = orderReports(
@@ -336,12 +398,9 @@ export async function briefingPlan(
 
 	// Only reports already found readable above are asked about.
 	const reportIds = reports.map((r) => r.reportId);
-	const [watchReports, alerts, status] = await Promise.all([
+	const [watchReports, alerts] = await Promise.all([
 		reportShapes(reportIds),
 		unusualAlerts(reportIds).catch(() => [] as WatchAlert[]),
-		statusOf(reachable ? [...reachable] : null, email, timeZone).catch(
-			() => [] as SourceStatus[],
-		),
 	]);
 	const sources = new Map<string, SemanticSource>();
 	for (const report of watchReports) {
@@ -366,31 +425,10 @@ export async function briefingPlan(
 		choices,
 	);
 
-	const since = Date.now() - alertDays * 86_400_000;
-
 	return {
 		items,
-		limit: shownItems,
-		late: status
-			.filter((s) => s.state === "late" || s.state === "overdue")
-			.map(({ sourceKey, title, state, expectedBy, lastChanged }) => ({
-				sourceKey,
-				title,
-				state,
-				expectedBy,
-				lastChanged,
-			})),
-		alerts: inbox
-			.filter((a) => Date.parse(a.createdOn) >= since)
-			.map(({ id, title, body, link, createdOn, readOn }) => ({
-				id,
-				title,
-				body,
-				link,
-				createdOn,
-				readOn,
-			})),
 		reports,
 		choices,
+		reachable: reachable ? [...reachable] : null,
 	};
 }
