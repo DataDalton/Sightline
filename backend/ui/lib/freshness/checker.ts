@@ -19,7 +19,9 @@ import {
 } from "./history";
 import { evaluateLateness } from "./lateness";
 import { refreshMarks } from "./marks";
+import { loadHistoryChanged } from "./loads";
 import { routineLooksAllowed } from "./warehouse";
+import { perProcess } from "../perProcess";
 
 // Watches the tables behind each source for new data.
 //
@@ -71,7 +73,10 @@ function quoted(table: string): string {
 
 // What each source was found to read, held for a while so a pass every few
 // seconds does not ask again.
-const tablesHeld = new Map<string, { at: number; tables: string[] | null }>();
+const tablesHeld = perProcess(
+	"freshness/checker:tablesHeld",
+	() => new Map<string, { at: number; tables: string[] | null }>(),
+);
 const tablesHeldMs = 10 * 60_000;
 
 // Metric views whose definitions are being read behind the passes.
@@ -242,7 +247,7 @@ async function recordArrivals(
 			kept.push(t);
 		}
 	}
-	await sql(
+	const landed = await sql<{ table_name: string }>(
 		`INSERT INTO table_arrivals (table_name, arrived_on)
 		 SELECT $1, t FROM unnest($2::timestamptz[]) AS t
 		 WHERE NOT EXISTS (
@@ -251,13 +256,15 @@ async function recordArrivals(
 		     AND a.arrived_on BETWEEN t - make_interval(secs => $3)
 		                          AND t + make_interval(secs => $3)
 		 )
-		 ON CONFLICT DO NOTHING`,
+		 ON CONFLICT DO NOTHING
+		 RETURNING table_name`,
 		[
 			table,
 			kept.map((t) => new Date(t).toISOString()),
 			arrivalSpacingMs / 1000,
 		],
 	);
+	if (landed.length > 0) loadHistoryChanged();
 }
 
 let passing = false;
@@ -300,16 +307,18 @@ async function pass(): Promise<void> {
 	// Written only where it differs, since this runs every few seconds on
 	// every replica.
 	if (unreadable.length > 0) {
-		await sql(
+		const moved = await sql<{ source_key: string }>(
 			`UPDATE data_sources SET freshness_mode = 'timer', freshness_note = $2
 			 WHERE source_key = ANY($1::text[])
 			   AND (freshness_mode <> 'timer'
-			        OR freshness_note IS DISTINCT FROM $2)`,
+			        OR freshness_note IS DISTINCT FROM $2)
+			 RETURNING source_key`,
 			[
 				unreadable.map((s) => s.sourceKey),
 				"The tables this reads are not known, so it is refreshed on a timer.",
 			],
 		);
+		if (moved.length > 0) loadHistoryChanged();
 	}
 
 	const tables = [...intervalByTable.keys()];
@@ -516,7 +525,7 @@ async function settleSources(
 
 	// One statement for every source, writing only the rows whose mode or
 	// note moved or whose data changed.
-	await sql(
+	const moved = await sql<{ source_key: string }>(
 		`UPDATE data_sources d SET
 		   freshness_mode = u.mode, freshness_note = u.note,
 		   data_changed_on = CASE WHEN u.changed THEN now()
@@ -526,9 +535,11 @@ async function settleSources(
 		 WHERE d.source_key = u.key
 		   AND (u.changed
 		        OR (d.freshness_mode, d.freshness_note)
-		           IS DISTINCT FROM (u.mode, u.note))`,
+		           IS DISTINCT FROM (u.mode, u.note))
+		 RETURNING d.source_key`,
 		[keys, modes, notes, changes],
 	);
+	if (moved.length > 0) loadHistoryChanged();
 	const changedKeys = keys.filter((_, i) => changes[i]);
 	if (changedKeys.length > 0) {
 		await sql(
@@ -543,7 +554,10 @@ async function settleSources(
 // source that has gone too long without a look. The tables are read from the
 // platform tables rather than from this module, which may be a different
 // instance from the one running the passes.
-const lastAsked = new Map<string, number>();
+const lastAsked = perProcess(
+	"freshness/checker:lastAsked",
+	() => new Map<string, number>(),
+);
 
 export function requestCheck(sourceKey: string): void {
 	const now = Date.now();

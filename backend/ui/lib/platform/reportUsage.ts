@@ -4,8 +4,7 @@ import type { PolicyClass } from "../auth/policy";
 import { sql } from "../data/lakebase";
 import { record } from "../telemetry/usage";
 import { isPageControl } from "../visuals/catalog";
-import { getReport, type ReportDetail } from "./reports";
-import { cachedDefinition } from "./definitionCache";
+import { getReport, reportById } from "./reports";
 
 // How a report is read, for the people who maintain it.
 //
@@ -26,33 +25,6 @@ export class UsageError extends Error {
 	) {
 		super(message);
 	}
-}
-
-const uuidPattern =
-	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-// The report a beacon names, resolved through the same access check as
-// opening it. The id to slug lookup is the same for every reader and is held
-// briefly. Access, and whether the report is still active, are decided by
-// getReport on every call.
-async function reportById(
-	policy: PolicyClass,
-	identity: Identity,
-	reportId: string,
-): Promise<ReportDetail | null> {
-	if (!uuidPattern.test(reportId)) return null;
-	const id = reportId.toLowerCase();
-	const slug = await cachedDefinition(`report-slug:${id}`, async () => {
-		const rows = await sql<{ slug: string }>(
-			`SELECT slug FROM reports WHERE report_id = $1::uuid AND is_active`,
-			[id],
-		);
-		return rows[0]?.slug ?? null;
-	});
-	if (!slug) return null;
-	const report = await getReport(policy, identity, slug);
-	// A slug held from before a rename can now belong to another report.
-	return report && report.reportId === id ? report : null;
 }
 
 // Records that a page was shown, or that a visual on it was used. Refused for

@@ -1,5 +1,6 @@
 import type { Identity } from "../auth/identity";
 import { insertLog } from "../activityLog";
+import { batchedRead } from "../data/batch";
 import { sql, transaction } from "../data/lakebase";
 import { noteOpened } from "../retention/opened";
 import {
@@ -88,6 +89,35 @@ const visible = `
 	    OR EXISTS (SELECT 1 FROM sheet_shares sh
 	               WHERE sh.sheet_id = s.sheet_id AND sh.email = $1))`;
 
+// Opening a sheet reads it once per request, so everyone opening one at
+// about the same time is answered by one statement. The query is the one
+// above, asked once for each reader and sheet given, with the reader in
+// place of $1. See lib/data/batch.
+const sheetReads = batchedRead<{ email: string; id: string }, Row | null>(
+	async (asked) => {
+		const rows = await sql<Row & { asker: string }>(
+			`SELECT k.e AS asker, x.*
+			 FROM unnest($1::text[], $2::uuid[]) AS k(e, id)
+			 CROSS JOIN LATERAL (
+			   ${visible.replaceAll("$1", "k.e")} AND s.sheet_id = k.id
+			 ) x`,
+			[asked.map((k) => k.email), asked.map((k) => k.id)],
+		);
+		return new Map(
+			rows.map(({ asker, ...row }) => [
+				readKey(asker, row.sheet_id),
+				row as Row,
+			]),
+		);
+	},
+	(k) => readKey(k.email, k.id),
+	null,
+);
+
+function readKey(email: string, id: string): string {
+	return JSON.stringify([email, id.toLowerCase()]);
+}
+
 function toSheet(row: Row): Sheet {
 	return {
 		id: row.sheet_id,
@@ -136,14 +166,11 @@ export async function getSheet(
 	id: string,
 ): Promise<Sheet | null> {
 	if (!isUuid(id)) return null;
-	const rows = await sql<Row>(`${visible} AND s.sheet_id = $2`, [
-		identity.email.toLowerCase(),
-		id,
-	]);
-	if (!rows[0]) return null;
+	const row = await sheetReads({ email: identity.email.toLowerCase(), id });
+	if (!row) return null;
 	// Any read by somebody who may open it counts as use for retention.
 	noteOpened("sheet", id);
-	return toSheet(rows[0]);
+	return toSheet(row);
 }
 
 export async function createSheet(
@@ -420,16 +447,158 @@ export interface Present {
 
 const leaseSeconds = 30;
 
-// A session row belongs to the person who first wrote it. Both writes below
-// match on the email as well as the session id, so nobody can move or mark
-// somebody else's session by sending its id.
+// What a beat from an open sheet answers: the sheet's version and who last
+// saved it, and everyone who has it open. Null when the caller may not open
+// the sheet.
+export interface Beat {
+	version: number;
+	modifiedBy: string;
+	present: Present[];
+}
 
-export async function heartbeat(
+interface BeatKey {
+	email: string;
+	sheetId: string;
+	sessionId: string;
+	state: string;
+}
+
+interface BeatRow {
+	kind: "sheet" | "beat" | "listed";
+	sheet_id: string;
+	session_id: string;
+	user_email: string;
+	state: { cell?: { row: string; column: string } } | null;
+	version: string | null;
+	modified_by: string | null;
+}
+
+// Every open sheet beats every few seconds, so the beats arriving together
+// are answered by one statement: who may open each sheet, its version, the
+// renewed place of each session, and who else is there. See lib/data/batch.
+//
+// Each session's row is read as of before this statement's own writes, so a
+// session's renewed row, as the write returned it, replaces the one read.
+const beats = batchedRead<BeatKey, Beat | null>(
+	async (keys) => {
+		// One renewal per session in a statement. Two people sending the same
+		// session id for one sheet are answered as unable to open it, since
+		// only one of them can own the session.
+		const claimed = new Map<string, BeatKey>();
+		for (const key of keys) {
+			const session = `${key.sheetId}|${key.sessionId}`;
+			if (!claimed.has(session)) claimed.set(session, key);
+		}
+		const sent = [...claimed.values()];
+		const rows = await sql<BeatRow>(
+			`WITH k AS (
+			   SELECT * FROM unnest($1::text[], $2::uuid[], $3::text[], $4::jsonb[])
+			     AS k(email, sheet_id, session_id, state)
+			 ),
+			 allowed AS (
+			   SELECT k.*, s.version, s.modified_by
+			   FROM k
+			   JOIN sheets s ON s.sheet_id = k.sheet_id AND s.removed_on IS NULL
+			   WHERE s.owner_email = k.email
+			      OR EXISTS (SELECT 1 FROM sheet_shares sh
+			                 WHERE sh.sheet_id = s.sheet_id AND sh.email = k.email)
+			 ),
+			 beat AS (
+			   INSERT INTO sheet_presence
+			     (sheet_id, session_id, user_email, state, expires_on)
+			   SELECT sheet_id, session_id, email, state,
+			          now() + make_interval(secs => $5)
+			   FROM allowed
+			   ON CONFLICT (sheet_id, session_id) DO UPDATE SET
+			     state = EXCLUDED.state, expires_on = EXCLUDED.expires_on
+			   WHERE sheet_presence.left_on IS NULL
+			     AND sheet_presence.user_email = EXCLUDED.user_email
+			   RETURNING sheet_id, session_id, user_email, state
+			 )
+			 SELECT 'sheet' AS kind, a.sheet_id::text, a.session_id,
+			        a.email AS user_email, NULL::jsonb AS state,
+			        a.version::text AS version, a.modified_by
+			 FROM allowed a
+			 UNION ALL
+			 SELECT 'beat', b.sheet_id::text, b.session_id, b.user_email, b.state,
+			        NULL, NULL
+			 FROM beat b
+			 UNION ALL
+			 SELECT 'listed', p.sheet_id::text, p.session_id, p.user_email,
+			        p.state, NULL, NULL
+			 FROM sheet_presence p
+			 WHERE p.sheet_id IN (SELECT sheet_id FROM allowed)
+			   AND p.expires_on > now() AND p.left_on IS NULL`,
+			[
+				sent.map((k) => k.email),
+				sent.map((k) => k.sheetId),
+				sent.map((k) => k.sessionId),
+				sent.map((k) => k.state),
+				leaseSeconds,
+			],
+		);
+
+		const sessions = new Map<string, Map<string, BeatRow>>();
+		const sheets = new Map<string, BeatRow>();
+		for (const row of rows) {
+			if (row.kind === "sheet") {
+				sheets.set(
+					`${row.sheet_id}|${row.session_id}|${row.user_email}`,
+					row,
+				);
+				continue;
+			}
+			let held = sessions.get(row.sheet_id);
+			if (!held) sessions.set(row.sheet_id, (held = new Map()));
+			// A renewal replaces what was read before it.
+			if (row.kind === "beat" || !held.has(row.session_id)) {
+				held.set(row.session_id, row);
+			}
+		}
+
+		const answers = new Map<string, Beat | null>();
+		for (const key of sent) {
+			const sheet = sheets.get(
+				`${key.sheetId.toLowerCase()}|${key.sessionId}|${key.email}`,
+			);
+			if (!sheet) continue;
+			answers.set(beatKeyOf(key), {
+				version: Number(sheet.version),
+				modifiedBy: sheet.modified_by ?? "",
+				present: [
+					...(sessions.get(sheet.sheet_id)?.values() ?? []),
+				].map((r) => ({
+					email: r.user_email,
+					sessionId: r.session_id,
+					cell: r.state?.cell ?? null,
+					self: r.session_id === key.sessionId,
+				})),
+			});
+		}
+		return answers;
+	},
+	(key) => beatKeyOf(key),
+	null,
+);
+
+function beatKeyOf(key: BeatKey): string {
+	return JSON.stringify([
+		key.email,
+		key.sheetId.toLowerCase(),
+		key.sessionId,
+	]);
+}
+
+// Renews the caller's place on an open sheet and says who else is there.
+// A session row belongs to the person who first wrote it, so nobody can move
+// or mark somebody else's session by sending its id.
+export async function beatSheet(
 	identity: Identity,
 	sheetId: string,
 	sessionId: string,
 	cell: unknown,
-): Promise<Present[]> {
+): Promise<Beat | null> {
+	if (!isUuid(sheetId)) return null;
 	const c = (cell ?? null) as { row?: unknown; column?: unknown } | null;
 	const state =
 		c && typeof c.row === "string" && typeof c.column === "string"
@@ -440,37 +609,15 @@ export async function heartbeat(
 					},
 				}
 			: {};
-	const session = sessionId.slice(0, 64);
-	await sql(
-		`INSERT INTO sheet_presence (sheet_id, session_id, user_email, state, expires_on)
-		 VALUES ($1, $2, $3, $4, now() + ($5 || ' seconds')::interval)
-		 ON CONFLICT (sheet_id, session_id) DO UPDATE SET
-		   state = EXCLUDED.state, expires_on = EXCLUDED.expires_on
-		 WHERE sheet_presence.left_on IS NULL
-		   AND sheet_presence.user_email = EXCLUDED.user_email`,
-		[
-			sheetId,
-			session,
-			identity.email.toLowerCase(),
-			JSON.stringify(state),
-			String(leaseSeconds),
-		],
-	);
-	const rows = await sql<{
-		session_id: string;
-		user_email: string;
-		state: { cell?: { row: string; column: string } };
-	}>(
-		`SELECT session_id, user_email, state FROM sheet_presence
-		 WHERE sheet_id = $1 AND expires_on > now() AND left_on IS NULL`,
-		[sheetId],
-	);
-	return rows.map((r) => ({
-		email: r.user_email,
-		sessionId: r.session_id,
-		cell: r.state?.cell ?? null,
-		self: r.session_id === session,
-	}));
+	const answer = await beats({
+		email: identity.email.toLowerCase(),
+		sheetId,
+		sessionId: sessionId.slice(0, 64),
+		state: JSON.stringify(state),
+	});
+	// An open sheet counts as use for retention, as any read of it does.
+	if (answer) noteOpened("sheet", sheetId);
+	return answer;
 }
 
 // Marked as left rather than deleted, so a heartbeat already on its way when

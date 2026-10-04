@@ -33,7 +33,9 @@ import {
 	type RunQuery,
 } from "../alerts/runner";
 import type { RunIdentity } from "../alerts/shared";
+import { hasOwnedChecks } from "../alerts/owners";
 import { pageLink } from "./store";
+import { perProcess } from "../perProcess";
 
 // Works out and sends the pages people have scheduled.
 //
@@ -385,7 +387,10 @@ export async function runScheduledDeliveries(): Promise<void> {
 // --- While the owner is here -----------------------------------------------
 
 // Held back like the alert pass. See ownerThrottleMs in lib/alerts/runner.
-const lastOwnerRun = new Map<string, number>();
+const lastOwnerRun = perProcess(
+	"deliveries/runner:lastOwnerRun",
+	() => new Map<string, number>(),
+);
 
 // Called from a request the owner made. Confirms which of their scheduled
 // reports they can still open, which is what lets those run while they are
@@ -395,13 +400,20 @@ export function runDeliveriesForOwner(identity: Identity): void {
 	const email = identity.email.toLowerCase();
 	const now = Date.now();
 	if (now - (lastOwnerRun.get(email) ?? 0) < ownerThrottleMs) return;
+	// Kept in the order each pass ran, so the passes old enough to run again
+	// are at the front and are dropped from there.
+	lastOwnerRun.delete(email);
 	lastOwnerRun.set(email, now);
-	if (lastOwnerRun.size > 10000) lastOwnerRun.clear();
+	for (const [held, ranAt] of lastOwnerRun) {
+		if (now - ranAt < ownerThrottleMs) break;
+		lastOwnerRun.delete(held);
+	}
 
 	const run = asOwner(identity);
 	if (!run) return;
 
 	void (async () => {
+		if (!(await hasOwnedChecks(email))) return;
 		const mine = await sql<{
 			delivery_id: string;
 			slug: string;

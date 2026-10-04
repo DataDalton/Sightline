@@ -1,4 +1,8 @@
 import { sql } from "../data/lakebase";
+import {
+	cachedDefinition,
+	invalidateDefinitions,
+} from "../platform/definitionCache";
 import { describePattern, type LateState } from "./arrivals";
 import type { StoredPattern } from "./lateness";
 import { lookedOnSql } from "./marks";
@@ -27,6 +31,60 @@ export interface SourceStatus {
 	checkedOn: string | null;
 	pattern: string | null;
 	subscribed: boolean;
+}
+
+// The sources running late or overdue, for the home page of everyone who can
+// read them. The same rows for every reader, so held once and narrowed to what
+// each reader can reach in memory. Held until the evaluator moves a source in
+// or out of being late, which drops it on every instance. See
+// lib/platform/changes.
+export interface LateSource {
+	sourceKey: string;
+	title: string;
+	state: "late" | "overdue";
+	expectedBy: string | null;
+	lastChanged: string | null;
+}
+
+const lateKey = "freshness:late";
+
+// Drops this and every source's standing held in lib/freshness/lateness.
+export function lateStandingChanged(): void {
+	invalidateDefinitions("freshness:");
+}
+
+export async function lateSources(
+	sourceKeys: string[] | null,
+): Promise<LateSource[]> {
+	const all = await cachedDefinition(lateKey, async () => {
+		const rows = await sql<{
+			source_key: string;
+			title: string;
+			late_state: "late" | "overdue";
+			expected_by: string | null;
+			last_arrival: string | null;
+			data_changed_on: string | null;
+		}>(
+			`SELECT source_key, title, late_state, expected_by::text,
+			        last_arrival::text, data_changed_on::text
+			 FROM data_sources
+			 WHERE is_active AND late_state IN ('late', 'overdue')
+			 ORDER BY lower(title)`,
+		);
+		return rows.map(
+			(r): LateSource => ({
+				sourceKey: r.source_key,
+				title: r.title,
+				state: r.late_state,
+				expectedBy: r.expected_by,
+				// As in statusOf, the late table's last load.
+				lastChanged: r.last_arrival ?? r.data_changed_on,
+			}),
+		);
+	});
+	if (!sourceKeys) return all;
+	const reachable = new Set(sourceKeys);
+	return all.filter((s) => reachable.has(s.sourceKey));
 }
 
 export async function statusOf(

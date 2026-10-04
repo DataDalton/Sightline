@@ -405,3 +405,70 @@ export async function getReport(
 		})),
 	};
 }
+
+const uuidPattern =
+	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// The report a beacon names, resolved through the same access check as
+// opening it. The id to slug lookup is the same for every reader and is held
+// briefly. Access, and whether the report is still active, are decided by
+// getReport on every call.
+export async function reportById(
+	policy: PolicyClass,
+	identity: Identity,
+	reportId: string,
+): Promise<ReportDetail | null> {
+	if (!uuidPattern.test(reportId)) return null;
+	const id = reportId.toLowerCase();
+	const slug = await cachedDefinition(`report-slug:${id}`, async () => {
+		const rows = await sql<{ slug: string }>(
+			`SELECT slug FROM reports WHERE report_id = $1::uuid AND is_active`,
+			[id],
+		);
+		return rows[0]?.slug ?? null;
+	});
+	if (!slug) return null;
+	const report = await getReport(policy, identity, slug);
+	// A slug held from before a rename can now belong to another report.
+	return report && report.reportId === id ? report : null;
+}
+
+// The report a page is on. A page never moves to another report, so the
+// answer is held for good once found. A page that is not found is not held,
+// since an editor may add a page under that id afterwards.
+class NoSuchPage extends Error {}
+
+export async function reportOfPage(pageId: string): Promise<string | null> {
+	if (!uuidPattern.test(pageId)) return null;
+	const id = pageId.toLowerCase();
+	try {
+		return await cachedDefinition(`page-report:${id}|`, async () => {
+			const rows = await sql<{ report_id: string }>(
+				`SELECT report_id::text AS report_id FROM report_pages
+				 WHERE page_id = $1::uuid`,
+				[id],
+			);
+			if (!rows[0]) throw new NoSuchPage();
+			return rows[0].report_id;
+		});
+	} catch (error) {
+		if (error instanceof NoSuchPage) return null;
+		throw error;
+	}
+}
+
+// An active page and its report, opened as the caller. Null for a page that
+// does not exist, one no longer active, and one on a report the caller cannot
+// open, which all answer the same.
+export async function openReportPage(
+	policy: PolicyClass,
+	identity: Identity,
+	pageId: string,
+): Promise<{ report: ReportDetail; page: PageDefinition } | null> {
+	const reportId = await reportOfPage(pageId);
+	if (!reportId) return null;
+	const report = await reportById(policy, identity, reportId);
+	const id = pageId.toLowerCase();
+	const page = report?.pages.find((p) => p.pageId.toLowerCase() === id);
+	return report && page ? { report, page } : null;
+}

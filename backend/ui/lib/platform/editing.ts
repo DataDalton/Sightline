@@ -1,7 +1,8 @@
 import { sql, transaction } from "../data/lakebase";
 import type { PolicyClass } from "../auth/policy";
 import { insertLog } from "../activityLog";
-import { invalidateReport } from "./curated";
+import { invalidateDefinitions } from "./definitionCache";
+import { invalidateReport, reportSubject } from "./curated";
 import { writeVersion } from "./versionWrite";
 import {
 	effective,
@@ -137,16 +138,7 @@ export async function assertCanEdit(
 	email: string,
 	reportId: string,
 ): Promise<boolean> {
-	const rows = await sql<{
-		category_id: string | null;
-		is_personal: boolean;
-		owner_email: string | null;
-	}>(
-		`SELECT category_id, is_personal, owner_email
-		 FROM reports WHERE report_id = $1 AND is_active = TRUE`,
-		[reportId],
-	);
-	const report = rows[0];
+	const report = await reportSubject(reportId);
 	if (!report) throw new EditForbiddenError("Report not found");
 
 	const context = await getExplicitContext(policy, email);
@@ -901,6 +893,11 @@ export async function applyEdits(
 	// Another replica serves the previous definition until its entry lapses,
 	// which is the price of not asking the database whether it is current.
 	invalidateReport(request.reportId, [reportSlug]);
+	// A removed page takes its alerts with it, and the home page plan holds
+	// the unusual ones for everybody.
+	if (request.operations.some((op) => op.type === "removePage")) {
+		invalidateDefinitions("briefing-plan:unusual");
+	}
 	return result;
 }
 

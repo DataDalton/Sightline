@@ -1,5 +1,10 @@
 import type { LoadEvidence, TableLoad } from "../alerts/completeness";
+import { batchedRead } from "../data/batch";
 import { sql } from "../data/lakebase";
+import {
+	cachedDefinition,
+	invalidateDefinitions,
+} from "../platform/definitionCache";
 import {
 	customPattern,
 	readLatenessSetting,
@@ -10,12 +15,15 @@ import {
 // about when they load, for telling a period whose load has not landed from
 // one that has. See lib/alerts/completeness.
 //
-// Read from the platform store alone, in one statement for any number of
-// datasets, so it never asks the warehouse anything. Held briefly on this
-// replica, so a briefing and the alerts of the same minute share a read.
+// Read from the platform store alone, so it never asks the warehouse
+// anything. Held per dataset until what it is read from changes: a load
+// arriving, a load pattern being learned, how the dataset is watched, or how
+// its lateness is judged. Each of those calls loadHistoryChanged, which drops
+// it on every process. See lib/platform/changes.
 
-const heldMs = 60_000;
-const held = new Map<string, { at: number; evidence: LoadEvidence | null }>();
+export function loadHistoryChanged(): void {
+	invalidateDefinitions("freshness:loads:");
+}
 
 interface Row {
 	source_key: string;
@@ -26,21 +34,10 @@ interface Row {
 	pattern: ArrivalPattern | null;
 }
 
-export async function loadEvidence(
-	sourceKeys: string[],
-): Promise<Map<string, LoadEvidence>> {
-	const now = Date.now();
-	const out = new Map<string, LoadEvidence>();
-	const missing: string[] = [];
-	for (const key of new Set(sourceKeys)) {
-		const kept = held.get(key);
-		if (kept && now - kept.at < heldMs) {
-			if (kept.evidence) out.set(key, kept.evidence);
-		} else missing.push(key);
-	}
-	if (missing.length === 0) return out;
-
-	try {
+// The datasets asked about at about the same time, read in one statement. See
+// lib/data/batch.
+const storedEvidence = batchedRead<string, LoadEvidence | null>(
+	async (sourceKeys) => {
 		// A metric view reads the tables it was found to be built on, and a
 		// table reads itself, as the lateness checks judge them.
 		const rows = await sql<Row>(
@@ -61,9 +58,9 @@ export async function loadEvidence(
 			 ) t ON TRUE
 			 LEFT JOIN table_patterns p ON p.table_name = t.table_name
 			 WHERE d.is_active AND d.source_key = ANY($1::text[])`,
-			[missing],
+			[sourceKeys],
 		);
-		const found = new Map<string, LoadEvidence>();
+		const found = new Map<string, LoadEvidence | null>();
 		for (const row of rows) {
 			const setting = readLatenessSetting(row.lateness);
 			const evidence = found.get(row.source_key) ?? {
@@ -85,16 +82,30 @@ export async function loadEvidence(
 			}
 			found.set(row.source_key, evidence);
 		}
-		if (held.size > 5000) held.clear();
-		for (const key of missing) {
-			const evidence = found.get(key) ?? null;
-			held.set(key, { at: now, evidence });
-			if (evidence) out.set(key, evidence);
-		}
-	} catch (error) {
-		// Without load history every period is judged by the settling rules
-		// alone, never left unjudged.
-		console.warn("Load history could not be read:", error);
-	}
+		return found;
+	},
+	(sourceKey) => sourceKey,
+	null,
+);
+
+export async function loadEvidence(
+	sourceKeys: string[],
+): Promise<Map<string, LoadEvidence>> {
+	const out = new Map<string, LoadEvidence>();
+	await Promise.all(
+		[...new Set(sourceKeys)].map(async (key) => {
+			try {
+				const evidence = await cachedDefinition(
+					`freshness:loads:${key}`,
+					() => storedEvidence(key),
+				);
+				if (evidence) out.set(key, evidence);
+			} catch (error) {
+				// Without load history every period is judged by the settling
+				// rules alone, never left unjudged.
+				console.warn("Load history could not be read:", error);
+			}
+		}),
+	);
 	return out;
 }

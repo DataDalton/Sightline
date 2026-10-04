@@ -4,6 +4,7 @@ import { listSources } from "../semantic/registry";
 import { quoteName, sourceRef } from "../semantic/types";
 import { settings } from "../settings";
 import type { Identity } from "./identity";
+import { perProcess } from "../perProcess";
 
 // Which sources a reader can read, as Unity Catalog answers it.
 //
@@ -40,19 +41,27 @@ interface Entry {
 	computedAt: number;
 }
 
-const memory = new Map<string, Entry>();
-const inflight = new Map<string, Promise<Set<string>>>();
-const refreshing = new Set<string>();
+const memory = perProcess(
+	"auth/sourceAccess:memory",
+	() => new Map<string, Entry>(),
+);
+const inflight = perProcess(
+	"auth/sourceAccess:inflight",
+	() => new Map<string, Promise<Set<string>>>(),
+);
+const refreshing = perProcess(
+	"auth/sourceAccess:refreshing",
+	() => new Set<string>(),
+);
 
 // One entry per reader who has ever asked on this replica. Age decides whether
 // an entry may be served and on its own removes nothing, so without a ceiling
 // the map grows with everybody who has ever signed in rather than with whoever
 // is signed in now.
 //
-// Sized from the expected population rather than a constant.
-function maxReaders(): number {
-	return Math.max(1000, settings().expectedReaders);
-}
+// The ceiling is sized for people, so it is only reached by more people than
+// any one replica serves at once.
+const maxReaders = 1_000_000;
 
 // Swept on write rather than on a timer, so a replica nobody is asking stops
 // doing work.
@@ -60,7 +69,9 @@ const sweepIntervalMs = 5 * 60 * 1000;
 let sweptAt = 0;
 
 // Holds an answer, dropping whatever is past serving to make room.
+// Held in the order answers were computed, so the oldest is the first.
 function remember(email: string, entry: Entry): void {
+	memory.delete(email);
 	memory.set(email, entry);
 
 	const now = Date.now();
@@ -71,15 +82,12 @@ function remember(email: string, entry: Entry): void {
 		}
 	}
 
-	const ceiling = maxReaders();
-	if (memory.size <= ceiling) return;
 	// Oldest first. A dropped answer costs its reader one round trip, which is
 	// what they would have paid had they not visited recently.
-	const byAge = Array.from(memory.entries()).sort(
-		(a, b) => a[1].computedAt - b[1].computedAt,
-	);
-	for (const [key] of byAge.slice(0, memory.size - ceiling)) {
-		memory.delete(key);
+	while (memory.size > maxReaders) {
+		const oldest = memory.keys().next().value;
+		if (oldest === undefined) return;
+		memory.delete(oldest);
 	}
 }
 

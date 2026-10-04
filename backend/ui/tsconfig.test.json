@@ -17,6 +17,8 @@
 		"lib/query/builder.test.ts",
 		"lib/query/dateRange.test.ts",
 		"lib/query/logic.test.ts",
+		"lib/data/batch.ts",
+		"lib/data/batch.test.ts",
 		"lib/query/spec.ts",
 		"lib/query/limits.test.ts",
 		"lib/query/visualSpec.ts",

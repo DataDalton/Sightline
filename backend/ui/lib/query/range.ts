@@ -16,6 +16,7 @@ import {
 	sharedValueSet,
 } from "./cache";
 import { QuerySpecError, type QueryFilter } from "./spec";
+import { perProcess } from "../perProcess";
 
 // The smallest and largest value a field actually takes.
 //
@@ -50,8 +51,15 @@ interface CacheEntry {
 	expiresAt: number;
 }
 
-const cache = new Map<string, CacheEntry>();
-const inflight = new Map<string, Promise<FieldRange>>();
+// One of each for the process. See lib/perProcess.
+const cache = perProcess(
+	"query/range:cache",
+	() => new Map<string, CacheEntry>(),
+);
+const inflight = perProcess(
+	"query/range:inflight",
+	() => new Map<string, Promise<FieldRange>>(),
+);
 // A range is a few short strings, so many can be held. Each policy class
 // holds its own copy of every field it reads, and the ceiling leaves room for
 // a wide estate read by many classes at once.
@@ -74,16 +82,15 @@ function evictIfNeeded(): void {
 	}
 }
 
-export async function getFieldRange(
+// The checks every range read makes before anything is asked, and the key its
+// answer is held under.
+async function rangeQuestion(
 	identity: Identity,
 	sourceKey: string,
 	field: string,
-	filters: QueryFilter[] = [],
-	// "max" asks only for the upper bound. A freshness stamp is a MAX and
-	// nothing else, and the lower bound would double the warehouse cost of
-	// every page load for a figure nobody reads.
-	bounds: "both" | "max" = "both",
-): Promise<FieldRange> {
+	filters: QueryFilter[],
+	bounds: "both" | "max",
+) {
 	const source = getSource(sourceKey);
 	if (!source) throw new QuerySpecError(`Unknown source "${sourceKey}"`);
 
@@ -111,10 +118,17 @@ export async function getFieldRange(
 
 	const scope = source.hasRowFilter ? policy.id : "unfiltered";
 	const key = `${scope}:${sourceKey}:${field}:${bounds}:${JSON.stringify(filters)}`;
-	const now = Date.now();
+	return { source, definition, policy, shareable, key };
+}
 
-	// Not once the data behind it has changed, which is when its newest value
-	// is most likely to have moved. See lib/freshness.
+// Not once the data behind it has changed, which is when its newest value is
+// most likely to have moved. See lib/freshness.
+function heldRange(
+	sourceKey: string,
+	shareable: boolean,
+	key: string,
+	now: number,
+): FieldRange | null {
 	const cached = shareable ? cache.get(key) : undefined;
 	if (
 		cached &&
@@ -123,6 +137,49 @@ export async function getFieldRange(
 	) {
 		return cached.value;
 	}
+	return null;
+}
+
+// The range this process already holds, without asking anything, or null.
+// For a page rendered on the server, which hands over what is already known
+// and leaves the rest for the browser to ask.
+export async function heldFieldRange(
+	identity: Identity,
+	sourceKey: string,
+	field: string,
+	bounds: "both" | "max" = "both",
+): Promise<FieldRange | null> {
+	const { shareable, key } = await rangeQuestion(
+		identity,
+		sourceKey,
+		field,
+		[],
+		bounds,
+	);
+	return heldRange(sourceKey, shareable, key, Date.now());
+}
+
+export async function getFieldRange(
+	identity: Identity,
+	sourceKey: string,
+	field: string,
+	filters: QueryFilter[] = [],
+	// "max" asks only for the upper bound. A freshness stamp is a MAX and
+	// nothing else, and the lower bound would double the warehouse cost of
+	// every page load for a figure nobody reads.
+	bounds: "both" | "max" = "both",
+): Promise<FieldRange> {
+	const { source, definition, policy, shareable, key } = await rangeQuestion(
+		identity,
+		sourceKey,
+		field,
+		filters,
+		bounds,
+	);
+	const now = Date.now();
+
+	const cached = heldRange(sourceKey, shareable, key, now);
+	if (cached) return cached;
 
 	const existing = shareable ? inflight.get(key) : undefined;
 	if (existing) return existing;

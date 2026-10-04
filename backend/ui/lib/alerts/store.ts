@@ -18,6 +18,7 @@ import {
 	type AlertState,
 	type Wording,
 } from "./rule";
+import { ownersChanged } from "./owners";
 import { describeSchedule, nextRun } from "./schedule";
 import { recordedSources, restrictableSources } from "./recorded";
 
@@ -252,6 +253,7 @@ export async function createAlert(
 			await accessConfirmed(identity, definition.sourceKey),
 		],
 	);
+	ownersChanged();
 	return toRecord(rows[0]);
 }
 

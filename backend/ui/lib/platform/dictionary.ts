@@ -25,6 +25,7 @@ import {
 	type DependentKind,
 } from "./dependents";
 import { countsBySource, mergeCounts } from "./fieldCounts";
+import { perProcess } from "../perProcess";
 
 // What every field means, and what depends on it.
 //
@@ -240,12 +241,15 @@ export async function fieldUsage(
 // many items name a field, whoever they belong to, and is only served for a
 // source the reader may read.
 const countTtlMs = 60 * 1000;
-const heldCounts = new Map<
-	string,
-	{ at: number; counts: Map<string, number> }
->();
+const heldCounts = perProcess(
+	"platform/dictionary:heldCounts",
+	() => new Map<string, { at: number; counts: Map<string, number> }>(),
+);
 // Walks in progress per source, so readers arriving together share one.
-const countingNow = new Map<string, Promise<Map<string, number>>>();
+const countingNow = perProcess(
+	"platform/dictionary:countingNow",
+	() => new Map<string, Promise<Map<string, number>>>(),
+);
 
 async function countSources(
 	keys: string[],
@@ -347,7 +351,10 @@ export interface FieldDefinition {
 // the caller's own access to that source has been checked below. What the
 // definition says is the same for everybody who may read it.
 const definitionTtlMs = 10 * 60 * 1000;
-const definitions = new Map<string, { parsed: ViewCalculations; at: number }>();
+const definitions = perProcess(
+	"platform/dictionary:definitions",
+	() => new Map<string, { parsed: ViewCalculations; at: number }>(),
+);
 
 export async function fieldDefinition(
 	identity: Identity,

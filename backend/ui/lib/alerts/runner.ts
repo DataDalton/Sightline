@@ -39,6 +39,7 @@ import {
 	type Firing,
 	type Reading,
 } from "./rule";
+import { hasOwnedChecks } from "./owners";
 import { BatchReads } from "./reads";
 import { confirmSubscriptions } from "./pageStore";
 import { nextRun } from "./schedule";
@@ -60,6 +61,7 @@ import {
 	type AlertRecord,
 	type AlertRow,
 } from "./store";
+import { perProcess } from "../perProcess";
 
 // Running alerts: reading the measure, deciding, writing the inbox.
 //
@@ -598,7 +600,10 @@ export async function runScheduledAlerts(): Promise<void> {
 
 // --- While the owner is here -----------------------------------------------
 
-const lastOwnerRun = new Map<string, number>();
+const lastOwnerRun = perProcess(
+	"alerts/runner:lastOwnerRun",
+	() => new Map<string, number>(),
+);
 
 // How often one owner's pass runs on one replica. The pass is started from a
 // poll every open tab makes, and each run reads what the owner can reach and
@@ -618,13 +623,20 @@ export function runAlertsForOwner(identity: Identity): void {
 	const email = identity.email.toLowerCase();
 	const now = Date.now();
 	if (now - (lastOwnerRun.get(email) ?? 0) < ownerThrottleMs) return;
+	// Kept in the order each pass ran, so the passes old enough to run again
+	// are at the front and are dropped from there.
+	lastOwnerRun.delete(email);
 	lastOwnerRun.set(email, now);
-	if (lastOwnerRun.size > 10000) lastOwnerRun.clear();
+	for (const [held, ranAt] of lastOwnerRun) {
+		if (now - ranAt < ownerThrottleMs) break;
+		lastOwnerRun.delete(held);
+	}
 
 	const run = asOwner(identity);
 	if (!run) return;
 
 	void (async () => {
+		if (!(await hasOwnedChecks(email))) return;
 		const reachable = await reachableSet(identity);
 		const readable = reachable ? [...reachable] : null;
 

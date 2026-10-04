@@ -1,4 +1,4 @@
-// A per-replica concurrency gate.
+// A concurrency gate. Held per process by its callers, see lib/perProcess.
 //
 // Work handed to a gate runs at most `limit` at a time, and the rest waits in
 // arrival order. This bounds what one replica asks of a shared resource, such

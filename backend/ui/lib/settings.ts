@@ -41,10 +41,6 @@ export interface PlatformSettings {
 	// counting entries prices a one row scorecard the same as a fifty thousand
 	// row extract and is reached either far too early or never.
 	resultMaxBytes: number;
-	// How many people the deployment expects to serve. The per reader caches
-	// are sized from this rather than from a constant, because the right size
-	// is a property of the installation.
-	expectedReaders: number;
 	// Serve an expired entry immediately and refresh behind the request, so a
 	// cold policy class costs one slow request rather than many.
 	staleWhileRevalidate: boolean;
@@ -59,7 +55,6 @@ export interface PlatformSettings {
 	refreshIntervalSeconds: number;
 
 	// Identity
-	groupCacheTtlSeconds: number;
 	// How long a cached policy class is still served while the membership
 	// lookup itself is failing. Bounds how long a revoked grant keeps working.
 	policyGraceSeconds: number;
@@ -145,13 +140,11 @@ export const defaultSettings: PlatformSettings = {
 	resultTtlSeconds: 3600,
 	resultMaxEntries: 2000,
 	resultMaxBytes: 256,
-	expectedReaders: 25000,
 	staleWhileRevalidate: true,
 	liveTtlSeconds: 15,
 
 	refreshIntervalSeconds: 3600,
 
-	groupCacheTtlSeconds: 300,
 	policyGraceSeconds: 3600,
 
 	telemetryEnabled: true,
@@ -241,10 +234,8 @@ const numericBounds: Record<NumericSetting, [number, number]> = {
 	resultTtlSeconds: [1, 7 * 86400],
 	resultMaxEntries: [1, 1_000_000],
 	resultMaxBytes: [1, 64 * 1024],
-	expectedReaders: [1, 10_000_000],
 	liveTtlSeconds: [1, 86400],
 	refreshIntervalSeconds: [30, 7 * 86400],
-	groupCacheTtlSeconds: [1, 86400],
 	policyGraceSeconds: [0, 7 * 86400],
 	telemetryFlushIntervalMs: [1000, 3_600_000],
 	telemetryMaxBatch: [1, 100_000],
@@ -353,11 +344,9 @@ export const writableSettings = [
 	"resultTtlSeconds",
 	"resultMaxEntries",
 	"resultMaxBytes",
-	"expectedReaders",
 	"staleWhileRevalidate",
 	"liveTtlSeconds",
 	"refreshIntervalSeconds",
-	"groupCacheTtlSeconds",
 	"policyGraceSeconds",
 	"telemetryEnabled",
 	"editorGroups",

@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { batchedRead } from "../data/batch";
 import { sql } from "../data/lakebase";
 import {
 	cachedDefinition,
@@ -229,13 +230,22 @@ export async function listInbox(
 	return rows.map(toItem);
 }
 
-// How many are unread and the newest entry, which every open page asks for
-// when it loads and then once a minute. Held per person until an entry
-// arrives for them or one is read or removed, which drops it on every
-// instance. See lib/platform/changes.
+// How many are unread, the newest entry, and the newest alerts. Every open
+// page asks for the first two when it loads and then once a minute, and the
+// home page shows the alerts. Read together in one statement and held per
+// person until an entry arrives for them or one is read or removed, which
+// drops it on every instance. See lib/platform/changes.
+interface InboxDigest {
+	unread: number;
+	latest: InboxItem | null;
+	alerts: InboxItem[];
+}
+
+// How many of the newest alerts are held.
+const heldAlerts = 20;
 
 function summaryKey(ownerEmail: string): string {
-	return `inbox-summary:${ownerEmail.toLowerCase()}`;
+	return `inbox-summary:${ownerEmail.toLowerCase()}|`;
 }
 
 export function forgetSummary(ownerEmail: string): void {
@@ -245,13 +255,60 @@ export function forgetSummary(ownerEmail: string): void {
 export async function inboxSummary(
 	ownerEmail: string,
 ): Promise<{ unread: number; latest: InboxItem | null }> {
-	return cachedDefinition(summaryKey(ownerEmail), async () => {
-		const [unread, latest] = await Promise.all([
-			unreadCount(ownerEmail),
-			listInbox(ownerEmail, { limit: 1 }),
-		]);
-		return { unread, latest: latest[0] ?? null };
-	});
+	const { unread, latest } = await inboxDigest(ownerEmail);
+	return { unread, latest };
+}
+
+// The newest alerts, newest first.
+export async function recentAlerts(ownerEmail: string): Promise<InboxItem[]> {
+	return (await inboxDigest(ownerEmail)).alerts;
+}
+
+// Read for everyone asking at about the same time in one statement. See
+// lib/data/batch.
+const storedDigests = batchedRead<string, InboxDigest>(
+	async (emails) => {
+		const columns = `notification_id::text AS notification_id, kind, title,
+		                 body, link, data, created_on::text AS created_on,
+		                 read_on::text AS read_on`;
+		const rows = await sql<{
+			email: string;
+			unread: string;
+			latest: Row[];
+			alerts: Row[];
+		}>(
+			`SELECT e.email,
+			   (SELECT count(*) FROM notifications
+			    WHERE owner_email = e.email AND read_on IS NULL)::text AS unread,
+			   (SELECT coalesce(json_agg(n), '[]') FROM (
+			      SELECT ${columns} FROM notifications
+			      WHERE owner_email = e.email
+			      ORDER BY created_on DESC LIMIT 1) n) AS latest,
+			   (SELECT coalesce(json_agg(n), '[]') FROM (
+			      SELECT ${columns} FROM notifications
+			      WHERE owner_email = e.email AND kind = 'alert'
+			      ORDER BY created_on DESC LIMIT $2) n) AS alerts
+			 FROM unnest($1::text[]) AS e(email)`,
+			[emails, heldAlerts],
+		);
+		return new Map(
+			rows.map((row) => [
+				row.email,
+				{
+					unread: Number(row.unread),
+					latest: row.latest[0] ? toItem(row.latest[0]) : null,
+					alerts: row.alerts.map(toItem),
+				},
+			]),
+		);
+	},
+	(email) => email,
+	{ unread: 0, latest: null, alerts: [] },
+);
+
+async function inboxDigest(ownerEmail: string): Promise<InboxDigest> {
+	const owner = ownerEmail.toLowerCase();
+	return cachedDefinition(summaryKey(owner), () => storedDigests(owner));
 }
 
 export async function unreadCount(ownerEmail: string): Promise<number> {

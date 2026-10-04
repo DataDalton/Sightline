@@ -6,6 +6,7 @@ import { runCatalogQuery } from "./ucMetadata";
 import { syncSourceFields } from "./fieldSync";
 import { syncSourceMetadata } from "./ucMetadata";
 import { loadRegistry } from "./registry";
+import { lateStandingChanged } from "../freshness/status";
 import { isValidObjectName } from "./types";
 
 // Finding tables in Unity Catalog and registering one as a source.
@@ -415,6 +416,9 @@ export async function updateSource(
 	if (updated.length === 0) {
 		throw new RegistrationError("That source is not registered.");
 	}
+	// Its title and how its lateness is judged are held with its standing and
+	// its load history.
+	lateStandingChanged();
 	// Judged again straight away, so the setting shows its effect on the
 	// screen that changed it rather than a minute later.
 	if (input.lateness) {

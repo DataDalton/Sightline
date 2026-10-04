@@ -23,6 +23,7 @@ import {
 } from "./cache";
 import { createGate } from "./gate";
 import { QuerySpecError, type QuerySpec } from "./spec";
+import { perProcess } from "../perProcess";
 
 // Runs a query spec for one caller. This is the single entry point every
 // visual, table and export goes through.
@@ -73,7 +74,10 @@ export async function assertCanReadSource(
 
 // Tracks refreshes running behind a stale response, so a burst of requests for
 // the same key triggers one warehouse query rather than one each.
-const revalidating = new Set<string>();
+const revalidating = perProcess(
+	"query/execute:revalidating",
+	() => new Set<string>(),
+);
 
 // How many warehouse queries one batch will start at the same time.
 //
@@ -89,7 +93,10 @@ const maxBatchConcurrency = 6;
 // each stale answer starts a refresh. Run unbounded, that burst opens one
 // statement per visual on the same warehouse session. Sized like a batch, so
 // background work never presses on a session harder than a cold page does.
-const backgroundRefreshes = createGate(maxBatchConcurrency);
+const backgroundRefreshes = perProcess(
+	"query/execute:backgroundRefreshes",
+	() => createGate(maxBatchConcurrency),
+);
 
 // Refreshes a stale entry behind the response that served it.
 //
@@ -120,7 +127,10 @@ function refreshBehind(
 // Shares an in-flight warehouse query between concurrent callers waiting on
 // the same key. Without this, N users hitting a cold entry at once produce N
 // identical warehouse queries.
-const inflight = new Map<string, Promise<CacheEntry>>();
+const inflight = perProcess(
+	"query/execute:inflight",
+	() => new Map<string, Promise<CacheEntry>>(),
+);
 
 function toResult(
 	entry: CacheEntry,

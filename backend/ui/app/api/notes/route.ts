@@ -13,6 +13,7 @@ import {
 } from "@/lib/platform/notes";
 import { sql } from "@/lib/data/lakebase";
 import { reportSubject } from "@/lib/platform/curated";
+import { reportOfPage } from "@/lib/platform/reports";
 import { isUuid } from "@/lib/alerts/store";
 
 // Commentary on a visual.
@@ -104,12 +105,7 @@ export async function GET(request: NextRequest) {
 	try {
 		// The page has to belong to the report the access was checked
 		// against, or a caller could open one report and read another's notes.
-		const pages = await sql<{ page_id: string }>(
-			`SELECT page_id::text FROM report_pages
-			 WHERE page_id::text = lower($1) AND report_id::text = lower($2)`,
-			[pageId, reportId],
-		);
-		if (pages.length === 0) {
+		if ((await reportOfPage(pageId)) !== reportId.toLowerCase()) {
 			return NextResponse.json({ error: "Not found" }, { status: 404 });
 		}
 		return NextResponse.json({ notes: await listPageNotes(pageId) });

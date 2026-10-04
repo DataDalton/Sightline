@@ -484,6 +484,8 @@ export async function remapField(
 		invalidateDefinitions(`report-body:${reportId}`);
 	}
 	if (reports.length > 0) invalidateDefinitions("report:");
+	// Saved views name fields too, and are held per page.
+	invalidateDefinitions("views:");
 	await loadRegistry(true);
 
 	void insertLog({

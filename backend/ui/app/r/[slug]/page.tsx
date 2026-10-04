@@ -1,11 +1,17 @@
 import { headers } from "next/headers";
-import { NextRequest } from "next/server";
+import { answeredHere, type Ask } from "../../answeredHere";
 import { GET as authoringGet } from "../../api/authoring/route";
 import { GET as deliveriesGet } from "../../api/deliveries/route";
 import { GET as notesGet } from "../../api/notes/route";
 import { GET as pageAlertsGet } from "../../api/page-alerts/route";
+import { GET as lateGet } from "../../api/query/late/route";
 import { GET as viewsGet } from "../../api/views/route";
 import { settings } from "../../../lib/settings";
+import type { Identity } from "../../../lib/auth/identity";
+import { liveTtlSeconds } from "../../../lib/query/cache";
+import { heldFieldRange } from "../../../lib/query/range";
+import { lateKey, postKey } from "../../../lib/query/requestKey";
+import { getSource } from "../../../lib/semantic/registry";
 import ReportView from "../ReportView";
 import { getIdentityFromHeaders } from "../../../lib/auth/identity";
 import { resolvePolicyClass } from "../../../lib/auth/policy";
@@ -32,49 +38,96 @@ import {
 //
 // The visuals still fetch their own rows, because those depend on filters the
 // client owns. What they no longer wait for is finding out that they exist.
-// The opening page's other requests, answered here by the same handlers the
-// browser would reach, under the same headers, so the answers carry the same
-// access checks and the same shape. Keyed as the client asks for each. One
-// that fails or refuses is left out and the client asks for it as before.
+// The opening page's other requests. See app/answeredHere.
 async function openingResponses(
 	incoming: Headers,
 	reportId: string,
 	pageId: string | undefined,
+	sourceKeys: string[],
 ): Promise<Record<string, unknown>> {
-	const asks: [string, (request: NextRequest) => Promise<Response>][] = [
-		["/api/authoring", authoringGet],
-		["/api/deliveries", deliveriesGet],
+	const asks: Ask[] = [
+		{ key: "/api/authoring", handler: authoringGet },
+		{ key: "/api/deliveries", handler: deliveriesGet },
 	];
+	const late = lateKey(sourceKeys);
+	if (late) asks.push({ key: late, handler: lateGet });
 	if (pageId) {
 		asks.push(
-			[
-				`/api/notes?reportId=${encodeURIComponent(reportId)}&pageId=${encodeURIComponent(pageId)}`,
-				notesGet,
-			],
-			[`/api/views?pageId=${encodeURIComponent(pageId)}`, viewsGet],
+			{
+				key: `/api/notes?reportId=${encodeURIComponent(reportId)}&pageId=${encodeURIComponent(pageId)}`,
+				handler: notesGet,
+			},
+			{
+				key: `/api/views?pageId=${encodeURIComponent(pageId)}`,
+				handler: viewsGet,
+			},
 		);
 		if (settings().alertsEnabled)
-			asks.push([
-				`/api/page-alerts/?pageId=${encodeURIComponent(pageId)}`,
-				pageAlertsGet,
-			]);
+			asks.push({
+				key: `/api/page-alerts/?pageId=${encodeURIComponent(pageId)}`,
+				handler: pageAlertsGet,
+			});
 	}
-	const answered = await Promise.all(
-		asks.map(async ([key, handle]) => {
-			try {
-				const response = await handle(
-					new NextRequest(new URL(key, "http://localhost"), {
-						headers: incoming,
-					}),
-				);
-				if (!response.ok) return null;
-				return [key, await response.json()] as const;
-			} catch {
-				return null;
-			}
-		}),
-	);
-	return Object.fromEntries(answered.filter((a) => a !== null));
+	return answeredHere(incoming, asks);
+}
+
+// The opening page's "data through" stamp, when the newest value it shows is
+// already held. Never asked of the warehouse here, so it cannot hold the
+// document up. Worked out from the page as ReportView works it out, and keyed
+// as DataFreshness asks for it.
+async function openingFreshness(
+	identity: Identity,
+	report: OpeningReport,
+): Promise<Record<string, unknown>> {
+	const page = report.pages[0];
+	const sourceKey =
+		page?.sourceKey ??
+		report.sourceKey ??
+		page?.visuals.find((v) => v.sourceKey)?.sourceKey ??
+		null;
+	if (!sourceKey) return {};
+	const field =
+		page?.config?.freshness?.field ??
+		getSource(sourceKey)?.defaultTimeField ??
+		null;
+	if (!field) return {};
+	try {
+		const range = await heldFieldRange(identity, sourceKey, field, "max");
+		if (!range) return {};
+		const live = getSource(sourceKey)?.isLive === true;
+		return {
+			[postKey("/api/query/freshness", { sourceKey, field })]: {
+				field,
+				value: range.max,
+				dataType: range.dataType,
+				refreshAfterMs: live ? liveTtlSeconds() * 1000 : null,
+			},
+		};
+	} catch {
+		return {};
+	}
+}
+
+// What the opening page is read from, as the late notice and the freshness
+// stamp read it.
+interface OpeningReport {
+	reportId: string;
+	sourceKey: string | null;
+	pages: {
+		pageId: string;
+		sourceKey: string | null;
+		config?: { freshness?: { field?: string | null } | null } | null;
+		visuals: { sourceKey: string | null }[];
+	}[];
+}
+
+function openingSources(report: OpeningReport): string[] {
+	const page = report.pages[0];
+	return [
+		page?.sourceKey,
+		report.sourceKey,
+		...(page?.visuals ?? []).map((v) => v.sourceKey),
+	].filter((key): key is string => Boolean(key));
 }
 
 async function definitionFor(slug: string) {
@@ -107,16 +160,23 @@ async function definitionFor(slug: string) {
 		// Cached answers only, so this cannot make the document slower than the
 		// budget it already runs under.
 		const report = payload.report as WarmableReport;
-		const [seeded, responses] = await Promise.all([
+		const opening = payload.report as unknown as OpeningReport;
+		const [seeded, responses, freshness] = await Promise.all([
 			seedPageQueries(identity, report, null),
 			openingResponses(
 				new Headers(incoming),
 				report.reportId,
 				report.pages[0]?.pageId,
+				openingSources(opening),
 			),
+			openingFreshness(identity, opening),
 		]);
 
-		return { ...payload, seeded, responses };
+		return {
+			...payload,
+			seeded,
+			responses: { ...responses, ...freshness },
+		};
 	}, undefined);
 }
 

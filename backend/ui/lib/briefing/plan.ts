@@ -1,11 +1,12 @@
 import type { Identity } from "../auth/identity";
 import type { PolicyClass } from "../auth/policy";
+import { batchedRead } from "../data/batch";
 import { sql } from "../data/lakebase";
-import { statusOf, type SourceStatus } from "../freshness/status";
-import { listInbox, type InboxItem } from "../notify/store";
-import { listPersonalPages } from "../platform/personal";
+import { lateSources, type LateSource } from "../freshness/status";
+import { recentAlerts, type InboxItem } from "../notify/store";
+import { curatedReports } from "../platform/curated";
 import { listReports } from "../platform/reports";
-import { listFavourites } from "../platform/search";
+import { readFavourites } from "../platform/search";
 import { reachableSet } from "../platform/sources";
 import { cachedDefinition, peekDefinition } from "../platform/definitionCache";
 import {
@@ -15,7 +16,7 @@ import {
 } from "../platform/peerRanking";
 import { getSource } from "../semantic/registry";
 import type { SemanticSource } from "../semantic/types";
-import { listChoices, type BriefingChoice } from "./choices";
+import type { BriefingChoice } from "./choices";
 import { orderReports, type BriefingReport } from "./order";
 import {
 	watchList,
@@ -45,10 +46,7 @@ export interface BriefingPlan {
 	items: WatchItem[];
 	// How many of the unpinned ones the page shows.
 	limit: number;
-	late: Pick<
-		SourceStatus,
-		"sourceKey" | "title" | "state" | "expectedBy" | "lastChanged"
-	>[];
+	late: LateSource[];
 	alerts: Pick<
 		InboxItem,
 		"id" | "title" | "body" | "link" | "createdOn" | "readOn"
@@ -63,20 +61,62 @@ export interface BriefingPlan {
 // with the same access, use most.
 const usageDays = 30;
 
-// Reports the reader opened most over the window, by how often.
-async function mostOpened(email: string): Promise<string[]> {
-	const rows = await sql<{ report_id: string }>(
-		`SELECT report_id::text AS report_id
-		 FROM usage_events
-		 WHERE lower(user_email) = $1
-		   AND event_type = 'page_view' AND report_id IS NOT NULL
-		   AND occurred_on > now() - make_interval(days => $2)
-		 GROUP BY report_id
-		 ORDER BY count(*) DESC, max(occurred_on) DESC
-		 LIMIT 20`,
-		[email, usageDays],
-	);
-	return rows.map((r) => r.report_id);
+// What the plan reads about the reader alone: the pages
+// they built for themselves, newest first, the reports they opened most over
+// the window, by how often, and their pins and hides, pins first in their
+// order.
+interface ReaderSignals {
+	own: { reportId: string; slug: string; title: string }[];
+	frequent: string[];
+	choices: BriefingChoice[];
+}
+
+// Read for everyone whose plan is built at about the same time in one
+// statement. See lib/data/batch.
+const storedSignals = batchedRead<string, ReaderSignals>(
+	async (emails) => {
+		const rows = await sql<ReaderSignals & { email: string }>(
+			`SELECT e.email,
+			   (SELECT coalesce(json_agg(json_build_object(
+			             'reportId', r.report_id::text, 'slug', r.slug,
+			             'title', r.title) ORDER BY r.modified_on DESC), '[]')
+			    FROM reports r
+			    WHERE r.is_active AND r.is_personal
+			      AND lower(r.owner_email) = e.email) AS own,
+			   (SELECT coalesce(json_agg(u.report_id ORDER BY u.opens DESC,
+			                             u.latest DESC), '[]')
+			    FROM (SELECT report_id::text AS report_id, count(*) AS opens,
+			                 max(occurred_on) AS latest
+			          FROM usage_events
+			          WHERE lower(user_email) = e.email
+			            AND event_type = 'page_view' AND report_id IS NOT NULL
+			            AND occurred_on > now() - make_interval(days => $2)
+			          GROUP BY report_id
+			          ORDER BY count(*) DESC, max(occurred_on) DESC
+			          LIMIT 20) u) AS frequent,
+			   (SELECT coalesce(json_agg(json_build_object(
+			             'reportId', c.report_id::text, 'measure', c.measure,
+			             'choice', c.choice)
+			           ORDER BY c.choice = 'hide', c.position NULLS LAST,
+			                    c.chosen_on), '[]')
+			    FROM briefing_choices c
+			    WHERE c.user_email = e.email) AS choices
+			 FROM unnest($1::text[]) AS e(email)`,
+			[emails, usageDays],
+		);
+		return new Map(
+			rows.map(({ email, own, frequent, choices }) => [
+				email,
+				{ own, frequent, choices },
+			]),
+		);
+	},
+	(email) => email,
+	{ own: [], frequent: [], choices: [] },
+);
+
+function readerSignals(email: string): Promise<ReaderSignals> {
+	return storedSignals(email.toLowerCase());
 }
 
 // Reports most opened by other people resolved to the reader's policy class,
@@ -188,18 +228,48 @@ function toWatchReport(stamp: ReportStamp, rows: ShapeRow[]): WatchReport {
 // its own reads its page's, and a page with none reads its report's, as on the
 // report itself.
 //
-// One cheap question for every report's stamp, then the pages and visuals of
-// only the reports whose stamp has no shape held for it, in one question for
-// all of them. The rest come from memory.
+// Each curated report's stamp comes from the shared curated list, which every
+// save drops. Only personal pages, which that list leaves out, are asked about,
+// in one question for all of them. Then the pages and visuals of only the
+// reports whose stamp has no shape held for it, again in one question. The
+// rest come from memory.
 async function reportShapes(reportIds: string[]): Promise<WatchReport[]> {
 	if (reportIds.length === 0) return [];
-	const stamps = await sql<ReportStamp>(
-		`SELECT report_id::text AS report_id, slug, title, source_key,
-		        version::text AS version, modified_on::text AS modified_on
-		 FROM reports
-		 WHERE report_id = ANY($1::uuid[]) AND is_active`,
-		[reportIds],
+	const curated = new Map(
+		(await curatedReports()).map((r) => [r.report_id, r]),
 	);
+	const stamps: ReportStamp[] = [];
+	const unlisted: string[] = [];
+	for (const id of reportIds) {
+		const row = curated.get(id);
+		if (!row) {
+			unlisted.push(id);
+			continue;
+		}
+		const modified = row.modified_on as unknown;
+		stamps.push({
+			report_id: row.report_id,
+			slug: row.slug,
+			title: row.title,
+			source_key: row.source_key,
+			version: String(row.version),
+			modified_on:
+				modified instanceof Date
+					? modified.toISOString()
+					: String(modified),
+		});
+	}
+	if (unlisted.length > 0) {
+		stamps.push(
+			...(await sql<ReportStamp>(
+				`SELECT report_id::text AS report_id, slug, title, source_key,
+				        version::text AS version, modified_on::text AS modified_on
+				 FROM reports
+				 WHERE report_id = ANY($1::uuid[]) AND is_active`,
+				[unlisted],
+			)),
+		);
+	}
 
 	const held = new Map<string, ShapeRow[]>();
 	const missing: string[] = [];
@@ -252,30 +322,37 @@ async function reportShapes(reportIds: string[]): Promise<WatchReport[]> {
 	return out;
 }
 
+// Every active "unusual" page alert, the same for every reader, so held once
+// and filtered to the reader's reports in memory. Under the plan prefix, which
+// setting, changing or removing a page alert drops.
 async function unusualAlerts(reportIds: string[]): Promise<WatchAlert[]> {
 	if (reportIds.length === 0) return [];
-	const rows = await sql<{
-		report_id: string;
-		source_key: string;
-		measure: string | null;
-		time_field: string | null;
-	}>(
-		`SELECT report_id::text AS report_id, source_key,
-		        definition->>'measure' AS measure,
-		        definition->'anomaly'->>'timeField' AS time_field
-		 FROM page_alerts
-		 WHERE is_active AND report_id = ANY($1::uuid[])
-		   AND definition->>'condition' = 'unusual'`,
-		[reportIds],
-	);
-	return rows
-		.filter((r) => r.measure && r.time_field)
-		.map((r) => ({
-			reportId: r.report_id,
-			sourceKey: r.source_key,
-			measure: r.measure as string,
-			timeField: r.time_field as string,
-		}));
+	const all = await cachedDefinition("briefing-plan:unusual", async () => {
+		const rows = await sql<{
+			report_id: string;
+			source_key: string;
+			measure: string | null;
+			time_field: string | null;
+		}>(
+			`SELECT report_id::text AS report_id, source_key,
+			        definition->>'measure' AS measure,
+			        definition->'anomaly'->>'timeField' AS time_field
+			 FROM page_alerts
+			 WHERE is_active AND definition->>'condition' = 'unusual'`,
+		);
+		return rows
+			.filter((r) => r.measure && r.time_field)
+			.map(
+				(r): WatchAlert => ({
+					reportId: r.report_id,
+					sourceKey: r.source_key,
+					measure: r.measure as string,
+					timeField: r.time_field as string,
+				}),
+			);
+	});
+	const wanted = new Set(reportIds);
+	return all.filter((a) => wanted.has(a.reportId));
 }
 
 // What a reader's plan is built from that changes only when something about
@@ -297,11 +374,11 @@ interface PlanCore {
 const coreLifetimeMs = 3 * 60 * 60 * 1000;
 
 // Sources running late and alerts that fired change on their own schedule, so
-// they are read on every visit. Each is one indexed question.
+// they are taken on every visit from what is held for them, which those
+// changes drop.
 export async function briefingPlan(
 	identity: Identity,
 	policy: PolicyClass,
-	timeZone: string,
 ): Promise<BriefingPlan> {
 	const email = identity.email.toLowerCase();
 	const core = await cachedDefinition(
@@ -310,26 +387,22 @@ export async function briefingPlan(
 		coreLifetimeMs,
 	);
 	const [status, inbox] = await Promise.all([
-		statusOf(core.reachable, email, timeZone).catch(
-			() => [] as SourceStatus[],
-		),
-		listInbox(email, { kind: "alert", limit: 20 }).catch(
-			() => [] as InboxItem[],
-		),
+		lateSources(core.reachable).catch(() => [] as LateSource[]),
+		recentAlerts(email).catch(() => [] as InboxItem[]),
 	]);
 	const since = Date.now() - alertDays * 86_400_000;
 	return {
 		items: core.items,
 		limit: shownItems,
-		late: status
-			.filter((s) => s.state === "late" || s.state === "overdue")
-			.map(({ sourceKey, title, state, expectedBy, lastChanged }) => ({
+		late: status.map(
+			({ sourceKey, title, state, expectedBy, lastChanged }) => ({
 				sourceKey,
 				title,
 				state,
 				expectedBy,
 				lastChanged,
-			})),
+			}),
+		),
 		alerts: inbox
 			.filter((a) => Date.parse(a.createdOn) >= since)
 			.map(({ id, title, body, link, createdOn, readOn }) => ({
@@ -351,24 +424,18 @@ async function buildCore(
 ): Promise<PlanCore> {
 	const email = identity.email.toLowerCase();
 	const none = () => [] as string[];
-	const [
-		visible,
-		personal,
-		favourites,
-		frequent,
-		popular,
-		choices,
-		reachable,
-	] = await Promise.all([
-		listReports(policy, identity),
-		listPersonalPages(identity, policy).catch(() => null),
-		listFavourites(email),
-		mostOpened(email).catch(none),
-		popularWithPeers(email, policy.id).catch(none),
-		listChoices(email).catch(() => [] as BriefingChoice[]),
-		reachableSet(identity),
-	]);
-	const own = personal?.mine ?? [];
+	const [visible, signals, favourites, popular, reachable] =
+		await Promise.all([
+			listReports(policy, identity),
+			// Not caught. A plan built without the reader's pins would be held
+			// as theirs, so a failure here fails the request and the next one
+			// builds it again.
+			readerSignals(email),
+			readFavourites(email),
+			popularWithPeers(email, policy.id).catch(none),
+			reachableSet(identity),
+		]);
+	const { own, frequent, choices } = signals;
 	const reports = orderReports(
 		[
 			...visible.map((r) => ({

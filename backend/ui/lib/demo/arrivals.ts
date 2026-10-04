@@ -1,4 +1,5 @@
 import { sql } from "../data/lakebase";
+import { loadHistoryChanged } from "../freshness/loads";
 import { sources } from "./datasets";
 
 // When the demonstration's tables load, so late data has something to learn
@@ -74,6 +75,7 @@ export async function seedArrivals(): Promise<void> {
 			rows.map((r) => new Date(r.at).toISOString()),
 		],
 	);
+	loadHistoryChanged();
 }
 
 // Each weekday morning's loads, for a demo left running across days. Every
@@ -111,4 +113,5 @@ export async function landTodaysLoads(): Promise<void> {
 			new Date(today).toISOString(),
 		],
 	);
+	loadHistoryChanged();
 }

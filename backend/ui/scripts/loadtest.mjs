@@ -18,6 +18,15 @@
 // previous run, so the figures that matter are the changes between runs on
 // the same machine rather than the figures themselves.
 //
+// With --cost it measures instead what each kind of request costs the app:
+// processing time and database transactions per request, for a first visit
+// and for somebody already signed in, with nothing else running. Each run is
+// compared with the previous one, so a change shows as how far it moved the
+// cost of each request rather than as a breaking point, which moves with
+// whatever else the machine is doing.
+//
+//   npm run loadtest -- --cost
+//
 // It only runs against the demo. It refuses a server that is not on this
 // machine and a database without the demo's membership table, and everything
 // it adds is removed when it finishes.
@@ -33,6 +42,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { cpus, freemem, tmpdir } from "node:os";
+import http from "node:http";
 import { join } from "node:path";
 import pg from "pg";
 
@@ -222,70 +232,97 @@ async function recordJourneys() {
 	);
 	const journeys = [];
 	try {
-		for (const visit of visits) {
-			const page = await openTarget(debugPort);
-			await page.send("Network.enable");
-			await page.send("Page.enable");
-			await page.send("Emulation.setDeviceMetricsOverride", {
-				width: 1440,
-				height: 900,
-				deviceScaleFactor: 1,
-				mobile: false,
-			});
-			const seen = [];
-			let startedAt = null;
-			page.on((event) => {
-				if (event.method !== "Network.requestWillBeSent") return;
-				const { request, type, timestamp, requestId } = event.params;
-				if (!worthReplaying(request.url, type, request.headers?.Accept))
-					return;
-				startedAt ??= timestamp;
-				seen.push({
-					requestId,
-					at: Math.round((timestamp - startedAt) * 1000),
-					method: request.method,
-					path: request.url.slice(base.length),
-					body: request.postData ?? null,
-					hasBody: Boolean(request.hasPostData),
-					contentType: request.headers?.["Content-Type"] ?? null,
-					accept: request.headers?.Accept ?? null,
-					rsc: request.headers?.RSC ?? request.headers?.rsc ?? null,
-					routerState:
-						request.headers?.["Next-Router-State-Tree"] ?? null,
-					nextUrl: request.headers?.["Next-Url"] ?? null,
+		// Every visit is made once before any is recorded, so what is
+		// recorded is a visit to a server already running rather than the
+		// first one after it starts, which answers less with its pages while
+		// it is still connecting. The browser cache is off, so the recorded
+		// visit asks for everything a first-time visitor would.
+		for (const pass of ["warm", "record"])
+			for (const visit of visits) {
+				const page = await openTarget(debugPort);
+				await page.send("Network.enable");
+				await page.send("Network.setCacheDisabled", {
+					cacheDisabled: true,
 				});
-			});
-			await page.send("Page.navigate", { url: base + visit.path });
-			await sleep(visit.wait);
-			if (visit.then) {
-				await page.send("Runtime.evaluate", {
-					expression: visit.then,
-					returnByValue: true,
+				await page.send("Page.enable");
+				await page.send("Emulation.setDeviceMetricsOverride", {
+					width: 1440,
+					height: 900,
+					deviceScaleFactor: 1,
+					mobile: false,
 				});
-				await sleep(visit.thenWait ?? 5000);
-			}
-			// Bodies the event did not carry are asked for separately.
-			for (const request of seen) {
-				if (request.body === null && request.hasBody) {
-					const answer = await page.send(
-						"Network.getRequestPostData",
-						{
-							requestId: request.requestId,
-						},
+				const seen = [];
+				let startedAt = null;
+				page.on((event) => {
+					if (event.method !== "Network.requestWillBeSent") return;
+					const { request, type, timestamp, requestId } =
+						event.params;
+					if (
+						!worthReplaying(
+							request.url,
+							type,
+							request.headers?.Accept,
+						)
+					)
+						return;
+					startedAt ??= timestamp;
+					seen.push({
+						requestId,
+						at: Math.round((timestamp - startedAt) * 1000),
+						method: request.method,
+						path: request.url.slice(base.length),
+						body: request.postData ?? null,
+						hasBody: Boolean(request.hasPostData),
+						contentType: request.headers?.["Content-Type"] ?? null,
+						accept: request.headers?.Accept ?? null,
+						rsc:
+							request.headers?.RSC ??
+							request.headers?.rsc ??
+							null,
+						routerState:
+							request.headers?.["Next-Router-State-Tree"] ?? null,
+						nextUrl: request.headers?.["Next-Url"] ?? null,
+					});
+				});
+				await page.send("Page.navigate", { url: base + visit.path });
+				await sleep(visit.wait);
+				if (visit.then) {
+					await page.send("Runtime.evaluate", {
+						expression: visit.then,
+						returnByValue: true,
+					});
+					await sleep(visit.thenWait ?? 5000);
+				}
+				// Bodies the event did not carry are asked for separately.
+				for (const request of seen) {
+					if (request.body === null && request.hasBody) {
+						const answer = await page.send(
+							"Network.getRequestPostData",
+							{
+								requestId: request.requestId,
+							},
+						);
+						request.body = answer.result?.postData ?? null;
+					}
+				}
+				page.close();
+				if (pass === "warm") continue;
+				journeys.push({
+					name: visit.name,
+					weight: visit.weight,
+					requests: seen.map(
+						({ requestId, hasBody, ...rest }) => rest,
+					),
+				});
+				console.log(
+					`Recorded ${visit.name}: ${seen.length} requests over ${Math.round((seen.at(-1)?.at ?? 0) / 1000)}s`,
+				);
+				for (const request of seen) {
+					console.log(
+						`  ${String(request.at).padStart(6)}ms  ${kindOf(request.method, request.path)}`,
 					);
-					request.body = answer.result?.postData ?? null;
 				}
 			}
-			page.close();
-			journeys.push({
-				name: visit.name,
-				weight: visit.weight,
-				requests: seen.map(({ requestId, hasBody, ...rest }) => rest),
-			});
-			console.log(
-				`Recorded ${visit.name}: ${seen.length} requests over ${Math.round((seen.at(-1)?.at ?? 0) / 1000)}s`,
-			);
-		}
 	} finally {
 		browser.kill();
 		await sleep(500);
@@ -453,6 +490,51 @@ function kindOf(method, path) {
 	return `${method} ${clean}${rsc}`;
 }
 
+// Requests go over kept-alive connections, as they reach the app from the
+// proxy in front of it in a deployment. A browser's own connection ends at the
+// proxy, so the app sees the proxy's long-lived connections, reused from one
+// request to the next, rather than one new one for each visit. A connection is
+// opened when every open one is busy. Idle connections are closed here before
+// the server's own keep-alive timeout would close them, so a request is never
+// sent on a connection the server is closing.
+const proxySockets = Number(option("sockets", "Infinity"));
+const connections = new http.Agent({
+	keepAlive: true,
+	maxSockets: proxySockets,
+	timeout: 4000,
+});
+
+function sendOnce(request, headers) {
+	return new Promise((resolve, reject) => {
+		const body =
+			request.method === "GET" ? undefined : (request.body ?? undefined);
+		const outgoing = http.request(
+			base + request.path,
+			{
+				method: request.method,
+				headers: body
+					? { ...headers, "Content-Length": Buffer.byteLength(body) }
+					: headers,
+				agent: connections,
+				timeout: requestTimeoutMs,
+			},
+			(response) => {
+				// Read to the end, so a streamed answer is timed to its last line.
+				response.on("data", () => {});
+				response.on("end", () => resolve(response.statusCode ?? 0));
+				response.on("error", reject);
+			},
+		);
+		outgoing.on("timeout", () => {
+			const error = new Error("timed out");
+			error.name = "TimeoutError";
+			outgoing.destroy(error);
+		});
+		outgoing.on("error", reject);
+		outgoing.end(body);
+	});
+}
+
 async function send(person, request) {
 	const headers = { [emailHeader]: person };
 	if (request.contentType) headers["Content-Type"] = request.contentType;
@@ -465,23 +547,13 @@ async function send(person, request) {
 	const started = performance.now();
 	const kind = kindOf(request.method, request.path);
 	try {
-		const response = await fetch(base + request.path, {
-			method: request.method,
-			headers,
-			body:
-				request.method === "GET"
-					? undefined
-					: (request.body ?? undefined),
-			signal: AbortSignal.timeout(requestTimeoutMs),
-		});
-		// Read to the end, so a streamed answer is timed to its last line.
-		await response.arrayBuffer();
+		const status = await sendOnce(request, headers);
 		samples.push({
 			at: Date.now(),
 			kind,
 			ms: performance.now() - started,
-			ok: response.status < 500 && response.status !== 429,
-			status: String(response.status),
+			ok: status < 500 && status !== 429,
+			status: String(status),
 		});
 	} catch (error) {
 		samples.push({
@@ -489,7 +561,10 @@ async function send(person, request) {
 			kind,
 			ms: performance.now() - started,
 			ok: false,
-			status: error?.name === "TimeoutError" ? "timed out" : "no answer",
+			status:
+				error?.name === "TimeoutError"
+					? "timed out"
+					: `no answer${error?.code ? ` (${error.code})` : ""}`,
 		});
 	}
 }
@@ -610,11 +685,190 @@ function change(now, then) {
 	return ` (${percent >= 0 ? "+" : ""}${percent}%)`;
 }
 
+// --- Cost per request ----------------------------------------------------------
+
+// How many people make first visits, per visit, and how many times each kind
+// of request is sent for people already signed in.
+const costVisits = Number(option("cost-visits", "100"));
+const costRepeats = Number(option("cost-repeats", "300"));
+const costConcurrency = 10;
+
+function appCpuSeconds(pid) {
+	const out = execFileSync(
+		"powershell",
+		["-NoProfile", "-Command", `(Get-Process -Id ${pid}).CPU`],
+		{ encoding: "utf8" },
+	);
+	return Number(out.trim());
+}
+
+// Runs the tasks a few at a time, as a handful of people would.
+async function inTurn(tasks) {
+	let next = 0;
+	await Promise.all(
+		Array.from({ length: costConcurrency }, async () => {
+			while (next < tasks.length) await tasks[next++]();
+		}),
+	);
+}
+
+// The processing time and transactions one batch of work cost, less what the
+// app spends on its own background work over the same time.
+async function costOf(pid, idle, work) {
+	const cpuBefore = appCpuSeconds(pid);
+	const dbBefore = await databaseTotals();
+	const started = Date.now();
+	await work();
+	const seconds = (Date.now() - started) / 1000;
+	const cpu = appCpuSeconds(pid) - cpuBefore - idle.cpu * seconds;
+	const dbAfter = await databaseTotals();
+	return {
+		cpuMs: Math.max(0, cpu * 1000),
+		transactions: Math.max(
+			0,
+			dbAfter.transactions -
+				dbBefore.transactions -
+				idle.transactions * seconds,
+		),
+	};
+}
+
+function previousCost() {
+	if (!existsSync(outDir)) return null;
+	const files = readdirSync(outDir)
+		.filter((f) => f.startsWith("cost-") && f.endsWith(".json"))
+		.sort();
+	if (files.length === 0) return null;
+	try {
+		return JSON.parse(readFileSync(join(outDir, files.at(-1)), "utf8"));
+	} catch {
+		return null;
+	}
+}
+
+async function measureCost(journeys) {
+	const pid = serverProcessId();
+	if (!pid) throw new Error("The app's process could not be found.");
+	const earlierCost = previousCost();
+	// A few people go through every visit first and are not counted, so
+	// what is shared between people, such as the briefing cards of an access
+	// mix, is already held and a first visit measures one person's own cost.
+	const warmUp = 10;
+	const people = await addPeople((costVisits + warmUp) * journeys.length);
+	console.log("Warming the app with visits that are not counted...");
+	for (const journey of journeys) {
+		await inTurn(
+			people.splice(0, warmUp).map((p) => () => replay(p, journey)),
+		);
+	}
+
+	console.log("Measuring the app's own background work for 20s...");
+	const idleCpu = appCpuSeconds(pid);
+	const idleDb = await databaseTotals();
+	await sleep(20_000);
+	const idle = {
+		cpu: (appCpuSeconds(pid) - idleCpu) / 20,
+		transactions:
+			((await databaseTotals()).transactions - idleDb.transactions) / 20,
+	};
+	// The two readings of database totals inside the window are transactions
+	// themselves.
+	idle.transactions = Math.max(0, idle.transactions - 2 / 20);
+
+	const rows = [];
+	const failures = () => samples.filter((s) => !s.ok).length;
+
+	// First visits, each by somebody the app has not seen.
+	let nextPerson = 0;
+	const warmed = [];
+	for (const journey of journeys) {
+		const visitors = people.slice(nextPerson, nextPerson + costVisits);
+		nextPerson += costVisits;
+		warmed.push(...visitors);
+		const failedBefore = failures();
+		const cost = await costOf(pid, idle, () =>
+			inTurn(visitors.map((p) => () => replay(p, journey))),
+		);
+		rows.push({
+			kind: `first visit: ${journey.name}`,
+			cpuMs: cost.cpuMs / visitors.length,
+			transactions: cost.transactions / visitors.length,
+			failed: failures() - failedBefore,
+		});
+	}
+
+	// Each kind of request again, by people the app has already seen.
+	const byKind = new Map();
+	for (const journey of journeys) {
+		for (const request of journey.requests) {
+			const kind = kindOf(request.method, request.path);
+			if (!byKind.has(kind)) byKind.set(kind, request);
+		}
+	}
+	for (const [kind, request] of byKind) {
+		const failedBefore = failures();
+		const cost = await costOf(pid, idle, () =>
+			inTurn(
+				Array.from(
+					{ length: costRepeats },
+					(_, i) => () => send(warmed[i % warmed.length], request),
+				),
+			),
+		);
+		rows.push({
+			kind,
+			cpuMs: cost.cpuMs / costRepeats,
+			transactions: cost.transactions / costRepeats,
+			failed: failures() - failedBefore,
+		});
+	}
+
+	console.log("\nProcessing time and transactions per request:");
+	for (const row of rows) {
+		const was = earlierCost?.rows?.find((r) => r.kind === row.kind);
+		console.log(
+			`  ${row.cpuMs.toFixed(1).padStart(7)}ms${change(row.cpuMs, was?.cpuMs).padEnd(8)}` +
+				` ${row.transactions.toFixed(1).padStart(5)} tx${change(row.transactions, was?.transactions).padEnd(8)}` +
+				`  ${row.kind}${row.failed ? `  (${row.failed} failed)` : ""}`,
+		);
+	}
+
+	const finishedOn = new Date().toISOString();
+	mkdirSync(outDir, { recursive: true });
+	const file = join(outDir, `cost-${finishedOn.replace(/[:.]/g, "-")}.json`);
+	writeFileSync(
+		file,
+		JSON.stringify(
+			{
+				finishedOn,
+				warehouseDelayMs:
+					Number(process.env.DEMO_WAREHOUSE_DELAY_MS) || null,
+				idle,
+				rows,
+			},
+			null,
+			2,
+		),
+	);
+	console.log(`Results written to ${file}`);
+}
+
 // --- Run -----------------------------------------------------------------------
 
-const earlier = previousRun();
+const costMode = process.argv.includes("--cost");
+const earlier = costMode ? null : previousRun();
 console.log("Recording visits in a browser...");
 const journeys = await recordJourneys();
+if (costMode) {
+	try {
+		await measureCost(journeys);
+	} finally {
+		const removed = await removePeople();
+		console.log(`Removed ${removed} rows the made-up people left.`);
+		await db.end();
+	}
+	process.exit(0);
+}
 const people = await addPeople(Math.max(...stages));
 console.log(`Added ${people.length} made-up people in the demo's group mixes.`);
 

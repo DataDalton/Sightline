@@ -86,6 +86,13 @@ async function startPostgres() {
 		port: postgresPort,
 		...credentials,
 		persistent: true,
+		// This one server stands in for both the platform store and the
+		// warehouse, so it takes the connections of both: the platform pool
+		// and the warehouse sessions a deployed process may hold, from
+		// lib/data/warehouseSessions, with room for the change listener and the
+		// load test's own client. Postgres's default allows fewer than the
+		// warehouse sessions alone.
+		postgresFlags: ["-c", "max_connections=300"],
 		onLog: () => {},
 		onError: () => {},
 	});

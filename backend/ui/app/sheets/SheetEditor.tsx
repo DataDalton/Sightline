@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "../components/AppLink";
+import { seedResponses } from "../components/SWRProvider";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import type { FormatHint } from "../../lib/format";
@@ -58,7 +59,20 @@ function newId(): string {
 	return Math.random().toString(36).slice(2, 10);
 }
 
-export default function SheetEditor({ id }: { id: string }) {
+// Answers the server worked out while rendering the document arrive as
+// seeded, and are handed over before anything below asks for them. See
+// app/answeredHere.
+export default function SheetEditor({
+	id,
+	seeded,
+}: {
+	id: string;
+	seeded?: Record<string, unknown>;
+}) {
+	useState(() => {
+		if (seeded) seedResponses(seeded);
+		return null;
+	});
 	const s = useSheet(id);
 	const router = useRouter();
 	const def = s.definition;

@@ -1,5 +1,6 @@
 import type { Identity } from "../auth/identity";
 import { insertLog } from "../activityLog";
+import { batchedRead } from "../data/batch";
 import { sql, transaction } from "../data/lakebase";
 import { noteOpened } from "../retention/opened";
 import {
@@ -87,6 +88,35 @@ const visible = `
 	FROM boards b
 	WHERE ${canOpen}`;
 
+// Opening a board reads it once per request, so everyone opening one at
+// about the same time is answered by one statement. The query is the one
+// above, asked once for each reader and board given, with the reader in
+// place of $1. See lib/data/batch.
+const boardReads = batchedRead<{ email: string; id: string }, Row | null>(
+	async (asked) => {
+		const rows = await sql<Row & { asker: string }>(
+			`SELECT k.e AS asker, x.*
+			 FROM unnest($1::text[], $2::uuid[]) AS k(e, id)
+			 CROSS JOIN LATERAL (
+			   ${visible.replaceAll("$1", "k.e")} AND b.board_id = k.id
+			 ) x`,
+			[asked.map((k) => k.email), asked.map((k) => k.id)],
+		);
+		return new Map(
+			rows.map(({ asker, ...row }) => [
+				readKey(asker, row.board_id),
+				row as Row,
+			]),
+		);
+	},
+	(k) => readKey(k.email, k.id),
+	null,
+);
+
+function readKey(email: string, id: string): string {
+	return JSON.stringify([email, id.toLowerCase()]);
+}
+
 function toBoard(row: Row): Board {
 	const definition = cleanDefinition(row.definition);
 	return {
@@ -143,14 +173,11 @@ export async function getBoard(
 	id: string,
 ): Promise<Board | null> {
 	if (!isUuid(id)) return null;
-	const rows = await sql<Row>(`${visible} AND b.board_id = $2`, [
-		identity.email.toLowerCase(),
-		id,
-	]);
-	if (!rows[0]) return null;
+	const row = await boardReads({ email: identity.email.toLowerCase(), id });
+	if (!row) return null;
 	// Any read by somebody who may open it counts as use for retention.
 	noteOpened("board", id);
-	return toBoard(rows[0]);
+	return toBoard(row);
 }
 
 // The version of a board the caller may open, or null when they may not or it

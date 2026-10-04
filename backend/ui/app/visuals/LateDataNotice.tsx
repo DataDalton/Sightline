@@ -2,6 +2,9 @@
 
 import Link from "../components/AppLink";
 import useSWR from "swr";
+import { describePattern } from "../../lib/freshness/arrivals";
+import { lateKey } from "../../lib/query/requestKey";
+import type { StoredPattern } from "../../lib/freshness/lateness";
 import styles from "./LateData.module.css";
 
 // Said above a page when data it reads has not arrived when it usually does,
@@ -16,7 +19,7 @@ interface LateSource {
 	title: string;
 	state: string;
 	lastArrival: string | null;
-	description: string | null;
+	pattern: StoredPattern | null;
 }
 
 // Asked again every few minutes, which is as often as a late load is likely
@@ -44,13 +47,9 @@ function when(iso: string): string {
 }
 
 export function LateDataNotice({ sourceKeys }: { sourceKeys: string[] }) {
-	const keys = [...new Set(sourceKeys)].sort();
-	const { data } = useSWR<{ sources: LateSource[] }>(
-		keys.length
-			? `/api/query/late/?sources=${encodeURIComponent(keys.join(","))}&tz=${encodeURIComponent(browserZone())}`
-			: null,
-		{ refreshInterval: refreshMs },
-	);
+	const { data } = useSWR<{ sources: LateSource[] }>(lateKey(sourceKeys), {
+		refreshInterval: refreshMs,
+	});
 
 	const late = (data?.sources ?? []).filter((s) => s.state === "late");
 	if (late.length === 0) return null;
@@ -80,7 +79,9 @@ export function LateDataNotice({ sourceKeys }: { sourceKeys: string[] }) {
 							? ` since ${when(source.lastArrival)}`
 							: ""}
 						, so figures from it may be behind.
-						{source.description ? ` ${source.description}` : ""}
+						{source.pattern
+							? ` ${describePattern(source.pattern, browserZone())}`
+							: ""}
 					</p>
 				))}
 				<Link href="/status" className={styles.link}>

@@ -19,8 +19,10 @@ import {
 	type LateState,
 	type LatenessSetting,
 } from "./arrivals";
+import { cachedDefinition } from "../platform/definitionCache";
+import { loadHistoryChanged } from "./loads";
 import { claimRun } from "./claim";
-import { lateSubscribers } from "./status";
+import { lateStandingChanged, lateSubscribers } from "./status";
 
 // Whether each source's data has arrived when it usually does.
 //
@@ -205,6 +207,7 @@ async function tableFacts(
 		   learned_on = EXCLUDED.learned_on`,
 		[stale, patterns, newestList],
 	);
+	loadHistoryChanged();
 	return facts;
 }
 
@@ -318,7 +321,7 @@ async function evaluate(now: number): Promise<void> {
 
 	// One statement, writing only the rows whose standing moved.
 	const column = (i: number) => settled.map((v) => v[i]);
-	await sql(
+	const moved = await sql<{ source_key: string }>(
 		`UPDATE data_sources d SET late_state = u.state,
 		   expected_by = u.expected, last_arrival = u.arrival,
 		   arrival_pattern = u.pattern::jsonb
@@ -328,9 +331,11 @@ async function evaluate(now: number): Promise<void> {
 		 WHERE d.source_key = u.key
 		   AND (d.late_state, d.expected_by, d.last_arrival, d.arrival_pattern)
 		       IS DISTINCT FROM
-		       (u.state, u.expected, u.arrival, u.pattern::jsonb)`,
+		       (u.state, u.expected, u.arrival, u.pattern::jsonb)
+		 RETURNING d.source_key`,
 		[column(0), column(1), column(2), column(3), column(4)],
 	);
+	if (moved.length > 0) lateStandingChanged();
 }
 
 // The people who look after a source, meaning whoever may manage the catalogue of
@@ -408,6 +413,7 @@ async function moveToLate(
 		return notifyManyInTransaction(client, notice.people, notice.input);
 	});
 	if (written === null) return false;
+	lateStandingChanged();
 	// Pushed once the entries are committed, so no device hears of one that
 	// rolled back.
 	pushNotifications(written);
@@ -461,33 +467,61 @@ export interface LateSource {
 
 // The standing of some sources, for the pages built on them and for the
 // administration screens.
-export async function latenessOf(
+// Every source's standing is the same for every reader, so it is held once
+// and narrowed to the sources asked about in memory. Held until the evaluator
+// moves a source's standing, which drops it on every instance. See
+// lateStandingChanged in lib/freshness/status.
+interface StandingRow {
+	source_key: string;
+	title: string;
+	late_state: string | null;
+	expected_by: string | null;
+	last_arrival: string | null;
+	arrival_pattern: StoredPattern | null;
+}
+
+// Each source's standing with its load pattern as stored, for a page that
+// says the pattern in the reader's own time zone.
+export interface SourceStanding {
+	sourceKey: string;
+	title: string;
+	state: LateState | "unwatched";
+	expectedBy: string | null;
+	lastArrival: string | null;
+	pattern: StoredPattern | null;
+}
+
+export async function standingOf(
 	sourceKeys: string[] | null,
-	timeZone: string,
-): Promise<LateSource[]> {
-	const rows = await sql<{
-		source_key: string;
-		title: string;
-		late_state: string | null;
-		expected_by: string | null;
-		last_arrival: string | null;
-		arrival_pattern: StoredPattern | null;
-	}>(
-		`SELECT source_key, title, late_state, expected_by::text,
-		        last_arrival::text, arrival_pattern
-		 FROM data_sources
-		 WHERE is_active AND ($1::text[] IS NULL OR source_key = ANY($1::text[]))`,
-		[sourceKeys],
+): Promise<SourceStanding[]> {
+	const all = await cachedDefinition("freshness:standing", () =>
+		sql<StandingRow>(
+			`SELECT source_key, title, late_state, expected_by::text,
+			        last_arrival::text, arrival_pattern
+			 FROM data_sources
+			 WHERE is_active`,
+		),
 	);
+	const wanted = sourceKeys ? new Set(sourceKeys) : null;
+	const rows = wanted ? all.filter((r) => wanted.has(r.source_key)) : all;
 	return rows.map((r) => ({
 		sourceKey: r.source_key,
 		title: r.title,
 		state: (r.late_state as LateState | null) ?? "unwatched",
 		expectedBy: r.expected_by,
 		lastArrival: r.last_arrival,
-		description: r.arrival_pattern
-			? describePattern(r.arrival_pattern, timeZone)
-			: null,
+		pattern: r.arrival_pattern,
+	}));
+}
+
+// The same, with the pattern said in the time zone given.
+export async function latenessOf(
+	sourceKeys: string[] | null,
+	timeZone: string,
+): Promise<LateSource[]> {
+	return (await standingOf(sourceKeys)).map(({ pattern, ...standing }) => ({
+		...standing,
+		description: pattern ? describePattern(pattern, timeZone) : null,
 	}));
 }
 

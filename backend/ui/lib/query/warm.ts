@@ -9,6 +9,7 @@ import { pagedSpec, sliceWindow, type RowWindow } from "./paging";
 import { canonicalRequest } from "./requestKey";
 import { initialQueryForVisual } from "./visualSpec";
 import { openingBreakdown, openingFilters } from "../visuals/pageDefaults";
+import { perProcess } from "../perProcess";
 
 // Filling a cache partition before somebody waits on it.
 //
@@ -214,7 +215,10 @@ async function onlyCold(
 // When each report was last warmed for each class. A report is rendered for
 // every visit and every prefetch of a link to it, and warming it for the same
 // class again within the interval only repeats the check that finds it warm.
-const warmedReports = new Map<string, number>();
+const warmedReports = perProcess(
+	"query/warm:warmedReports",
+	() => new Map<string, number>(),
+);
 const reportWarmIntervalMs = 60 * 1000;
 const maxTrackedReports = 5000;
 
@@ -271,7 +275,10 @@ export function warmReport(identity: Identity, report: WarmableReport): void {
 // own reports are walked, and only answers missing from their class are
 // asked for, so a reader whose reports a colleague in the same class already
 // warmed costs one cache check and no warehouse time.
-const warmedReaders = new Map<string, number>();
+const warmedReaders = perProcess(
+	"query/warm:warmedReaders",
+	() => new Map<string, number>(),
+);
 
 // Long enough that browsing does not retrigger it, short enough that a session
 // spanning a morning is warmed more than once. Deliberately longer than the

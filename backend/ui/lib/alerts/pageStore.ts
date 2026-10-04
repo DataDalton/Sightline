@@ -1,13 +1,18 @@
 import type { Identity } from "../auth/identity";
 import { resolvePolicyClass, type PolicyClass } from "../auth/policy";
 import { insertLog } from "../activityLog";
+import { batchedRead } from "../data/batch";
 import { sql } from "../data/lakebase";
-import { invalidateDefinitions } from "../platform/definitionCache";
+import {
+	cachedDefinition,
+	invalidateDefinitions,
+} from "../platform/definitionCache";
 import { pageLink } from "../deliveries/store";
 import { assertCanEdit, EditForbiddenError } from "../platform/editing";
 import { effective, refuse } from "../platform/pageProtection";
 import {
 	getReport,
+	openReportPage,
 	type PageDefinition,
 	type ReportDetail,
 } from "../platform/reports";
@@ -21,6 +26,7 @@ import {
 	type MuteChoice,
 	type ScopeMode,
 } from "./pageRules";
+import { ownersChanged } from "./owners";
 import { restrictableSources } from "./recorded";
 import {
 	AlertDefinitionError,
@@ -187,21 +193,9 @@ async function openPage(
 	policy: PolicyClass,
 	pageId: string,
 ): Promise<OpenedPage> {
-	const missing = new PageAlertError("Page not found", 404);
-	if (!isUuid(pageId)) throw missing;
-	const rows = await sql<{ slug: string }>(
-		`SELECT r.slug FROM report_pages p
-		 JOIN reports r ON r.report_id = p.report_id
-		 WHERE p.page_id = $1::uuid AND p.is_active AND r.is_active`,
-		[pageId],
-	);
-	if (!rows[0]) throw missing;
-	const report = await getReport(policy, identity, rows[0].slug);
-	const page = report?.pages.find(
-		(p) => p.pageId.toLowerCase() === pageId.toLowerCase(),
-	);
-	if (!report || !page) throw missing;
-	return { report, page };
+	const opened = await openReportPage(policy, identity, pageId);
+	if (!opened) throw new PageAlertError("Page not found", 404);
+	return opened;
 }
 
 // Every dataset the page reads, its own and each of its visuals'.
@@ -282,6 +276,52 @@ async function loadRows(
 	);
 }
 
+// The alerts on one page with each caller's own subscription, read for
+// everyone opening a page with alerts at about the same time in one
+// statement. See lib/data/batch.
+const pageRows = batchedRead<{ email: string; pageId: string }, PageAlertRow[]>(
+	async (asked) => {
+		const rows = await sql<PageAlertRow & { asker: string }>(
+			`SELECT k.e AS asker, a.alert_id::text AS alert_id,
+			        a.report_id::text AS report_id, r.slug,
+			        r.title AS report_title,
+			        a.page_id::text AS page_id, p.title AS page_title,
+			        p.sort_order = (SELECT min(q.sort_order) FROM report_pages q
+			                        WHERE q.report_id = a.report_id AND q.is_active)
+			          AS first_page,
+			        a.name, a.source_key, a.definition,
+			        a.last_checked_on::text AS last_checked_on,
+			        a.modified_on::text AS modified_on, a.modified_by,
+			        s.email IS NOT NULL AS subscribed,
+			        s.muted_until::text AS muted_until,
+			        (SELECT count(*) FROM page_alert_subscriptions c
+			         WHERE c.alert_id = a.alert_id)::int AS subscribers
+			 FROM unnest($1::text[], $2::uuid[]) AS k(e, pg)
+			 JOIN page_alerts a  ON a.page_id = k.pg AND a.is_active
+			 JOIN reports r      ON r.report_id = a.report_id AND r.is_active
+			 JOIN report_pages p ON p.page_id = a.page_id AND p.is_active
+			 LEFT JOIN page_alert_subscriptions s
+			        ON s.alert_id = a.alert_id AND s.email = k.e
+			 ORDER BY p.sort_order, a.created_on`,
+			[asked.map((k) => k.email), asked.map((k) => k.pageId)],
+		);
+		const byAsk = new Map<string, PageAlertRow[]>();
+		for (const { asker, ...row } of rows) {
+			const id = pageRowsKey(asker, row.page_id);
+			const held = byAsk.get(id) ?? [];
+			held.push(row);
+			byAsk.set(id, held);
+		}
+		return byAsk;
+	},
+	(k) => pageRowsKey(k.email, k.pageId),
+	[],
+);
+
+function pageRowsKey(email: string, pageId: string): string {
+	return JSON.stringify([email, pageId.toLowerCase()]);
+}
+
 async function loadOne(
 	identity: Identity,
 	id: string,
@@ -338,10 +378,16 @@ export async function listPageAlerts(
 	const opened = await openPage(identity, policy, pageId);
 	const canEdit = await mayEdit(policy, identity, opened.report.reportId);
 	const readable = await readableFilter(identity);
+	const hasAlerts = (await pagesWithAlerts()).has(
+		opened.page.pageId.toLowerCase(),
+	);
 	const [rows, restrictable] = await Promise.all([
-		loadRows(identity.email, "AND a.page_id = $2::uuid", [
-			opened.page.pageId,
-		]),
+		hasAlerts
+			? pageRows({
+					email: identity.email.toLowerCase(),
+					pageId: opened.page.pageId,
+				})
+			: ([] as PageAlertRow[]),
 		restrictableSources(),
 	]);
 	const keys = new Set(restrictable.keys());
@@ -580,6 +626,24 @@ export async function deletePageAlert(
 // which every reader's home page plan reads, so a change to one drops them.
 function planInputsChanged(): void {
 	invalidateDefinitions("briefing-plan:");
+	invalidateDefinitions(alertPagesKey);
+}
+
+// Every page with an active alert, the same for everyone, so a page without
+// one is answered without a question. Held until an alert is set, changed or
+// removed, which drops it on every instance. An alert stopped with its page
+// or report stays in the set until then, which costs that page a question
+// that finds nothing.
+const alertPagesKey = "page-alerts:pages";
+
+async function pagesWithAlerts(): Promise<Set<string>> {
+	return cachedDefinition(alertPagesKey, async () => {
+		const rows = await sql<{ page_id: string }>(
+			`SELECT DISTINCT page_id::text AS page_id FROM page_alerts
+			 WHERE is_active`,
+		);
+		return new Set(rows.map((r) => r.page_id));
+	});
 }
 
 // --- Following -------------------------------------------------------------
@@ -615,6 +679,7 @@ async function upsertSubscriptions(
 			],
 		);
 	}
+	ownersChanged();
 }
 
 // Follows, stops following, or mutes one page alert. Muting follows it too,

@@ -1,3 +1,4 @@
+import { batchedRead } from "../data/batch";
 import { sql } from "../data/lakebase";
 import type { Identity } from "../auth/identity";
 import type { PolicyClass } from "../auth/policy";
@@ -353,20 +354,45 @@ export async function recentReports(
 // Held per person until they mark or unmark a report, which drops it on
 // every instance. See lib/platform/changes.
 function favouritesKey(email: string): string {
-	return `favourites:${email.toLowerCase()}`;
+	return `favourites:${email.toLowerCase()}|`;
 }
 
+// Read for everyone asking at about the same time in one statement. See
+// lib/data/batch.
+const storedFavourites = batchedRead<string, string[]>(
+	async (emails) => {
+		const rows = await sql<{ email: string; report_id: string }>(
+			`SELECT lower(user_email) AS email, report_id::text AS report_id
+			 FROM favourites
+			 WHERE lower(user_email) = ANY($1::text[])
+			 ORDER BY created_on DESC`,
+			[emails],
+		);
+		const byEmail = new Map<string, string[]>();
+		for (const row of rows) {
+			const held = byEmail.get(row.email) ?? [];
+			held.push(row.report_id);
+			byEmail.set(row.email, held);
+		}
+		return byEmail;
+	},
+	(email) => email,
+	[],
+);
+
+// The reader's favourites, newest first. A failed read is not held, so the
+// next request asks again.
+export async function readFavourites(email: string): Promise<string[]> {
+	const owner = email.toLowerCase();
+	return cachedDefinition(favouritesKey(owner), () =>
+		storedFavourites(owner),
+	);
+}
+
+// The same, answering empty when the read fails, for a screen that shows
+// what it can.
 export async function listFavourites(email: string): Promise<string[]> {
-	return cachedDefinition(favouritesKey(email), async () => {
-		const rows = await sql<{ report_id: string }>(
-			`SELECT report_id::text AS report_id
-				 FROM favourites
-				 WHERE lower(user_email) = $1
-				 ORDER BY created_on DESC`,
-			[email.toLowerCase()],
-		).catch(() => [] as { report_id: string }[]);
-		return rows.map((row) => row.report_id);
-	});
+	return readFavourites(email).catch(() => [] as string[]);
 }
 
 // Adding one twice is not an error. The button is a toggle and a double click

@@ -1,3 +1,4 @@
+import { batchedRead } from "../data/batch";
 import { sql } from "../data/lakebase";
 import type { Card } from "./card";
 
@@ -26,6 +27,63 @@ export interface StoredCard {
 // The most recent card for each key on or before the day given. An earlier
 // day's card is what a reader sees first thing in the morning while today's
 // is worked out.
+//
+// Read for everyone opening their home page at about the same time in one
+// statement for each day asked about. See lib/data/batch.
+const storedCards = batchedRead<
+	{ key: string; today: string },
+	StoredCard | null
+>(
+	async (asked) => {
+		const byDay = new Map<string, string[]>();
+		for (const { key, today } of asked) {
+			const keys = byDay.get(today) ?? [];
+			keys.push(key);
+			byDay.set(today, keys);
+		}
+		const found = new Map<string, StoredCard | null>();
+		await Promise.all(
+			[...byDay].map(async ([today, keys]) => {
+				const rows = await sql<{
+					card_key: string;
+					card: Card | null;
+					fresh: boolean;
+					judged_on: string | null;
+				}>(
+					`SELECT DISTINCT ON (c.card_key) c.card_key, c.card,
+					        c.judged_on::text AS judged_on,
+					        (c.day = $2::date AND c.expires_on > now()
+					         AND c.computed_on >= coalesce(d.data_changed_on, '-infinity'))
+					          AS fresh
+					 FROM briefing_cards c
+					 LEFT JOIN data_sources d ON d.source_key = c.source_key
+					 WHERE c.card_key = ANY($1) AND c.day <= $2::date
+					   AND (c.scope <> 'unfiltered' OR NOT coalesce(d.has_row_filter, FALSE))
+					 ORDER BY c.card_key, c.day DESC`,
+					[keys, today],
+				);
+				for (const row of rows) {
+					found.set(cardId(row.card_key, today), {
+						key: row.card_key,
+						card: row.card,
+						fresh: row.fresh === true,
+						judgedAt: row.judged_on
+							? Date.parse(row.judged_on)
+							: null,
+					});
+				}
+			}),
+		);
+		return found;
+	},
+	({ key, today }) => cardId(key, today),
+	null,
+);
+
+function cardId(key: string, today: string): string {
+	return JSON.stringify([key, today]);
+}
+
 export async function readCards(
 	keys: string[],
 	today: string,
@@ -33,31 +91,11 @@ export async function readCards(
 	const found = new Map<string, StoredCard>();
 	if (keys.length === 0) return found;
 	try {
-		const rows = await sql<{
-			card_key: string;
-			card: Card | null;
-			fresh: boolean;
-			judged_on: string | null;
-		}>(
-			`SELECT DISTINCT ON (c.card_key) c.card_key, c.card,
-			        c.judged_on::text AS judged_on,
-			        (c.day = $2::date AND c.expires_on > now()
-			         AND c.computed_on >= coalesce(d.data_changed_on, '-infinity'))
-			          AS fresh
-			 FROM briefing_cards c
-			 LEFT JOIN data_sources d ON d.source_key = c.source_key
-			 WHERE c.card_key = ANY($1) AND c.day <= $2::date
-			   AND (c.scope <> 'unfiltered' OR NOT coalesce(d.has_row_filter, FALSE))
-			 ORDER BY c.card_key, c.day DESC`,
-			[keys, today],
+		const cards = await Promise.all(
+			keys.map((key) => storedCards({ key, today })),
 		);
-		for (const row of rows) {
-			found.set(row.card_key, {
-				key: row.card_key,
-				card: row.card,
-				fresh: row.fresh === true,
-				judgedAt: row.judged_on ? Date.parse(row.judged_on) : null,
-			});
+		for (const card of cards) {
+			if (card) found.set(card.key, card);
 		}
 	} catch (error) {
 		// A failed read means every card is worked out afresh, never an

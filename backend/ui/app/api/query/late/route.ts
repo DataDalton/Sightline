@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { validTimeZone } from "@/lib/alerts/schedule";
 import { getIdentity } from "@/lib/auth/identity";
 import { requestCheck } from "@/lib/freshness/checker";
-import { latenessOf } from "@/lib/freshness/lateness";
+import { standingOf } from "@/lib/freshness/lateness";
 import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
 import { reachableSet } from "@/lib/platform/sources";
 
@@ -16,10 +15,9 @@ import { reachableSet } from "@/lib/platform/sources";
 
 const maxSources = 20;
 
-function zoneOf(raw: string | null): string {
-	return validTimeZone(raw);
-}
-
+// Answers with each source's load pattern as stored, which the page says in
+// the reader's own time zone, so the question carries nothing about the
+// reader and the page that renders it can answer it too.
 export async function GET(request: NextRequest) {
 	await ensureReadyOrDegrade();
 
@@ -42,7 +40,7 @@ export async function GET(request: NextRequest) {
 	const reachable = await reachableSet(identity);
 	const readable = asked.filter((key) => !reachable || reachable.has(key));
 
-	const sources = await latenessOf(readable, zoneOf(params.get("tz")));
+	const sources = await standingOf(readable);
 	for (const source of sources) {
 		if (source.state === "overdue") requestCheck(source.sourceKey);
 	}

@@ -1,6 +1,7 @@
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import type { Client as PgClient, Pool, PoolClient } from "pg";
 import { randomUUID } from "node:crypto";
+import { perProcess } from "../perProcess";
 import { lakebase } from "../runtime";
 import type { QueryParams } from "./types";
 
@@ -17,8 +18,6 @@ import type { QueryParams } from "./types";
 // a database instance, which mints credentials through instance_names. The
 // underlying SDK call is the same one that helper uses.
 
-let poolPromise: Promise<Pool> | null = null;
-
 // --- Token minting ---------------------------------------------------------
 
 interface CachedToken {
@@ -26,8 +25,13 @@ interface CachedToken {
 	expiresAt: number;
 }
 
-let cachedToken: CachedToken | null = null;
-let tokenInflight: Promise<string> | null = null;
+// The pool and the credential it connects with, one of each for the process.
+// See lib/perProcess.
+const shared = perProcess("lakebase", () => ({
+	pool: null as Promise<Pool> | null,
+	token: null as CachedToken | null,
+	minting: null as Promise<string> | null,
+}));
 
 // Re-mint this long before the token actually expires, so a connection opened
 // at the boundary does not get a credential that dies mid-handshake.
@@ -54,23 +58,24 @@ async function mintToken(): Promise<string> {
 		? new Date(credential.expiration_time).getTime()
 		: Date.now() + 60 * 60 * 1000;
 
-	cachedToken = { token: credential.token, expiresAt };
+	shared.token = { token: credential.token, expiresAt };
 	return credential.token;
 }
 
 async function getToken(): Promise<string> {
 	const now = Date.now();
-	if (cachedToken && cachedToken.expiresAt - tokenRefreshBufferMs > now) {
-		return cachedToken.token;
+	const held = shared.token;
+	if (held && held.expiresAt - tokenRefreshBufferMs > now) {
+		return held.token;
 	}
 
 	// Share one mint between concurrent connection attempts.
-	if (tokenInflight) return tokenInflight;
+	if (shared.minting) return shared.minting;
 
-	tokenInflight = mintToken().finally(() => {
-		tokenInflight = null;
+	shared.minting = mintToken().finally(() => {
+		shared.minting = null;
 	});
-	return tokenInflight;
+	return shared.minting;
 }
 
 // --- Pool ------------------------------------------------------------------
@@ -180,13 +185,13 @@ export async function openDedicatedClient(): Promise<PgClient> {
 }
 
 export function getPool(): Promise<Pool> {
-	if (!poolPromise) {
-		poolPromise = createPool().catch((err) => {
-			poolPromise = null;
+	if (!shared.pool) {
+		shared.pool = createPool().catch((err) => {
+			shared.pool = null;
 			throw err;
 		});
 	}
-	return poolPromise;
+	return shared.pool;
 }
 
 export type SqlParams = unknown[];
@@ -217,16 +222,19 @@ export async function sql<T = Record<string, unknown>>(
 // log every minute, slowest in total first. Time includes waiting for a
 // connection, which is what a full pool costs each statement.
 const queryStats = process.env.SQL_QUERY_STATS === "1";
-const statementTotals = new Map<
-	string,
-	{ count: number; totalMs: number; queuedPeak: number }
->();
-let statsTimer: ReturnType<typeof setInterval> | null = null;
-const loopDelay = monitorEventLoopDelay({ resolution: 20 });
+// Gathered for the whole process, so one log covers every statement sent.
+const stats = perProcess("lakebase-stats", () => ({
+	totals: new Map<
+		string,
+		{ count: number; totalMs: number; queuedPeak: number }
+	>(),
+	timer: null as ReturnType<typeof setInterval> | null,
+	loopDelay: monitorEventLoopDelay({ resolution: 20 }),
+}));
 
 function noteQuery(text: string, ms: number, waiting: number): void {
 	const key = text.replace(/\s+/g, " ").trim().slice(0, 110);
-	const held = statementTotals.get(key) ?? {
+	const held = stats.totals.get(key) ?? {
 		count: 0,
 		totalMs: 0,
 		queuedPeak: 0,
@@ -234,21 +242,26 @@ function noteQuery(text: string, ms: number, waiting: number): void {
 	held.count++;
 	held.totalMs += ms;
 	held.queuedPeak = Math.max(held.queuedPeak, waiting);
-	statementTotals.set(key, held);
-	if (!statsTimer) {
-		loopDelay.enable();
-	}
-	statsTimer ??= setInterval(() => {
-		const top = [...statementTotals.entries()]
+	stats.totals.set(key, held);
+	if (stats.timer) return;
+	stats.loopDelay.enable();
+	stats.timer = setInterval(() => {
+		const top = [...stats.totals.entries()]
 			.sort((a, b) => b[1].totalMs - a[1].totalMs)
 			.slice(0, 25);
 		// How late the request thread ran callbacks, which is how long every
 		// request and every statement result waited behind other work.
 		console.log(
-			`Request thread delay in the last minute, typical ${Math.round(loopDelay.percentile(50) / 1e6)}ms, ` +
-				`slowest 1% ${Math.round(loopDelay.percentile(99) / 1e6)}ms`,
+			`Request thread delay in the last minute, typical ${Math.round(stats.loopDelay.percentile(50) / 1e6)}ms, ` +
+				`slowest 1% ${Math.round(stats.loopDelay.percentile(99) / 1e6)}ms`,
 		);
-		loopDelay.reset();
+		stats.loopDelay.reset();
+		void getPool().then((pool) =>
+			console.log(
+				`Pool: ${pool.totalCount} open, ${pool.idleCount} idle, ` +
+					`${pool.waitingCount} waiting`,
+			),
+		);
 		console.log("Statements in the last minute, by total time:");
 		for (const [statement, t] of top) {
 			console.log(
@@ -257,7 +270,7 @@ function noteQuery(text: string, ms: number, waiting: number): void {
 					`${t.queuedPeak} waiting at most  ${statement}`,
 			);
 		}
-		statementTotals.clear();
+		stats.totals.clear();
 	}, 60_000);
 }
 
@@ -363,10 +376,10 @@ export async function tryAdvisoryLock(
 }
 
 export async function closePool(): Promise<void> {
-	if (!poolPromise) return;
-	const pool = await poolPromise;
-	poolPromise = null;
-	cachedToken = null;
+	if (!shared.pool) return;
+	const pool = await shared.pool;
+	shared.pool = null;
+	shared.token = null;
 	await pool.end().catch(() => {});
 }
 
@@ -376,7 +389,7 @@ export function lakebaseStats(): {
 } {
 	return {
 		configured: Boolean(lakebase.host || lakebase.localUrl),
-		tokenExpiresAt: cachedToken?.expiresAt ?? null,
+		tokenExpiresAt: shared.token?.expiresAt ?? null,
 	};
 }
 

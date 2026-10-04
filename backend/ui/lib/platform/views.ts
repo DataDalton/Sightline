@@ -2,8 +2,8 @@ import { sql, transaction } from "../data/lakebase";
 import { insertLog } from "../activityLog";
 import type { Identity } from "../auth/identity";
 import type { PolicyClass } from "../auth/policy";
-import { getAccessContext } from "./access";
-import { resolveReportAccess } from "./accessRules";
+import { cachedDefinition, invalidateDefinitions } from "./definitionCache";
+import { openReportPage } from "./reports";
 
 // Per-user saved views: a person's own filters, column selection, sort and
 // options for a page. Saving a view never mutates the underlying report, so
@@ -81,59 +81,51 @@ export async function openablePageReport(
 	identity: Identity,
 	pageId: string,
 ): Promise<string | null> {
-	const rows = await sql<{
-		report_id: string;
-		category_id: string | null;
-		is_personal: boolean;
-		owner_email: string | null;
-	}>(
-		`SELECT r.report_id::text AS report_id, r.category_id, r.is_personal,
-		        r.owner_email
-		 FROM report_pages p
-		 JOIN reports r ON r.report_id = p.report_id
-		 WHERE p.page_id::text = lower($1)
-		   AND p.is_active = TRUE AND r.is_active = TRUE`,
-		[pageId],
+	return (
+		(await openReportPage(policy, identity, pageId))?.report.reportId ??
+		null
 	);
-	const report = rows[0];
-	if (!report) return null;
-
-	const context = await getAccessContext(policy, identity);
-	const view = resolveReportAccess(
-		context.grants,
-		{
-			reportId: report.report_id,
-			categoryId: report.category_id,
-			isPersonal: report.is_personal,
-			ownerEmail: report.owner_email,
-		},
-		context.email,
-		"view",
-		context.baseline,
-	);
-	return view.allowed ? report.report_id : null;
 }
 
 // Views the caller can open for a page: their own, plus any shared with a
 // group they belong to.
+//
+// Every view on the page is held, per page, until one on it is saved or
+// removed, which drops it on every instance. See lib/platform/changes. Each
+// reader's own and shared ones are picked out in memory, so a page nobody has
+// saved a view on costs no question at all once it is held.
+function viewsKey(pageId: string): string {
+	return `views:${pageId.toLowerCase()}|`;
+}
+
+function pageViews(pageId: string): Promise<ViewRow[]> {
+	return cachedDefinition(viewsKey(pageId), () =>
+		sql<ViewRow>(
+			`SELECT view_id, owner_email, report_id, page_id, name, config,
+			        is_default, is_shared, shared_with, modified_on
+			 FROM saved_views
+			 WHERE page_id = $1
+			 ORDER BY is_default DESC, name`,
+			[pageId],
+		),
+	);
+}
+
 export async function listViews(
 	email: string,
 	grants: string[],
 	pageId: string,
 ): Promise<SavedView[]> {
-	const rows = await sql<ViewRow>(
-		`SELECT view_id, owner_email, report_id, page_id, name, config,
-		        is_default, is_shared, shared_with, modified_on
-		 FROM saved_views
-		 WHERE page_id = $1
-		   AND (
-		     lower(owner_email) = $2
-		     OR (is_shared = TRUE AND shared_with && $3::text[])
-		   )
-		 ORDER BY is_default DESC, name`,
-		[pageId, email.toLowerCase(), grants],
-	);
-	return rows.map((row) => toView(row, email));
+	const owner = email.toLowerCase();
+	const groups = new Set(grants);
+	return (await pageViews(pageId))
+		.filter(
+			(row) =>
+				row.owner_email.toLowerCase() === owner ||
+				(row.is_shared &&
+					(row.shared_with ?? []).some((g) => groups.has(g))),
+		)
+		.map((row) => toView(row, email));
 }
 
 export interface SaveViewInput {
@@ -222,6 +214,7 @@ export async function saveView(
 		}
 		return row;
 	});
+	if (saved.page_id) invalidateDefinitions(viewsKey(saved.page_id));
 
 	await insertLog({
 		recordType: "saved_view",
@@ -237,13 +230,14 @@ export async function deleteView(
 	email: string,
 	viewId: string,
 ): Promise<boolean> {
-	const rows = await sql<{ view_id: string }>(
+	const rows = await sql<{ page_id: string | null }>(
 		`DELETE FROM saved_views
 		 WHERE view_id = $1 AND lower(owner_email) = $2
-		 RETURNING view_id`,
+		 RETURNING page_id::text`,
 		[viewId, email.toLowerCase()],
 	);
 	if (rows.length === 0) return false;
+	if (rows[0].page_id) invalidateDefinitions(viewsKey(rows[0].page_id));
 
 	await insertLog({
 		recordType: "saved_view",

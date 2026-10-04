@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { visibleKeys } from "@/lib/sheets/data";
-import { heartbeat, leaveSheet } from "@/lib/sheets/store";
-import { privateJson, readJson } from "../../../notifications/guard";
+import type { Identity } from "@/lib/auth/identity";
+import {
+	beatSheet,
+	getSheet,
+	leaveSheet,
+	type Present,
+} from "@/lib/sheets/store";
+import { caller, privateJson, readJson } from "../../../notifications/guard";
 import { failure, sheetFor, type IdContext } from "../../respond";
 
 // Polled every few seconds by an open sheet. Renews the caller's place in the
@@ -10,22 +16,19 @@ import { failure, sheetFor, type IdContext } from "../../respond";
 
 // { sessionId, cell }
 export async function POST(request: NextRequest, { params }: IdContext) {
-	const found = await sheetFor(request, (await params).id);
-	if (found instanceof NextResponse) return found;
+	const identity = await caller(request);
+	if (identity instanceof NextResponse) return identity;
+	const id = (await params).id;
 	const body = ((await readJson(request)) ?? {}) as Record<string, unknown>;
 	const sessionId = typeof body.sessionId === "string" ? body.sessionId : "";
 	if (!sessionId) return privateJson({ error: "No session" }, 400);
 	try {
-		const present = await heartbeat(
-			found.identity,
-			found.sheet.id,
-			sessionId,
-			body.cell,
-		);
+		const beat = await beatSheet(identity, id, sessionId, body.cell);
+		if (!beat) return privateJson({ error: "Sheet not found" }, 404);
 		return privateJson({
-			version: found.sheet.version,
-			modifiedBy: found.sheet.modifiedBy,
-			present: await withinReach(found, present),
+			version: beat.version,
+			modifiedBy: beat.modifiedBy,
+			present: await withinReach(identity, id, beat.present),
 		});
 	} catch (error) {
 		return failure(error, "update who is here");
@@ -35,20 +38,25 @@ export async function POST(request: NextRequest, { params }: IdContext) {
 // A row key is the row's dimension values, so another viewer's selection is
 // passed on only when the caller's own rows include it. Somebody whose row
 // filter hides a row does not learn its values from a colleague selecting it.
-// Only the selected rows are checked, under the caller's own access.
+// Only the selected rows are checked, under the caller's own access, and the
+// sheet is read for that only when somebody else has a row selected.
 async function withinReach(
-	found: Exclude<Awaited<ReturnType<typeof sheetFor>>, NextResponse>,
-	present: Awaited<ReturnType<typeof heartbeat>>,
-) {
+	identity: Identity,
+	id: string,
+	present: Present[],
+): Promise<Present[]> {
 	const selected = present.filter((p) => !p.self && p.cell?.row);
 	if (selected.length === 0) return present;
 	let visible: Set<string>;
 	try {
-		visible = await visibleKeys(
-			found.identity,
-			found.sheet,
-			selected.map((p) => p.cell!.row),
-		);
+		const sheet = await getSheet(identity, id);
+		visible = sheet
+			? await visibleKeys(
+					identity,
+					sheet,
+					selected.map((p) => p.cell!.row),
+				)
+			: new Set();
 	} catch {
 		visible = new Set();
 	}

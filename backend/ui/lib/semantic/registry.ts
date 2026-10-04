@@ -1,5 +1,6 @@
 import { sql } from "../data/lakebase";
 import { setTrackedGroups } from "../auth/policy";
+import { dropDefinitionsLocally } from "../platform/definitionCache";
 import {
 	marksReadAt,
 	onMarksRead,
@@ -113,6 +114,9 @@ function toField(row: FieldRow): SemanticField {
 // An explicit sync passes true: it is what an admin runs after fixing the
 // privilege that made the walk fail, and reusing the failed answer would report
 // the fix as having changed nothing.
+// The sources and titles the last load found. See loadRegistry.
+let listedSources = "";
+
 export async function loadRegistry(force = false): Promise<void> {
 	// A caller arriving during a load gets a fresh load after it, not the one
 	// already running. That load may have read the tables before the caller's
@@ -211,6 +215,19 @@ export async function loadRegistry(force = false): Promise<void> {
 
 			sources = byKey;
 			loadedAt = Date.now();
+
+			// What is held about each source's standing names its title and
+			// leaves out sources that stopped, so a source added, removed or
+			// renamed drops it here. Every instance reloads its own registry,
+			// so this is not announced.
+			const listed = sourceRows
+				.map((r) => `${r.source_key}\u0000${r.title}`)
+				.sort()
+				.join("\u0001");
+			if (listed !== listedSources) {
+				listedSources = listed;
+				dropDefinitionsLocally("freshness:");
+			}
 
 			// Only groups that actually appear in an access rule are probed
 			// when resolving a policy class, so membership stays one small

@@ -24,6 +24,7 @@ import {
 	type CapabilityMap,
 	type Permission,
 } from "./accessRules";
+import { perProcess } from "../perProcess";
 
 // Resolves what a caller may open and what they may do, from the tables that
 // say so. The decisions themselves live in lib/platform/accessRules, which has
@@ -134,7 +135,10 @@ interface CacheEntry {
 	expiresAt: number;
 }
 
-const cache = new Map<string, CacheEntry>();
+const cache = perProcess(
+	"platform/access:cache",
+	() => new Map<string, CacheEntry>(),
+);
 
 // A lookup in progress, and whether an invalidation reached its key while it
 // ran. One that started before a grant changed may have read the old grants,
@@ -144,7 +148,10 @@ interface PendingContext {
 	stale: boolean;
 }
 
-const inflight = new Map<string, PendingContext>();
+const inflight = perProcess(
+	"platform/access:inflight",
+	() => new Map<string, PendingContext>(),
+);
 
 // Contexts built while part of what feeds them could not be read. Served to
 // the request that built them and never cached, so the next request tries
@@ -157,11 +164,9 @@ const partial = new WeakSet<AccessContext>();
 // its own removes nothing, so without a ceiling the map grows with everybody
 // who has ever used the replica rather than with whoever is using it now.
 //
-// Sized from the expected population rather than a constant, because a number
-// that is generous for one installation is a permanent thrash for another.
-function maxCacheEntries(): number {
-	return Math.max(1000, settings().expectedReaders * 2);
-}
+// The ceiling is sized for people rather than reports, so it is only reached
+// by more people than any one replica serves at once.
+const maxCacheEntries = 1_000_000;
 
 // Swept on write rather than on a timer, so a replica that stops being asked
 // stops doing work. The interval is what keeps a walk of the map off every
@@ -177,34 +182,26 @@ function evictIfNeeded(now: number): void {
 		}
 	}
 
-	// Expired entries are usually enough. A burst of distinct callers inside
-	// one interval is not, and past the ceiling the map is holding more than it
-	// is allowed to, so the oldest go regardless of whether they are still
-	// live. A dropped entry costs its owner one resolution.
-	const ceiling = maxCacheEntries();
-	if (cache.size <= ceiling) return;
-	const byExpiry = Array.from(cache.entries()).sort(
-		(a, b) => a[1].expiresAt - b[1].expiresAt,
-	);
-	for (const [key] of byExpiry.slice(0, cache.size - ceiling)) {
-		cache.delete(key);
+	// Past the ceiling the entry resolved longest ago goes, whether or not it
+	// is still live. Entries are held in the order they were resolved, so it
+	// is the first. A dropped entry costs its owner one resolution.
+	while (cache.size > maxCacheEntries) {
+		const oldest = cache.keys().next().value;
+		if (oldest === undefined) return;
+		cache.delete(oldest);
 	}
 }
 
 // How long a resolved access context is reused.
 //
-// The same setting the membership probe uses, rather than a second number
-// meaning nearly the same thing. Both answer "how long is a membership-derived
-// decision trusted", and having one at sixty seconds and the other at five
-// minutes meant the shorter one silently decided, so the setting an admin can
-// see did not describe the behaviour.
-//
-// This bounds how long a withdrawn grant keeps working inside the app. Access
-// to the app itself is gated upstream by the identity provider, which revokes
-// on its own schedule regardless of this.
-function contextTtlMs(): number {
-	return Math.max(settings().groupCacheTtlSeconds, 30) * 1000;
-}
+// A context is keyed by the caller's policy class, so a change of membership
+// gives it a new key, and a change to a role or a grant made here is announced
+// and drops it. What it folds in without either is what the catalogue lets
+// the caller read, from lib/auth/sourceAccess, so this is how soon a change
+// there reaches a context already held. Access to the app itself is gated
+// upstream by the identity provider, which revokes on its own schedule
+// regardless of this.
+const contextLifetimeMs = 5 * 60 * 1000;
 
 // What a caller holds when nothing can be read from the platform store.
 //
@@ -343,9 +340,10 @@ async function cached(
 		try {
 			const context = await load();
 			if (!pending.stale && !partial.has(context)) {
+				cache.delete(key);
 				cache.set(key, {
 					context,
-					expiresAt: Date.now() + contextTtlMs(),
+					expiresAt: Date.now() + contextLifetimeMs,
 				});
 				evictIfNeeded(Date.now());
 			}

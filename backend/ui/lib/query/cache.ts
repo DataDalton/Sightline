@@ -7,6 +7,7 @@ import type { PolicyClass } from "../auth/policy";
 import type { SemanticSource } from "../semantic/types";
 import { canonicalizeSpec, type QuerySpec } from "./spec";
 import { createGate } from "./gate";
+import { perProcess } from "../perProcess";
 
 // Three cache tiers in front of the warehouse:
 //
@@ -147,9 +148,14 @@ interface MemoryEntry {
 	bytes: number;
 }
 
-const memory = new Map<string, MemoryEntry>();
-let counter = 0;
-let heldBytes = 0;
+// Held for the whole process, with its use counter and size, so every copy
+// of this module reads and fills the same results. See lib/perProcess.
+const l1 = perProcess("query/cache:l1", () => ({
+	memory: new Map<string, MemoryEntry>(),
+	counter: 0,
+	heldBytes: 0,
+}));
+const memory = l1.memory;
 
 function budgetBytes(): number {
 	return settings().resultMaxBytes * 1024 * 1024;
@@ -158,7 +164,7 @@ function budgetBytes(): number {
 function memoryGet(key: string): CacheEntry | null {
 	const found = memory.get(key);
 	if (!found) return null;
-	found.touched = ++counter;
+	found.touched = ++l1.counter;
 	return found.value;
 }
 
@@ -176,7 +182,7 @@ function memoryGetCurrent(key: string): CacheEntry | null {
 function memoryDelete(key: string): void {
 	const held = memory.get(key);
 	if (!held) return;
-	heldBytes -= held.bytes;
+	l1.heldBytes -= held.bytes;
 	memory.delete(key);
 }
 
@@ -195,11 +201,11 @@ function memorySet(key: string, value: CacheEntry, jsonBytes: number): void {
 	}
 
 	memoryDelete(key);
-	memory.set(key, { value, touched: ++counter, bytes });
-	heldBytes += bytes;
+	memory.set(key, { value, touched: ++l1.counter, bytes });
+	l1.heldBytes += bytes;
 
 	const max = settings().resultMaxEntries;
-	if (heldBytes <= budget && memory.size <= max) return;
+	if (l1.heldBytes <= budget && memory.size <= max) return;
 
 	// Expired and superseded entries first. Neither can be served, so they
 	// are free to drop and cost nobody a hit.
@@ -212,7 +218,7 @@ function memorySet(key: string, value: CacheEntry, jsonBytes: number): void {
 
 	const targetBytes = budget * evictionLowMark;
 	const targetCount = Math.floor(max * evictionLowMark);
-	if (heldBytes <= targetBytes && memory.size <= targetCount) return;
+	if (l1.heldBytes <= targetBytes && memory.size <= targetCount) return;
 
 	// Ordered once, then walked. The low mark above is what keeps this from
 	// running on every insert.
@@ -220,7 +226,7 @@ function memorySet(key: string, value: CacheEntry, jsonBytes: number): void {
 		(a, b) => a[1].touched - b[1].touched,
 	);
 	for (const [k] of byAge) {
-		if (heldBytes <= targetBytes && memory.size <= targetCount) break;
+		if (l1.heldBytes <= targetBytes && memory.size <= targetCount) break;
 		// Never evict what was just inserted: the caller is about to read it.
 		if (k === key) continue;
 		memoryDelete(k);
@@ -381,7 +387,9 @@ function estimateJsonBytes(entry: CacheEntry): number {
 // next read and nothing else.
 const sharedWriteConcurrency = 3;
 const sharedWriteMaxQueued = 64;
-const sharedWrites = createGate(sharedWriteConcurrency);
+const sharedWrites = perProcess("query/cache:sharedWrites", () =>
+	createGate(sharedWriteConcurrency),
+);
 
 function queueSharedSet(
 	key: string,
@@ -668,7 +676,7 @@ export function cacheStats(): {
 } {
 	return {
 		l1Entries: memory.size,
-		l1Bytes: heldBytes,
+		l1Bytes: l1.heldBytes,
 		l1BudgetBytes: budgetBytes(),
 	};
 }

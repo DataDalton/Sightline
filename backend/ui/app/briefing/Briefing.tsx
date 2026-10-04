@@ -150,7 +150,7 @@ export function Briefing({ firstName }: { firstName: string | null }) {
 		data: plan,
 		error,
 		mutate: refreshPlan,
-	} = useSWR<BriefingPlan>(`/api/briefing/?tz=${encodeURIComponent(tz)}`, {
+	} = useSWR<BriefingPlan>("/api/briefing/", {
 		revalidateOnFocus: false,
 	});
 	const [cards, setCards] = useState<Record<string, Card | null>>({});

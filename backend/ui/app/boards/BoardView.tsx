@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "../components/AppLink";
+import { seedResponses } from "../components/SWRProvider";
 import {
 	memo,
 	useCallback,
@@ -410,7 +411,20 @@ const ItemCard = memo(function ItemCard({
 	);
 });
 
-export default function BoardView({ id }: { id: string }) {
+// Answers the server worked out while rendering the document arrive as
+// seeded, and are handed over before anything below asks for them. See
+// app/answeredHere.
+export default function BoardView({
+	id,
+	seeded,
+}: {
+	id: string;
+	seeded?: Record<string, unknown>;
+}) {
+	useState(() => {
+		if (seeded) seedResponses(seeded);
+		return null;
+	});
 	const board = useBoard(id);
 	usePageTitle(board.title || "Board");
 	const { data: sourceData } = useSWR<{ sources: SourceMeta[] }>(

@@ -1603,6 +1603,10 @@ const migrations: string[] = [
 	// answers it was built from were computed, so a card is judged again
 	// only once time has moved past something it was judged before.
 	`ALTER TABLE briefing_cards ADD COLUMN IF NOT EXISTS judged_on TIMESTAMPTZ`,
+
+	// The sign-in a stored membership was found for, as a hash of the token.
+	// A row is read back only for the same sign-in. See lib/auth/policy.
+	`ALTER TABLE reader_policy ADD COLUMN IF NOT EXISTS session_key TEXT NOT NULL DEFAULT ''`,
 ];
 
 // Creates anything missing. Safe to run on every startup.

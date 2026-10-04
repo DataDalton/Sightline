@@ -1,4 +1,5 @@
 import { announce, onChange } from "./changes";
+import { perProcess } from "../perProcess";
 
 // What a report is, as opposed to who may see it or what it currently says.
 //
@@ -25,7 +26,58 @@ interface Entry {
 	expiresAt: number;
 }
 
-const entries = new Map<string, Entry>();
+// Kept in order of last use, oldest first. A read moves its key to the end,
+// so the first key is always the one to give up when the ceiling is reached.
+const entries = perProcess(
+	"platform/definitionCache:entries",
+	() => new Map<string, Entry>(),
+);
+
+// Every key under each prefix that ends at a ':' or '|', so dropping a prefix
+// visits only the keys beneath it rather than every key held. Per reader keys
+// end their reader's part with '|', which makes dropping one reader's entries
+// a lookup.
+const families = perProcess(
+	"platform/definitionCache:families",
+	() => new Map<string, Set<string>>(),
+);
+
+function familiesOf(key: string): string[] {
+	const out: string[] = [];
+	for (let i = 0; i < key.length; i++) {
+		const c = key.charCodeAt(i);
+		// ':' and '|'
+		if (c === 58 || c === 124) out.push(key.slice(0, i + 1));
+	}
+	return out;
+}
+
+function hold(key: string, entry: Entry): void {
+	if (entries.has(key)) entries.delete(key);
+	else {
+		for (const family of familiesOf(key)) {
+			let members = families.get(family);
+			if (!members) families.set(family, (members = new Set()));
+			members.add(key);
+		}
+	}
+	entries.set(key, entry);
+	if (entries.size > maxEntries) {
+		// The least recently read.
+		const oldest = entries.keys().next().value;
+		if (oldest !== undefined) release(oldest);
+	}
+}
+
+function release(key: string): void {
+	if (!entries.delete(key)) return;
+	for (const family of familiesOf(key)) {
+		const members = families.get(family);
+		if (!members) continue;
+		members.delete(key);
+		if (members.size === 0) families.delete(family);
+	}
+}
 
 // A load in progress, and whether an invalidation reached its key while it
 // ran. A load whose key was invalidated may have read the rows the write
@@ -37,47 +89,29 @@ interface Pending {
 	stale: boolean;
 }
 
-const inflight = new Map<string, Pending>();
+const inflight = perProcess(
+	"platform/definitionCache:inflight",
+	() => new Map<string, Pending>(),
+);
 
-// An expired entry is never read, but it is still held: the map only ever grew,
-// one slot per report the installation has, each holding a full definition.
-// Swept on write rather than on a timer, so a module instance that stops being
-// asked stops doing work.
+// An expired entry is never read, and is dropped as it is found. Walked once
+// a minute as well, so entries nobody asks for again do not hold memory until
+// the ceiling pushes them out. Run on write rather than on a timer, so a
+// module instance that stops being asked stops doing work.
 const sweepIntervalMs = 60 * 1000;
 let sweptAt = 0;
 
-// A ceiling as well as a sweep.
-//
-// The sweep drops what has expired, which is enough while every key is a report
-// and an installation has hundreds. Per caller keys changed that: navigation is
-// memoised per policy class and reader, so the number of live keys follows the
-// number of people using the app rather than the number of reports.
-const maxEntries = 50000;
+// How many entries are held at most. Per reader keys make the count follow
+// the number of people using the app rather than the number of reports, so
+// the ceiling is sized for people. Reaching it drops the entry read longest
+// ago, which costs that reader one recomputation.
+const maxEntries = 1_000_000;
 
 function sweep(now: number): void {
-	// The interval bounds the expiry walk. The ceiling below is checked every
-	// time, because a burst of distinct callers can cross it inside one
-	// interval and the point of a ceiling is that it is not crossed.
-	if (now - sweptAt < sweepIntervalMs) {
-		if (entries.size > maxEntries) trim();
-		return;
-	}
+	if (now - sweptAt < sweepIntervalMs) return;
 	sweptAt = now;
 	for (const [key, held] of entries) {
-		if (held.expiresAt <= now) entries.delete(key);
-	}
-
-	trim();
-}
-
-function trim(): void {
-	if (entries.size <= maxEntries) return;
-	// Oldest expiry first. A dropped entry costs one caller one recomputation.
-	const byExpiry = Array.from(entries.entries()).sort(
-		(a, b) => a[1].expiresAt - b[1].expiresAt,
-	);
-	for (const [key] of byExpiry.slice(0, entries.size - maxEntries)) {
-		entries.delete(key);
+		if (held.expiresAt <= now) release(key);
 	}
 }
 
@@ -91,7 +125,11 @@ export async function cachedDefinition<T>(
 	const now = Date.now();
 
 	const held = entries.get(key);
-	if (held && held.expiresAt > now) return held.value as T;
+	if (held && held.expiresAt > now) {
+		entries.delete(key);
+		entries.set(key, held);
+		return held.value as T;
+	}
 
 	sweep(now);
 
@@ -104,7 +142,7 @@ export async function cachedDefinition<T>(
 	pending.promise = (async () => {
 		const value = await load();
 		if (!pending.stale) {
-			entries.set(key, { value, expiresAt: Date.now() + lifetimeMs });
+			hold(key, { value, expiresAt: Date.now() + lifetimeMs });
 		}
 		return value;
 	})().finally(() => {
@@ -137,7 +175,30 @@ export function invalidateDefinitions(prefix?: string): void {
 // The same, on this instance only, for applying a change announced by
 // another, which must not be announced again.
 export function dropDefinitionsLocally(prefix?: string): void {
-	dropMatchingLocally(prefix ? (key) => key.startsWith(prefix) : () => true);
+	if (!prefix) {
+		dropMatchingLocally(() => true);
+		return;
+	}
+	// The keys under the longest family the prefix names, of which only those
+	// that start with the whole prefix are dropped.
+	let cut = -1;
+	for (let i = prefix.length - 1; i >= 0; i--) {
+		const c = prefix.charCodeAt(i);
+		if (c === 58 || c === 124) {
+			cut = i;
+			break;
+		}
+	}
+	const matches = (key: string) => key.startsWith(prefix);
+	if (cut < 0) {
+		dropMatchingLocally(matches);
+		return;
+	}
+	const members = families.get(prefix.slice(0, cut + 1));
+	if (members) {
+		for (const key of [...members]) if (matches(key)) release(key);
+	}
+	dropInflight(matches);
 }
 
 onChange(
@@ -151,9 +212,13 @@ onChange(
 // announces it in a form other instances can apply, as access does with its
 // own kind of change.
 export function dropMatchingLocally(test: (key: string) => boolean): void {
-	for (const key of entries.keys()) {
-		if (test(key)) entries.delete(key);
+	for (const key of [...entries.keys()]) {
+		if (test(key)) release(key);
 	}
+	dropInflight(test);
+}
+
+function dropInflight(test: (key: string) => boolean): void {
 	for (const [key, pending] of inflight) {
 		if (!test(key)) continue;
 		pending.stale = true;

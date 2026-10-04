@@ -24,3 +24,17 @@ export function canonicalRequest(value: unknown): string {
 		.map(([k, v]) => `${JSON.stringify(k)}:${canonicalRequest(v)}`)
 		.join(",")}}`;
 }
+
+// The key a read sent as a POST is held under. See app/hooks/usePostResource.
+export function postKey(url: string, body: unknown): string {
+	return `${url}\u0000${canonicalRequest(body)}`;
+}
+
+// The key a page's late data notice asks under, for the sources the page
+// reads. See app/visuals/LateDataNotice.
+export function lateKey(sourceKeys: string[]): string | null {
+	const keys = [...new Set(sourceKeys)].sort();
+	return keys.length
+		? `/api/query/late/?sources=${encodeURIComponent(keys.join(","))}`
+		: null;
+}

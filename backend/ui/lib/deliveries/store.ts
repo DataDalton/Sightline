@@ -11,6 +11,7 @@ import {
 	type Schedule,
 } from "../alerts/schedule";
 import { slug } from "../visuals/shareState";
+import { hasOwnedChecks, ownersChanged } from "../alerts/owners";
 
 // A page somebody asked to be sent on a schedule.
 //
@@ -81,9 +82,12 @@ function toRecord(row: DeliveryListRow): DeliveryRecord {
 	};
 }
 
+// Somebody with no alert, followed alert or scheduled page has nothing to
+// list, which the shared set of owners answers without a question.
 export async function listDeliveries(
 	ownerEmail: string,
 ): Promise<DeliveryRecord[]> {
+	if (!(await hasOwnedChecks(ownerEmail))) return [];
 	const rows = await sql<DeliveryListRow>(
 		`SELECT d.delivery_id::text, d.report_id::text, r.slug,
 		        r.title AS report_title, d.page_id::text, p.title AS page_title,
@@ -162,6 +166,7 @@ export async function subscribe(
 			confirmed,
 		],
 	);
+	ownersChanged();
 
 	const all = await listDeliveries(email);
 	const saved = all.find((d) => d.pageId === page.pageId);

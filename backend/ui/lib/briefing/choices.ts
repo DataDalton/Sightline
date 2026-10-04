@@ -18,26 +18,6 @@ export interface BriefingChoice {
 	choice: Choice;
 }
 
-// Pins first, in the reader's order, then hides.
-export async function listChoices(email: string): Promise<BriefingChoice[]> {
-	const rows = await sql<{
-		report_id: string;
-		measure: string;
-		choice: Choice;
-	}>(
-		`SELECT report_id::text AS report_id, measure, choice
-		 FROM briefing_choices
-		 WHERE user_email = $1
-		 ORDER BY choice = 'hide', position NULLS LAST, chosen_on`,
-		[email.toLowerCase()],
-	);
-	return rows.map((r) => ({
-		reportId: r.report_id,
-		measure: r.measure,
-		choice: r.choice,
-	}));
-}
-
 // Sets or clears one choice. Null clears it, which is how a hidden figure
 // comes back and a pinned one goes back to being chosen for the reader. A new
 // pin goes after the reader's other pins.

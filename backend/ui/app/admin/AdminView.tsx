@@ -892,7 +892,6 @@ interface ConfigValues {
 	staleWhileRevalidate: boolean;
 	liveTtlSeconds: number;
 	refreshIntervalSeconds: number;
-	groupCacheTtlSeconds: number;
 	policyGraceSeconds: number;
 	telemetryEnabled: boolean;
 	editorGroups: string[];
@@ -1416,18 +1415,9 @@ function ConfigurationSection({ group }: { group: PaneId }) {
 
 						<SettingGroup
 							title="Access"
-							blurb="How long a resolved membership is trusted. Both bound how long a withdrawn grant keeps working."
+							blurb="Group membership is checked once each time somebody signs in. This is how long the last check stands while checking fails."
 						>
 							<div className={styles.settingGrid}>
-								<NumberSetting
-									label="Membership cache"
-									hint="How long a resolved membership and the access it confers are reused. Bounds how long a grant withdrawn here keeps working."
-									unit="seconds"
-									value={values.groupCacheTtlSeconds}
-									onChange={(v) =>
-										set({ groupCacheTtlSeconds: v })
-									}
-								/>
 								<NumberSetting
 									label="Grace when unavailable"
 									hint="How long a stored membership is still served while the lookup itself is failing."

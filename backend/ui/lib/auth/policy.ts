@@ -1,5 +1,8 @@
+import { createHash } from "node:crypto";
 import { effectiveAdminGroups, settings } from "../settings";
+import { batchedRead } from "../data/batch";
 import type { Identity } from "./identity";
+import { perProcess } from "../perProcess";
 
 // Resolves a caller into a policy class: the set of group grants that decides
 // which rows Unity Catalog will return for them.
@@ -11,8 +14,13 @@ import type { Identity } from "./identity";
 // and two users in different classes can never read each other entries
 // because the class id is part of the cache key.
 //
-// Membership is probed with a single query per user per TTL rather than one
-// per request, and no SCIM permission is required.
+// Membership is probed with a single query per sign-in rather than one per
+// request, and no SCIM permission is required. A sign-in is told apart by the
+// forwarded token. A new sign-in, or the token being replaced while somebody
+// stays signed in, is a new token, and the probe runs once for it. A change of
+// membership while a token lasts takes effect with the next one. Queries that
+// are not answered from the shared cache are unaffected by that wait, since
+// Unity Catalog applies the row filter under the token as each one runs.
 
 export interface PolicyClass {
 	// Stable id for the resolved grant set. Part of every data cache key.
@@ -30,6 +38,10 @@ export interface PolicyClass {
 
 interface CacheEntry {
 	value: PolicyClass;
+	// The sign-in and the tracked group list the answer was found for. Served
+	// only while both are still the caller's.
+	session: string;
+	setKey: string;
 	// Point at which the entry is refreshed on next use.
 	expiresAt: number;
 	// Point past which the entry is no longer served even in a degraded
@@ -37,10 +49,32 @@ interface CacheEntry {
 	graceUntil: number;
 }
 
-const cache = new Map<string, CacheEntry>();
-const inflight = new Map<string, Promise<PolicyClass>>();
+const cache = perProcess(
+	"auth/policy:cache",
+	() => new Map<string, CacheEntry>(),
+);
+const inflight = perProcess(
+	"auth/policy:inflight",
+	() => new Map<string, Promise<PolicyClass>>(),
+);
 
-const maxCacheEntries = 50000;
+const maxCacheEntries = 1_000_000;
+
+// How long one sign-in's answer stands when its token is never replaced, as
+// with a token that does not expire. A forwarded token is replaced well
+// within this.
+const sessionLifetimeMs = 24 * 60 * 60 * 1000;
+
+// Tells one sign-in from another without keeping the token itself. Without a
+// token, as in local development and the demo, each person is one sign-in.
+function sessionOf(identity: Identity): string {
+	return identity.userToken
+		? createHash("sha256")
+				.update(identity.userToken)
+				.digest("hex")
+				.slice(0, 32)
+		: "local";
+}
 
 // How many times one resolution asks again after the tracked group list changes
 // under it, before it gives up and reports the class as unresolved.
@@ -78,7 +112,10 @@ let trackedGroups: TrackedGroup[] = [];
 // is the evidence that distinguishes the two. Absence is not proof of a typo:
 // a correctly named group nobody in it has signed in under yet looks the same,
 // which is why the administration screen says "not seen" rather than "wrong".
-const groupProbes = new Map<string, { probedAt: number; matchedAt: number }>();
+const groupProbes = perProcess(
+	"auth/policy:groupProbes",
+	() => new Map<string, { probedAt: number; matchedAt: number }>(),
+);
 
 export interface GroupProbeRecord {
 	name: string;
@@ -204,18 +241,14 @@ function policyIdFor(grants: string[]): string {
 		.join("+");
 }
 
+// Entries are kept in the order they were resolved, so the first is the one
+// resolved longest ago and is dropped when the ceiling is reached. A dropped
+// class costs that person one stored policy read on their next request.
 function evictIfNeeded(): void {
-	if (cache.size <= maxCacheEntries) return;
-	const now = Date.now();
-	for (const [key, entry] of cache) {
-		if (entry.graceUntil <= now) cache.delete(key);
-	}
-	if (cache.size > maxCacheEntries) {
-		let excess = cache.size - maxCacheEntries;
-		for (const key of cache.keys()) {
-			cache.delete(key);
-			if (--excess <= 0) break;
-		}
+	while (cache.size > maxCacheEntries) {
+		const oldest = cache.keys().next().value;
+		if (oldest === undefined) return;
+		cache.delete(oldest);
 	}
 }
 
@@ -329,18 +362,51 @@ function groupSetKey(groups: TrackedGroup[]): string {
 		.join("|");
 }
 
+// Read for everyone arriving at about the same time in one statement. See
+// lib/data/batch.
+// A stored answer is used only for the sign-in it was found for.
+const storedPolicies = batchedRead<
+	{ email: string; setKey: string; session: string },
+	string[] | null
+>(
+	async (keys) => {
+		const { sql } = await import("../data/lakebase");
+		const rows = await sql<{
+			user_email: string;
+			group_set: string;
+			session_key: string;
+			grants: string[];
+		}>(
+			`SELECT p.user_email, p.group_set, p.session_key, p.grants
+			 FROM reader_policy p
+			 JOIN unnest($1::text[], $2::text[], $3::text[]) AS k(e, s, t)
+			   ON p.user_email = k.e AND p.group_set = k.s
+			  AND p.session_key = k.t
+			 WHERE p.expires_on > now()`,
+			[
+				keys.map((k) => k.email),
+				keys.map((k) => k.setKey),
+				keys.map((k) => k.session),
+			],
+		);
+		return new Map(
+			rows.map((r) => [
+				JSON.stringify([r.user_email, r.group_set, r.session_key]),
+				r.grants,
+			]),
+		);
+	},
+	(k) => JSON.stringify([k.email, k.setKey, k.session]),
+	null,
+);
+
 async function readStoredPolicy(
 	email: string,
 	setKey: string,
+	session: string,
 ): Promise<string[] | null> {
 	try {
-		const { sql } = await import("../data/lakebase");
-		const rows = await sql<{ grants: string[] }>(
-			`SELECT grants FROM reader_policy
-			 WHERE user_email = $1 AND group_set = $2 AND expires_on > now()`,
-			[email, setKey],
-		);
-		return rows[0]?.grants ?? null;
+		return await storedPolicies({ email, setKey, session });
 	} catch (error) {
 		// A miss, never an error the caller sees: the probe still runs.
 		console.warn("Stored policy read failed:", error);
@@ -355,15 +421,32 @@ async function readStoredPolicy(
 // memory, so the write only lets another replica skip the probe, and one that
 // fails costs that replica a probe, never correctness.
 const storeEveryMs = 1000;
-const policiesToStore = new Map<
-	string,
-	{ email: string; setKey: string; grants: string[] }
->();
-const groupsToStore = new Map<string, string[]>();
+const policiesToStore = perProcess(
+	"auth/policy:policiesToStore",
+	() =>
+		new Map<
+			string,
+			{ email: string; setKey: string; session: string; grants: string[] }
+		>(),
+);
+const groupsToStore = perProcess(
+	"auth/policy:groupsToStore",
+	() => new Map<string, string[]>(),
+);
 let storeTimer: ReturnType<typeof setTimeout> | null = null;
 
-function queueStored(email: string, grants: string[], setKey: string): void {
-	policiesToStore.set(`${email}|${setKey}`, { email, setKey, grants });
+function queueStored(
+	email: string,
+	grants: string[],
+	setKey: string,
+	session: string,
+): void {
+	policiesToStore.set(`${email}|${setKey}`, {
+		email,
+		setKey,
+		session,
+		grants,
+	});
 	// Keeps the groups a person was just found in after the stored policy
 	// has expired. Only messages read it, to know who is in a group without
 	// asking the workspace directory. It grants nothing, since every read of
@@ -385,18 +468,23 @@ async function storeQueued(): Promise<void> {
 	if (policies.length > 0) {
 		await sql(
 			`INSERT INTO reader_policy
-			   (user_email, group_set, grants, computed_on, expires_on)
-			 SELECT e, k, g::jsonb, now(), now() + make_interval(secs => $4)
-			 FROM unnest($1::text[], $2::text[], $3::text[]) AS u(e, k, g)
+			   (user_email, group_set, session_key, grants, computed_on,
+			    expires_on)
+			 SELECT e, k, t, g::jsonb, now(),
+			        now() + make_interval(secs => $5)
+			 FROM unnest($1::text[], $2::text[], $3::text[], $4::text[])
+			   AS u(e, k, t, g)
 			 ON CONFLICT (user_email, group_set) DO UPDATE SET
+			   session_key = EXCLUDED.session_key,
 			   grants = EXCLUDED.grants,
 			   computed_on = EXCLUDED.computed_on,
 			   expires_on = EXCLUDED.expires_on`,
 			[
 				policies.map((p) => p.email),
 				policies.map((p) => p.setKey),
+				policies.map((p) => p.session),
 				policies.map((p) => JSON.stringify(p.grants)),
-				settings().groupCacheTtlSeconds,
+				sessionLifetimeMs / 1000,
 			],
 		).catch((error) => {
 			console.warn("Stored policy write failed:", error);
@@ -421,25 +509,32 @@ export async function resolvePolicyClass(
 	identity: Identity,
 ): Promise<PolicyClass> {
 	const key = identity.email.toLowerCase();
+	const session = sessionOf(identity);
 	const now = Date.now();
 
 	if (trackedGroups.length === 0) return emptyClass(now);
 
 	const cached = cache.get(key);
-	if (cached && cached.expiresAt > now) return cached.value;
+	if (
+		cached &&
+		cached.expiresAt > now &&
+		cached.session === session &&
+		cached.setKey === groupSetKey(trackedGroups)
+	) {
+		return cached.value;
+	}
 
-	const existing = inflight.get(key);
+	const resolving = `${key}|${session}`;
+	const existing = inflight.get(resolving);
 	if (existing) return existing;
 
 	// Declared ahead of the body so its own cleanup can tell its entry apart.
 	let pending: Promise<PolicyClass> | undefined = undefined;
 	pending = (async (): Promise<PolicyClass> => {
 		try {
-			// Read back before it is asked for again. The stored answer carries
-			// the same lifetime the memory one does, so this shares an existing
-			// window between replicas rather than widening it: a membership
-			// change still takes effect within groupCacheTtlSeconds, and the
-			// grace window still covers a lookup outage.
+			// Read back before it is asked for again. A replica that already
+			// probed for this sign-in stored what it found, so one sign-in is
+			// probed once however many replicas it reaches.
 			//
 			// The answer is only kept when the tracked list is still the one it
 			// was asked against. A list replaced while the probe ran would
@@ -451,7 +546,7 @@ export async function resolvePolicyClass(
 			let stored: string[] | null = null;
 			let grants: string[] = [];
 			for (let attempt = 0; ; attempt++) {
-				stored = await readStoredPolicy(key, setKey);
+				stored = await readStoredPolicy(key, setKey, session);
 				grants = stored ?? (await probeGrants(identity, groups));
 				const currentKey = groupSetKey(trackedGroups);
 				if (currentKey === setKey) break;
@@ -463,7 +558,7 @@ export async function resolvePolicyClass(
 				groups = trackedGroups;
 				setKey = currentKey;
 			}
-			if (!stored) queueStored(key, grants, setKey);
+			if (!stored) queueStored(key, grants, setKey, session);
 			const value: PolicyClass = {
 				id: policyIdFor(grants),
 				grants,
@@ -471,9 +566,12 @@ export async function resolvePolicyClass(
 				stale: false,
 				resolvedAt: now,
 			};
+			cache.delete(key);
 			cache.set(key, {
 				value,
-				expiresAt: now + settings().groupCacheTtlSeconds * 1000,
+				session,
+				setKey,
+				expiresAt: now + sessionLifetimeMs,
 				graceUntil: now + settings().policyGraceSeconds * 1000,
 			});
 			evictIfNeeded();
@@ -489,6 +587,8 @@ export async function resolvePolicyClass(
 				const stale: PolicyClass = { ...cached.value, stale: true };
 				cache.set(key, {
 					value: stale,
+					session: cached.session,
+					setKey: cached.setKey,
 					expiresAt: now + 30000,
 					graceUntil: cached.graceUntil,
 				});
@@ -508,16 +608,18 @@ export async function resolvePolicyClass(
 		} finally {
 			// Only this resolution's own entry. A tracked list change clears the
 			// map, and a resolution started after that belongs to someone else.
-			if (inflight.get(key) === pending) inflight.delete(key);
+			if (inflight.get(resolving) === pending) {
+				inflight.delete(resolving);
+			}
 		}
 	})();
 
-	inflight.set(key, pending);
+	inflight.set(resolving, pending);
 	return pending;
 }
 
-// Drops a cached class so a grant change takes effect without waiting out the
-// TTL. Only affects the calling replica.
+// Drops a cached class so a grant change takes effect without waiting for the
+// next sign-in. Only affects the calling replica.
 export function invalidatePolicyClass(email?: string): void {
 	if (email) {
 		cache.delete(email.toLowerCase());

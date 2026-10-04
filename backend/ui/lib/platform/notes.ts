@@ -1,4 +1,5 @@
 import { sql } from "../data/lakebase";
+import { cachedDefinition, invalidateDefinitions } from "./definitionCache";
 import { maxNoteLength, type VisualNote } from "./noteTypes";
 
 // Re-exported so a server caller reads one module rather than two.
@@ -21,7 +22,19 @@ export type { VisualNote };
 // A page at a time rather than a visual at a time: a reader opens a page with
 // eight visuals on it, and eight requests for a handful of rows each is eight
 // round trips for something one covers.
+//
+// The same for every reader of the page, so held per page until a note on it
+// is added or removed, which drops it on every instance. See
+// lib/platform/changes.
+function notesKey(pageId: string): string {
+	return `notes:${pageId.toLowerCase()}|`;
+}
+
 export async function listPageNotes(pageId: string): Promise<VisualNote[]> {
+	return cachedDefinition(notesKey(pageId), () => readPageNotes(pageId));
+}
+
+async function readPageNotes(pageId: string): Promise<VisualNote[]> {
 	const rows = await sql<{
 		note_id: string;
 		visual_id: string;
@@ -79,6 +92,7 @@ export async function addNote(input: {
 
 	const created = rows[0];
 	if (!created) return null;
+	invalidateDefinitions(notesKey(input.pageId));
 
 	return {
 		noteId: created.note_id,
@@ -102,18 +116,19 @@ export async function removeNote(
 	canRemoveAny: boolean,
 ): Promise<boolean> {
 	const rows = canRemoveAny
-		? await sql<{ note_id: string }>(
+		? await sql<{ page_id: string }>(
 				`DELETE FROM visual_notes WHERE note_id = $1
-				 RETURNING note_id::text`,
+				 RETURNING page_id::text`,
 				[noteId],
 			)
-		: await sql<{ note_id: string }>(
+		: await sql<{ page_id: string }>(
 				`DELETE FROM visual_notes
 				 WHERE note_id = $1 AND author_email = $2
-				 RETURNING note_id::text`,
+				 RETURNING page_id::text`,
 				[noteId, requesterEmail.toLowerCase()],
 			);
 
+	for (const row of rows) invalidateDefinitions(notesKey(row.page_id));
 	return rows.length > 0;
 }
 

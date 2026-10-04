@@ -7,6 +7,8 @@ import OperationStateError, {
 } from "@databricks/sql/dist/errors/OperationStateError";
 import { resolveWarehousePath, serverHostname } from "../runtime";
 import type { QueryParams, Row } from "./types";
+import { perProcess } from "../perProcess";
+import { maxWarehouseSessions } from "./warehouseSessions";
 
 // Every query that touches user-facing data runs through here, under the
 // caller forwarded token. That is what makes Unity Catalog row filters and
@@ -34,12 +36,15 @@ interface PooledSession {
 	active: number;
 }
 
-const pool = new Map<string, PooledSession>();
+const pool = perProcess(
+	"data/userSession:pool",
+	() => new Map<string, PooledSession>(),
+);
 
 // Sessions idle longer than this are closed. Kept well under the typical
 // forwarded-token lifetime so a stale token is discarded rather than reused.
 const idleTimeoutMs = 5 * 60 * 1000;
-const maxPooledSessions = 200;
+const maxPooledSessions = maxWarehouseSessions;
 
 // The share of the pool speculative warming may fill. Past this, slots are kept
 // for readers who are actually querying.

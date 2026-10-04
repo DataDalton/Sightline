@@ -2,6 +2,8 @@ import { types, type Pool } from "pg";
 import type { QueryParams, Row } from "../data/types";
 import { lakebase, localIdentityEmail } from "../runtime";
 import { toPostgres } from "./dialect";
+import { maxWarehouseSessions } from "../data/warehouseSessions";
+import { perProcess } from "../perProcess";
 
 // The demonstration's warehouse. Runs what the platform would send to a
 // Databricks SQL warehouse against sample tables in the local Postgres, as the
@@ -26,20 +28,25 @@ function parserFor(oid: number, format?: string): (value: string) => unknown {
 
 // The sample tables are read through a pool of their own, as a real
 // warehouse is reached over connections of its own, so a load on the sample
-// data does not take connections the platform tables need.
-let warehousePool: Promise<Pool> | null = null;
+// data does not take connections the platform tables need. It holds as many
+// connections as a deployed process holds warehouse sessions, so the demo is
+// held to the limit a deployment has rather than to the platform store's
+// pool size. One for the process, see lib/perProcess.
+const shared = perProcess("demo/warehouse", () => ({
+	pool: null as Promise<Pool> | null,
+}));
 
 function getWarehousePool(): Promise<Pool> {
-	warehousePool ??= import("pg").then(
+	shared.pool ??= import("pg").then(
 		({ Pool: PgPool }) =>
 			new PgPool({
 				connectionString: lakebase.localUrl,
-				max: lakebase.poolMax,
+				max: maxWarehouseSessions,
 				idleTimeoutMillis: 30000,
 				connectionTimeoutMillis: 10000,
 			}),
 	);
-	return warehousePool;
+	return shared.pool;
 }
 
 // How long each sample query is held before it runs, from

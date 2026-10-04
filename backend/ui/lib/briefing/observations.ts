@@ -1,4 +1,5 @@
 import type { Observation } from "../alerts/completeness";
+import { batchedRead } from "../data/batch";
 import { sql } from "../data/lakebase";
 
 // What each figure read as for each recent period, every time its card was
@@ -24,14 +25,11 @@ function keyOf(scope: string, digest: string): string {
 	return `${scope}:${digest}`;
 }
 
-// Every reading for the figures given, in one statement. Answers them by
-// scope and digest, as figureKey names them.
-export async function readObservations(
-	figures: ObservedFigure[],
-): Promise<Map<string, Observation[]>> {
-	const found = new Map<string, Observation[]>();
-	if (figures.length === 0) return found;
-	try {
+// Every reading for the figures given. Answers them by scope and digest, as
+// figureKey names them. The figures of every card being worked out at about
+// the same time are read in one statement. See lib/data/batch.
+const storedReadings = batchedRead<ObservedFigure, Observation[]>(
+	async (figures) => {
 		const rows = await sql<{
 			scope: string;
 			card_digest: string;
@@ -53,6 +51,7 @@ export async function readObservations(
 				learnDays,
 			],
 		);
+		const found = new Map<string, Observation[]>();
 		for (const row of rows) {
 			const key = keyOf(row.scope, row.card_digest);
 			const list = found.get(key) ?? [];
@@ -63,6 +62,23 @@ export async function readObservations(
 			});
 			found.set(key, list);
 		}
+		return found;
+	},
+	(figure) => keyOf(figure.scope, figure.digest),
+	[],
+);
+
+export async function readObservations(
+	figures: ObservedFigure[],
+): Promise<Map<string, Observation[]>> {
+	const found = new Map<string, Observation[]>();
+	if (figures.length === 0) return found;
+	try {
+		const readings = await Promise.all(figures.map(storedReadings));
+		figures.forEach((figure, i) => {
+			if (readings[i].length > 0)
+				found.set(figureKey(figure), readings[i]);
+		});
 	} catch (error) {
 		// Nothing learned means the other signals decide.
 		console.warn("Figure readings could not be read:", error);
