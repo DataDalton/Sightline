@@ -45,6 +45,30 @@ const noRows = Object.freeze([]) as readonly Record<
 >[] as Record<string, unknown>[];
 const noColumns = Object.freeze([]) as readonly string[] as string[];
 
+// A query that failed is asked again on its own, soon at first and then less
+// often, so a visual that met a passing failure fills in without the reader
+// reloading. A refusal, such as no access or a question the source cannot
+// answer, is an answer rather than a failure and is not asked again.
+const failedQueryRetries = 5;
+const firstRetryMs = 1000;
+
+function retryFailedQuery(
+	error: Error & { status?: number },
+	_key: string,
+	_config: unknown,
+	revalidate: (options: { retryCount: number }) => void,
+	{ retryCount }: { retryCount: number },
+): void {
+	const status = error.status;
+	if (status !== undefined && status >= 400 && status < 500) return;
+	if (retryCount > failedQueryRetries) return;
+	const base = firstRetryMs * 2 ** (retryCount - 1);
+	setTimeout(
+		() => revalidate({ retryCount }),
+		base / 2 + Math.random() * base,
+	);
+}
+
 export function useVisualQuery(query: VisualQuery | null) {
 	// The canonical form of the query is the SWR key, so identical requests
 	// deduplicate across every visual on the page however the object was
@@ -84,6 +108,7 @@ export function useVisualQuery(query: VisualQuery | null) {
 			keepPreviousData: true,
 			// SWR also pauses this while the tab is hidden.
 			refreshInterval,
+			onErrorRetry: retryFailedQuery,
 		},
 	);
 

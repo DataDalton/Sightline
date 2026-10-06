@@ -34,6 +34,9 @@ interface PooledSession {
 	// Statements running on the session. A busy session is never evicted,
 	// because closing it would fail the statements still reading from it.
 	active: number;
+	// Taken out of the pool after it failed, and closed once the statements
+	// still running on it have finished.
+	retired: boolean;
 }
 
 const pool = perProcess(
@@ -130,6 +133,17 @@ function enforceCeiling(): void {
 	sweepIdle();
 }
 
+// Takes a session that failed out of the pool, so the next statement opens a
+// fresh one, without cutting off the statements still running on it. A page
+// sends every visual's query at once on the reader's session, and closing it
+// at the first failure failed every one of the others with it. It is closed
+// by release once the last of them has finished.
+function retire(key: string, entry: PooledSession): void {
+	if (pool.get(key) === entry) pool.delete(key);
+	entry.retired = true;
+	if (entry.active === 0) void closeEntry(key, entry);
+}
+
 // Takes the caller's session for one statement, opening it if needed. The
 // statement is counted as running until release is called.
 function acquire(key: string, token: string): PooledSession {
@@ -153,9 +167,10 @@ function acquire(key: string, token: string): PooledSession {
 // Marks one statement on the session as finished. Idle time counts from here,
 // so a long statement does not leave its session looking idle the moment it
 // ends.
-function release(entry: PooledSession): void {
+function release(key: string, entry: PooledSession): void {
 	entry.active = Math.max(0, entry.active - 1);
 	entry.lastUsed = Date.now();
+	if (entry.retired && entry.active === 0) void closeEntry(key, entry);
 }
 
 function openSession(token: string): PooledSession {
@@ -178,11 +193,23 @@ function openSession(token: string): PooledSession {
 			host: serverHostname,
 			path,
 			token,
+			// The driver's own telemetry is off. Each reader has a client of
+			// their own, and the driver sends every client's events under
+			// whichever client registered first, so one reader's events would
+			// go out under another reader's token.
+			telemetryEnabled: false,
 		});
 		return client.openSession();
 	})();
 
-	return { session, client, lastUsed: Date.now(), token, active: 0 };
+	return {
+		session,
+		client,
+		lastUsed: Date.now(),
+		token,
+		active: 0,
+		retired: false,
+	};
 }
 
 // Whether an error is the statement itself failing, such as a query the
@@ -195,15 +222,50 @@ function statementFailed(error: unknown): boolean {
 	);
 }
 
+// Failures that come from the warehouse's state at the moment rather than from
+// the statement: a session asked to run before the warehouse has finished
+// starting it, a warehouse at capacity while it scales, a connection or
+// session lost on the way, and a catalogue lookup that fails while a
+// session is still being set up. Each usually succeeds when asked again
+// shortly after, so it is asked again rather than shown as a failed visual.
+const passingFailure =
+	/max capacity reached|not fully initialized|no SparkSession is attached|No API URL found in Unity Scope|not connected|session was closed|session.*expired|ECONNRESET|ETIMEDOUT|EPIPE|socket hang up/i;
+
+// Failures where the session itself is fine and the warehouse refused or
+// stumbled, so the same session is used again.
+const warehouseRefusal =
+	/max capacity reached|No API URL found in Unity Scope/i;
+
+function messageOf(error: unknown): string {
+	if (error instanceof Error) return error.message;
+	if (error && typeof error === "object" && "message" in error) {
+		return String((error as { message: unknown }).message);
+	}
+	return String(error);
+}
+
+// How many times a statement is run in all, and how long to wait before each
+// run after the first. The waits grow and carry a random share, so readers
+// whose statements failed together do not all ask again in the same instant.
+const maxAttempts = 3;
+const firstWaitMs = 400;
+
+function waitBefore(attempt: number): Promise<void> {
+	const base = firstWaitMs * 3 ** (attempt - 1);
+	const ms = base / 2 + Math.random() * base;
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // Runs one statement on the caller's pooled session.
 //
-// A failure of the session itself, rather than of the statement, drops the
-// session so the next call reconnects. Where that session was opened with a
-// different token than the one the caller now holds, the failure is most
-// likely the old token expiring, so the statement is run once more on a
-// session opened with the current token. canRetry says whether the attempt
-// that failed had already handed rows on, in which case running again would
-// hand them twice and the error is passed on instead.
+// A statement the warehouse ran and refused leaves the session healthy, and
+// its error is passed on unless it is a passing one. Any other failure is the
+// session's, which is retired so the next attempt, and every later statement,
+// opens a fresh one. A failure is run again when it is a passing one, or when
+// the session was opened with an older token than the caller now holds, which
+// is most likely that token expiring. canRetry says whether the attempt that
+// failed had already handed rows on, in which case running again would hand
+// them twice and the error is passed on instead.
 async function onSession<T>(
 	key: string,
 	token: string,
@@ -211,20 +273,23 @@ async function onSession<T>(
 	canRetry: () => boolean,
 ): Promise<T> {
 	for (let attempt = 0; ; attempt++) {
+		if (attempt > 0) await waitBefore(attempt);
 		const entry = acquire(key, token);
 		try {
 			return await run(await entry.session);
 		} catch (error) {
-			// An expired token surfaces here and must not be retried against
-			// the same dead session. A statement the warehouse ran and refused
-			// leaves the session healthy, and closing it would fail every
-			// other query the same reader has running on it.
-			if (statementFailed(error)) throw error;
-			void closeEntry(key, entry);
+			const message = messageOf(error);
+			const passing = passingFailure.test(message);
+			if (statementFailed(error) && !passing) throw error;
+			if (!warehouseRefusal.test(message)) retire(key, entry);
 			const rotated = entry.token !== token;
-			if (attempt > 0 || !rotated || !canRetry()) throw error;
+			const again =
+				(passing || (rotated && attempt === 0)) &&
+				attempt + 1 < maxAttempts &&
+				canRetry();
+			if (!again) throw error;
 		} finally {
-			release(entry);
+			release(key, entry);
 		}
 	}
 }
