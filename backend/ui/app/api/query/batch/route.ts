@@ -243,9 +243,9 @@ export async function POST(request: NextRequest) {
 
 // What a query's slot carries back to the page.
 //
-// A failed query carries only its message, as it always has. A status is sent
-// only where the whole batch failed, which is the status the page would have
-// read from the response itself.
+// A failed query carries its message and the status the single query endpoint
+// would have answered with, so the page can tell a refusal, which is an answer,
+// from a failure that may pass if asked again.
 type Slot =
 	| { error: string; status?: number }
 	| {
@@ -263,7 +263,10 @@ type Slot =
 
 function toSlot(outcome: BatchOutcome): Slot {
 	if (outcome.error || !outcome.result) {
-		return { error: outcome.error ?? "Query failed" };
+		return {
+			error: outcome.error ?? "Query failed",
+			status: outcome.status,
+		};
 	}
 	const result = outcome.result;
 	return {

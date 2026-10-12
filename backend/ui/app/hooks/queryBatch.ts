@@ -69,8 +69,7 @@ interface Slot {
 	rowCount?: number;
 	meta?: QueryResponse["meta"];
 	error?: string;
-	// Present only where the whole batch failed, carrying the status the
-	// response would otherwise have answered with.
+	// The status a failed query would have been answered with on its own.
 	status?: number;
 }
 
@@ -194,42 +193,61 @@ function flush(): void {
 	}
 }
 
-// Runs one query, sent with whatever else is asked for in the same window.
+// Asks once, sent with whatever else is asked for in the same window.
+function askOnce(body: string): Promise<QueryResponse> {
+	return new Promise<QueryResponse>((resolve, reject) => {
+		queue.push({ body, resolve, reject });
+		if (scheduled) return;
+		scheduled = true;
+		setTimeout(flush, batchWindowMs);
+	});
+}
+
+// A query that failed for a reason that may pass, such as a warehouse that
+// was starting or busy, or an answer that never arrived, is asked again
+// before its caller hears of it. The visual stays loading through it rather
+// than showing a failure and then its figures a moment later. A refusal, no
+// access or a question its source cannot answer, is an answer and is passed
+// on at once. The waits grow and carry a random share, so the visuals of a
+// page that failed together do not all ask again in the same instant.
+const retries = 3;
+const firstRetryMs = 1000;
+
+function mayPass(error: unknown): boolean {
+	const status = (error as { status?: number }).status;
+	return status === undefined || status >= 500 || status === 429;
+}
+
+// Runs one query.
 //
 // body is the canonical JSON of the spec, which is also the SWR key, so the
 // string is not rebuilt here.
-export function runBatchedQuery(body: string): Promise<QueryResponse> {
+export async function runBatchedQuery(body: string): Promise<QueryResponse> {
 	// Already answered with the document. Taken rather than copied, so a seed
 	// answers once and everything after it goes to the server the normal way
 	// and gets a fresh reading.
 	const held = seeded.get(body);
 	if (held) {
 		seeded.delete(body);
-		return Promise.resolve(held);
+		return held;
 	}
 
-	// Counted down once, however many times the batch reports on it.
+	// Counted once for the whole query, retries included, so the print path
+	// does not take a query waiting to be asked again for a finished one.
 	inFlight++;
-	let settled = false;
-	const settle = () => {
-		if (settled) return;
-		settled = true;
+	try {
+		for (let attempt = 0; ; attempt++) {
+			try {
+				return await askOnce(body);
+			} catch (error) {
+				if (!mayPass(error) || attempt >= retries) throw error;
+				const base = firstRetryMs * 2 ** attempt;
+				await new Promise((resolve) =>
+					setTimeout(resolve, base / 2 + Math.random() * base),
+				);
+			}
+		}
+	} finally {
 		inFlight--;
-	};
-	return new Promise<QueryResponse>((resolve, reject) => {
-		queue.push({
-			body,
-			resolve: (value) => {
-				settle();
-				resolve(value);
-			},
-			reject: (error) => {
-				settle();
-				reject(error);
-			},
-		});
-		if (scheduled) return;
-		scheduled = true;
-		setTimeout(flush, batchWindowMs);
-	});
+	}
 }

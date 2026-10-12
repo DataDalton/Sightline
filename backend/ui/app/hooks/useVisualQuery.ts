@@ -45,12 +45,13 @@ const noRows = Object.freeze([]) as readonly Record<
 >[] as Record<string, unknown>[];
 const noColumns = Object.freeze([]) as readonly string[] as string[];
 
-// A query that failed is asked again on its own, soon at first and then less
-// often, so a visual that met a passing failure fills in without the reader
-// reloading. A refusal, such as no access or a question the source cannot
-// answer, is an answer rather than a failure and is not asked again.
-const failedQueryRetries = 5;
-const firstRetryMs = 1000;
+// A failure is shown only once runBatchedQuery has asked again and failed
+// each time. The visual then goes on asking, less and less often, so it fills
+// in on its own once whatever was failing recovers. A refusal, such as no
+// access or a question the source cannot answer, is an answer rather than a
+// failure and is not asked again.
+const firstLaterRetryMs = 10_000;
+const latestRetryMs = 60_000;
 
 function retryFailedQuery(
 	error: Error & { status?: number },
@@ -61,8 +62,10 @@ function retryFailedQuery(
 ): void {
 	const status = error.status;
 	if (status !== undefined && status >= 400 && status < 500) return;
-	if (retryCount > failedQueryRetries) return;
-	const base = firstRetryMs * 2 ** (retryCount - 1);
+	const base = Math.min(
+		firstLaterRetryMs * 2 ** (retryCount - 1),
+		latestRetryMs,
+	);
 	setTimeout(
 		() => revalidate({ retryCount }),
 		base / 2 + Math.random() * base,
