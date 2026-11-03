@@ -23,7 +23,7 @@ never reaches the container.
 | The app's configuration in Databricks | The resource bindings, the user authorization scopes, the bootstrap admin group |
 | The Lakebase instance | A login role for the service principal, and ownership of the platform schema |
 | Unity Catalog | What each reader may select, and what the service principal may read to walk the filters |
-| Model serving | Who may query the assistant's endpoint, when it is used |
+| Model serving or AI Gateway | Who may query the assistant's model, when it is used |
 | Administration in the app | Name, description, logo, SQL warehouse, caching, assistant endpoint, alerts and push, editor and admin groups, extra policy groups |
 
 Connection targets must be known before the platform can read its own settings
@@ -117,12 +117,13 @@ Scopes are granted on the app record, not in `app.yaml`, and read back as
 | Scope | For |
 | --- | --- |
 | `sql` | Every data query, and the membership probe that resolves a policy class |
-| `model-serving` | The assistant's model calls, made as the person asking. Only needed when the assistant is configured |
+| `model-serving` | The assistant's model calls to a serving endpoint, made as the person asking. Only needed when the assistant uses one |
+| `ai-gateway` | The assistant's model calls to an AI Gateway model, made as the person asking. Only needed when the assistant uses one |
 
 Set them under the app's User authorization in the workspace, or:
 
 ```bash
-databricks apps update <name> --json '{"user_api_scopes": ["sql", "model-serving"]}'
+databricks apps update <name> --json '{"user_api_scopes": ["sql", "model-serving", "ai-gateway"]}'
 ```
 
 `databricks apps get <name>` reports the effective list. A change applies at
@@ -132,22 +133,39 @@ app is true exactly when the token arrived.
 
 ## The data assistant
 
-Name a serving endpoint under Administration > Platform > Assistant. The
-name is enough, because the address is built from the workspace the app is
-connected to. A full address can be given instead for a model hosted
-elsewhere. Any `llm/v1/chat` endpoint works, changing the name changes the
-model with no redeploy, and clearing it removes the assistant, its navigation
-entry and its routes.
+The model is set under Administration > Platform > Assistant, in one of two
+ways. Changing either changes the model with no redeploy, and clearing both
+removes the assistant, its navigation entry and its routes.
+
+| Model | Endpoint name | Full address | Model |
+| --- | --- | --- | --- |
+| A serving endpoint in this workspace | The endpoint's name | Empty | Empty |
+| An AI Gateway model | Empty | `https://<workspace>/ai-gateway/mlflow/v1/chat/completions` | The model's three part name, `<catalog>.<schema>.<model>` |
+| A model hosted elsewhere | Empty | Its chat completions address | Only if that service serves several models from one address |
+
+A serving endpoint's address is built from the workspace the app is connected
+to, so its name is enough. Any `llm/v1/chat` endpoint works. A gateway serves
+several models from one address and picks by the Model field, which is sent
+with every request. Use the gateway's `/chat/completions` address, because the
+assistant sends the chat shape, which the `/responses` address does not take.
 
 It also needs:
 
-- **A queryable endpoint.** Grant `CAN QUERY` to the reader groups and the
-  app's service principal. Built in `databricks-*` endpoints are often open to
-  every workspace user already, so check first.
-- **An identity for the call.** With `model-serving` granted, each model call
-  goes out as the person asking. Without it the service principal carries the
-  call. The data queries it runs are always made as the person asking, under
-  `sql`.
+- **An identity for the call.** Each model call goes out under the token of
+  the person asking and never as the app. The scope that reaches the model has
+  to be granted, `model-serving` for a serving endpoint and `ai-gateway` for
+  a gateway model. Without it the call is refused and the assistant says it
+  cannot answer. The data queries it runs are made as the person asking too,
+  under `sql`.
+- **Permission on the model for every reader.** The app's service principal
+  needs none, because it never calls the model.
+  - A serving endpoint needs `CAN QUERY` for the reader groups. Built in
+    `databricks-*` endpoints are often open to every workspace user already,
+    so check first.
+  - A gateway model is a Unity Catalog object, so the reader groups need
+    `EXECUTE` on it plus `USE CATALOG` and `USE SCHEMA` on its parents.
+    Those two make the catalog and schema visible to them, so put the model in
+    a schema they can already use rather than granting them a new one.
 
 Conversations, standing instructions and memories are stored per person in
 `assistant_conversations` and `assistant_profiles`. Saved Explore views are in
