@@ -551,6 +551,13 @@ function VisualBody({
 								"match",
 							) === "exclude"
 						}
+						offersNewest={
+							optionValue<boolean>(
+								visual.visualType,
+								visual.config,
+								"openOnNewest",
+							) === true
+						}
 					/>
 				);
 			case "presenceFilter":

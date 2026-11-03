@@ -47,6 +47,9 @@ interface DropdownProps extends BaseProps {
 	// stays correct as values are added: a new one is included by default,
 	// where an include list would silently leave it out.
 	exclude?: boolean;
+	// Offers the field's newest value as a choice of its own, for a filter
+	// that opens on it.
+	offersNewest?: boolean;
 }
 
 export function DropdownFilter({
@@ -56,8 +59,12 @@ export function DropdownFilter({
 	label,
 	multiple = true,
 	exclude = false,
+	offersNewest = false,
 }: DropdownProps) {
 	const { setWidgetFilter, clausesExcept, byWidget } = usePageFilters();
+	// Set to the field's newest value, whatever that is today, rather than
+	// to a value of its own.
+	const onNewest = byWidget[visualId]?.[0]?.op === "is_latest";
 	const [open, setOpen] = useState(false);
 	const [search, setSearch] = useState("");
 	const [debounced, setDebounced] = useState("");
@@ -89,6 +96,10 @@ export function DropdownFilter({
 	} = useValuePages(
 		open ? { sourceKey, field, search: debounced, filters: others } : null,
 	);
+
+	const applyNewest = () => {
+		setWidgetFilter(visualId, [{ field, op: "is_latest" }]);
+	};
 
 	const apply = (next: string[]) => {
 		setWidgetFilter(
@@ -122,8 +133,9 @@ export function DropdownFilter({
 	// Said rather than implied. A control set to exclude looks identical to one
 	// set to include until the reader notices the numbers are wrong, so the
 	// trigger says which it is doing whenever anything is chosen.
-	const summary =
-		selected.length === 0
+	const summary = onNewest
+		? "Newest"
+		: selected.length === 0
 			? "All"
 			: exclude
 				? selected.length === 1
@@ -136,7 +148,7 @@ export function DropdownFilter({
 	return (
 		<FilterChip
 			label={label ?? field}
-			value={selected.length > 0 ? summary : null}
+			value={selected.length > 0 || onNewest ? summary : null}
 			onClear={() => apply([])}
 			onOpenChange={setOpen}
 		>
@@ -166,6 +178,46 @@ export function DropdownFilter({
 								onClick={() => apply([])}
 							>
 								Clear
+							</button>
+						</div>
+					)}
+
+					{offersNewest && (
+						<div className={styles.list} role="listbox">
+							<button
+								type="button"
+								role="option"
+								aria-selected={onNewest}
+								className={styles.option}
+								onClick={() => {
+									applyNewest();
+									close();
+								}}
+							>
+								<span
+									className={`${styles.checkbox} ${styles.radio} ${
+										onNewest ? styles.checked : ""
+									}`}
+									aria-hidden="true"
+								>
+									<svg
+										width="9"
+										height="9"
+										viewBox="0 0 16 16"
+										fill="none"
+									>
+										<path
+											d="M3 8.5l3.5 3.5L13 5"
+											stroke="currentColor"
+											strokeWidth="2.5"
+											strokeLinecap="round"
+											strokeLinejoin="round"
+										/>
+									</svg>
+								</span>
+								<span className={styles.optionLabel}>
+									Newest
+								</span>
 							</button>
 						</div>
 					)}

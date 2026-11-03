@@ -187,6 +187,24 @@ function buildFilterSql(
 	const expr = fieldRef(source, field);
 	const marker = `f${index}`;
 
+	// The newest value is read from the whole source, under the same access
+	// as the query around it, so it is the newest the reader can see and is
+	// not narrowed by the other filters on the page. A metric view will not
+	// aggregate a dimension, so it is the first value in descending order
+	// there, and the maximum on a table.
+	if (filter.op === "is_latest") {
+		if (field.kind === "measure") {
+			throw new QuerySpecError(
+				`"${field.name}" is a measure. Only a dimension has a newest value.`,
+			);
+		}
+		const newest =
+			source.kind === "metric_view"
+				? `(SELECT ${expr} FROM ${quotedSourceRef(source)} WHERE ${expr} IS NOT NULL GROUP BY ${expr} ORDER BY ${expr} DESC LIMIT 1)`
+				: `(SELECT MAX(${expr}) FROM ${quotedSourceRef(source)})`;
+		return `${expr} = ${newest}`;
+	}
+
 	if (valuelessOperators.has(filter.op)) {
 		return filter.op === "is_empty"
 			? `(${expr} IS NULL OR CAST(${expr} AS STRING) = '')`

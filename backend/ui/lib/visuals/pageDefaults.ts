@@ -122,6 +122,17 @@ export function openingFilters(
 		}
 
 		if (visual.visualType === "dropdownFilter") {
+			if (
+				field &&
+				optionValue<boolean>(
+					visual.visualType,
+					visual.config,
+					"openOnNewest",
+				) === true
+			) {
+				opening[visual.visualId] = [{ field, op: "is_latest" }];
+				continue;
+			}
 			const raw = optionValue<string>(
 				visual.visualType,
 				visual.config,

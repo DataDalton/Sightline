@@ -1607,6 +1607,10 @@ const migrations: string[] = [
 	// The sign-in a stored membership was found for, as a hash of the token.
 	// A row is read back only for the same sign-in. See lib/auth/policy.
 	`ALTER TABLE reader_policy ADD COLUMN IF NOT EXISTS session_key TEXT NOT NULL DEFAULT ''`,
+
+	// When a field's description was last written in the app. Until then it
+	// follows the catalogue's comment on every sync. See lib/semantic/fieldSync.
+	`ALTER TABLE source_fields ADD COLUMN IF NOT EXISTS description_edited_on TIMESTAMPTZ`,
 ];
 
 // Creates anything missing. Safe to run on every startup.

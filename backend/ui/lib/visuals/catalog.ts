@@ -1283,6 +1283,13 @@ export const visualCatalog: VisualTypeDefinition[] = [
 				placeholder: "North, South",
 				help: "Comma separated. A page that opens already narrowed asks the warehouse for less.",
 			},
+			{
+				key: "openOnNewest",
+				label: "Open on the newest value",
+				kind: "toggle",
+				fallback: false,
+				help: "Opens on the field's highest value, such as the latest year, and moves on by itself when a newer one arrives. For data that adds a period at a time, where adding periods together counts each one again. Takes the place of the values selected on open.",
+			},
 		],
 		defaultLayout: { w: 3, h: 1 },
 	},

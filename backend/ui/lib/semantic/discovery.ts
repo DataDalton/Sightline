@@ -462,6 +462,11 @@ export async function updateSourceFields(
 			`UPDATE source_fields SET
 			   display_name = CASE WHEN $6 THEN $3 ELSE display_name END,
 			   description = COALESCE($4, description),
+			   -- Marked only when the text changes, so saving a field with
+			   -- its description as it was leaves it following the catalogue.
+			   description_edited_on = CASE
+			     WHEN $4 IS NOT NULL AND $4 IS DISTINCT FROM description
+			     THEN now() ELSE description_edited_on END,
 			   format_hint = COALESCE($5, format_hint)
 			 WHERE source_key = $1 AND field_name = $2
 			 RETURNING field_id::text AS field_id`,

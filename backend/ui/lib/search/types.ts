@@ -23,7 +23,10 @@ export type SearchOperator =
 	| "lt"
 	| "lte"
 	| "is_empty"
-	| "is_not_empty";
+	| "is_not_empty"
+	// The field's highest value in the source, such as its latest year. Asked
+	// of the source as part of the query, so it moves as the data does.
+	| "is_latest";
 
 export const operatorLabels: Record<SearchOperator, string> = {
 	eq: "=",
@@ -38,12 +41,14 @@ export const operatorLabels: Record<SearchOperator, string> = {
 	lte: "<=",
 	is_empty: "is empty",
 	is_not_empty: "is not empty",
+	is_latest: "is the newest",
 };
 
 // Operators that carry no value, so a filter using one is complete without it.
 export const valuelessOperators = new Set<SearchOperator>([
 	"is_empty",
 	"is_not_empty",
+	"is_latest",
 ]);
 
 export function isValidOperator(op: string): op is SearchOperator {

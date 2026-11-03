@@ -815,3 +815,47 @@ test("a registered table expression doubles backticks in the column name", () =>
 	);
 	assert.match(compiled.sql, /^SELECT `a`` FROM x; --` AS `Odd`$/m);
 });
+
+test("the newest value of a metric view dimension is read from the view in the same query", () => {
+	const compiled = compileQuery(
+		source,
+		spec({
+			measures: ["Revenue"],
+			filters: [{ field: "Order Count", op: "is_latest" }],
+		}),
+	);
+	assert.match(
+		compiled.sql,
+		/`Order Count` = \(SELECT `Order Count` FROM cat\.sch\.orders WHERE `Order Count` IS NOT NULL GROUP BY `Order Count` ORDER BY `Order Count` DESC LIMIT 1\)/,
+	);
+	assert.deepEqual(compiled.params, {});
+});
+
+test("the newest value of a table field is its maximum", () => {
+	const compiled = compileQuery(
+		tableSource,
+		spec({
+			sourceKey: "directory",
+			measures: ["Accounts"],
+			filters: [{ field: "Region", op: "is_latest" }],
+		}),
+	);
+	assert.match(
+		compiled.sql,
+		/region = \(SELECT MAX\(region\) FROM cat\.sch\.customer_directory\)/,
+	);
+});
+
+test("a measure has no newest value", () => {
+	assert.throws(
+		() =>
+			compileQuery(
+				source,
+				spec({
+					measures: ["Revenue"],
+					filters: [{ field: "Revenue", op: "is_latest" }],
+				}),
+			),
+		QuerySpecError,
+	);
+});

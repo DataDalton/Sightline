@@ -181,3 +181,20 @@ test("a flag with no configured value takes the catalogue's", () => {
 	);
 	assert.deepEqual(opening.f?.[0]?.values, ["true"]);
 });
+
+test("a dropdown set to open on the newest value opens on it, ahead of fixed values", () => {
+	const opening = openingFilters(
+		[
+			{
+				visualId: "y",
+				visualType: "dropdownFilter",
+				config: {
+					dimensions: ["Period Year"],
+					options: { openOnNewest: true, defaultValues: "2024" },
+				},
+			},
+		],
+		day,
+	);
+	assert.deepEqual(opening.y, [{ field: "Period Year", op: "is_latest" }]);
+});

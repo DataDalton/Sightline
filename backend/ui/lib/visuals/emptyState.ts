@@ -77,6 +77,9 @@ function describeField(
 			case "is_not_empty":
 				parts.push(not ? "blank" : "not blank");
 				break;
+			case "is_latest":
+				parts.push(not ? "not the newest" : "the newest");
+				break;
 			case "contains":
 			case "starts_with":
 			case "ends_with":

@@ -233,6 +233,7 @@ interface ExistingRow {
 	status: string;
 	data_type: string | null;
 	description: string | null;
+	description_edited_on: string | null;
 	sort_order: number;
 	fingerprint: Partial<Fingerprint> | null;
 	renamed_to: string | null;
@@ -325,7 +326,8 @@ export async function syncSourceFields(
 
 	const existing = await sql<ExistingRow>(
 		`SELECT field_name, field_kind, sql_expr, status, data_type,
-		        description, sort_order, fingerprint, renamed_to
+		        description, description_edited_on::text, sort_order,
+		        fingerprint, renamed_to
 		 FROM source_fields WHERE source_key = $1`,
 		[sourceKey],
 	);
@@ -333,6 +335,11 @@ export async function syncSourceFields(
 
 	const added: string[] = [];
 	const reclassified: string[] = [];
+	const refreshed: {
+		name: string;
+		description: string | null;
+		dataType: string | null;
+	}[] = [];
 	const returned: string[] = [];
 
 	for (const field of fields) {
@@ -388,6 +395,50 @@ export async function syncSourceFields(
 		}
 
 		if (known.status === "missing") returned.push(field.name);
+
+		// The catalogue's comment and type are what the field is now. A
+		// description is taken from it on every sync, so one corrected or
+		// rewritten there reaches the app, until somebody writes their own
+		// here, which is kept from then on.
+		const description =
+			known.description_edited_on === null &&
+			(known.description ?? null) !== (field.description ?? null)
+				? field.description
+				: undefined;
+		const dataType =
+			field.dataType && field.dataType !== known.data_type
+				? field.dataType
+				: undefined;
+		if (description !== undefined || dataType !== undefined) {
+			refreshed.push({
+				name: field.name,
+				// A comment removed in the catalogue clears the description.
+				description:
+					description !== undefined ? description : known.description,
+				dataType: dataType ?? known.data_type,
+			});
+		}
+	}
+
+	if (refreshed.length > 0) {
+		await sql(
+			`UPDATE source_fields AS f
+			 SET description = x.description, data_type = x.data_type,
+			     modified_on = now()
+			 FROM jsonb_to_recordset($2::jsonb)
+			      AS x(name text, description text, data_type text)
+			 WHERE f.source_key = $1 AND f.field_name = x.name`,
+			[
+				sourceKey,
+				JSON.stringify(
+					refreshed.map((r) => ({
+						name: r.name,
+						description: r.description,
+						data_type: r.dataType,
+					})),
+				),
+			],
+		);
 	}
 
 	const published = new Set(fields.map((f) => f.name));
