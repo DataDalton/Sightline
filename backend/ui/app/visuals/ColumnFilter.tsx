@@ -24,6 +24,9 @@ interface ColumnFilterProps {
 	otherFilters: unknown[];
 	selected: string[];
 	sortDirection: "asc" | "desc" | null;
+	// Off where sorting by this field means nothing on its own, such as one
+	// level of a matrix, which is sorted from its headings instead.
+	sortable?: boolean;
 	anchor: { x: number; y: number };
 	onSort: (direction: "asc" | "desc" | null) => void;
 	onApply: (values: string[]) => void;
@@ -41,6 +44,7 @@ export function ColumnFilter({
 	otherFilters,
 	selected,
 	sortDirection,
+	sortable = true,
 	anchor,
 	onSort,
 	onApply,
@@ -128,30 +132,32 @@ export function ColumnFilter({
 			role="dialog"
 			aria-label={`Filter and sort ${field}`}
 		>
-			<div className={styles.popoverSort}>
-				<button
-					type="button"
-					className={`${styles.sortButton} ${
-						sortDirection === "asc" ? styles.sortActive : ""
-					}`}
-					onClick={() =>
-						onSort(sortDirection === "asc" ? null : "asc")
-					}
-				>
-					↑ Asc
-				</button>
-				<button
-					type="button"
-					className={`${styles.sortButton} ${
-						sortDirection === "desc" ? styles.sortActive : ""
-					}`}
-					onClick={() =>
-						onSort(sortDirection === "desc" ? null : "desc")
-					}
-				>
-					↓ Desc
-				</button>
-			</div>
+			{sortable && (
+				<div className={styles.popoverSort}>
+					<button
+						type="button"
+						className={`${styles.sortButton} ${
+							sortDirection === "asc" ? styles.sortActive : ""
+						}`}
+						onClick={() =>
+							onSort(sortDirection === "asc" ? null : "asc")
+						}
+					>
+						↑ Asc
+					</button>
+					<button
+						type="button"
+						className={`${styles.sortButton} ${
+							sortDirection === "desc" ? styles.sortActive : ""
+						}`}
+						onClick={() =>
+							onSort(sortDirection === "desc" ? null : "desc")
+						}
+					>
+						↓ Desc
+					</button>
+				</div>
+			)}
 
 			<div className={styles.popoverSearch}>
 				<input

@@ -801,6 +801,9 @@ function VisualBody({
 					baseFilters={filters}
 					fields={fields}
 					style={style}
+					reportId={reportId}
+					pageId={pageId}
+					visualId={visual.visualId}
 					onSelect={crossFilterBy}
 					selection={ownSelection}
 				/>

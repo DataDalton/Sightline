@@ -287,6 +287,8 @@
 	display: flex;
 	align-items: center;
 	gap: var(--space-2);
+	/* Wraps on a narrow card rather than pushing the export off the edge. */
+	flex-wrap: wrap;
 	padding: var(--space-2) var(--space-3);
 	border-bottom: 1px solid var(--border-subtle);
 	flex-shrink: 0;
@@ -300,8 +302,73 @@
 	font-size: var(--text-sm);
 }
 
-.toolButton:hover {
+.toolButton:hover:not(:disabled) {
 	background: var(--state-hover);
+}
+
+.toolButton:disabled {
+	opacity: 0.55;
+	cursor: not-allowed;
+}
+
+.exportTool,
+.filterTool {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	white-space: nowrap;
+}
+
+.filterTool svg {
+	color: var(--text-muted);
+}
+
+/* A level with a filter on it, marked by colour and by weight. */
+.filterToolActive {
+	border-color: var(--brand-strong);
+	font-weight: 600;
+}
+
+.filterToolActive svg {
+	color: var(--brand-strong);
+}
+
+/* A heading that sorts its column. Drawn as the heading text, with an arrow
+   only on the column the rows are ordered by. */
+.sortButton {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1);
+	padding: 0;
+	border: 0;
+	background: none;
+	font: inherit;
+	color: inherit;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.sortButton:hover {
+	color: var(--text-primary);
+}
+
+.sortButton:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: 2px;
+	border-radius: var(--radius-sm);
+}
+
+/* Measure headings are right aligned, so their arrow sits before the text. */
+.sortButtonEnd {
+	justify-content: flex-end;
+	width: 100%;
+}
+
+/* The part of a label a search matched. */
+.match {
+	background: var(--brand-subtle);
+	color: inherit;
+	border-radius: 2px;
 }
 
 .spacer {

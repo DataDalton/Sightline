@@ -10,7 +10,7 @@ import {
 	useState,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { formatValue, type FormatHint } from "../../lib/format";
+import { formatValue, toNumber, type FormatHint } from "../../lib/format";
 import type { VisualStyle } from "../../lib/visuals/style";
 import {
 	matchesSelection,
@@ -20,12 +20,16 @@ import {
 } from "../../lib/visuals/selection";
 import { VisualError } from "./VisualFrame";
 import { VisualLoadingState } from "./LoadingState";
+import { ColumnFilter } from "./ColumnFilter";
 import { createResultMemo, resultMaxAge } from "./resultMemo";
 import { canonical } from "../hooks/canonicalKey";
 import { runBatchedQuery } from "../hooks/queryBatch";
+import { useExport } from "../hooks/useExport";
 import { maxLimit } from "../../lib/query/spec";
+import { maxExportRows } from "../../lib/query/exportLimits";
 import type { FieldMeta } from "./types";
 import styles from "./Matrix.module.css";
+import gridStyles from "./DataGrid.module.css";
 
 // The matrix: a hierarchy down the left, a pivoted dimension across the top.
 //
@@ -38,6 +42,13 @@ import styles from "./Matrix.module.css";
 // Columns pivot on an optional dimension, with the measures repeated beneath
 // each of its values and a rule between groups so one period reads as separate
 // from the next.
+//
+// Every level is fetched whole, so sorting siblings on the client orders the
+// real level rather than a sample of it. Filters on a level or on the pivot
+// go into every query, so the figures at every level cover only what passes.
+// A search finds matching values at any level and opens the branches that
+// lead to them. Export writes the whole hierarchy out flat, one column per
+// level.
 //
 // Only the rows in view are rendered. The table keeps its sticky headers, and
 // spacer rows above and below the rendered window stand in for the rest, so
@@ -54,6 +65,9 @@ interface MatrixProps {
 	fields: Map<string, FieldMeta>;
 	height?: number;
 	style?: VisualStyle;
+	reportId?: string | null;
+	pageId?: string | null;
+	visualId?: string | null;
 	// Fires when a reader clicks a row's label, with the row's value and the
 	// values of every level above it, so a business unit is selected inside
 	// the division it sits under rather than across all of them. Fires with
@@ -98,13 +112,30 @@ type DisplayItem =
 			remaining: number;
 	  };
 
+// The order siblings are shown in. A null key orders by the row label, and
+// any other key names one cell, a measure under one pivoted value.
+interface MatrixSort {
+	key: string | null;
+	direction: "asc" | "desc";
+}
+
 // How many children an expanded node shows at first, and how many more each
 // press of "Show more" reveals. A node with thousands of children would
 // otherwise push its siblings out of reach of the scrollbar.
 const childBatch = 200;
 
+// How many matching values a search reads per level. A term that matches
+// more than this is too broad to open every branch for, and the reader is
+// asked to narrow it.
+const searchLimit = 500;
+
 // A row's rendered height before it has been measured.
 const estimatedRowHeight = 33;
+
+const labelOrder = new Intl.Collator(undefined, {
+	numeric: true,
+	sensitivity: "base",
+});
 
 function cellKey(columnValue: string | null, measure: string): string {
 	return columnValue === null ? measure : `${columnValue}||${measure}`;
@@ -114,17 +145,13 @@ function pathKey(path: string[]): string {
 	return path.join("||");
 }
 
-// Whether `row` sits anywhere beneath the node at `parentPath`.
-function isDescendant(row: MatrixRow, parentPath: string[]): boolean {
-	return (
-		row.path.length > parentPath.length &&
-		pathKey(row.path.slice(0, parentPath.length)) === pathKey(parentPath)
-	);
-}
-
 // Whether a node key belongs to `key` itself or to anything beneath it.
 function underKey(candidate: string, key: string): boolean {
 	return candidate === key || candidate.startsWith(`${key}||`);
+}
+
+function isBlank(raw: unknown): boolean {
+	return raw === null || raw === undefined || raw === "";
 }
 
 // The column groups already on screen plus any a new level brought, sorted.
@@ -134,39 +161,57 @@ function mergeColumnValues(current: string[], added: string[]): string[] {
 	return Array.from(new Set([...current, ...added])).sort();
 }
 
-// The rows in display order with a "Show more" line placed after the last
-// visible descendant of every node that still holds children back.
+// Siblings in the chosen order. Blank figures sort last in both directions,
+// so a descending sort opens on the largest value rather than on gaps.
+function arrange(rows: MatrixRow[], sort: MatrixSort | null): MatrixRow[] {
+	if (!sort) return rows;
+	const sign = sort.direction === "asc" ? 1 : -1;
+	const key = sort.key;
+	if (key === null) {
+		return [...rows].sort(
+			(a, b) => sign * labelOrder.compare(a.label, b.label),
+		);
+	}
+	return [...rows].sort((a, b) => {
+		const x = toNumber(a.values[key]);
+		const y = toNumber(b.values[key]);
+		if (x === null && y === null) return 0;
+		if (x === null) return 1;
+		if (y === null) return -1;
+		return sign * (x - y);
+	});
+}
+
+// The rows in display order, with a "Show more" line after the shown
+// children of every node that still holds some back.
 function buildItems(
-	rows: MatrixRow[],
-	remainder: Map<string, MatrixRow[]>,
+	top: MatrixRow[],
+	children: Map<string, MatrixRow[]>,
+	shown: Map<string, number>,
+	expanded: Set<string>,
+	sort: MatrixSort | null,
 ): DisplayItem[] {
 	const items: DisplayItem[] = [];
-	// Open nodes with children still held back, innermost last.
-	const open: MatrixRow[] = [];
-
-	const close = (parent: MatrixRow) => {
-		const parentKey = pathKey(parent.path);
-		items.push({
-			kind: "more",
-			key: `more:${parentKey}`,
-			parentKey,
-			depth: parent.depth + 1,
-			remaining: remainder.get(parentKey)?.length ?? 0,
-		});
-	};
-
-	for (const row of rows) {
-		while (
-			open.length > 0 &&
-			!isDescendant(row, open[open.length - 1].path)
-		) {
-			close(open.pop() as MatrixRow);
-		}
+	const visit = (row: MatrixRow) => {
 		const key = pathKey(row.path);
 		items.push({ kind: "row", key, row });
-		if (remainder.has(key)) open.push(row);
-	}
-	while (open.length > 0) close(open.pop() as MatrixRow);
+		if (!expanded.has(key)) return;
+		const kids = children.get(key);
+		if (!kids) return;
+		const ordered = arrange(kids, sort);
+		const limit = shown.get(key) ?? childBatch;
+		for (const child of ordered.slice(0, limit)) visit(child);
+		if (ordered.length > limit) {
+			items.push({
+				kind: "more",
+				key: `more:${key}`,
+				parentKey: key,
+				depth: row.depth + 1,
+				remaining: ordered.length - limit,
+			});
+		}
+	};
+	for (const row of arrange(top, sort)) visit(row);
 	return items;
 }
 
@@ -179,6 +224,17 @@ interface TopLevel {
 
 const topLevels = createResultMemo<TopLevel>(40, resultMaxAge);
 
+// What a search opened: the branches leading to every match, with the
+// matches marked.
+interface SearchResult {
+	top: MatrixRow[];
+	children: Map<string, MatrixRow[]>;
+	expanded: Set<string>;
+	matches: Set<string>;
+	columnValues: string[];
+	truncated: boolean;
+}
+
 export function MatrixTable({
 	sourceKey,
 	rowDimensions,
@@ -188,23 +244,45 @@ export function MatrixTable({
 	fields,
 	height = 520,
 	style,
+	reportId,
+	pageId,
+	visualId,
 	onSelect,
 	selection,
 }: MatrixProps) {
-	const [rows, setRows] = useState<MatrixRow[]>([]);
-	const [expanded, setExpanded] = useState<Set<string>>(new Set());
-	const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set());
-	// Children fetched but not yet shown, keyed by the parent's path key.
-	const [remainder, setRemainder] = useState<Map<string, MatrixRow[]>>(
+	const [top, setTop] = useState<MatrixRow[]>([]);
+	// Fetched children of every open node, keyed by the node's path key.
+	const [children, setChildren] = useState<Map<string, MatrixRow[]>>(
 		new Map(),
 	);
+	// How many of a node's children are shown, when more than the first batch.
+	const [shown, setShown] = useState<Map<string, number>>(new Map());
+	const [expanded, setExpanded] = useState<Set<string>>(new Set());
+	const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set());
 	const [columnValues, setColumnValues] = useState<string[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<(Error & { status?: number }) | null>(
 		null,
 	);
+	const [sort, setSort] = useState<MatrixSort | null>(null);
+	const [levelFilterState, setLevelFilters] = useState<
+		Record<string, string[]>
+	>({});
+	const [openFilter, setOpenFilter] = useState<{
+		field: string;
+		x: number;
+		y: number;
+	} | null>(null);
+	const [search, setSearch] = useState("");
+	const [term, setTerm] = useState("");
+	// The path keys a search matched, or null when no search is running.
+	const [matches, setMatches] = useState<Set<string> | null>(null);
+	const [searchTruncated, setSearchTruncated] = useState(false);
 
-	const baseKey = JSON.stringify(baseFilters);
+	useEffect(() => {
+		const timer = setTimeout(() => setTerm(search.trim()), 300);
+		return () => clearTimeout(timer);
+	}, [search]);
 
 	// The field lists by content, so the memoised rows below are not all
 	// re-rendered when the page hands over an equal but new array.
@@ -215,59 +293,83 @@ export function MatrixTable({
 	// eslint-disable-next-line react-hooks/exhaustive-deps
 	const measureFields = useMemo(() => measures, [measureKey]);
 
+	// The fields a level filter may name. One left over from a field that
+	// was taken off the matrix would fail every query, so it is dropped.
+	const filterableKey = JSON.stringify([
+		...rowDimensions,
+		...(columnDimension ? [columnDimension] : []),
+	]);
+	const filterable = useMemo<string[]>(
+		() => JSON.parse(filterableKey),
+		[filterableKey],
+	);
+	const levelFilters = useMemo(() => {
+		const kept: Record<string, string[]> = {};
+		for (const [field, values] of Object.entries(levelFilterState)) {
+			if (filterable.includes(field) && values.length > 0) {
+				kept[field] = values;
+			}
+		}
+		return kept;
+	}, [levelFilterState, filterable]);
+
+	// The page's filters and the matrix's own, which every level is read
+	// under.
+	const baseKey = JSON.stringify(baseFilters);
+	const levelKey = JSON.stringify(levelFilters);
+	const activeFilters = useMemo<FilterClause[]>(
+		() => [
+			...(baseFilters as FilterClause[]),
+			...Object.entries(levelFilters).map(([field, values]) => ({
+				field,
+				op: "eq",
+				values,
+			})),
+		],
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[baseKey, levelKey],
+	);
+
 	// Advanced whenever the top level reloads, so an expansion that started
 	// against the previous query shape can tell its answer no longer applies.
 	const generation = useRef(0);
 
-	// Fetches one level completely, the children of `path` or the top level
-	// when empty. The level is read page by page until a page comes back
-	// short, so no row and no column cell is left out however many
-	// combinations the level holds. The pivoted column values it saw come
-	// back with the rows rather than going into state here, so a caller whose
-	// request was superseded can discard both. isCurrent is checked before
-	// every page after the first, so a superseded load stops asking.
-	const fetchLevel = useCallback(
+	// Reads one level completely. With a prefix it is the children of that
+	// node, grouped by the level's own field and placed under the node. With
+	// none it is every row at that depth, grouped by the whole path, which is
+	// how a search reads many branches in one query. The level is read page
+	// by page until a page comes back short, so no row and no column cell is
+	// left out however many combinations the level holds. isCurrent is
+	// checked before every page after the first, so a superseded load stops
+	// asking.
+	const readLevel = useCallback(
 		async (
-			path: string[],
-			parentRaws: unknown[],
+			depth: number,
+			filters: FilterClause[],
+			prefix: { path: string[]; raws: unknown[] } | null,
 			isCurrent: () => boolean,
 		): Promise<{ rows: MatrixRow[]; columnValues: string[] }> => {
-			const depth = path.length;
 			const dimension = rowDimensions[depth];
 			if (!dimension) return { rows: [], columnValues: [] };
-
-			// Scope to the ancestors, so expanding "2025 / Medical" asks only
-			// for business units inside it.
-			const scope: FilterClause[] = [
-				...(baseFilters as FilterClause[]),
-				// A blank ancestor is a null or an empty value, which an
-				// equality on its empty label would not match.
-				...path.map((value, i): FilterClause => {
-					const raw = parentRaws[i];
-					return raw === null || raw === undefined || raw === ""
-						? { field: rowDimensions[i], op: "is_empty" }
-						: {
-								field: rowDimensions[i],
-								op: "eq",
-								values: [value],
-							};
-				}),
-			];
+			const grouped = prefix
+				? [dimension]
+				: rowDimensions.slice(0, depth + 1);
 
 			// Sorted by every grouped dimension, so each combination has one
 			// fixed position and consecutive pages neither repeat nor skip one.
-			const sort: { field: string; direction: "asc" }[] = [
-				{ field: dimension, direction: "asc" },
-			];
+			const order = grouped.map((field) => ({
+				field,
+				direction: "asc" as const,
+			}));
 			if (columnDimension) {
-				sort.push({ field: columnDimension, direction: "asc" });
+				order.push({ field: columnDimension, direction: "asc" });
 			}
 
-			// Collapse the pivoted dimension into one row per row-value, with
-			// the measures spread across the column groups. Both maps live
-			// across pages, so a row label whose cells straddle a page
-			// boundary is still merged into one row.
-			const byLabel = new Map<string, MatrixRow>();
+			// Collapse the pivoted dimension into one row per path, with the
+			// measures spread across the column groups. Both maps live across
+			// pages, so a row whose cells straddle a page boundary is still
+			// merged into one row.
+			const byPath = new Map<string, MatrixRow>();
 			const seenColumns = new Set<string>();
 
 			for (let offset = 0; ; offset += maxLimit) {
@@ -276,36 +378,41 @@ export function MatrixTable({
 					canonical({
 						sourceKey,
 						dimensions: columnDimension
-							? [dimension, columnDimension]
-							: [dimension],
+							? [...grouped, columnDimension]
+							: grouped,
 						measures,
-						filters: scope,
-						sort,
+						filters,
+						sort: order,
 						limit: maxLimit,
 						offset,
 					}),
 				);
 				const page: Record<string, unknown>[] = data.rows ?? [];
 				for (const record of page) {
-					const label = String(record[dimension] ?? "");
 					const columnValue = columnDimension
 						? String(record[columnDimension] ?? "")
 						: null;
 					if (columnValue !== null) seenColumns.add(columnValue);
 
-					let row = byLabel.get(label);
+					const path = prefix
+						? [...prefix.path, String(record[dimension] ?? "")]
+						: grouped.map((field) => String(record[field] ?? ""));
+					const key = pathKey(path);
+					let row = byPath.get(key);
 					if (!row) {
 						row = {
-							path: [...path, label],
-							raws: [...parentRaws, record[dimension]],
-							label,
+							path,
+							raws: prefix
+								? [...prefix.raws, record[dimension]]
+								: grouped.map((field) => record[field]),
+							label: path[path.length - 1],
 							depth,
 							values: {},
 							// A node has children whenever another row dimension
 							// remains below it.
 							hasChildren: depth + 1 < rowDimensions.length,
 						};
-						byLabel.set(label, row);
+						byPath.set(key, row);
 					}
 					for (const measure of measures) {
 						row.values[cellKey(columnValue, measure)] =
@@ -316,26 +423,189 @@ export function MatrixTable({
 			}
 
 			return {
-				rows: Array.from(byLabel.values()),
+				rows: Array.from(byPath.values()),
 				columnValues: columnDimension ? Array.from(seenColumns) : [],
 			};
 		},
-		[sourceKey, rowDimensions, columnDimension, measures, baseFilters],
+		[sourceKey, rowDimensions, columnDimension, measures],
+	);
+
+	// The children of one node, scoped to its ancestors, so expanding
+	// "2025 / Medical" asks only for business units inside it.
+	const readChildren = useCallback(
+		(row: MatrixRow, isCurrent: () => boolean) =>
+			readLevel(
+				row.depth + 1,
+				[
+					...activeFilters,
+					// A blank ancestor is a null or an empty value, which an
+					// equality on its empty label would not match.
+					...row.path.map(
+						(value, i): FilterClause =>
+							isBlank(row.raws[i])
+								? { field: rowDimensions[i], op: "is_empty" }
+								: {
+										field: rowDimensions[i],
+										op: "eq",
+										values: [value],
+									},
+					),
+				],
+				{ path: row.path, raws: row.raws },
+				isCurrent,
+			),
+		[readLevel, activeFilters, rowDimensions],
+	);
+
+	// Finds the values containing the term at every level, then reads the
+	// branches that lead to them. One query per level for the matches, and
+	// one per level for the rows on those branches, each narrowed to the
+	// values the matches named and trimmed to the exact paths afterwards.
+	const runSearch = useCallback(
+		async (
+			text: string,
+			isCurrent: () => boolean,
+		): Promise<SearchResult> => {
+			const found = await Promise.all(
+				rowDimensions.map((field, depth) => {
+					const grouped = rowDimensions.slice(0, depth + 1);
+					return runBatchedQuery(
+						canonical({
+							sourceKey,
+							dimensions: grouped,
+							measures: [],
+							filters: [
+								...activeFilters,
+								{ field, op: "contains", value: text },
+							],
+							sort: grouped.map((f) => ({
+								field: f,
+								direction: "asc",
+							})),
+							limit: searchLimit,
+							offset: 0,
+						}),
+					);
+				}),
+			);
+
+			const matched = new Set<string>();
+			// Every node on the way to a match, by depth.
+			const onBranch: Set<string>[] = rowDimensions.map(() => new Set());
+			// The values each depth's branch nodes hold, and whether any is
+			// blank, which a value list cannot express.
+			const valuesAt: Set<string>[] = rowDimensions.map(() => new Set());
+			const blankAt: boolean[] = rowDimensions.map(() => false);
+			let truncated = false;
+
+			found.forEach((data, depth) => {
+				const rows: Record<string, unknown>[] = data.rows ?? [];
+				if (rows.length >= searchLimit) truncated = true;
+				const grouped = rowDimensions.slice(0, depth + 1);
+				for (const record of rows) {
+					const path = grouped.map((f) => String(record[f] ?? ""));
+					matched.add(pathKey(path));
+					for (let i = 0; i <= depth; i++) {
+						onBranch[i].add(pathKey(path.slice(0, i + 1)));
+						valuesAt[i].add(path[i]);
+						if (isBlank(record[grouped[i]])) blankAt[i] = true;
+					}
+				}
+			});
+
+			const result: SearchResult = {
+				top: [],
+				children: new Map(),
+				expanded: new Set(),
+				matches: matched,
+				columnValues: [],
+				truncated,
+			};
+			if (matched.size === 0) return result;
+
+			const levels = await Promise.all(
+				onBranch.map((keys, depth) => {
+					if (keys.size === 0) {
+						return Promise.resolve({ rows: [], columnValues: [] });
+					}
+					const narrowed: FilterClause[] = [...activeFilters];
+					for (let i = 0; i <= depth; i++) {
+						if (!blankAt[i]) {
+							narrowed.push({
+								field: rowDimensions[i],
+								op: "eq",
+								values: Array.from(valuesAt[i]),
+							});
+						}
+					}
+					return readLevel(depth, narrowed, null, isCurrent);
+				}),
+			);
+
+			const columns = new Set<string>();
+			levels.forEach((level, depth) => {
+				for (const value of level.columnValues) columns.add(value);
+				for (const row of level.rows) {
+					if (!onBranch[depth].has(pathKey(row.path))) continue;
+					if (depth === 0) {
+						result.top.push(row);
+						continue;
+					}
+					const parent = pathKey(row.path.slice(0, -1));
+					const kids = result.children.get(parent) ?? [];
+					kids.push(row);
+					result.children.set(parent, kids);
+					result.expanded.add(parent);
+				}
+			});
+			result.columnValues = Array.from(columns);
+			return result;
+		},
+		[sourceKey, rowDimensions, activeFilters, readLevel],
 	);
 
 	// Everything that shapes the top level, which is what makes a remembered
 	// one still the right answer.
-	const topKey = `${sourceKey}|${baseKey}|${rowDimensions.join(
+	const topKey = `${sourceKey}|${JSON.stringify(activeFilters)}|${rowDimensions.join(
 		",",
 	)}|${columnDimension ?? ""}|${measures.join(",")}`;
 
-	// Reload from the top whenever the query shape changes.
+	// Reload from the top whenever the query shape or the search changes.
 	useEffect(() => {
 		let cancelled = false;
 		generation.current += 1;
 		setError(null);
 		setExpanded(new Set());
-		setRemainder(new Map());
+		setChildren(new Map());
+		setShown(new Map());
+		setSearchTruncated(false);
+
+		if (term) {
+			setLoading(true);
+			runSearch(term, () => !cancelled)
+				.then((found) => {
+					if (cancelled) return;
+					setTop(found.top);
+					setChildren(found.children);
+					setExpanded(found.expanded);
+					setMatches(found.matches);
+					setSearchTruncated(found.truncated);
+					setColumnValues((prev) =>
+						mergeColumnValues(prev, found.columnValues),
+					);
+					setLoading(false);
+				})
+				.catch((e) => {
+					if (cancelled) return;
+					setError(e as Error & { status?: number });
+					setLoading(false);
+				});
+			return () => {
+				cancelled = true;
+			};
+		}
+
+		setMatches(null);
 
 		// Straight back on screen if this matrix has been opened before. Only
 		// the top level: an expanded subtree is deliberately discarded on
@@ -343,7 +613,7 @@ export function MatrixTable({
 		// it here would be the same staleness by another route.
 		const remembered = topLevels.get(topKey);
 		if (remembered) {
-			setRows(remembered.rows);
+			setTop(remembered.rows);
 			setColumnValues(remembered.columnValues);
 			setLoading(false);
 			return;
@@ -352,18 +622,18 @@ export function MatrixTable({
 		setLoading(true);
 		setColumnValues([]);
 
-		fetchLevel([], [], () => !cancelled)
-			.then((top) => {
+		readLevel(0, activeFilters, null, () => !cancelled)
+			.then((level) => {
 				if (cancelled) return;
-				setRows(top.rows);
+				setTop(level.rows);
 				setLoading(false);
 				// Merged into state rather than replacing it, and read back
 				// from the merge so the remembered level carries the same
 				// column groups the screen does.
 				setColumnValues((prev) => {
-					const merged = mergeColumnValues(prev, top.columnValues);
+					const merged = mergeColumnValues(prev, level.columnValues);
 					topLevels.set(topKey, {
-						rows: top.rows,
+						rows: level.rows,
 						columnValues: merged,
 					});
 					return merged;
@@ -378,7 +648,9 @@ export function MatrixTable({
 		return () => {
 			cancelled = true;
 		};
-	}, [topKey]);
+		// topKey and term together are the whole query shape.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [topKey, term]);
 
 	const toggle = async (row: MatrixRow) => {
 		const key = pathKey(row.path);
@@ -386,8 +658,15 @@ export function MatrixTable({
 		if (expanded.has(key)) {
 			// Collapsing removes the subtree rather than hiding it, so a later
 			// expansion refetches and cannot show stale figures. Everything
-			// open or held back beneath it goes too, so reopening starts
-			// every level closed.
+			// open beneath it goes too, so reopening starts every level
+			// closed.
+			const keep = <T,>(map: Map<string, T>) => {
+				const next = new Map<string, T>();
+				for (const [held, value] of map) {
+					if (!underKey(held, key)) next.set(held, value);
+				}
+				return next;
+			};
 			setExpanded((prev) => {
 				const next = new Set<string>();
 				for (const open of prev) {
@@ -395,14 +674,8 @@ export function MatrixTable({
 				}
 				return next;
 			});
-			setRemainder((prev) => {
-				const next = new Map<string, MatrixRow[]>();
-				for (const [held, children] of prev) {
-					if (!underKey(held, key)) next.set(held, children);
-				}
-				return next;
-			});
-			setRows((prev) => prev.filter((r) => !isDescendant(r, row.path)));
+			setChildren(keep);
+			setShown(keep);
 			return;
 		}
 
@@ -413,28 +686,17 @@ export function MatrixTable({
 		setLoadingPaths((prev) => new Set(prev).add(key));
 		const startedIn = generation.current;
 		try {
-			const { rows: children, columnValues: childColumns } =
-				await fetchLevel(
-					row.path,
-					row.raws,
-					() => startedIn === generation.current,
-				);
+			const level = await readChildren(
+				row,
+				() => startedIn === generation.current,
+			);
 			if (startedIn !== generation.current) return;
 			// Column groups accumulate across expansions, so a child that
 			// introduces a period the parent lacked still lines up.
-			setColumnValues((prev) => mergeColumnValues(prev, childColumns));
-			const shown = children.slice(0, childBatch);
-			const held = children.slice(childBatch);
-			setRows((prev) => {
-				const index = prev.findIndex((r) => pathKey(r.path) === key);
-				if (index < 0) return prev;
-				const next = [...prev];
-				next.splice(index + 1, 0, ...shown);
-				return next;
-			});
-			if (held.length > 0) {
-				setRemainder((prev) => new Map(prev).set(key, held));
-			}
+			setColumnValues((prev) =>
+				mergeColumnValues(prev, level.columnValues),
+			);
+			setChildren((prev) => new Map(prev).set(key, level.rows));
 			setExpanded((prev) => new Set(prev).add(key));
 		} catch (e) {
 			if (startedIn !== generation.current) return;
@@ -448,38 +710,62 @@ export function MatrixTable({
 		}
 	};
 
-	// Moves the next batch of a node's held-back children into view, after
-	// the last row currently shown beneath it.
+	// Shows the next batch of a node's children after the ones already shown.
 	const showMore = (parentKey: string) => {
-		const held = remainder.get(parentKey);
-		if (!held || held.length === 0) return;
-		const batch = held.slice(0, childBatch);
-		const rest = held.slice(childBatch);
-		setRows((prev) => {
-			const index = prev.findIndex((r) => pathKey(r.path) === parentKey);
-			if (index < 0) return prev;
-			const parentPath = prev[index].path;
-			let end = index + 1;
-			while (end < prev.length && isDescendant(prev[end], parentPath)) {
-				end += 1;
-			}
-			const next = [...prev];
-			next.splice(end, 0, ...batch);
-			return next;
-		});
-		setRemainder((prev) => {
-			const next = new Map(prev);
-			if (rest.length > 0) next.set(parentKey, rest);
-			else next.delete(parentKey);
-			return next;
-		});
+		setShown((prev) =>
+			new Map(prev).set(
+				parentKey,
+				(prev.get(parentKey) ?? childBatch) + childBatch,
+			),
+		);
 	};
 
 	const collapseAll = () => {
 		setExpanded(new Set());
-		setRemainder(new Map());
-		setRows((prev) => prev.filter((r) => r.depth === 0));
+		setChildren(new Map());
+		setShown(new Map());
 	};
+
+	// Label first ascending, then descending, then the query's own order. A
+	// figure first descending, since the largest is usually what is wanted.
+	const toggleSort = (key: string | null) => {
+		setSort((prev) => {
+			const first = key === null ? "asc" : "desc";
+			if (!prev || prev.key !== key) return { key, direction: first };
+			if (prev.direction === first) {
+				return { key, direction: first === "asc" ? "desc" : "asc" };
+			}
+			return null;
+		});
+	};
+
+	// Scoped to this matrix, so two on one page do not watch each other's work
+	// and a reader who leaves and comes back is offered the file they asked for.
+	const exporter = useExport(`export:${visualId ?? sourceKey}`);
+
+	// The whole hierarchy flat, one column per level and the pivoted field as
+	// a column of its own, under the same filters the matrix shows. A search
+	// only decides which branches are open, so it is not applied.
+	const runExport = () => {
+		const flat = [
+			...rowDimensions,
+			...(columnDimension ? [columnDimension] : []),
+		];
+		void exporter.start({
+			spec: {
+				sourceKey,
+				dimensions: flat,
+				measures,
+				filters: activeFilters,
+				sort: flat.map((field) => ({ field, direction: "asc" })),
+				limit: maxExportRows,
+			},
+			reportId,
+			pageId,
+			visualId,
+		});
+	};
+	const exportError = exporter.error;
 
 	// The handlers read the latest state through refs, so the rows can be
 	// memoised against stable callbacks and skip re-rendering when an
@@ -566,7 +852,10 @@ export function MatrixTable({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [selectionKey, columnDimension, groups]);
 
-	const items = useMemo(() => buildItems(rows, remainder), [rows, remainder]);
+	const items = useMemo(
+		() => buildItems(top, children, shown, expanded, sort),
+		[top, children, shown, expanded, sort],
+	);
 
 	// How far down the second header row has to sit: the height of the row
 	// above it, or nothing when that row is not rendered. Measured rather than
@@ -682,21 +971,20 @@ export function MatrixTable({
 		event.preventDefault();
 	};
 
-	if (error && rows.length === 0) return <VisualError error={error} />;
-	if (loading) {
+	// With nothing of the reader's own narrowing it, the matrix opens the way
+	// every visual does: a placeholder, then the rows. Once a search or a
+	// level filter is in play the toolbar stays, so it can be undone.
+	const narrowed = term !== "" || Object.keys(levelFilters).length > 0;
+	if (!narrowed && error && top.length === 0) {
+		return <VisualError error={error} />;
+	}
+	if (!narrowed && loading) {
 		return (
 			<VisualLoadingState
 				variant={style?.loadingAnimation}
 				label="Loading matrix"
 				height={height}
 			/>
-		);
-	}
-	if (rows.length === 0) {
-		return (
-			<div className={styles.state}>
-				No rows match the current filters
-			</div>
 		);
 	}
 
@@ -718,23 +1006,70 @@ export function MatrixTable({
 		]);
 	};
 
-	return (
-		<div className={styles.matrix} style={{ height }}>
-			<div className={styles.toolbar}>
-				<button
-					type="button"
-					className={styles.toolButton}
-					onClick={collapseAll}
-				>
-					Collapse all
-				</button>
-				<div className={styles.spacer} />
-				<span className={styles.hint}>
-					{rowDimensions.join(" › ")}
-					{columnDimension ? ` by ${columnDimension}` : ""}
-				</span>
-			</div>
+	const sortArrow = (key: string | null) =>
+		sort && sort.key === key ? (
+			<svg
+				className={gridStyles.sortIcon}
+				width="10"
+				height="10"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="3"
+				strokeLinecap="round"
+				aria-hidden="true"
+			>
+				{sort.direction === "asc" ? (
+					<path d="M6 15l6-6 6 6" />
+				) : (
+					<path d="M6 9l6 6 6-6" />
+				)}
+			</svg>
+		) : null;
 
+	const sortState = (
+		key: string | null,
+	): "ascending" | "descending" | "none" =>
+		sort && sort.key === key
+			? sort.direction === "asc"
+				? "ascending"
+				: "descending"
+			: "none";
+
+	const rowHeading = (
+		<button
+			type="button"
+			className={styles.sortButton}
+			onClick={() => toggleSort(null)}
+			title="Sort by name"
+		>
+			{rowDimensions.join(" › ")}
+			{sortArrow(null)}
+		</button>
+	);
+
+	const activeChips = Object.entries(levelFilters);
+
+	let body: React.ReactNode;
+	if (loading) {
+		body = (
+			<VisualLoadingState
+				variant={style?.loadingAnimation}
+				label={term ? "Searching" : "Loading matrix"}
+			/>
+		);
+	} else if (error && top.length === 0) {
+		body = <VisualError error={error} />;
+	} else if (top.length === 0) {
+		body = (
+			<div className={styles.state}>
+				{term
+					? `Nothing in ${rowDimensions.join(", ")} contains "${term}"`
+					: "No rows match the current filters"}
+			</div>
+		);
+	} else {
+		body = (
 			<div className={styles.scroller} ref={scrollerRef}>
 				<table
 					className={styles.table}
@@ -750,8 +1085,12 @@ export function MatrixTable({
 								className={styles.groupHeader}
 								ref={groupRowRef}
 							>
-								<th className={styles.rowHeader} rowSpan={2}>
-									{rowDimensions[0]}
+								<th
+									className={styles.rowHeader}
+									rowSpan={2}
+									aria-sort={sortState(null)}
+								>
+									{rowHeading}
 								</th>
 								{groups.map((group, g) => {
 									const chosen = columnChosen?.[g] ?? false;
@@ -791,30 +1130,45 @@ export function MatrixTable({
 						)}
 						<tr className={styles.measureHeader}>
 							{!columnDimension && (
-								<th className={styles.rowHeader}>
-									{rowDimensions[0]}
+								<th
+									className={styles.rowHeader}
+									aria-sort={sortState(null)}
+								>
+									{rowHeading}
 								</th>
 							)}
 							{groups.map((group, g) =>
-								measures.map((measure, i) => (
-									<th
-										key={`${group ?? "all"}-${measure}`}
-										className={`${
-											i === 0 ? styles.groupStart : ""
-										} ${
-											columnChosen !== null &&
-											!columnChosen[g]
-												? styles.columnDimmed
-												: ""
-										}`}
-										title={
-											fields.get(measure)?.description ??
-											measure
-										}
-									>
-										{measure}
-									</th>
-								)),
+								measures.map((measure, i) => {
+									const key = cellKey(group, measure);
+									return (
+										<th
+											key={`${group ?? "all"}-${measure}`}
+											aria-sort={sortState(key)}
+											className={`${
+												i === 0 ? styles.groupStart : ""
+											} ${
+												columnChosen !== null &&
+												!columnChosen[g]
+													? styles.columnDimmed
+													: ""
+											}`}
+										>
+											<button
+												type="button"
+												className={`${styles.sortButton} ${styles.sortButtonEnd}`}
+												onClick={() => toggleSort(key)}
+												title={
+													fields.get(measure)
+														?.description ??
+													`Sort by ${measure}`
+												}
+											>
+												{sortArrow(key)}
+												{measure}
+											</button>
+										</th>
+									);
+								}),
 							)}
 						</tr>
 					</thead>
@@ -878,6 +1232,9 @@ export function MatrixTable({
 									isLoading={loadingPaths.has(item.key)}
 									chosen={chosen}
 									dimmed={marking !== null && !chosen}
+									highlight={
+										matches?.has(item.key) ? term : null
+									}
 									selectable={Boolean(onSelect)}
 									onToggle={onToggle}
 									onSelect={onSelectParts}
@@ -896,7 +1253,224 @@ export function MatrixTable({
 					</tbody>
 				</table>
 			</div>
+		);
+	}
+
+	return (
+		<div className={styles.matrix} style={{ height }}>
+			<div className={styles.toolbar}>
+				<div className={gridStyles.search}>
+					<svg
+						className={gridStyles.searchIcon}
+						width="13"
+						height="13"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						strokeWidth="2"
+						strokeLinecap="round"
+						aria-hidden="true"
+					>
+						<circle cx="11" cy="11" r="7" />
+						<path d="M21 21l-4.35-4.35" />
+					</svg>
+					<input
+						type="text"
+						className={gridStyles.searchInput}
+						placeholder={`Search ${rowDimensions.join(", ")}`}
+						aria-label={`Search ${rowDimensions.join(", ")}`}
+						value={search}
+						onChange={(e) => setSearch(e.target.value)}
+					/>
+				</div>
+
+				{filterable.map((field) => (
+					<button
+						key={field}
+						type="button"
+						className={`${styles.toolButton} ${styles.filterTool} ${
+							levelFilters[field] ? styles.filterToolActive : ""
+						}`}
+						aria-label={`Filter ${field}`}
+						onClick={(e) => {
+							const rect =
+								e.currentTarget.getBoundingClientRect();
+							setOpenFilter({
+								field,
+								x: rect.left,
+								y: rect.bottom + 4,
+							});
+						}}
+					>
+						<svg
+							width="11"
+							height="11"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2"
+							strokeLinecap="round"
+							aria-hidden="true"
+						>
+							<path d="M3 5h18l-7 8v6l-4 2v-8z" />
+						</svg>
+						{field}
+					</button>
+				))}
+
+				<div className={styles.spacer} />
+
+				{searchTruncated && !loading && (
+					<span className={gridStyles.exportNote}>
+						first {searchLimit.toLocaleString()} matches per level
+					</span>
+				)}
+
+				{/* A file that stopped at the ceiling is not the whole answer,
+				    and a reader who is not told will treat it as one. */}
+				{exporter.job?.truncated && !exporter.busy && (
+					<span
+						className={gridStyles.exportNote}
+						title={`An export stops at ${maxExportRows.toLocaleString()} rows. Narrow the filters, or read the source directly for more.`}
+					>
+						first {maxExportRows.toLocaleString()} rows exported
+					</span>
+				)}
+
+				<button
+					type="button"
+					className={styles.toolButton}
+					onClick={collapseAll}
+					disabled={expanded.size === 0}
+				>
+					Collapse all
+				</button>
+
+				<button
+					type="button"
+					className={`${styles.toolButton} ${styles.exportTool}`}
+					onClick={runExport}
+					disabled={exporter.busy || top.length === 0}
+					title={
+						exportError
+							? exportError.message
+							: "Every level as its own column, under the filters shown. Exports are recorded in the audit log. Large ones keep running if you leave the page."
+					}
+				>
+					<svg
+						width="13"
+						height="13"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						strokeWidth="2"
+						strokeLinecap="round"
+						strokeLinejoin="round"
+						aria-hidden="true"
+					>
+						<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+						<path d="M7 10l5 5 5-5M12 15V3" />
+					</svg>
+					{exporter.busy
+						? exporter.job && exporter.job.rowCount > 0
+							? `${exporter.job.rowCount.toLocaleString()} rows`
+							: "Exporting"
+						: exportError
+							? "Export failed"
+							: "Export"}
+				</button>
+			</div>
+
+			{activeChips.length > 0 && (
+				<div className={gridStyles.chips}>
+					{activeChips.map(([field, values]) => (
+						<span key={field} className={gridStyles.chip}>
+							<span className={gridStyles.chipField}>
+								{field}
+							</span>
+							<span>
+								{values.length === 1
+									? values[0]
+									: `${values.length} selected`}
+							</span>
+							<button
+								type="button"
+								className={gridStyles.chipRemove}
+								aria-label={`Remove ${field} filter`}
+								onClick={() =>
+									setLevelFilters((prev) => {
+										const next = { ...prev };
+										delete next[field];
+										return next;
+									})
+								}
+							>
+								<svg
+									width="10"
+									height="10"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									strokeWidth="2.5"
+									strokeLinecap="round"
+									aria-hidden="true"
+								>
+									<path d="M6 6l12 12M18 6L6 18" />
+								</svg>
+							</button>
+						</span>
+					))}
+					<button
+						type="button"
+						className={gridStyles.clearAll}
+						onClick={() => setLevelFilters({})}
+					>
+						Clear all
+					</button>
+				</div>
+			)}
+
+			{body}
+
+			{openFilter && (
+				<ColumnFilter
+					field={openFilter.field}
+					sourceKey={sourceKey}
+					otherFilters={activeFilters.filter(
+						(f) => f.field !== openFilter.field,
+					)}
+					selected={levelFilters[openFilter.field] ?? []}
+					sortDirection={null}
+					sortable={false}
+					anchor={{ x: openFilter.x, y: openFilter.y }}
+					onSort={() => {}}
+					onApply={(values) => {
+						setLevelFilters((prev) => ({
+							...prev,
+							[openFilter.field]: values,
+						}));
+						setOpenFilter(null);
+					}}
+					onClose={() => setOpenFilter(null)}
+				/>
+			)}
 		</div>
+	);
+}
+
+// A label with the searched text marked, or the label as it is.
+function markedLabel(label: string, highlight: string | null) {
+	if (!highlight) return label;
+	const at = label.toLowerCase().indexOf(highlight.toLowerCase());
+	if (at < 0) return label;
+	return (
+		<>
+			{label.slice(0, at)}
+			<mark className={styles.match}>
+				{label.slice(at, at + highlight.length)}
+			</mark>
+			{label.slice(at + highlight.length)}
+		</>
 	);
 }
 
@@ -911,6 +1485,8 @@ interface BodyRowProps {
 	isLoading: boolean;
 	chosen: boolean;
 	dimmed: boolean;
+	// The search term when this row is one of its matches.
+	highlight: string | null;
 	selectable: boolean;
 	onToggle: (row: MatrixRow) => void;
 	onSelect: (parts: SelectionPart[]) => void;
@@ -930,11 +1506,13 @@ const BodyRow = memo(function BodyRow({
 	isLoading,
 	chosen,
 	dimmed,
+	highlight,
 	selectable,
 	onToggle,
 	onSelect,
 	measure,
 }: BodyRowProps) {
+	const label = markedLabel(row.label, highlight);
 	return (
 		<tr
 			data-index={index}
@@ -998,10 +1576,10 @@ const BodyRow = memo(function BodyRow({
 						aria-pressed={chosen}
 						title={`Filter the page to ${row.label}`}
 					>
-						{row.label}
+						{label}
 					</button>
 				) : (
-					row.label
+					label
 				)}
 			</td>
 
