@@ -109,6 +109,10 @@ export interface PlatformSettings {
 	// under assistantEndpointUrl for anything hosted elsewhere.
 	assistantEndpoint: string;
 	assistantEndpointUrl: string;
+	// The model a gateway is asked for, sent with every request. A serving
+	// endpoint is one model already and needs none. An AI Gateway serves
+	// several from one address and picks by this.
+	assistantModel: string;
 
 	// Alerts somebody sets on a measure. Off stops every check and hides the
 	// feature, without deleting anybody's alerts.
@@ -156,6 +160,7 @@ export const defaultSettings: PlatformSettings = {
 
 	assistantEndpoint: "",
 	assistantEndpointUrl: "",
+	assistantModel: "",
 
 	alertsEnabled: true,
 	pushEnabled: false,
@@ -354,6 +359,7 @@ export const writableSettings = [
 	"accessModel",
 	"assistantEndpoint",
 	"assistantEndpointUrl",
+	"assistantModel",
 	"alertsEnabled",
 	"pushEnabled",
 	"retentionMonths",

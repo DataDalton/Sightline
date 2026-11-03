@@ -64,7 +64,8 @@ export function endpointUrl(): string {
 }
 
 // The chat shape every llm/v1/chat serving endpoint accepts, including the
-// tool calling half of it.
+// tool calling half of it. An AI Gateway accepts it too, at its
+// /chat/completions address, with the model named in the request.
 
 export type ChatMessage =
 	| { role: "system" | "user"; content: string }
@@ -111,6 +112,7 @@ async function post(
 	handlers: StreamHandlers,
 ): Promise<Omit<Turn, "as">> {
 	const timeout = AbortSignal.timeout(requestTimeoutMs);
+	const model = settings().assistantModel.trim();
 	const signal = handlers.signal
 		? AbortSignal.any([timeout, handlers.signal])
 		: timeout;
@@ -126,6 +128,9 @@ async function post(
 		// the endpoints reject the old ones, so the request carries only what
 		// the conversation is and how long an answer may run.
 		body: JSON.stringify({
+			// Named only where one is set, for a gateway that serves several
+			// models from one address. A serving endpoint is one model.
+			...(model ? { model } : {}),
 			messages,
 			...(tools.length > 0 ? { tools } : {}),
 			max_tokens: maxTokens,

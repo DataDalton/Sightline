@@ -899,6 +899,7 @@ interface ConfigValues {
 	accessModel: "catalog" | "grants";
 	assistantEndpoint: string;
 	assistantEndpointUrl: string;
+	assistantModel: string;
 	alertsEnabled: boolean;
 	pushEnabled: boolean;
 	retentionMonths: number;
@@ -1479,16 +1480,31 @@ function ConfigurationSection({ group }: { group: PaneId }) {
 							</Field>
 							<Field
 								label="Full address"
-								hint="Only for a model hosted outside this workspace. Set, it is used instead of the name above."
+								hint="For an AI Gateway, or a model hosted outside this workspace. Set, it is used instead of the name above. A gateway's address ends in /chat/completions."
 							>
 								<input
 									className={styles.input}
 									value={values.assistantEndpointUrl}
-									placeholder="https://example.com/v1/chat/completions"
+									placeholder="https://example.com/ai-gateway/mlflow/v1/chat/completions"
 									onChange={(e) =>
 										set({
 											assistantEndpointUrl:
 												e.target.value,
+										})
+									}
+								/>
+							</Field>
+							<Field
+								label="Model"
+								hint="The model a gateway is asked for, sent with every request. A gateway serves several models from one address and needs this. A serving endpoint is one model already, so leave it empty there."
+							>
+								<input
+									className={styles.input}
+									value={values.assistantModel}
+									placeholder="catalog.schema.model"
+									onChange={(e) =>
+										set({
+											assistantModel: e.target.value,
 										})
 									}
 								/>
@@ -1504,12 +1520,15 @@ function ConfigurationSection({ group }: { group: PaneId }) {
 
 						<p className={styles.paneNote}>
 							Each model call goes out under the caller&apos;s own
-							token when the app holds the model-serving user
-							authorization scope, and under the app&apos;s
-							service principal when it does not. The scope is set
-							on the app in the workspace, under User
-							authorization. The data queries the assistant runs
-							are always made as the caller.
+							token and nothing else. Their token reaches the
+							model only when the app holds a user authorization
+							scope the endpoint accepts, model-serving for a
+							serving endpoint, and without it the assistant tells
+							the person it cannot answer rather than asking as
+							the app. The scope is set on the app in the
+							workspace, under User authorization. The data
+							queries the assistant runs are always made as the
+							caller.
 						</p>
 					</>
 				)}
