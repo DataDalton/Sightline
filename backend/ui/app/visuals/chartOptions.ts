@@ -1082,7 +1082,10 @@ export function buildCartesian(
 		xAxis: orientation === "horizontal" ? value : category,
 		yAxis:
 			orientation === "horizontal"
-				? category
+				? // Reversed so the first row is at the top. A category axis
+					// counts up from the bottom, which would put the largest
+					// bar of a largest first chart last.
+					{ ...category, inverse: true }
 				: usesRightAxis
 					? [
 							value,
