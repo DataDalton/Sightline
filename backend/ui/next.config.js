@@ -45,6 +45,12 @@ const nextConfig = {
 	trailingSlash: true,
 	skipTrailingSlashRedirect: true,
 	reactStrictMode: true,
+	// Sends metadata with the document rather than streaming it in afterwards.
+	// A title that streams in is mounted after the page has set its own in
+	// usePageTitle, and puts the default name back over it. Every browser is
+	// matched rather than only the bots this option is named for. The metadata
+	// is static, so waiting for it costs nothing.
+	htmlLimitedBots: /.*/,
 	compress: true,
 	poweredByHeader: false,
 	images: {
