@@ -96,6 +96,7 @@ import {
 	type ChartContext,
 } from "./chartOptions";
 import { VisualEmpty, VisualError, VisualLoading } from "./VisualFrame";
+import { VisualLoadingState } from "./LoadingState";
 import type { FieldMeta } from "./types";
 import styles from "./Visual.module.css";
 
@@ -1225,7 +1226,15 @@ export function Chart({
 
 	if (problem) return <VisualEmpty message={problem.message} />;
 	if (error) return <VisualError error={error} />;
-	if (isLoading && rows.length === 0) return <VisualLoading rows={5} />;
+	// The shape of the content unless the author chose another placeholder.
+	const placeholder = (lines: number) =>
+		style?.loadingAnimation && style.loadingAnimation !== "skeleton" ? (
+			<VisualLoadingState variant={style.loadingAnimation} />
+		) : (
+			<VisualLoading rows={lines} />
+		);
+
+	if (isLoading && rows.length === 0) return placeholder(5);
 	if (rows.length === 0) return <VisualEmpty />;
 
 	if (isMap && mapFailed) {
@@ -1233,7 +1242,7 @@ export function Chart({
 			<VisualEmpty message="The map boundaries could not be loaded, so there is nothing to draw this on. Reloading the page is worth a try." />
 		);
 	}
-	if (isMap && !countries) return <VisualLoading rows={4} />;
+	if (isMap && !countries) return placeholder(4);
 
 	// A comparison chart with nothing to compare against. Said rather than
 	// drawn as a flat line, which would read as "nothing changed" when the
@@ -1245,7 +1254,7 @@ export function Chart({
 	}
 
 	if (comparisonNeeded && comparison.isLoading) {
-		return <VisualLoading rows={5} />;
+		return placeholder(5);
 	}
 
 	// What the chart says, for a reader who cannot see it.

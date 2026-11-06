@@ -19,12 +19,17 @@ import {
 	type DateClause,
 } from "../../lib/query/compare";
 import { Sparkline } from "./Sparkline";
-import { evaluateConditions, type VisualStyle } from "../../lib/visuals/style";
+import {
+	evaluateConditions,
+	styleForMeasure,
+	type VisualStyle,
+} from "../../lib/visuals/style";
 import { readThemeColors, withAlpha } from "./colors";
 import { useTheme } from "../context/ThemeContext";
 import { VisualError } from "./VisualFrame";
 import { VisualLoadingState } from "./LoadingState";
-import { fieldTooltip, type FieldMeta } from "./types";
+import { LabelHint } from "./LabelHint";
+import type { FieldMeta } from "./types";
 import {
 	describeBasis,
 	readTargets,
@@ -62,6 +67,9 @@ interface KpiRowProps {
 	// Bands to split the tiles into. One query either way: the grouping is
 	// about how the answer is laid out, not about what is asked for.
 	groups?: KpiGroup[];
+	// What a tile's name explains, by measure, where the author wrote something
+	// of their own. Anything else explains itself with the field's description.
+	tooltips?: Record<string, string>;
 	// What to compare each figure against, and which date the page's range
 	// filter sits on. Both are needed: without the field there is no window to
 	// move, and without a period there is nothing to move it to.
@@ -143,6 +151,7 @@ export function KpiRow({
 	fields,
 	style,
 	groups,
+	tooltips,
 	compareTo,
 	compareField,
 	sparkline,
@@ -354,10 +363,16 @@ export function KpiRow({
 						: ""
 				: "";
 
-		// An explicit rule overrides the built-in growth colouring.
+		// A rule overrides the colour chosen for the tile, and either overrides
+		// the built-in growth colouring.
+		const chosenColor = styleForMeasure(
+			style,
+			name,
+			measures.indexOf(name),
+		).color;
 		const explicitColor =
-			match?.textColor && colors
-				? colors.resolve(match.textColor, colors.text)
+			colors && (match?.textColor || chosenColor)
+				? colors.resolve(match?.textColor ?? chosenColor, colors.text)
 				: undefined;
 		const background =
 			match?.background && colors
@@ -419,12 +434,11 @@ export function KpiRow({
 
 		return (
 			<div key={name} className={styles.kpi} style={{ background }}>
-				<span
+				<LabelHint
+					label={name}
+					text={tooltips?.[name] || fields.get(name)?.description}
 					className={styles.kpiLabel}
-					title={fieldTooltip(fields.get(name), name)}
-				>
-					{name}
-				</span>
+				/>
 				<span
 					className={`${styles.kpiValue} ${explicitColor ? "" : fallbackTone}`}
 					style={{

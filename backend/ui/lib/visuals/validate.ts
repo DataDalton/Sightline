@@ -132,6 +132,13 @@ function checkOption(
 			if (!Array.isArray(value)) return wrong("a list of groups");
 			return null;
 		}
+
+		case "measureText": {
+			if (!value || typeof value !== "object" || Array.isArray(value)) {
+				return wrong("text for each measure");
+			}
+			return null;
+		}
 	}
 }
 

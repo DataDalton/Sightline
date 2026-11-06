@@ -690,6 +690,11 @@ function VisualBody({
 						visual.config,
 						"groups",
 					)}
+					tooltips={optionValue<Record<string, string>>(
+						visual.visualType,
+						visual.config,
+						"tooltips",
+					)}
 					compareTo={comparePeriod}
 					compareField={compareField}
 					targets={optionValue(
@@ -804,6 +809,13 @@ function VisualBody({
 					reportId={reportId}
 					pageId={pageId}
 					visualId={visual.visualId}
+					showTotals={
+						optionValue<boolean>(
+							visual.visualType,
+							visual.config,
+							"showTotals",
+						) === true
+					}
 					onSelect={crossFilterBy}
 					selection={ownSelection}
 				/>

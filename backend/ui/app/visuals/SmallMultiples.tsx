@@ -9,7 +9,7 @@ import { useTheme } from "../context/ThemeContext";
 import { Sparkline } from "./Sparkline";
 import { VisualError, VisualEmpty } from "./VisualFrame";
 import { VisualLoadingState } from "./LoadingState";
-import type { VisualStyle } from "../../lib/visuals/style";
+import { styleForMeasure, type VisualStyle } from "../../lib/visuals/style";
 import {
 	matchesSelection,
 	selectionCovers,
@@ -64,6 +64,7 @@ export function SmallMultiples({
 	measures,
 	filters,
 	fields,
+	style,
 	options,
 	onSelect,
 	selection,
@@ -144,14 +145,25 @@ export function SmallMultiples({
 
 	if (error) return <VisualError error={error} />;
 	if (isLoading && rows.length === 0) {
-		return <VisualLoadingState variant="skeleton" height={140} rows={2} />;
+		return (
+			<VisualLoadingState
+				variant={style?.loadingAnimation ?? "skeleton"}
+				height={140}
+				rows={2}
+			/>
+		);
 	}
 	if (panels.length === 0 || !domain) return <VisualEmpty />;
 
 	const hint = (fields.get(measure)?.formatHint as FormatHint) ?? "decimal";
 	const marking = selectionCovers(selection, [splitField]) ? selection : null;
 	const columns = Math.max(1, Math.min(6, Number(options?.columns) || 3));
-	const stroke = colors?.series[0];
+	const stroke = colors
+		? colors.resolve(
+				styleForMeasure(style, measure, 0).color,
+				colors.series[0],
+			)
+		: undefined;
 
 	return (
 		<div

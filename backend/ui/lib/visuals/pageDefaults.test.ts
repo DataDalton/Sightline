@@ -198,3 +198,29 @@ test("a dropdown set to open on the newest value opens on it, ahead of fixed val
 	);
 	assert.deepEqual(opening.y, [{ field: "Period Year", op: "is_latest" }]);
 });
+
+test("a dropdown set to drop its values opens with them dropped", () => {
+	const opening = openingFilters(
+		[
+			{
+				visualId: "kept",
+				visualType: "dropdownFilter",
+				config: {
+					dimensions: ["region"],
+					options: { defaultValues: "North" },
+				},
+			},
+			{
+				visualId: "dropped",
+				visualType: "dropdownFilter",
+				config: {
+					dimensions: ["region"],
+					options: { defaultValues: "North", match: "exclude" },
+				},
+			},
+		],
+		day,
+	);
+	assert.equal((opening.kept[0] as { op: string }).op, "eq");
+	assert.equal((opening.dropped[0] as { op: string }).op, "neq");
+});

@@ -153,7 +153,14 @@ export function openingFilters(
 			opening[visual.visualId] = [
 				{
 					field,
-					op: "eq",
+					op:
+						optionValue<string>(
+							visual.visualType,
+							visual.config,
+							"match",
+						) === "exclude"
+							? "neq"
+							: "eq",
 					values: multiple ? values : values.slice(0, 1),
 				},
 			];

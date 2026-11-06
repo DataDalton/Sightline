@@ -133,6 +133,11 @@ interface ConditionsEditorProps {
 	// Scales only make sense where there is a column of values to compare
 	// across, so a KPI row does not offer them.
 	allowScales: boolean;
+	// Offers one ramp for the whole visual and no rules, for a chart that shades
+	// a grid or a map, where there is no column to choose and no cell to style.
+	scaleOnly?: boolean;
+	// What a rule can do on this type. See the visual catalogue.
+	ruleStyle?: "cell" | "value" | "mark";
 	onChange: (patch: Partial<VisualStyle>) => void;
 }
 
@@ -140,8 +145,18 @@ export function ConditionsEditor({
 	style,
 	availableFields,
 	allowScales,
+	scaleOnly = false,
+	ruleStyle = "cell",
 	onChange,
 }: ConditionsEditorProps) {
+	// A bar is a filled shape with no text of its own, so a rule can only
+	// change its fill.
+	const fillOnly = ruleStyle === "mark";
+	// Top and bottom need rows in one order to count along.
+	const operators = Object.entries(operatorLabels).filter(
+		([value]) =>
+			ruleStyle !== "value" || (value !== "top" && value !== "bottom"),
+	);
 	const rules = style.conditions ?? [];
 	const scales = style.colorScales ?? [];
 
@@ -188,7 +203,9 @@ export function ConditionsEditor({
 					field: availableFields[0] ?? "",
 					operator: "gt",
 					value: 0,
-					textColor: { token: "success" },
+					...(fillOnly
+						? { background: { token: "success" as const } }
+						: { textColor: { token: "success" as const } }),
 				},
 			],
 		});
@@ -229,279 +246,307 @@ export function ConditionsEditor({
 
 	return (
 		<>
-			<Section
-				id="visual-conditions"
-				title="Conditional formatting"
-				defaultOpen={false}
-				count={rules.length}
-			>
-				{rules.length > 1 && (
-					<Hint>
-						Applied in order and later ones win, so put the general
-						rule first and the specific one after it.
-					</Hint>
-				)}
+			{!scaleOnly && (
+				<Section
+					id="visual-conditions"
+					title="Conditional formatting"
+					defaultOpen={false}
+					count={rules.length}
+				>
+					{rules.length > 1 && (
+						<Hint>
+							Applied in order and later ones win, so put the
+							general rule first and the specific one after it.
+						</Hint>
+					)}
 
-				{rules.map((rule, index) => (
-					<div key={index} className={styles.ruleCard}>
-						<div className={styles.ruleHeader}>
-							<span className={styles.ruleNumber}>
-								{index + 1}
-							</span>
-							<button
-								type="button"
-								className={styles.iconButton}
-								onClick={() => moveRule(index, index - 1)}
-								disabled={index === 0}
-								aria-label="Move rule up"
-							>
-								<ArrowUpIcon />
-							</button>
-							<button
-								type="button"
-								className={styles.iconButton}
-								onClick={() => moveRule(index, index + 1)}
-								disabled={index === rules.length - 1}
-								aria-label="Move rule down"
-							>
-								<ArrowDownIcon />
-							</button>
-							<div className={styles.spacer} />
-							<button
-								type="button"
-								className={`${styles.iconButton} ${styles.iconRemove}`}
-								onClick={() => removeRule(index)}
-								aria-label="Remove rule"
-							>
-								<CloseIcon />
-							</button>
-						</div>
-
-						<div className={styles.field}>
-							<label className={styles.fieldLabel}>When</label>
-							<Select
-								value={rule.field}
-								onChange={(v) =>
-									updateRule(index, { field: v })
-								}
-								ariaLabel="Field"
-								searchable={availableFields.length > 12}
-								options={availableFields.map((f) => ({
-									value: f,
-									label: f,
-								}))}
-							/>
-						</div>
-
-						<div className={styles.row}>
-							<Select
-								value={rule.operator}
-								onChange={(v) =>
-									updateRule(index, {
-										operator: v as ConditionOperator,
-									})
-								}
-								ariaLabel="Operator"
-								options={Object.entries(operatorLabels).map(
-									([value, label]) => ({ value, label }),
-								)}
-							/>
-							<NumberInput
-								value={rule.value ?? 0}
-								onCommit={(value) =>
-									updateRule(index, { value })
-								}
-								ariaLabel="Threshold"
-							/>
-							{rule.operator === "between" && (
-								<NumberInput
-									value={rule.value2 ?? 0}
-									onCommit={(value2) =>
-										updateRule(index, { value2 })
-									}
-									ariaLabel="Upper bound"
-								/>
-							)}
-						</div>
-
-						<div className={styles.field} style={{ marginTop: 8 }}>
-							<label className={styles.fieldLabel}>
-								Text colour
-							</label>
-							<div className={styles.swatchGrid}>
+					{rules.map((rule, index) => (
+						<div key={index} className={styles.ruleCard}>
+							<div className={styles.ruleHeader}>
+								<span className={styles.ruleNumber}>
+									{index + 1}
+								</span>
 								<button
 									type="button"
-									className={`${styles.swatch} ${
-										!rule.textColor
-											? styles.swatchActive
-											: ""
-									}`}
-									style={{
-										background: "transparent",
-										borderStyle: "dashed",
-									}}
-									title="No colour"
-									onClick={() =>
-										updateRule(index, {
-											textColor: undefined,
-										})
-									}
-								/>
-								{swatches.map((s) => {
-									const active =
-										rule.textColor &&
-										"token" in rule.textColor &&
-										rule.textColor.token === s.token;
-									return (
-										<button
-											key={s.token}
-											type="button"
-											className={`${styles.swatch} ${active ? styles.swatchActive : ""}`}
-											style={{ background: s.hex }}
-											title={s.token}
-											onClick={() =>
-												updateRule(index, {
-													textColor: {
-														token: s.token,
-													} as ColorSpec,
-												})
-											}
-										/>
-									);
-								})}
-							</div>
-						</div>
-
-						<div className={styles.field}>
-							<label className={styles.fieldLabel}>
-								Background
-							</label>
-							<div className={styles.swatchGrid}>
+									className={styles.iconButton}
+									onClick={() => moveRule(index, index - 1)}
+									disabled={index === 0}
+									aria-label="Move rule up"
+								>
+									<ArrowUpIcon />
+								</button>
 								<button
 									type="button"
-									className={`${styles.swatch} ${
-										!rule.background
-											? styles.swatchActive
-											: ""
-									}`}
-									style={{
-										background: "transparent",
-										borderStyle: "dashed",
-									}}
-									title="No background"
-									onClick={() =>
-										updateRule(index, {
-											background: undefined,
-										})
-									}
-								/>
-								{swatches.map((s) => {
-									const active =
-										rule.background &&
-										"token" in rule.background &&
-										rule.background.token === s.token;
-									return (
-										<button
-											key={s.token}
-											type="button"
-											className={`${styles.swatch} ${active ? styles.swatchActive : ""}`}
-											style={{ background: s.hex }}
-											title={s.token}
-											onClick={() =>
-												updateRule(index, {
-													background: {
-														token: s.token,
-													} as ColorSpec,
-												})
-											}
-										/>
-									);
-								})}
+									className={styles.iconButton}
+									onClick={() => moveRule(index, index + 1)}
+									disabled={index === rules.length - 1}
+									aria-label="Move rule down"
+								>
+									<ArrowDownIcon />
+								</button>
+								<div className={styles.spacer} />
+								<button
+									type="button"
+									className={`${styles.iconButton} ${styles.iconRemove}`}
+									onClick={() => removeRule(index)}
+									aria-label="Remove rule"
+								>
+									<CloseIcon />
+								</button>
 							</div>
-						</div>
 
-						<div className={styles.field}>
-							<label className={styles.fieldLabel}>
-								Marker, shown before the value
-							</label>
+							<div className={styles.field}>
+								<label className={styles.fieldLabel}>
+									When
+								</label>
+								<Select
+									value={rule.field}
+									onChange={(v) =>
+										updateRule(index, { field: v })
+									}
+									ariaLabel="Field"
+									searchable={availableFields.length > 12}
+									options={availableFields.map((f) => ({
+										value: f,
+										label: f,
+									}))}
+								/>
+							</div>
+
 							<div className={styles.row}>
-								<input
-									className={styles.input}
-									value={rule.marker ?? ""}
-									placeholder="none"
-									maxLength={3}
-									onChange={(e) =>
+								<Select
+									value={rule.operator}
+									onChange={(v) =>
 										updateRule(index, {
-											marker: e.target.value || undefined,
+											operator: v as ConditionOperator,
 										})
 									}
+									ariaLabel="Operator"
+									options={operators.map(
+										([value, label]) => ({
+											value,
+											label,
+										}),
+									)}
 								/>
-								{markerSuggestions.map((m) => (
-									<button
-										key={m}
-										type="button"
-										className={styles.markerButton}
-										onClick={() =>
-											updateRule(index, { marker: m })
+								<NumberInput
+									value={rule.value ?? 0}
+									onCommit={(value) =>
+										updateRule(index, { value })
+									}
+									ariaLabel="Threshold"
+								/>
+								{rule.operator === "between" && (
+									<NumberInput
+										value={rule.value2 ?? 0}
+										onCommit={(value2) =>
+											updateRule(index, { value2 })
 										}
-										aria-label={`Use ${m}`}
-									>
-										{m}
-									</button>
-								))}
+										ariaLabel="Upper bound"
+									/>
+								)}
 							</div>
-							{/* Not a nag: colour alone disappears in greyscale and
+
+							{!fillOnly && (
+								<div
+									className={styles.field}
+									style={{ marginTop: 8 }}
+								>
+									<label className={styles.fieldLabel}>
+										Text colour
+									</label>
+									<div className={styles.swatchGrid}>
+										<button
+											type="button"
+											className={`${styles.swatch} ${
+												!rule.textColor
+													? styles.swatchActive
+													: ""
+											}`}
+											style={{
+												background: "transparent",
+												borderStyle: "dashed",
+											}}
+											title="No colour"
+											onClick={() =>
+												updateRule(index, {
+													textColor: undefined,
+												})
+											}
+										/>
+										{swatches.map((s) => {
+											const active =
+												rule.textColor &&
+												"token" in rule.textColor &&
+												rule.textColor.token ===
+													s.token;
+											return (
+												<button
+													key={s.token}
+													type="button"
+													className={`${styles.swatch} ${active ? styles.swatchActive : ""}`}
+													style={{
+														background: s.hex,
+													}}
+													title={s.token}
+													onClick={() =>
+														updateRule(index, {
+															textColor: {
+																token: s.token,
+															} as ColorSpec,
+														})
+													}
+												/>
+											);
+										})}
+									</div>
+								</div>
+							)}
+
+							<div className={styles.field}>
+								<label className={styles.fieldLabel}>
+									Background
+								</label>
+								<div className={styles.swatchGrid}>
+									<button
+										type="button"
+										className={`${styles.swatch} ${
+											!rule.background
+												? styles.swatchActive
+												: ""
+										}`}
+										style={{
+											background: "transparent",
+											borderStyle: "dashed",
+										}}
+										title="No background"
+										onClick={() =>
+											updateRule(index, {
+												background: undefined,
+											})
+										}
+									/>
+									{swatches.map((s) => {
+										const active =
+											rule.background &&
+											"token" in rule.background &&
+											rule.background.token === s.token;
+										return (
+											<button
+												key={s.token}
+												type="button"
+												className={`${styles.swatch} ${active ? styles.swatchActive : ""}`}
+												style={{ background: s.hex }}
+												title={s.token}
+												onClick={() =>
+													updateRule(index, {
+														background: {
+															token: s.token,
+														} as ColorSpec,
+													})
+												}
+											/>
+										);
+									})}
+								</div>
+							</div>
+
+							{!fillOnly && (
+								<>
+									<div className={styles.field}>
+										<label className={styles.fieldLabel}>
+											Marker, shown before the value
+										</label>
+										<div className={styles.row}>
+											<input
+												className={styles.input}
+												value={rule.marker ?? ""}
+												placeholder="none"
+												maxLength={3}
+												onChange={(e) =>
+													updateRule(index, {
+														marker:
+															e.target.value ||
+															undefined,
+													})
+												}
+											/>
+											{markerSuggestions.map((m) => (
+												<button
+													key={m}
+													type="button"
+													className={
+														styles.markerButton
+													}
+													onClick={() =>
+														updateRule(index, {
+															marker: m,
+														})
+													}
+													aria-label={`Use ${m}`}
+												>
+													{m}
+												</button>
+											))}
+										</div>
+										{/* Not a nag: colour alone disappears in greyscale and
 							    for a reader with colour vision deficiency, and
 							    this is the one place to catch it. */}
-							{(rule.textColor || rule.background) &&
-								!rule.marker && (
-									<Hint>
-										This rule uses colour only. A marker
-										keeps it readable in print and for
-										readers who cannot distinguish the hue.
-									</Hint>
-								)}
+										{(rule.textColor || rule.background) &&
+											!rule.marker && (
+												<Hint>
+													This rule uses colour only.
+													A marker keeps it readable
+													in print and for readers who
+													cannot distinguish the hue.
+												</Hint>
+											)}
+									</div>
+
+									<button
+										type="button"
+										className={styles.checkRow}
+										onClick={() =>
+											updateRule(index, {
+												bold: !rule.bold,
+											})
+										}
+									>
+										<span
+											className={`${styles.checkbox} ${rule.bold ? styles.checked : ""}`}
+											aria-hidden="true"
+										>
+											<svg
+												width="9"
+												height="9"
+												viewBox="0 0 16 16"
+												fill="none"
+											>
+												<path
+													d="M3 8.5l3.5 3.5L13 5"
+													stroke="currentColor"
+													strokeWidth="2.5"
+													strokeLinecap="round"
+													strokeLinejoin="round"
+												/>
+											</svg>
+										</span>
+										Bold the value
+									</button>
+								</>
+							)}
 						</div>
+					))}
 
-						<button
-							type="button"
-							className={styles.checkRow}
-							onClick={() =>
-								updateRule(index, { bold: !rule.bold })
-							}
-						>
-							<span
-								className={`${styles.checkbox} ${rule.bold ? styles.checked : ""}`}
-								aria-hidden="true"
-							>
-								<svg
-									width="9"
-									height="9"
-									viewBox="0 0 16 16"
-									fill="none"
-								>
-									<path
-										d="M3 8.5l3.5 3.5L13 5"
-										stroke="currentColor"
-										strokeWidth="2.5"
-										strokeLinecap="round"
-										strokeLinejoin="round"
-									/>
-								</svg>
-							</span>
-							Bold the value
-						</button>
-					</div>
-				))}
-
-				<button
-					type="button"
-					className={styles.addButton}
-					onClick={addRule}
-				>
-					Add rule
-				</button>
-			</Section>
+					<button
+						type="button"
+						className={styles.addButton}
+						onClick={addRule}
+					>
+						Add rule
+					</button>
+				</Section>
+			)}
 
 			{allowScales && (
 				<Section
@@ -539,23 +584,25 @@ export function ConditionsEditor({
 								</button>
 							</div>
 
-							<div className={styles.field}>
-								<label className={styles.fieldLabel}>
-									Column
-								</label>
-								<Select
-									value={scale.field}
-									onChange={(v) =>
-										updateScale(index, { field: v })
-									}
-									ariaLabel="Field"
-									searchable={availableFields.length > 12}
-									options={availableFields.map((f) => ({
-										value: f,
-										label: f,
-									}))}
-								/>
-							</div>
+							{!scaleOnly && (
+								<div className={styles.field}>
+									<label className={styles.fieldLabel}>
+										Column
+									</label>
+									<Select
+										value={scale.field}
+										onChange={(v) =>
+											updateScale(index, { field: v })
+										}
+										ariaLabel="Field"
+										searchable={availableFields.length > 12}
+										options={availableFields.map((f) => ({
+											value: f,
+											label: f,
+										}))}
+									/>
+								</div>
+							)}
 
 							{themeColors &&
 								(["sequential", "diverging"] as const).map(
@@ -674,15 +721,18 @@ export function ConditionsEditor({
 									/>
 									<div className={styles.rampEnds}>
 										<span>Lowest</span>
-										{scale.kind === "diverging" && (
-											<span>{scale.midpoint ?? 0}</span>
-										)}
+										{scale.kind === "diverging" &&
+											!scaleOnly && (
+												<span>
+													{scale.midpoint ?? 0}
+												</span>
+											)}
 										<span>Highest</span>
 									</div>
 								</div>
 							)}
 
-							{scale.kind === "diverging" && (
+							{scale.kind === "diverging" && !scaleOnly && (
 								<div className={styles.field}>
 									<label className={styles.fieldLabel}>
 										Midpoint
@@ -702,61 +752,65 @@ export function ConditionsEditor({
 								</div>
 							)}
 
-							<button
-								type="button"
-								className={styles.checkRow}
-								onClick={() =>
-									updateScale(index, {
-										asDataBar: !scale.asDataBar,
-									})
-								}
-							>
-								<span
-									className={`${styles.checkbox} ${scale.asDataBar ? styles.checked : ""}`}
-									aria-hidden="true"
+							{!scaleOnly && (
+								<button
+									type="button"
+									className={styles.checkRow}
+									onClick={() =>
+										updateScale(index, {
+											asDataBar: !scale.asDataBar,
+										})
+									}
 								>
-									<svg
-										width="9"
-										height="9"
-										viewBox="0 0 16 16"
-										fill="none"
+									<span
+										className={`${styles.checkbox} ${scale.asDataBar ? styles.checked : ""}`}
+										aria-hidden="true"
 									>
-										<path
-											d="M3 8.5l3.5 3.5L13 5"
-											stroke="currentColor"
-											strokeWidth="2.5"
-											strokeLinecap="round"
-											strokeLinejoin="round"
-										/>
-									</svg>
-								</span>
-								Show as a data bar
-							</button>
+										<svg
+											width="9"
+											height="9"
+											viewBox="0 0 16 16"
+											fill="none"
+										>
+											<path
+												d="M3 8.5l3.5 3.5L13 5"
+												stroke="currentColor"
+												strokeWidth="2.5"
+												strokeLinecap="round"
+												strokeLinejoin="round"
+											/>
+										</svg>
+									</span>
+									Show as a data bar
+								</button>
+							)}
 						</div>
 					))}
 
-					<button
-						type="button"
-						className={styles.addButton}
-						onClick={() =>
-							onChange({
-								colorScales: [
-									...scales,
-									{
-										field: availableFields[0] ?? "",
-										// The neutral default: intensity, with
-										// no implication that high is good or
-										// bad until an author says so.
-										kind: "sequential",
-										high: { token: "info" },
-										asDataBar: false,
-									},
-								],
-							})
-						}
-					>
-						Add colour scale
-					</button>
+					{(!scaleOnly || scales.length === 0) && (
+						<button
+							type="button"
+							className={styles.addButton}
+							onClick={() =>
+								onChange({
+									colorScales: [
+										...scales,
+										{
+											field: availableFields[0] ?? "",
+											// The neutral default: intensity, with
+											// no implication that high is good or
+											// bad until an author says so.
+											kind: "sequential",
+											high: { token: "info" },
+											asDataBar: false,
+										},
+									],
+								})
+							}
+						>
+							Add colour scale
+						</button>
+					)}
 				</Section>
 			)}
 		</>

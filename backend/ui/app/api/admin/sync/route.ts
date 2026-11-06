@@ -12,7 +12,7 @@ import {
 	syncAllSourceFields,
 	syncSourceFields,
 } from "@/lib/semantic/fieldSync";
-import { loadRegistry } from "@/lib/semantic/registry";
+import { reloadRegistryEverywhere } from "@/lib/semantic/registry";
 import { announceMissingFields } from "@/lib/semantic/fieldWatch";
 import {
 	finishSyncRun,
@@ -92,7 +92,7 @@ export async function POST(request: NextRequest) {
 		// waiting out the poll interval, and the row filter walk is redone
 		// rather than reused: a sync is what an admin runs after granting the
 		// catalogue access that walk needs.
-		await loadRegistry(true);
+		await reloadRegistryEverywhere(true);
 
 		// Told after the registry is rebuilt, so a link in the message opens a
 		// page that already knows the field is gone. A failure here costs the

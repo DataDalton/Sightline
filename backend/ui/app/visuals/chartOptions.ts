@@ -27,6 +27,7 @@ import {
 	unitWords,
 	type ForecastResult,
 } from "../../lib/visuals/forecast";
+import { optionValue } from "../../lib/visuals/catalog";
 import { worldMapName } from "./worldMap";
 
 // Builds the ECharts option for each visual type.
@@ -204,6 +205,33 @@ function seriesColor(
 	);
 }
 
+// The colours for marks that stand for rows rather than measures, such as the
+// slices of a pie. The set an author chose, or the theme's.
+function markPalette(ctx: ChartContext): string[] {
+	const chosen = ctx.style?.palette ?? [];
+	if (chosen.length === 0) return ctx.colors.series;
+	return chosen.map((token) =>
+		ctx.colors.resolve({ token }, ctx.colors.series[0]),
+	);
+}
+
+// The colours of a chart that shades a value along one ramp, from the scale an
+// author chose or the fallback given. A ramp across a midpoint passes through
+// the surface, so the middle of the range reads as neither end.
+function scaleRange(ctx: ChartContext, fallback: string[]): string[] {
+	const scale = ctx.style?.colorScales?.[0];
+	if (!scale) return fallback;
+	const high = ctx.colors.resolve(scale.high, ctx.colors.series[0]);
+	if (scale.kind === "diverging") {
+		return [
+			ctx.colors.resolve(scale.low, ctx.colors.negative),
+			ctx.colors.surface,
+			high,
+		];
+	}
+	return [withAlpha(high, 0.15), withAlpha(high, 0.55), high];
+}
+
 // Shared tooltip that formats values the same way the tables do, so a figure
 // does not change shape depending on where it is read.
 function tooltip(ctx: ChartContext, trigger: "item" | "axis" = "axis") {
@@ -301,6 +329,21 @@ function categoryAxis(ctx: ChartContext, categories: string[]) {
 	};
 }
 
+// The names down the side of a chart drawn as a list.
+//
+// Every name that fits between its neighbours is shown, rather than the library
+// thinning them to a regular interval and leaving half the rows unnamed. A long
+// name is cut short so the names cannot take the plot's width. The tooltip still
+// gives it in full.
+function listAxisLabel(ctx: ChartContext) {
+	return {
+		interval: 0,
+		hideOverlap: true,
+		width: ctx.options?.largeText === true ? 320 : 180,
+		overflow: "truncate" as const,
+	};
+}
+
 const baseGrid = { left: 8, right: 16, top: 30, bottom: 8, containLabel: true };
 
 // A window onto a long series, when the author has asked for one.
@@ -360,6 +403,8 @@ function zoomWindow(ctx: ChartContext, axisIndex: 0 | 1) {
 function referenceMarkLine(
 	ctx: ChartContext,
 	orientation: "vertical" | "horizontal" = "vertical",
+	// Which measure a line that names none is worked out from.
+	plotted: string = ctx.measures[0],
 ) {
 	const lines = ctx.style?.referenceLines ?? [];
 	if (lines.length === 0) return undefined;
@@ -372,7 +417,7 @@ function referenceMarkLine(
 
 	const data = lines
 		.map((reference) => {
-			const measure = reference.measure ?? ctx.measures[0];
+			const measure = reference.measure ?? plotted;
 			if (!measure) return null;
 
 			const at = referenceValue(reference, ctx.rows, measure);
@@ -581,7 +626,9 @@ interface DrawnSeries {
 	type: string;
 	yAxisIndex: number;
 	stack?: string;
-	itemStyle: { color: string; borderRadius?: unknown };
+	// The series' own colour. The fill drawn may be a gradient made from it.
+	baseColor: string;
+	itemStyle: { borderRadius?: unknown };
 	lineStyle?: { width?: number };
 	data: unknown[];
 }
@@ -656,7 +703,7 @@ function forecastLayer(
 		if (index < 0) continue;
 		const measured = drawn[index];
 		if (measured.type !== "line" && measured.type !== "bar") continue;
-		const color = measured.itemStyle.color;
+		const color = measured.baseColor;
 		const isBar = measured.type === "bar";
 		const stacked = measured.stack !== undefined;
 		const note =
@@ -894,8 +941,33 @@ export function buildCartesian(
 					? "bar"
 					: "line";
 
-		const isArea = resolvedKind === "area" || s.fill !== "none";
+		// An area chart fills until an author says not to. Asked of the stored
+		// entries, because the resolved style reads "none" for one left unset.
+		const entries = style?.series ?? [];
+		const chosenFill =
+			entries.find((entry) => entry.measure === measure)?.fill ??
+			entries.find((entry) => !entry.measure)?.fill;
+		const isArea =
+			chosenFill !== "none" &&
+			(resolvedKind === "area" || s.fill !== "none");
 		const fillOpacity = s.fillOpacity ?? 0.25;
+
+		// A bar fading from its full colour at the value end to the chosen
+		// opacity at the base, so its length still reads from the strong end.
+		const barGradient =
+			echartsType === "bar" && s.fill === "gradient"
+				? {
+						type: "linear" as const,
+						x: orientation === "horizontal" ? 1 : 0,
+						y: 0,
+						x2: 0,
+						y2: orientation === "horizontal" ? 0 : 1,
+						colorStops: [
+							{ offset: 0, color },
+							{ offset: 1, color: withAlpha(color, fillOpacity) },
+						],
+					}
+				: null;
 
 		let areaStyle: Record<string, unknown> | undefined;
 		if (isArea && echartsType === "line") {
@@ -974,8 +1046,9 @@ export function buildCartesian(
 							? undefined
 							: s.stack)),
 			barMaxWidth: 36,
+			baseColor: color,
 			itemStyle: {
-				color,
+				color: barGradient ?? color,
 				borderRadius:
 					echartsType === "bar"
 						? orientation === "horizontal"
@@ -1039,7 +1112,7 @@ export function buildCartesian(
 		kind,
 		orientation,
 		categories,
-		series as DrawnSeries[],
+		series as unknown as DrawnSeries[],
 	);
 
 	const category = categoryAxis(
@@ -1085,7 +1158,14 @@ export function buildCartesian(
 				? // Reversed so the first row is at the top. A category axis
 					// counts up from the bottom, which would put the largest
 					// bar of a largest first chart last.
-					{ ...category, inverse: true }
+					{
+						...category,
+						inverse: true,
+						axisLabel: {
+							...category.axisLabel,
+							...listAxisLabel(ctx),
+						},
+					}
 				: usesRightAxis
 					? [
 							value,
@@ -1243,6 +1323,7 @@ export function buildPie(ctx: ChartContext, donut: boolean) {
 	// dimmed when every slice is selected, since there is nothing to contrast.
 	const selected = activeSelection(ctx, grouped.length);
 	const hasTail = grouped !== ordered;
+	const palette = markPalette(ctx);
 
 	const data = grouped.map((r, i) => {
 		const name = String(r[field] ?? "");
@@ -1259,7 +1340,7 @@ export function buildPie(ctx: ChartContext, donut: boolean) {
 			// selects nothing.
 			...(tail ? { tail: true } : {}),
 			itemStyle: {
-				color: colors.series[i % colors.series.length],
+				color: palette[i % palette.length],
 				...(opacity === undefined ? {} : { opacity }),
 			},
 		};
@@ -1343,6 +1424,7 @@ export function buildTreemap(ctx: ChartContext) {
 	// lighter in light mode, darker in dark mode, same hue either way.
 	const tone = (color: string, strength: number) =>
 		mix(colors.surface, color, strength);
+	const palette = markPalette(ctx);
 
 	// Colour says which group a tile is in, not how big it is. The area
 	// already says how big it is, and a lightness ramp on top of that put the
@@ -1415,7 +1497,7 @@ export function buildTreemap(ctx: ChartContext) {
 		data = shown.map(({ name, group, index }) => {
 			// Coloured by its place among all the groups, so a group keeps
 			// its colour when it is zoomed into.
-			const hue = colors.series[index % colors.series.length];
+			const hue = palette[index % palette.length];
 			// Largest first, so the tiles inside a group are laid out and
 			// stepped through in the same order.
 			const ordered = [...group.children].sort(
@@ -1463,7 +1545,7 @@ export function buildTreemap(ctx: ChartContext) {
 		);
 
 		data = ordered.map((r, rank) => {
-			const hue = colors.series[rank % colors.series.length];
+			const hue = palette[rank % palette.length];
 			const inside =
 				markOpacity(selection, {
 					[dimensions[0]]: r[dimensions[0]],
@@ -1471,7 +1553,7 @@ export function buildTreemap(ctx: ChartContext) {
 			const fill = tone(
 				hue,
 				inside
-					? strengthAt(Math.floor(rank / colors.series.length))
+					? strengthAt(Math.floor(rank / palette.length))
 					: dimmedStrength,
 			);
 			return {
@@ -1538,6 +1620,7 @@ export function buildTreemap(ctx: ChartContext) {
 export function buildFunnel(ctx: ChartContext) {
 	const { rows, dimensions, measures, colors } = ctx;
 	const hint = ctx.hintFor(measures[0]);
+	const palette = markPalette(ctx);
 
 	return {
 		animation: false,
@@ -1566,7 +1649,7 @@ export function buildFunnel(ctx: ChartContext) {
 					textBorderWidth: 0,
 				},
 				data: rows.map((r, i) => {
-					const fill = colors.series[i % colors.series.length];
+					const fill = palette[i % palette.length];
 					const opacity = highlightOpacity(ctx, r);
 					return {
 						name: String(r[dimensions[0]] ?? ""),
@@ -1732,6 +1815,7 @@ export function buildWaterfall(ctx: ChartContext) {
 					color: colors.positive,
 					borderRadius: [2, 2, 0, 0],
 				},
+				markLine: referenceMarkLine(ctx),
 				data: rising,
 			},
 			{
@@ -1863,11 +1947,11 @@ export function buildChoropleth(
 			itemHeight: 90,
 			textStyle: { color: colors.textMuted, fontSize: 10 },
 			inRange: {
-				color: [
+				color: scaleRange(ctx, [
 					withAlpha(colors.series[0], 0.15),
 					withAlpha(colors.series[0], 0.55),
 					colors.series[0],
-				],
+				]),
 			},
 		},
 		series: [
@@ -2014,7 +2098,7 @@ export function buildTimeline(ctx: ChartContext) {
 			// A category axis counts up from the bottom, which puts the
 			// earliest thing at the foot of a schedule nobody reads that way.
 			inverse: true,
-			axisLabel: { color: colors.axis, hideOverlap: true },
+			axisLabel: { color: colors.axis, ...listAxisLabel(ctx) },
 			axisLine: { lineStyle: { color: colors.grid } },
 			axisTick: { show: false },
 		},
@@ -2033,7 +2117,7 @@ export function buildTimeline(ctx: ChartContext) {
 				stack: "span",
 				barWidth: "55%",
 				itemStyle: {
-					color: colors.series[0],
+					color: seriesColor(ctx, measure ?? "", 0),
 					borderRadius: 3,
 				},
 				// A span of zero has no width to draw, so a single day is
@@ -2121,11 +2205,11 @@ export function buildCalendar(ctx: ChartContext) {
 			itemHeight: 60,
 			textStyle: { color: colors.textMuted, fontSize: 10 },
 			inRange: {
-				color: [
+				color: scaleRange(ctx, [
 					withAlpha(colors.series[0], 0.12),
 					withAlpha(colors.series[0], 0.55),
 					colors.series[0],
-				],
+				]),
 			},
 		},
 		calendar: {
@@ -2234,7 +2318,7 @@ export function buildSankey(ctx: ChartContext) {
 
 	return {
 		animation: false,
-		color: colors.series,
+		color: markPalette(ctx),
 		textStyle: { color: colors.text, fontFamily: colors.font },
 		tooltip: {
 			...tooltip(ctx),
@@ -2415,7 +2499,7 @@ export function buildHistogram(ctx: ChartContext) {
 				// than separate categories, and a gap between them says
 				// otherwise.
 				barCategoryGap: "2%",
-				itemStyle: { color: colors.series[0] },
+				itemStyle: { color: seriesColor(ctx, measure, 0) },
 				data: bins.map((bin) => bin.count),
 			},
 		],
@@ -2523,8 +2607,8 @@ export function buildBoxPlot(ctx: ChartContext) {
 				// that was a rectangle the width of the chart.
 				boxWidth: [10, 52],
 				itemStyle: {
-					color: withAlpha(colors.series[0], 0.35),
-					borderColor: colors.series[0],
+					color: withAlpha(seriesColor(ctx, measure, 0), 0.35),
+					borderColor: seriesColor(ctx, measure, 0),
 					borderWidth: 1.25,
 				},
 				data: boxes.map((entry) =>
@@ -2562,7 +2646,7 @@ export function buildPareto(ctx: ChartContext) {
 	const bars = rows.map((row) => ({
 		value: toNumber(row[measure]),
 		itemStyle: {
-			color: colors.series[0],
+			color: seriesColor(ctx, measure, 0),
 			opacity: highlightOpacity(ctx, row),
 			borderRadius: [2, 2, 0, 0] as [number, number, number, number],
 		},
@@ -2825,7 +2909,11 @@ export function buildBullet(ctx: ChartContext) {
 		return actual / target;
 	};
 
-	const by = ctx.options?.sortBy;
+	const by = optionValue<string>(
+		"bulletChart",
+		{ options: ctx.options },
+		"sortBy",
+	);
 	const rows =
 		by === "valueDesc" || by === "valueAsc"
 			? [...ctx.rows].sort(
@@ -2852,7 +2940,7 @@ export function buildBullet(ctx: ChartContext) {
 					? met
 						? colors.resolve({ token: "success" }, colors.series[0])
 						: colors.resolve({ token: "warning" }, colors.series[0])
-					: colors.series[0],
+					: seriesColor(ctx, actualField, 0),
 				opacity: highlightOpacity(ctx, row),
 				borderRadius: 2,
 			},
@@ -2892,9 +2980,12 @@ export function buildBullet(ctx: ChartContext) {
 				return lines.join("<br/>");
 			},
 		},
+		// The value axis runs across here, so the value axis settings read
+		// against it.
 		xAxis: {
 			type: "value" as const,
-			name: ctx.style?.xAxis?.label,
+			name: ctx.style?.yAxis?.label ?? ctx.style?.xAxis?.label,
+			scale: ctx.style?.yAxis?.beginAtZero === false,
 			axisLabel: {
 				color: colors.axis,
 				formatter: (v: number) => formatCompact(v, hint),
@@ -2911,7 +3002,7 @@ export function buildBullet(ctx: ChartContext) {
 			// up from the bottom, which puts a list in the order nobody wrote
 			// it in.
 			inverse: true,
-			axisLabel: { color: colors.axis, hideOverlap: true },
+			axisLabel: { color: colors.axis, ...listAxisLabel(ctx) },
 			axisLine: { lineStyle: { color: colors.grid } },
 			axisTick: { show: false },
 		},
@@ -3117,12 +3208,13 @@ export function buildScatter(ctx: ChartContext) {
 				type: "scatter" as const,
 				name: yField,
 				itemStyle: {
-					color: colors.series[0],
+					color: seriesColor(ctx, xField, 0),
 					opacity: 0.75,
 					borderColor: colors.surface,
 					borderWidth: 1,
 				},
-				markLine: referenceMarkLine(ctx),
+				// The vertical measure, because the line runs across at a height.
+				markLine: referenceMarkLine(ctx, "vertical", yField),
 				data: points,
 			},
 		],
@@ -3132,7 +3224,7 @@ export function buildScatter(ctx: ChartContext) {
 // --- Heatmap ---------------------------------------------------------------
 
 export function buildHeatmap(ctx: ChartContext) {
-	const { rows, dimensions, measures, colors, style } = ctx;
+	const { rows, dimensions, measures, colors } = ctx;
 	const [rowField, colField] = dimensions;
 	const measure = measures[0];
 	const hint = ctx.hintFor(measure);
@@ -3176,10 +3268,6 @@ export function buildHeatmap(ctx: ChartContext) {
 		if (value > max) max = value;
 	}
 
-	const scale = style?.colorScales?.[0];
-	const low = colors.resolve(scale?.low, colors.surface);
-	const high = colors.resolve(scale?.high, colors.series[0]);
-
 	return {
 		animation: false,
 		textStyle: { color: colors.text, fontFamily: colors.font },
@@ -3214,7 +3302,9 @@ export function buildHeatmap(ctx: ChartContext) {
 			left: "center",
 			bottom: 0,
 			textStyle: { color: colors.textMuted },
-			inRange: { color: [low, high] },
+			inRange: {
+				color: scaleRange(ctx, [colors.surface, colors.series[0]]),
+			},
 			formatter: (v: number) => formatCompact(v, hint),
 		},
 		series: [
@@ -3238,6 +3328,7 @@ export function buildRadar(ctx: ChartContext) {
 	const maxima = measures.map((m) =>
 		Math.max(...rows.map((r) => Math.abs(toNumber(r[m]) ?? 0)), 1),
 	);
+	const palette = markPalette(ctx);
 
 	return {
 		animation: false,
@@ -3255,7 +3346,7 @@ export function buildRadar(ctx: ChartContext) {
 			{
 				type: "radar",
 				data: rows.slice(0, 6).map((row, i) => {
-					const color = colors.series[i % colors.series.length];
+					const color = palette[i % palette.length];
 					// A shape outside the selection keeps a faint outline
 					// and loses its fill, so the selected one is the shape
 					// read.

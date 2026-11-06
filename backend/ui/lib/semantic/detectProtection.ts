@@ -205,7 +205,8 @@ export async function refreshProtection(
 		// Keyed by policy class on this replica straight away, before the
 		// reload below finishes. Other replicas take it on from the stored
 		// flag within a few seconds. See checkProtection in ./registry.
-		const { loadRegistry, markProtected } = await import("./registry");
+		const { reloadRegistryEverywhere, markProtected } =
+			await import("./registry");
 		await markProtected(sourceKey);
 		// Every answer cached so far was stored as shareable, which is exactly
 		// what this source's readers must no longer be served.
@@ -214,7 +215,7 @@ export async function refreshProtection(
 		// Forced so a walk reads its filters. Until that walk finishes the
 		// source is not covered by the group list and nothing from it is
 		// shared.
-		void loadRegistry(true);
+		void reloadRegistryEverywhere(true);
 		console.warn(
 			`${sourceKey} carries a row filter or column mask. Protection is ` +
 				"now on and its cached answers were dropped.",

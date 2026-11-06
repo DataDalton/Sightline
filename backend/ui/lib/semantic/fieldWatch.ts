@@ -10,7 +10,7 @@ import {
 import { routineLooksAllowed } from "../freshness/warehouse";
 import { demoMode } from "../runtime";
 import { syncSourceFields, type FieldSyncResult } from "./fieldSync";
-import { loadRegistry } from "./registry";
+import { reloadRegistryEverywhere } from "./registry";
 
 // Noticing that a field went away, and telling the people it affects.
 //
@@ -432,7 +432,7 @@ async function syncDueSources(warehouseUp: boolean): Promise<void> {
 			r.returned.length > 0 ||
 			r.protection?.changed,
 	);
-	if (changed) await loadRegistry(true);
+	if (changed) await reloadRegistryEverywhere(true);
 
 	// Every source read cleanly, so a field whose announcement failed last
 	// time is told about now.

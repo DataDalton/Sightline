@@ -1,12 +1,15 @@
 "use client";
 
+import { useMemo } from "react";
 import { useVisualQuery } from "../hooks/useVisualQuery";
 import { queryForVisual } from "../../lib/query/visualSpec";
 import { formatValue, type FormatHint } from "../../lib/format";
 import { VisualLoadingState } from "./LoadingState";
 import { VisualEmpty, VisualError } from "./VisualFrame";
 import { fieldTooltip, type FieldMeta } from "./types";
-import type { VisualStyle } from "../../lib/visuals/style";
+import { evaluateConditions, type VisualStyle } from "../../lib/visuals/style";
+import { readThemeColors, withAlpha } from "./colors";
+import { useTheme } from "../context/ThemeContext";
 import styles from "./Visual.module.css";
 
 // One record, laid out as label and value.
@@ -55,6 +58,15 @@ export function RecordPanel({
 			measures,
 			filters,
 		}),
+	);
+
+	const rules = style?.conditions ?? [];
+	const { resolved: resolvedTheme } = useTheme();
+	const colors = useMemo(
+		() => (typeof window === "undefined" ? null : readThemeColors()),
+		// The palette is read off the document, so a theme switch reads it again.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[resolvedTheme],
 	);
 
 	if (error) return <VisualError error={error} />;
@@ -108,6 +120,9 @@ export function RecordPanel({
 				{names.map((name) => {
 					const field = fields.get(name);
 					const hint = (field?.formatHint as FormatHint) ?? "text";
+					const match = colors
+						? evaluateConditions(rules, record, name)
+						: null;
 					return (
 						<div
 							key={name}
@@ -117,7 +132,39 @@ export function RecordPanel({
 							<span className={styles.recordLabel}>
 								{field?.displayName ?? name}
 							</span>
-							<span className={styles.recordValue}>
+							<span
+								className={styles.recordValue}
+								style={
+									match && colors
+										? {
+												color: match.textColor
+													? colors.resolve(
+															match.textColor,
+															colors.text,
+														)
+													: undefined,
+												background: match.background
+													? withAlpha(
+															colors.resolve(
+																match.background,
+																colors
+																	.series[0],
+															),
+															0.18,
+														)
+													: undefined,
+												fontWeight: match.bold
+													? 700
+													: undefined,
+											}
+										: undefined
+								}
+							>
+								{match?.marker && (
+									<span className={styles.kpiMarker}>
+										{match.marker}
+									</span>
+								)}
 								{formatValue(record[name], hint)}
 							</span>
 						</div>

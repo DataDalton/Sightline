@@ -4,6 +4,7 @@ import { listSources } from "../semantic/registry";
 import { quoteName, sourceRef } from "../semantic/types";
 import { settings } from "../settings";
 import type { Identity } from "./identity";
+import { answerCovers } from "./sourceCoverage";
 import { perProcess } from "../perProcess";
 
 // Which sources a reader can read, as Unity Catalog answers it.
@@ -38,7 +39,20 @@ const hardTtlMs = 24 * 60 * 60 * 1000;
 
 interface Entry {
 	readable: Set<string>;
+	// The sources the answer asked about. Null on an answer stored before this
+	// was recorded.
+	asked: Set<string> | null;
 	computedAt: number;
+}
+
+// Whether an answer can speak for every source registered now. One that cannot
+// says nothing about the newer sources, and treating that as a refusal would
+// turn away a reader who holds the grant.
+function coversRegistry(entry: Entry): boolean {
+	return answerCovers(
+		entry.asked,
+		listSources().map((source) => source.sourceKey),
+	);
 }
 
 const memory = perProcess(
@@ -105,10 +119,13 @@ function remember(email: string, entry: Entry): void {
 // report and then be refused its rows. That is a worse answer for an unusual
 // grant, in exchange for an answer at all for everybody else, and the refusal
 // still happens where it must: on the real query, under their own token.
-async function probe(identity: Identity): Promise<Set<string>> {
+async function probe(
+	identity: Identity,
+): Promise<{ readable: Set<string>; asked: Set<string> }> {
 	const token = identity.userToken as string;
 	const sources = listSources();
-	if (sources.length === 0) return new Set();
+	const asked = new Set(sources.map((source) => source.sourceKey));
+	if (sources.length === 0) return { readable: new Set(), asked };
 
 	// Only the schemas something is actually registered in.
 	const scopes = new Map<string, Set<string>>();
@@ -138,17 +155,24 @@ async function probe(identity: Identity): Promise<Set<string>> {
 		}
 	}
 
-	return new Set(
-		sources
-			.filter((s) => visible.has(sourceRef(s).toLowerCase()))
-			.map((s) => s.sourceKey),
-	);
+	return {
+		readable: new Set(
+			sources
+				.filter((s) => visible.has(sourceRef(s).toLowerCase()))
+				.map((s) => s.sourceKey),
+		),
+		asked,
+	};
 }
 
 async function readStored(email: string): Promise<Entry | null> {
 	try {
-		const rows = await sql<{ source_keys: string[]; computed_on: string }>(
-			`SELECT source_keys, computed_on FROM reader_access
+		const rows = await sql<{
+			source_keys: string[];
+			asked_keys: string[] | null;
+			computed_on: string;
+		}>(
+			`SELECT source_keys, asked_keys, computed_on FROM reader_access
 			 WHERE user_email = $1 AND expires_on > now()`,
 			[email],
 		);
@@ -156,6 +180,7 @@ async function readStored(email: string): Promise<Entry | null> {
 		if (!row) return null;
 		return {
 			readable: new Set(row.source_keys ?? []),
+			asked: row.asked_keys ? new Set(row.asked_keys) : null,
 			computedAt: new Date(row.computed_on).getTime(),
 		};
 	} catch (error) {
@@ -168,17 +193,24 @@ async function readStored(email: string): Promise<Entry | null> {
 async function writeStored(
 	email: string,
 	readable: Set<string>,
+	asked: Set<string>,
 ): Promise<void> {
 	try {
 		await sql(
 			`INSERT INTO reader_access
-			   (user_email, source_keys, computed_on, expires_on)
-			 VALUES ($1, $2::jsonb, now(), now() + make_interval(secs => $3))
+			   (user_email, source_keys, asked_keys, computed_on, expires_on)
+			 VALUES ($1, $2::jsonb, $4::jsonb, now(), now() + make_interval(secs => $3))
 			 ON CONFLICT (user_email) DO UPDATE SET
 			   source_keys = EXCLUDED.source_keys,
+			   asked_keys = EXCLUDED.asked_keys,
 			   computed_on = EXCLUDED.computed_on,
 			   expires_on = EXCLUDED.expires_on`,
-			[email, JSON.stringify(Array.from(readable)), hardTtlMs / 1000],
+			[
+				email,
+				JSON.stringify(Array.from(readable)),
+				hardTtlMs / 1000,
+				JSON.stringify(Array.from(asked)),
+			],
 		);
 	} catch (error) {
 		// Costs the next request a round trip, never correctness.
@@ -190,9 +222,9 @@ async function resolve(
 	email: string,
 	identity: Identity,
 ): Promise<Set<string>> {
-	const readable = await probe(identity);
-	remember(email, { readable, computedAt: Date.now() });
-	await writeStored(email, readable);
+	const { readable, asked } = await probe(identity);
+	remember(email, { readable, asked, computedAt: Date.now() });
+	await writeStored(email, readable, asked);
 	return readable;
 }
 
@@ -224,10 +256,12 @@ export async function readableSources(
 	const now = Date.now();
 
 	const held = memory.get(email);
-	if (held && now - held.computedAt < softTtlMs) return held.readable;
-	if (held && now - held.computedAt < hardTtlMs) {
-		refreshBehind(email, identity);
-		return held.readable;
+	if (held && coversRegistry(held)) {
+		if (now - held.computedAt < softTtlMs) return held.readable;
+		if (now - held.computedAt < hardTtlMs) {
+			refreshBehind(email, identity);
+			return held.readable;
+		}
 	}
 	// Past the hard ceiling the answer is not served at all, which is what the
 	// ceiling was always documented to mean. Refreshing behind the request only
@@ -236,7 +270,7 @@ export async function readableSources(
 	// meant a day-old answer was served indefinitely, so a withdrawn grant kept
 	// working for as long as the outage lasted. Dropped instead, which falls
 	// through to the stored answer and then to a fresh probe.
-	if (held) memory.delete(email);
+	if (held && now - held.computedAt >= hardTtlMs) memory.delete(email);
 
 	// One resolution per reader, however many requests arrive at once.
 	const existing = inflight.get(email);
@@ -245,14 +279,23 @@ export async function readableSources(
 	const pending = (async () => {
 		try {
 			const stored = await readStored(email);
-			if (stored) {
+			if (stored && coversRegistry(stored)) {
 				remember(email, stored);
 				if (now - stored.computedAt >= softTtlMs) {
 					refreshBehind(email, identity);
 				}
 				return stored.readable;
 			}
-			return await resolve(email, identity);
+			// A source this reader has not been asked about, or nothing at all.
+			// Should the catalogue be unreachable, what they could already read
+			// stays readable, and the new source waits for the next request.
+			const earlier = stored ?? (held && memory.get(email));
+			try {
+				return await resolve(email, identity);
+			} catch (error) {
+				if (earlier) return earlier.readable;
+				throw error;
+			}
 		} finally {
 			inflight.delete(email);
 		}

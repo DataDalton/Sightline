@@ -81,11 +81,39 @@
 }
 
 .cell {
+	position: relative;
 	padding: var(--space-2) var(--space-3);
 	border-bottom: 1px solid var(--border-subtle);
 	white-space: nowrap;
 	text-align: right;
 	font-variant-numeric: tabular-nums;
+}
+
+/* A figure's size drawn behind it, from the left of the cell. */
+.dataBar {
+	position: absolute;
+	inset: 0 auto 0 0;
+}
+
+.cellText {
+	position: relative;
+}
+
+/* The total row stays in view at the foot of the scroller, as the headings do
+   at its head. */
+.totalRow td {
+	position: sticky;
+	bottom: 0;
+	z-index: 2;
+	background: var(--surface-sunken);
+	font-weight: 600;
+	border-top: 2px solid var(--border-default);
+	border-bottom: 0;
+}
+
+.totalRow .labelCell {
+	left: 0;
+	z-index: 3;
 }
 
 .labelCell {
@@ -98,6 +126,11 @@
 	border-right: 2px solid var(--border-default);
 	white-space: nowrap;
 	text-align: left;
+}
+
+.rowAlt .cell,
+.rowAlt .labelCell {
+	background: var(--surface-sunken);
 }
 
 .row:hover .cell,

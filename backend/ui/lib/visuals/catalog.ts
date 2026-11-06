@@ -76,6 +76,9 @@ export type VisualOption =
 	// Bands of measures, each with a label. Repeatable, so none of the scalar
 	// kinds above can express it.
 	| { key: string; label: string; kind: "measureGroups"; help?: string }
+	// A line of text for each measure on the visual, stored as a map of measure
+	// name to text.
+	| { key: string; label: string; kind: "measureText"; help?: string }
 	// A field chosen from the source the visual reads. "none" is always
 	// offered, because every field option here is one an author may not want.
 	| {
@@ -122,8 +125,30 @@ export interface VisualTypeDefinition {
 		// than glancing at it.
 		fillHeight?: boolean;
 		axes?: boolean;
+		// False where the value axis is fixed by what the chart draws, so
+		// starting it at zero is not a choice.
+		axisZero?: boolean;
 		legend?: boolean;
-		tooltip?: boolean;
+		// "Tooltip shows" for a chart that can show either every series at a
+		// position or one point. Elsewhere the chart's shape decides.
+		tooltipMode?: boolean;
+		// "Show each value as a share" for a chart with several series to share
+		// one total.
+		tooltipShare?: boolean;
+		// Corner rounding, for types that draw bars.
+		rounding?: boolean;
+		// Alternating row shading, for types drawn as rows.
+		rowShading?: boolean;
+		// One colour for the whole visual, because it draws a single series
+		// whatever fields it has.
+		singleColor?: boolean;
+		// A named set of colours and no single colour, because the marks are
+		// the rows of the answer rather than its measures.
+		paletteOnly?: boolean;
+		// What a conditional rule can do here. "cell" has text to style and rows
+		// in an order. "value" has text to style but no order to rank by. "mark"
+		// is a filled bar, which only takes a background.
+		ruleStyle?: "cell" | "value" | "mark";
 		// A target, a budget or the average drawn across the plot. Only for
 		// types with a value scale to place one against.
 		referenceLines?: boolean;
@@ -200,7 +225,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			dimensions: { min: 0, max: 0 },
 			measures: { min: 1, max: 24 },
 		},
-		supports: { color: true, conditionalFormat: true },
+		supports: { color: true, conditionalFormat: true, ruleStyle: "value" },
 		// The change since the period before, which follows whatever range the
 		// reader picks, and is what makes the change and "Why?" appear.
 		datedDefaults: { compareTo: "previous" },
@@ -247,6 +272,12 @@ export const visualCatalog: VisualTypeDefinition[] = [
 				kind: "measureGroups",
 				help: "Splits the tiles into labelled rows. Each band takes the next few measures in order, and anything left over becomes a final unlabelled row.",
 			},
+			{
+				key: "tooltips",
+				label: "Tooltips",
+				kind: "measureText",
+				help: "What a tile says when its name is hovered or tapped. Left empty it shows the field's description from the dictionary. A name with something to say is underlined with dashes.",
+			},
 		],
 		measureTargets: {
 			key: "targets",
@@ -265,7 +296,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			dimensions: { min: 0, max: 0 },
 			measures: { min: 1, max: 2 },
 		},
-		supports: { color: true, tooltip: true },
+		supports: { color: true, singleColor: true },
 		defaultLayout: { w: 3, h: 4 },
 	},
 	{
@@ -282,7 +313,12 @@ export const visualCatalog: VisualTypeDefinition[] = [
 				label: "What happened, then what was aimed for",
 			},
 		},
-		supports: { color: true, tooltip: true, axes: true },
+		supports: {
+			color: true,
+			axes: true,
+			singleColor: true,
+			tooltipMode: true,
+		},
 		options: [
 			{
 				key: "colourByTarget",
@@ -330,8 +366,11 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			secondAxis: true,
 			axes: true,
 			legend: true,
-			tooltip: true,
 			referenceLines: true,
+			tooltipMode: true,
+			tooltipShare: true,
+			rounding: true,
+			ruleStyle: "mark",
 		},
 		options: [
 			{
@@ -396,8 +435,11 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			stacking: true,
 			axes: true,
 			legend: true,
-			tooltip: true,
 			referenceLines: true,
+			tooltipMode: true,
+			tooltipShare: true,
+			rounding: true,
+			ruleStyle: "mark",
 		},
 		options: [
 			{
@@ -459,8 +501,11 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			secondAxis: true,
 			axes: true,
 			legend: true,
-			tooltip: true,
 			referenceLines: true,
+			tooltipMode: true,
+			tooltipShare: true,
+			rounding: true,
+			ruleStyle: "mark",
 		},
 		options: [
 			{
@@ -511,8 +556,9 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			secondAxis: true,
 			axes: true,
 			legend: true,
-			tooltip: true,
 			referenceLines: true,
+			tooltipMode: true,
+			tooltipShare: true,
 		},
 		options: [
 			{
@@ -553,8 +599,9 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			stacking: true,
 			axes: true,
 			legend: true,
-			tooltip: true,
 			referenceLines: true,
+			tooltipMode: true,
+			tooltipShare: true,
 		},
 		options: [
 			{
@@ -592,7 +639,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			},
 			measures: { min: 1, max: 1 },
 		},
-		supports: { color: true, tooltip: false },
+		supports: { color: true, singleColor: true },
 		options: [
 			{
 				key: "columns",
@@ -616,12 +663,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			dimensions: { min: 1, max: 1 },
 			measures: { min: 1, max: 1 },
 		},
-		supports: {
-			color: true,
-			axes: true,
-			tooltip: true,
-			referenceLines: true,
-		},
+		supports: { axes: true, referenceLines: true, tooltipMode: true },
 		defaultLayout: { w: 6, h: 5 },
 	},
 
@@ -636,7 +678,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			dimensions: { min: 1, max: 1 },
 			measures: { min: 1, max: 1 },
 		},
-		supports: { color: true, legend: true, tooltip: true },
+		supports: { color: true, legend: true, paletteOnly: true },
 		options: [
 			{
 				key: "groupTail",
@@ -672,7 +714,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			dimensions: { min: 1, max: 1 },
 			measures: { min: 1, max: 1 },
 		},
-		supports: { color: true, legend: true, tooltip: true },
+		supports: { color: true, legend: true, paletteOnly: true },
 		options: [
 			{
 				key: "groupTail",
@@ -707,7 +749,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			dimensions: { min: 1, max: 2 },
 			measures: { min: 1, max: 1 },
 		},
-		supports: { color: true, colorScale: true, tooltip: true },
+		supports: { color: true, paletteOnly: true },
 		options: [
 			{
 				key: "topN",
@@ -737,7 +779,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			dimensions: { min: 1, max: 1 },
 			measures: { min: 1, max: 1 },
 		},
-		supports: { color: true, legend: true, tooltip: true },
+		supports: { color: true, legend: true, paletteOnly: true },
 		options: [
 			{
 				key: "topN",
@@ -767,7 +809,13 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			dimensions: { min: 1, max: 2 },
 			measures: { min: 1, max: 8 },
 		},
-		supports: { color: true, axes: true, legend: true, tooltip: true },
+		supports: {
+			color: true,
+			axes: true,
+			legend: true,
+			tooltipMode: true,
+			rounding: true,
+		},
 		defaultLayout: { w: 6, h: 5 },
 	},
 
@@ -786,7 +834,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			},
 			measures: { min: 0, max: 1, label: "Shown in the tooltip" },
 		},
-		supports: { color: true, axes: true, tooltip: true },
+		supports: { color: true, singleColor: true },
 		defaultLayout: { w: 8, h: 5 },
 	},
 	{
@@ -799,7 +847,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			dimensions: { min: 1, max: 1, label: "A date, one cell each" },
 			measures: { min: 1, max: 1 },
 		},
-		supports: { colorScale: true, tooltip: true },
+		supports: { colorScale: true },
 		defaultLayout: { w: 12, h: 4 },
 	},
 	{
@@ -812,7 +860,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			dimensions: { min: 1, max: 1, label: "A country each" },
 			measures: { min: 1, max: 1 },
 		},
-		supports: { colorScale: true, tooltip: true },
+		supports: { colorScale: true },
 		defaultLayout: { w: 8, h: 6 },
 	},
 	{
@@ -825,7 +873,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			dimensions: { min: 2, max: 2, label: "From, then to" },
 			measures: { min: 1, max: 1, label: "How much flows" },
 		},
-		supports: { color: true, tooltip: true },
+		supports: { color: true, paletteOnly: true },
 		defaultLayout: { w: 6, h: 5 },
 	},
 	{
@@ -838,7 +886,12 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			dimensions: { min: 1, max: 1, label: "Measured across" },
 			measures: { min: 1, max: 1, label: "The figure being spread" },
 		},
-		supports: { color: true, axes: true, tooltip: true },
+		supports: {
+			color: true,
+			axes: true,
+			singleColor: true,
+			axisZero: false,
+		},
 		options: [
 			{
 				key: "bins",
@@ -866,7 +919,12 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			},
 			measures: { min: 1, max: 1 },
 		},
-		supports: { color: true, axes: true, tooltip: true },
+		supports: {
+			color: true,
+			axes: true,
+			singleColor: true,
+			axisZero: false,
+		},
 		options: [
 			{
 				key: "topN",
@@ -890,7 +948,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			dimensions: { min: 1, max: 1, label: "Ranked by" },
 			measures: { min: 1, max: 1 },
 		},
-		supports: { color: true, axes: true, legend: true, tooltip: true },
+		supports: { color: true, axes: true, legend: true, singleColor: true },
 		options: [
 			{
 				key: "cutoff",
@@ -924,7 +982,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			dimensions: { min: 1, max: 1, label: "One line each" },
 			measures: { min: 1, max: 1 },
 		},
-		supports: { axes: true, tooltip: true },
+		supports: { axes: true },
 		options: [
 			{
 				key: "compareTo",
@@ -975,9 +1033,8 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		supports: {
 			color: true,
 			axes: true,
-			legend: true,
-			tooltip: true,
 			referenceLines: true,
+			singleColor: true,
 		},
 		options: [
 			{
@@ -1023,7 +1080,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			dimensions: { min: 2, max: 2, label: "Rows and columns" },
 			measures: { min: 1, max: 1 },
 		},
-		supports: { colorScale: true, tooltip: true },
+		supports: { colorScale: true },
 		defaultLayout: { w: 6, h: 5 },
 	},
 	{
@@ -1036,7 +1093,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			dimensions: { min: 1, max: 1 },
 			measures: { min: 3, max: 8 },
 		},
-		supports: { color: true, fill: true, legend: true, tooltip: true },
+		supports: { color: true, legend: true, paletteOnly: true },
 		defaultLayout: { w: 4, h: 5 },
 	},
 
@@ -1058,8 +1115,8 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		supports: {
 			conditionalFormat: true,
 			colorScale: true,
-			tooltip: true,
 			fillHeight: true,
+			rowShading: true,
 		},
 		options: [
 			{
@@ -1136,8 +1193,9 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		supports: {
 			conditionalFormat: true,
 			colorScale: true,
-			tooltip: true,
 			fillHeight: true,
+			rowShading: true,
+			ruleStyle: "value",
 		},
 		options: [
 			{
@@ -1146,6 +1204,13 @@ export const visualCatalog: VisualTypeDefinition[] = [
 				kind: "toggle",
 				fallback: true,
 				help: "On, this takes the room left below it when it is the last thing on the page. Turn it off where the table is deliberately a preview rather than the thing being worked in.",
+			},
+			{
+				key: "showTotals",
+				label: "Show totals",
+				kind: "toggle",
+				fallback: false,
+				help: "Adds a total row at the bottom and, with a pivot, a total column on the right. Asked of the source rather than added up, so averages and percentages stay right.",
 			},
 			{
 				key: "columnDimension",
@@ -1168,7 +1233,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			dimensions: { min: 1, max: 60 },
 			measures: { min: 0, max: 60 },
 		},
-		supports: { conditionalFormat: true },
+		supports: { conditionalFormat: true, ruleStyle: "value" },
 		defaultLayout: { w: 4, h: 4 },
 	},
 
@@ -1452,7 +1517,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			dimensions: { min: 1, max: 12, label: "Attributes to show" },
 			measures: { min: 0, max: 4 },
 		},
-		supports: { conditionalFormat: true },
+		supports: { conditionalFormat: true, ruleStyle: "value" },
 		// Three rows rather than two: the attributes wrap onto a second line as
 		// soon as there are more than a few, and a header that scrolls is not a
 		// header.

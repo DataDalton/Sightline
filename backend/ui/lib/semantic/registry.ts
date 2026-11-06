@@ -1,6 +1,8 @@
 import { sql } from "../data/lakebase";
 import { setTrackedGroups } from "../auth/policy";
+import { announce, onChange } from "../platform/changes";
 import { dropDefinitionsLocally } from "../platform/definitionCache";
+import { perProcess } from "../perProcess";
 import {
 	marksReadAt,
 	onMarksRead,
@@ -57,14 +59,25 @@ interface FieldRow {
 	rename_candidate: string | null;
 }
 
-let sources = new Map<string, SemanticSource>();
-let loadedAt = 0;
-let loading: Promise<void> | null = null;
-// A reload asked for while one was running, and whether any caller forced it.
-let queuedLoad: Promise<void> | null = null;
-let queuedForce = false;
-let refreshTimer: ReturnType<typeof setTimeout> | null = null;
-let protectionTimer: ReturnType<typeof setInterval> | null = null;
+// One copy for the whole process, shared by every copy of this module, so a
+// reload made by one route is seen by all of them. See lib/perProcess.
+const state = perProcess("semantic/registry", () => ({
+	sources: new Map<string, SemanticSource>(),
+	loadedAt: 0,
+	loading: null as Promise<void> | null,
+	// A reload asked for while one was running, and whether any caller forced
+	// it.
+	queuedLoad: null as Promise<void> | null,
+	queuedForce: false,
+	refreshTimer: null as ReturnType<typeof setTimeout> | null,
+	protectionTimer: null as ReturnType<typeof setInterval> | null,
+	// When each source was marked protected in this process. A reload that read
+	// the tables before that moment carries the older flag, and is not allowed
+	// to put it back.
+	markedAt: new Map<string, number>(),
+	// The sources and titles the last load found. See loadRegistry.
+	listedSources: "",
+}));
 
 // How often the stored protection flags are reread, apart from the full
 // reload. Another replica can record a source as protected at any moment,
@@ -72,11 +85,6 @@ let protectionTimer: ReturnType<typeof setInterval> | null = null;
 // everyone. The flags come with the freshness marks, which are read on the
 // same period. See lib/freshness/marks.
 const protectionCheckMs = 5_000;
-
-// When each source was marked protected on this replica. A reload that read
-// the tables before that moment carries the older flag, and is not allowed to
-// put it back.
-const markedAt = new Map<string, number>();
 
 // What is stored about each source, reread. Registering or editing one reloads
 // this immediately, so the poll is only for changes another replica made, which
@@ -114,29 +122,26 @@ function toField(row: FieldRow): SemanticField {
 // An explicit sync passes true: it is what an admin runs after fixing the
 // privilege that made the walk fail, and reusing the failed answer would report
 // the fix as having changed nothing.
-// The sources and titles the last load found. See loadRegistry.
-let listedSources = "";
-
 export async function loadRegistry(force = false): Promise<void> {
 	// A caller arriving during a load gets a fresh load after it, not the one
 	// already running. That load may have read the tables before the caller's
 	// own write committed, so joining it would leave a just registered or
 	// edited source invisible until the next poll. Callers arriving during the
 	// same load share one queued reload.
-	if (loading) {
-		queuedForce = queuedForce || force;
-		if (!queuedLoad) {
-			queuedLoad = loading.then(() => {
-				const again = queuedForce;
-				queuedLoad = null;
-				queuedForce = false;
+	if (state.loading) {
+		state.queuedForce = state.queuedForce || force;
+		if (!state.queuedLoad) {
+			state.queuedLoad = state.loading.then(() => {
+				const again = state.queuedForce;
+				state.queuedLoad = null;
+				state.queuedForce = false;
 				return loadRegistry(again);
 			});
 		}
-		return queuedLoad;
+		return state.queuedLoad;
 	}
 
-	loading = (async () => {
+	state.loading = (async () => {
 		const startedAt = Date.now();
 		try {
 			const [sourceRows, fieldRows] = await Promise.all([
@@ -173,7 +178,7 @@ export async function loadRegistry(force = false): Promise<void> {
 					accessMode: row.access_mode as AccessMode,
 					hasRowFilter:
 						row.has_row_filter ||
-						(markedAt.get(row.source_key) ?? 0) >= startedAt,
+						(state.markedAt.get(row.source_key) ?? 0) >= startedAt,
 					cacheTtlSeconds: row.cache_ttl_seconds,
 					isLive: row.is_live,
 					defaultTimeField: row.default_time_field,
@@ -213,8 +218,8 @@ export async function loadRegistry(force = false): Promise<void> {
 				else source.dimensions.push(field);
 			}
 
-			sources = byKey;
-			loadedAt = Date.now();
+			state.sources = byKey;
+			state.loadedAt = Date.now();
 
 			// What is held about each source's standing names its title and
 			// leaves out sources that stopped, so a source added, removed or
@@ -224,8 +229,8 @@ export async function loadRegistry(force = false): Promise<void> {
 				.map((r) => `${r.source_key}\u0000${r.title}`)
 				.sort()
 				.join("\u0001");
-			if (listed !== listedSources) {
-				listedSources = listed;
+			if (listed !== state.listedSources) {
+				state.listedSources = listed;
 				dropDefinitionsLocally("freshness:");
 			}
 
@@ -239,12 +244,30 @@ export async function loadRegistry(force = false): Promise<void> {
 			// every query fail rather than degrade.
 			console.error("Semantic registry load failed:", error);
 		} finally {
-			loading = null;
+			state.loading = null;
 		}
 	})();
 
-	return loading;
+	return state.loading;
 }
+
+// Reloads this process and tells every other one to, for a change somebody just
+// made to the stored sources or fields. Each process holds its own copy, and
+// without this the others would keep serving the old list until their next
+// poll, so the same page could differ depending on which process answered.
+//
+// The others reload without forcing, because the catalogue walk a forced reload
+// redoes has already been done here.
+export async function reloadRegistryEverywhere(force = false): Promise<void> {
+	await loadRegistry(force);
+	announce("registry", "*");
+}
+
+onChange(
+	"registry",
+	() => void loadRegistry(),
+	() => void loadRegistry(),
+);
 
 function union(a: string[], b: string[]): string[] {
 	return Array.from(new Set([...a, ...b]));
@@ -369,8 +392,8 @@ async function discoverAndApply(
 // a query mid way through keys its answer by policy class too. Answers held
 // in memory for it are dropped.
 export async function markProtected(sourceKey: string): Promise<void> {
-	markedAt.set(sourceKey, Date.now());
-	const source = sources.get(sourceKey);
+	state.markedAt.set(sourceKey, Date.now());
+	const source = state.sources.get(sourceKey);
 	if (!source || source.hasRowFilter) return;
 	source.hasRowFilter = true;
 	const { forgetSourceInMemory } = await import("../query/cache");
@@ -386,7 +409,7 @@ async function checkProtection(): Promise<void> {
 	try {
 		let changed = false;
 		for (const key of protectedSources()) {
-			const source = sources.get(key);
+			const source = state.sources.get(key);
 			if (source && !source.hasRowFilter) {
 				await markProtected(key);
 				changed = true;
@@ -415,42 +438,42 @@ function rereadProtection(): void {
 }
 
 export function getSource(sourceKey: string): SemanticSource | null {
-	return sources.get(sourceKey) ?? null;
+	return state.sources.get(sourceKey) ?? null;
 }
 
 export function listSources(): SemanticSource[] {
-	return Array.from(sources.values()).sort((a, b) =>
+	return Array.from(state.sources.values()).sort((a, b) =>
 		a.title.localeCompare(b.title),
 	);
 }
 
 export function registryLoadedAt(): number {
-	return loadedAt;
+	return state.loadedAt;
 }
 
 export function startRegistryPolling(): void {
-	if (refreshTimer) return;
+	if (state.refreshTimer) return;
 	// A timeout that reschedules itself rather than a fixed interval, so a
 	// change to the setting is picked up without a restart.
 	const tick = () => {
 		void loadRegistry();
-		refreshTimer = setTimeout(tick, refreshIntervalMs());
-		refreshTimer.unref?.();
+		state.refreshTimer = setTimeout(tick, refreshIntervalMs());
+		state.refreshTimer.unref?.();
 	};
-	refreshTimer = setTimeout(tick, refreshIntervalMs());
-	refreshTimer.unref?.();
+	state.refreshTimer = setTimeout(tick, refreshIntervalMs());
+	state.refreshTimer.unref?.();
 	onMarksRead(checkOnMarksRead);
-	protectionTimer = setInterval(rereadProtection, protectionCheckMs);
-	protectionTimer.unref?.();
+	state.protectionTimer = setInterval(rereadProtection, protectionCheckMs);
+	state.protectionTimer.unref?.();
 }
 
 export function stopRegistryPolling(): void {
-	if (refreshTimer) {
-		clearTimeout(refreshTimer);
-		refreshTimer = null;
+	if (state.refreshTimer) {
+		clearTimeout(state.refreshTimer);
+		state.refreshTimer = null;
 	}
-	if (protectionTimer) {
-		clearInterval(protectionTimer);
-		protectionTimer = null;
+	if (state.protectionTimer) {
+		clearInterval(state.protectionTimer);
+		state.protectionTimer = null;
 	}
 }

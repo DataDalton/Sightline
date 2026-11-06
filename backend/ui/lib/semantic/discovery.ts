@@ -5,7 +5,7 @@ import { insertLog } from "../activityLog";
 import { runCatalogQuery } from "./ucMetadata";
 import { syncSourceFields } from "./fieldSync";
 import { syncSourceMetadata } from "./ucMetadata";
-import { loadRegistry } from "./registry";
+import { reloadRegistryEverywhere } from "./registry";
 import { lateStandingChanged } from "../freshness/status";
 import { isValidObjectName } from "./types";
 
@@ -263,7 +263,7 @@ export async function registerSource(
 
 	// So the source is queryable on the next request rather than after the
 	// registry's next poll.
-	await loadRegistry(true);
+	await reloadRegistryEverywhere(true);
 
 	// Counted from what actually landed rather than from what the sync
 	// reported, because the sync reports what it saw and this reports what is
@@ -330,7 +330,7 @@ export async function deactivateSource(
 		action: "remove_source",
 		changedBy: identity.email,
 	});
-	await loadRegistry(true);
+	await reloadRegistryEverywhere(true);
 }
 
 // --- Editing what was registered --------------------------------------------
@@ -434,7 +434,7 @@ export async function updateSource(
 		newValue: title ?? null,
 	});
 
-	await loadRegistry(true);
+	await reloadRegistryEverywhere(true);
 }
 
 export interface FieldEdit {
@@ -495,6 +495,6 @@ export async function updateSourceFields(
 		newValue: edits.map((e) => e.fieldName).join(","),
 	});
 
-	await loadRegistry(true);
+	await reloadRegistryEverywhere(true);
 	return changed;
 }

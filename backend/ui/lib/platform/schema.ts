@@ -1611,6 +1611,10 @@ const migrations: string[] = [
 	// When a field's description was last written in the app. Until then it
 	// follows the catalogue's comment on every sync. See lib/semantic/fieldSync.
 	`ALTER TABLE source_fields ADD COLUMN IF NOT EXISTS description_edited_on TIMESTAMPTZ`,
+
+	// Which sources a stored access answer asked about, so a source registered
+	// after it is asked about rather than refused. See lib/auth/sourceCoverage.
+	`ALTER TABLE reader_access ADD COLUMN IF NOT EXISTS asked_keys JSONB`,
 ];
 
 // Creates anything missing. Safe to run on every startup.

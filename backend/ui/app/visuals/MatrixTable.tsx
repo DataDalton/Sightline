@@ -18,6 +18,13 @@ import {
 	selectionValue,
 	type SelectionPart,
 } from "../../lib/visuals/selection";
+import { readThemeColors } from "./colors";
+import {
+	cellAppearance,
+	type CellAppearance,
+	type ColumnRange,
+} from "./cellAppearance";
+import { useTheme } from "../context/ThemeContext";
 import { VisualError } from "./VisualFrame";
 import { VisualLoadingState } from "./LoadingState";
 import { ColumnFilter } from "./ColumnFilter";
@@ -68,6 +75,8 @@ interface MatrixProps {
 	reportId?: string | null;
 	pageId?: string | null;
 	visualId?: string | null;
+	// A total row at the bottom and, with a pivot, a total column on the right.
+	showTotals?: boolean;
 	// Fires when a reader clicks a row's label, with the row's value and the
 	// values of every level above it, so a business unit is selected inside
 	// the division it sits under rather than across all of them. Fires with
@@ -247,6 +256,7 @@ export function MatrixTable({
 	reportId,
 	pageId,
 	visualId,
+	showTotals = false,
 	onSelect,
 	selection,
 }: MatrixProps) {
@@ -422,12 +432,51 @@ export function MatrixTable({
 				if (page.length < maxLimit) break;
 			}
 
+			// The total across the pivot for each row, read with the pivot left
+			// out rather than added up from its cells, which would be wrong for
+			// an average or a percentage. Kept under the cell key with no column
+			// value, which is the column the total is drawn in.
+			if (columnDimension && showTotals) {
+				for (let offset = 0; ; offset += maxLimit) {
+					if (!isCurrent()) break;
+					const data = await runBatchedQuery(
+						canonical({
+							sourceKey,
+							dimensions: grouped,
+							measures,
+							filters,
+							sort: grouped.map((field) => ({
+								field,
+								direction: "asc",
+							})),
+							limit: maxLimit,
+							offset,
+						}),
+					);
+					const page: Record<string, unknown>[] = data.rows ?? [];
+					for (const record of page) {
+						const path = prefix
+							? [...prefix.path, String(record[dimension] ?? "")]
+							: grouped.map((field) =>
+									String(record[field] ?? ""),
+								);
+						const row = byPath.get(pathKey(path));
+						if (!row) continue;
+						for (const measure of measures) {
+							row.values[cellKey(null, measure)] =
+								record[measure];
+						}
+					}
+					if (page.length < maxLimit) break;
+				}
+			}
+
 			return {
 				rows: Array.from(byPath.values()),
 				columnValues: columnDimension ? Array.from(seenColumns) : [],
 			};
 		},
-		[sourceKey, rowDimensions, columnDimension, measures],
+		[sourceKey, rowDimensions, columnDimension, measures, showTotals],
 	);
 
 	// The children of one node, scoped to its ancestors, so expanding
@@ -568,7 +617,7 @@ export function MatrixTable({
 	// one still the right answer.
 	const topKey = `${sourceKey}|${JSON.stringify(activeFilters)}|${rowDimensions.join(
 		",",
-	)}|${columnDimension ?? ""}|${measures.join(",")}`;
+	)}|${columnDimension ?? ""}|${measures.join(",")}|${showTotals}`;
 
 	// Reload from the top whenever the query shape or the search changes.
 	useEffect(() => {
@@ -651,6 +700,66 @@ export function MatrixTable({
 		// topKey and term together are the whole query shape.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [topKey, term]);
+
+	// The figures for the total row, keyed as the cells are. Its own query, for
+	// the same reason as the column above, and it leaves out a search, which
+	// decides which branches are open and not what is being totalled. One that
+	// could not be fetched is left off rather than shown as zero.
+	const [totals, setTotals] = useState<Record<string, unknown> | null>(null);
+	useEffect(() => {
+		if (!showTotals) {
+			setTotals(null);
+			return;
+		}
+		let live = true;
+		const read = (dimensions: string[], limit: number) =>
+			runBatchedQuery(
+				canonical({
+					sourceKey,
+					dimensions,
+					measures,
+					filters: activeFilters,
+					sort: dimensions.map((field) => ({
+						field,
+						direction: "asc",
+					})),
+					limit,
+					offset: 0,
+				}),
+			);
+		void Promise.all([
+			read([], 1),
+			columnDimension ? read([columnDimension], maxLimit) : null,
+		])
+			.then(([overall, pivoted]) => {
+				if (!live) return;
+				const next: Record<string, unknown> = {};
+				for (const measure of measures) {
+					next[cellKey(null, measure)] = overall.rows?.[0]?.[measure];
+				}
+				for (const record of pivoted?.rows ?? []) {
+					const group = String(
+						(record as Record<string, unknown>)[
+							columnDimension as string
+						] ?? "",
+					);
+					for (const measure of measures) {
+						next[cellKey(group, measure)] = (
+							record as Record<string, unknown>
+						)[measure];
+					}
+				}
+				setTotals(next);
+			})
+			.catch(() => {
+				if (live) setTotals(null);
+			});
+		return () => {
+			live = false;
+		};
+		// topKey holds every field and filter these read.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [topKey, showTotals]);
 
 	const toggle = async (row: MatrixRow) => {
 		const key = pathKey(row.path);
@@ -797,8 +906,12 @@ export function MatrixTable({
 	// One column group per pivoted value, or a single unnamed group.
 	const groups = useMemo<(string | null)[]>(
 		() =>
-			columnDimension && columnValues.length > 0 ? columnValues : [null],
-		[columnDimension, columnValues],
+			columnDimension && columnValues.length > 0
+				? showTotals
+					? [...columnValues, null]
+					: columnValues
+				: [null],
+		[columnDimension, columnValues, showTotals],
 	);
 
 	// Formatted cells per row, computed once for each row object and kept
@@ -856,6 +969,95 @@ export function MatrixTable({
 		() => buildItems(top, children, shown, expanded, sort),
 		[top, children, shown, expanded, sort],
 	);
+
+	// How each cell is drawn under the author's rules and colour scales. Null
+	// when there are none, which is most matrices and costs them nothing.
+	const { resolved: resolvedTheme } = useTheme();
+	const looksOf = useMemo(() => {
+		const conditions = style?.conditions ?? [];
+		const scales = style?.colorScales ?? [];
+		if (
+			(conditions.length === 0 && scales.length === 0) ||
+			typeof window === "undefined"
+		) {
+			return null;
+		}
+		const colors = readThemeColors();
+
+		// Ranges per level, since a year and a business unit are different
+		// sizes and one range would leave every level but the top looking flat.
+		const ranges = new Map<number, Map<string, ColumnRange>>();
+		for (const item of items) {
+			if (item.kind !== "row") continue;
+			const row = item.row;
+			const held =
+				ranges.get(row.depth) ?? new Map<string, ColumnRange>();
+			for (const scale of scales) {
+				for (const group of groups) {
+					// The total column is on another scale from the columns it
+					// adds up, so it stays out of their range.
+					if (group === null && columnDimension) continue;
+					const value = toNumber(
+						row.values[cellKey(group, scale.field)],
+					);
+					if (value === null) continue;
+					const range = held.get(scale.field);
+					held.set(
+						scale.field,
+						range
+							? {
+									min: Math.min(range.min, value),
+									max: Math.max(range.max, value),
+								}
+							: { min: value, max: value },
+					);
+				}
+			}
+			ranges.set(row.depth, held);
+		}
+
+		const cache = new WeakMap<MatrixRow, CellAppearance[]>();
+		return (row: MatrixRow): CellAppearance[] => {
+			let looks = cache.get(row);
+			if (!looks) {
+				const labels = Object.fromEntries(
+					row.raws.map((raw, i) => [rowFields[i], raw]),
+				);
+				looks = [];
+				for (const group of groups) {
+					const record: Record<string, unknown> = { ...labels };
+					for (const measure of measureFields) {
+						record[measure] = row.values[cellKey(group, measure)];
+					}
+					for (const measure of measureFields) {
+						looks.push(
+							cellAppearance(record, measure, {
+								conditions,
+								scales,
+								stats: ranges.get(row.depth) ?? new Map(),
+								colors,
+							}),
+						);
+					}
+				}
+				cache.set(row, looks);
+			}
+			return looks;
+		};
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [
+		JSON.stringify(style?.conditions ?? []),
+		JSON.stringify(style?.colorScales ?? []),
+		items,
+		groups,
+		columnDimension,
+		measureFields,
+		rowFields,
+		resolvedTheme,
+	]);
+
+	// Alternating row shading, on unless an author turns it off.
+	const striped = style?.stripedRows !== false;
 
 	// How far down the second header row has to sit: the height of the row
 	// above it, or nothing when that row is not rendered. Measured rather than
@@ -1121,7 +1323,7 @@ export function MatrixTable({
 													{group}
 												</button>
 											) : (
-												group
+												(group ?? "Total")
 											)}
 										</th>
 									);
@@ -1226,6 +1428,8 @@ export function MatrixTable({
 									row={row}
 									rowDimensions={rowFields}
 									cells={formatted(row)}
+									looks={looksOf ? looksOf(row) : null}
+									alt={striped && virtual.index % 2 === 1}
 									measureCount={measures.length}
 									columnChosen={columnChosen}
 									isOpen={expanded.has(item.key)}
@@ -1251,6 +1455,28 @@ export function MatrixTable({
 							</tr>
 						)}
 					</tbody>
+					{totals && (
+						<tfoot className={styles.totalRow}>
+							<tr>
+								<td className={styles.labelCell}>Total</td>
+								{groups.map((group) =>
+									measures.map((measure, i) => (
+										<td
+											key={`${group ?? "all"}-${measure}`}
+											className={`${styles.cell} ${
+												i === 0 ? styles.groupStart : ""
+											}`}
+										>
+											{formatValue(
+												totals[cellKey(group, measure)],
+												hints.get(measure) ?? "decimal",
+											)}
+										</td>
+									)),
+								)}
+							</tr>
+						</tfoot>
+					)}
 				</table>
 			</div>
 		);
@@ -1479,6 +1705,10 @@ interface BodyRowProps {
 	row: MatrixRow;
 	rowDimensions: string[];
 	cells: string[];
+	// How each cell is drawn, or null where the visual has no rules or scales.
+	looks: CellAppearance[] | null;
+	// Shaded, by the row's place in the list.
+	alt: boolean;
 	measureCount: number;
 	columnChosen: boolean[] | null;
 	isOpen: boolean;
@@ -1500,6 +1730,8 @@ const BodyRow = memo(function BodyRow({
 	row,
 	rowDimensions,
 	cells,
+	looks,
+	alt,
 	measureCount,
 	columnChosen,
 	isOpen,
@@ -1520,7 +1752,7 @@ const BodyRow = memo(function BodyRow({
 			tabIndex={-1}
 			className={`${styles.row} ${
 				styles[`level${Math.min(row.depth, 3)}`] ?? ""
-			} ${chosen ? styles.rowChosen : ""} ${
+			} ${alt ? styles.rowAlt : ""} ${chosen ? styles.rowChosen : ""} ${
 				dimmed ? styles.rowDimmed : ""
 			}`}
 		>
@@ -1587,14 +1819,37 @@ const BodyRow = memo(function BodyRow({
 				const group = Math.floor(c / measureCount);
 				const columnDimmed =
 					columnChosen !== null && !columnChosen[group];
+				const look = looks?.[c];
 				return (
 					<td
 						key={c}
 						className={`${styles.cell} ${
 							c % measureCount === 0 ? styles.groupStart : ""
 						} ${columnDimmed ? styles.cellDimmed : ""}`}
+						style={
+							look
+								? {
+										background: look.background,
+										color: look.color,
+										fontWeight: look.bold ? 600 : undefined,
+									}
+								: undefined
+						}
 					>
-						{text}
+						{look?.bar && (
+							<span
+								className={styles.dataBar}
+								style={{
+									width: `${look.bar.width}%`,
+									background: look.bar.color,
+								}}
+								aria-hidden="true"
+							/>
+						)}
+						<span className={styles.cellText}>
+							{look?.marker && <>{look.marker} </>}
+							{text}
+						</span>
 					</td>
 				);
 			})}

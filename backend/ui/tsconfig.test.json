@@ -115,6 +115,8 @@
 		"lib/platform/fieldRefs.ts",
 		"lib/platform/fieldRefs.test.ts",
 		"lib/auth/names.ts",
+		"lib/auth/sourceCoverage.ts",
+		"lib/auth/sourceCoverage.test.ts",
 		"lib/platform/categoryContacts.ts",
 		"lib/platform/categoryContacts.test.ts",
 		"lib/messages/rules.ts",

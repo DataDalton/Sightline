@@ -1121,6 +1121,42 @@ function VisualOptions({
 					);
 				}
 
+				if (option.kind === "measureText") {
+					const texts = (value ?? {}) as Record<string, string>;
+					return (
+						<div key={option.key} className={styles.field}>
+							<label className={styles.fieldLabel}>
+								{option.label}
+							</label>
+							{measures.map((measure) => (
+								<input
+									key={measure}
+									className={styles.input}
+									style={{ marginBottom: 4 }}
+									value={texts[measure] ?? ""}
+									placeholder={measure}
+									aria-label={`${option.label} for ${measure}`}
+									onChange={(e) => {
+										const next = { ...texts };
+										if (e.target.value) {
+											next[measure] = e.target.value;
+										} else {
+											delete next[measure];
+										}
+										set(
+											option.key,
+											Object.keys(next).length > 0
+												? next
+												: undefined,
+										);
+									}}
+								/>
+							))}
+							{option.help && <Hint>{option.help}</Hint>}
+						</div>
+					);
+				}
+
 				if (option.kind === "measureGroups") {
 					return (
 						<MeasureBands
@@ -1368,7 +1404,25 @@ function FormatTab({
 }) {
 	const supports = definition.supports;
 	const [seriesIndex, setSeriesIndex] = useState(0);
-	const activeMeasure = measures[seriesIndex];
+	// A visual drawn in one colour stores it against its first measure.
+	const activeMeasure = measures[supports.singleColor ? 0 : seriesIndex];
+	// What the axis does with nothing set, which a scatter chart decides the
+	// other way round from the rest, since its points are the whole chart.
+	const zeroByDefault = definition.type !== "scatterChart";
+	const startsAtZero = zeroByDefault
+		? style.yAxis?.beginAtZero !== false
+		: style.yAxis?.beginAtZero === true;
+	// Only a visual that asks the source for something has a wait to fill.
+	const loadsData =
+		definition.category !== "filter" &&
+		definition.category !== "text" &&
+		definition.category !== "layout";
+	const hasAppearance = Boolean(
+		supports.fillHeight ||
+		supports.rounding ||
+		supports.rowShading ||
+		loadsData,
+	);
 
 	const swatches = useMemo(() => {
 		if (typeof window === "undefined") return [];
@@ -1411,7 +1465,8 @@ function FormatTab({
 	].filter(Boolean).length;
 	const axesCount = [
 		Boolean(style.yAxis?.label),
-		style.yAxis?.beginAtZero === false,
+		style.yAxis?.beginAtZero !== undefined &&
+			startsAtZero !== zeroByDefault,
 	].filter(Boolean).length;
 	const chromeCount = [
 		style.legend?.show === false,
@@ -1443,205 +1498,233 @@ function FormatTab({
 				updateConfig={updateConfig}
 			/>
 
-			{supports.color && measures.length > 0 && (
-				<Section
-					id="visual-series"
-					title="Series"
-					count={(style.series ?? []).length}
-				>
-					{measures.length > 1 && (
-						<div className={styles.field}>
-							<label className={styles.fieldLabel}>
-								Series to style
-							</label>
-							<Select
-								value={String(seriesIndex)}
-								onChange={(v) => setSeriesIndex(Number(v))}
-								ariaLabel="Series"
-								options={measures.map((m, i) => ({
-									value: String(i),
-									label: m,
-								}))}
-							/>
-						</div>
-					)}
+			{(supports.color || supports.paletteOnly) &&
+				measures.length > 0 && (
+					<Section
+						id="visual-series"
+						title="Series"
+						count={(style.series ?? []).length}
+					>
+						{measures.length > 1 &&
+							!supports.singleColor &&
+							!supports.paletteOnly && (
+								<div className={styles.field}>
+									<label className={styles.fieldLabel}>
+										Series to style
+									</label>
+									<Select
+										value={String(seriesIndex)}
+										onChange={(v) =>
+											setSeriesIndex(Number(v))
+										}
+										ariaLabel="Series"
+										options={measures.map((m, i) => ({
+											value: String(i),
+											label: m,
+										}))}
+									/>
+								</div>
+							)}
 
-					{/* A named set for the whole chart, above the per-series
+						{/* A named set for the whole chart, above the per-series
 					    colour. Choosing a set is the decision an author
 					    actually makes; the swatch below is for the one series
 					    that has to be different from the rest. */}
-					{measures.length > 1 && (
-						<div className={styles.field}>
-							<span className={styles.fieldLabel}>
-								Series colours
-							</span>
-							<div className={styles.swatchGrid}>
-								{palettePresets.map((preset) => {
-									const on =
-										JSON.stringify(style.palette ?? []) ===
-										JSON.stringify(preset.tokens);
-									const stops = preset.tokens
-										.map(
-											(token, i) =>
-												`var(--${token}) ${(i / preset.tokens.length) * 100}%, var(--${token}) ${((i + 1) / preset.tokens.length) * 100}%`,
-										)
-										.join(", ");
-									return (
-										<button
-											key={preset.id}
-											type="button"
-											className={styles.markerButton}
-											aria-pressed={on}
-											aria-label={preset.label}
-											title={preset.note ?? preset.label}
-											onClick={() =>
-												updateStyle({
-													palette: preset.tokens,
-												})
-											}
-											style={{
-												background: `linear-gradient(90deg, ${stops})`,
-												outline: on
-													? "2px solid var(--brand)"
-													: undefined,
-											}}
-										/>
-									);
-								})}
-							</div>
-							<Hint>
-								{palettePresets.find(
-									(preset) =>
-										JSON.stringify(style.palette ?? []) ===
-										JSON.stringify(preset.tokens),
-								)?.note ??
-									"Colours are taken by series position, so a chart keeps its colours as measures are added."}
-							</Hint>
-						</div>
-					)}
-
-					<div className={styles.field}>
-						<span className={styles.fieldLabel}>Colour</span>
-						<div className={styles.swatchGrid}>
-							{swatches.map((s) => {
-								const active =
-									seriesEntry?.color &&
-									"token" in seriesEntry.color &&
-									seriesEntry.color.token === s.token;
-								return (
-									<button
-										key={s.token}
-										type="button"
-										className={`${styles.swatch} ${active ? styles.swatchActive : ""}`}
-										style={{ background: s.hex }}
-										title={s.token}
-										aria-label={`Colour ${s.token}`}
-										onClick={() =>
-											updateSeries({
-												color: {
-													token: s.token,
-												} as ColorSpec,
-											})
-										}
-									/>
-								);
-							})}
-						</div>
-					</div>
-
-					{supports.fill && (
-						<>
+						{((measures.length > 1 && !supports.singleColor) ||
+							supports.paletteOnly) && (
 							<div className={styles.field}>
-								<label className={styles.fieldLabel}>
-									Fill
-								</label>
-								<Select
-									value={seriesEntry?.fill ?? "none"}
-									onChange={(v) => updateSeries({ fill: v })}
-									ariaLabel="Fill"
-									options={[
-										{ value: "none", label: "None" },
-										{ value: "solid", label: "Solid" },
-										{
-											value: "gradient",
-											label: "Gradient",
-										},
-									]}
-								/>
+								<span className={styles.fieldLabel}>
+									Series colours
+								</span>
+								<div className={styles.swatchGrid}>
+									{palettePresets.map((preset) => {
+										const on =
+											JSON.stringify(
+												style.palette ?? [],
+											) === JSON.stringify(preset.tokens);
+										const stops = preset.tokens
+											.map(
+												(token, i) =>
+													`var(--${token}) ${(i / preset.tokens.length) * 100}%, var(--${token}) ${((i + 1) / preset.tokens.length) * 100}%`,
+											)
+											.join(", ");
+										return (
+											<button
+												key={preset.id}
+												type="button"
+												className={styles.markerButton}
+												aria-pressed={on}
+												aria-label={preset.label}
+												title={
+													preset.note ?? preset.label
+												}
+												onClick={() =>
+													updateStyle({
+														palette: preset.tokens,
+													})
+												}
+												style={{
+													background: `linear-gradient(90deg, ${stops})`,
+													outline: on
+														? "2px solid var(--brand)"
+														: undefined,
+												}}
+											/>
+										);
+									})}
+								</div>
+								<Hint>
+									{palettePresets.find(
+										(preset) =>
+											JSON.stringify(
+												style.palette ?? [],
+											) === JSON.stringify(preset.tokens),
+									)?.note ??
+										"Colours are taken by series position, so a chart keeps its colours as measures are added."}
+								</Hint>
 							</div>
+						)}
 
-							{seriesEntry?.fill &&
-								seriesEntry.fill !== "none" && (
-									<div className={styles.field}>
-										<label className={styles.fieldLabel}>
-											Fill opacity
-											<span className={styles.fieldCount}>
-												{Math.round(
+						{!supports.paletteOnly && (
+							<div className={styles.field}>
+								<span className={styles.fieldLabel}>
+									Colour
+								</span>
+								<div className={styles.swatchGrid}>
+									{swatches.map((s) => {
+										const active =
+											seriesEntry?.color &&
+											"token" in seriesEntry.color &&
+											seriesEntry.color.token === s.token;
+										return (
+											<button
+												key={s.token}
+												type="button"
+												className={`${styles.swatch} ${active ? styles.swatchActive : ""}`}
+												style={{ background: s.hex }}
+												title={s.token}
+												aria-label={`Colour ${s.token}`}
+												onClick={() =>
+													updateSeries({
+														color: {
+															token: s.token,
+														} as ColorSpec,
+													})
+												}
+											/>
+										);
+									})}
+								</div>
+							</div>
+						)}
+
+						{supports.fill && (
+							<>
+								<div className={styles.field}>
+									<label className={styles.fieldLabel}>
+										Fill
+									</label>
+									<Select
+										value={
+											seriesEntry?.fill ??
+											(definition.type === "areaChart"
+												? "solid"
+												: "none")
+										}
+										onChange={(v) =>
+											updateSeries({ fill: v })
+										}
+										ariaLabel="Fill"
+										options={[
+											{ value: "none", label: "None" },
+											{ value: "solid", label: "Solid" },
+											{
+												value: "gradient",
+												label: "Gradient",
+											},
+										]}
+									/>
+								</div>
+
+								{seriesEntry?.fill &&
+									seriesEntry.fill !== "none" && (
+										<div className={styles.field}>
+											<label
+												className={styles.fieldLabel}
+											>
+												Fill opacity
+												<span
+													className={
+														styles.fieldCount
+													}
+												>
+													{Math.round(
+														(seriesEntry.fillOpacity ??
+															0.25) * 100,
+													)}
+													%
+												</span>
+											</label>
+											<input
+												type="range"
+												className={styles.range}
+												min={5}
+												max={100}
+												step={5}
+												value={
 													(seriesEntry.fillOpacity ??
-														0.25) * 100,
-												)}
-												%
-											</span>
-										</label>
-										<input
-											type="range"
-											className={styles.range}
-											min={5}
-											max={100}
-											step={5}
-											value={
-												(seriesEntry.fillOpacity ??
-													0.25) * 100
-											}
-											onChange={(e) =>
-												updateSeries({
-													fillOpacity:
-														Number(e.target.value) /
-														100,
-												})
-											}
-										/>
-									</div>
-								)}
-						</>
-					)}
+														0.25) * 100
+												}
+												onChange={(e) =>
+													updateSeries({
+														fillOpacity:
+															Number(
+																e.target.value,
+															) / 100,
+													})
+												}
+											/>
+										</div>
+									)}
+							</>
+						)}
 
-					{supports.secondAxis && (
-						<button
-							type="button"
-							className={styles.checkRow}
-							onClick={() =>
-								updateSeries({
-									axis:
-										seriesEntry?.axis === "right"
-											? "left"
-											: "right",
-								})
-							}
-						>
-							<Check on={seriesEntry?.axis === "right"} />
-							Plot on the right axis
-						</button>
-					)}
+						{supports.secondAxis && (
+							<button
+								type="button"
+								className={styles.checkRow}
+								onClick={() =>
+									updateSeries({
+										axis:
+											seriesEntry?.axis === "right"
+												? "left"
+												: "right",
+									})
+								}
+							>
+								<Check on={seriesEntry?.axis === "right"} />
+								Plot on the right axis
+							</button>
+						)}
 
-					{supports.stacking && (
-						<button
-							type="button"
-							className={styles.checkRow}
-							onClick={() =>
-								updateSeries({
-									stack: seriesEntry?.stack
-										? undefined
-										: "total",
-								})
-							}
-						>
-							<Check on={Boolean(seriesEntry?.stack)} />
-							Stack this series
-						</button>
-					)}
-				</Section>
-			)}
+						{supports.stacking && (
+							<button
+								type="button"
+								className={styles.checkRow}
+								onClick={() =>
+									updateSeries({
+										stack: seriesEntry?.stack
+											? undefined
+											: "total",
+									})
+								}
+							>
+								<Check on={Boolean(seriesEntry?.stack)} />
+								Stack this series
+							</button>
+						)}
+					</Section>
+				)}
 
 			{supports.axes && (
 				<Section
@@ -1667,28 +1750,31 @@ function FormatTab({
 							}
 						/>
 					</div>
-					<button
-						type="button"
-						className={styles.checkRow}
-						onClick={() =>
-							updateStyle({
-								yAxis: {
-									...style.yAxis,
-									beginAtZero:
-										style.yAxis?.beginAtZero === false,
-								},
-							})
-						}
-					>
-						<Check on={style.yAxis?.beginAtZero !== false} />
-						Start the axis at zero
-					</button>
-					{style.yAxis?.beginAtZero === false && (
-						<Hint>
-							A truncated axis makes small differences look large.
-							Worth a note on the visual saying so.
-						</Hint>
+					{supports.axisZero !== false && (
+						<button
+							type="button"
+							className={styles.checkRow}
+							onClick={() =>
+								updateStyle({
+									yAxis: {
+										...style.yAxis,
+										beginAtZero: !startsAtZero,
+									},
+								})
+							}
+						>
+							<Check on={startsAtZero} />
+							Start the axis at zero
+						</button>
 					)}
+					{supports.axisZero !== false &&
+						!startsAtZero &&
+						zeroByDefault && (
+							<Hint>
+								A truncated axis makes small differences look
+								large. Worth a note on the visual saying so.
+							</Hint>
+						)}
 				</Section>
 			)}
 
@@ -1696,109 +1782,117 @@ function FormatTab({
 			    have always honoured and nothing could set: a chart drew its
 			    bars with a two pixel corner because that is what the fallback
 			    said, and a grid striped its rows because the same. */}
-			<Section
-				id="visual-appearance"
-				title="Appearance"
-				defaultOpen={false}
-				count={appearanceCount}
-			>
-				{fillHeightHere && (
-					<div className={styles.field}>
-						<Toggle
-							checked={
-								visual.config.options?.fillHeight !== false
-							}
-							onChange={(next) =>
-								updateConfig({
-									options: {
-										...visual.config.options,
-										fillHeight: next,
+			{hasAppearance && (
+				<Section
+					id="visual-appearance"
+					title="Appearance"
+					defaultOpen={false}
+					count={appearanceCount}
+				>
+					{fillHeightHere && (
+						<div className={styles.field}>
+							<Toggle
+								checked={
+									visual.config.options?.fillHeight !== false
+								}
+								onChange={(next) =>
+									updateConfig({
+										options: {
+											...visual.config.options,
+											fillHeight: next,
+										},
+									})
+								}
+								label="Fill the screen when it is last on the page"
+							/>
+							<Hint>
+								On by default. Turn it off where the table is
+								deliberately a preview. The canvas shows the
+								height a reader will get.
+							</Hint>
+						</div>
+					)}
+
+					{supports.rounding && (
+						<div className={styles.field}>
+							<label className={styles.fieldLabel}>
+								Corner rounding
+								<span className={styles.fieldCount}>
+									{style.cornerRadius ?? 2}
+								</span>
+							</label>
+							<input
+								type="range"
+								className={styles.range}
+								min={0}
+								max={12}
+								step={1}
+								value={style.cornerRadius ?? 2}
+								onChange={(e) =>
+									updateStyle({
+										cornerRadius: Number(e.target.value),
+									})
+								}
+							/>
+							<Hint>
+								Past about six a bar stops reading as a length,
+								which is the thing it is measuring.
+							</Hint>
+						</div>
+					)}
+
+					{supports.rowShading && (
+						<div className={styles.field}>
+							<Toggle
+								checked={style.stripedRows !== false}
+								onChange={(next) =>
+									updateStyle({ stripedRows: next })
+								}
+								label="Shade alternate rows"
+							/>
+							<Hint>
+								Reading across a wide row is where a grid loses
+								people.
+							</Hint>
+						</div>
+					)}
+
+					{loadsData && (
+						<div className={styles.field}>
+							<label className={styles.fieldLabel}>
+								While it loads
+							</label>
+							<Select
+								value={style.loadingAnimation ?? "skeleton"}
+								onChange={(v) =>
+									updateStyle({
+										loadingAnimation:
+											v as VisualStyle["loadingAnimation"],
+									})
+								}
+								ariaLabel="While it loads"
+								options={[
+									{
+										value: "skeleton",
+										label: "Shape of the content",
 									},
-								})
-							}
-							label="Fill the screen when it is last on the page"
-						/>
-						<Hint>
-							On by default. Turn it off where the table is
-							deliberately a preview. The canvas shows the height
-							a reader will get.
-						</Hint>
-					</div>
-				)}
-
-				{(supports.fill || supports.stacking) && (
-					<div className={styles.field}>
-						<label className={styles.fieldLabel}>
-							Corner rounding
-							<span className={styles.fieldCount}>
-								{style.cornerRadius ?? 2}
-							</span>
-						</label>
-						<input
-							type="range"
-							className={styles.range}
-							min={0}
-							max={12}
-							step={1}
-							value={style.cornerRadius ?? 2}
-							onChange={(e) =>
-								updateStyle({
-									cornerRadius: Number(e.target.value),
-								})
-							}
-						/>
-						<Hint>
-							Past about six a bar stops reading as a length,
-							which is the thing it is measuring.
-						</Hint>
-					</div>
-				)}
-
-				{supports.conditionalFormat && (
-					<div className={styles.field}>
-						<Toggle
-							checked={style.stripedRows !== false}
-							onChange={(next) =>
-								updateStyle({ stripedRows: next })
-							}
-							label="Shade alternate rows"
-						/>
-						<Hint>
-							Reading across a wide row is where a grid loses
-							people.
-						</Hint>
-					</div>
-				)}
-
-				<div className={styles.field}>
-					<label className={styles.fieldLabel}>While it loads</label>
-					<Select
-						value={style.loadingAnimation ?? "skeleton"}
-						onChange={(v) =>
-							updateStyle({
-								loadingAnimation:
-									v as VisualStyle["loadingAnimation"],
-							})
-						}
-						ariaLabel="While it loads"
-						options={[
-							{
-								value: "skeleton",
-								label: "Shape of the content",
-							},
-							{ value: "bars", label: "Bars" },
-							{ value: "spinner", label: "Spinner" },
-							{ value: "pulse", label: "Pulse" },
-							{ value: "none", label: "Nothing" },
-						]}
-					/>
-				</div>
-			</Section>
+									{ value: "bars", label: "Bars" },
+									{ value: "spinner", label: "Spinner" },
+									{ value: "pulse", label: "Pulse" },
+									{ value: "none", label: "Nothing" },
+								]}
+							/>
+						</div>
+					)}
+				</Section>
+			)}
 
 			{/* One group for the two smallest: a legend is a single switch and
 			    a tooltip is a switch and a choice, and each as its own titled
 			    group cost more height in headings than in controls. */}
-			{(supports.legend || supports.tooltip) && (
+			{(supports.legend ||
+				supports.tooltipMode ||
+				supports.tooltipShare) && (
 				<Section
 					id="visual-chrome"
 					title="Legend and tooltip"
@@ -1823,52 +1917,52 @@ function FormatTab({
 						</button>
 					)}
 
-					{supports.tooltip && (
-						<>
-							<div className={styles.field}>
-								<label className={styles.fieldLabel}>
-									Tooltip shows
-								</label>
-								<Select
-									value={style.tooltip?.mode ?? "axis"}
-									onChange={(v) =>
-										updateStyle({
-											tooltip: {
-												...style.tooltip,
-												mode: v as "single" | "axis",
-											},
-										})
-									}
-									ariaLabel="Tooltip mode"
-									options={[
-										{
-											value: "axis",
-											label: "Every series at that point",
-										},
-										{
-											value: "single",
-											label: "Just the hovered point",
-										},
-									]}
-								/>
-							</div>
-							<button
-								type="button"
-								className={styles.checkRow}
-								onClick={() =>
+					{supports.tooltipMode && (
+						<div className={styles.field}>
+							<label className={styles.fieldLabel}>
+								Tooltip shows
+							</label>
+							<Select
+								value={style.tooltip?.mode ?? "axis"}
+								onChange={(v) =>
 									updateStyle({
 										tooltip: {
 											...style.tooltip,
-											showShare:
-												!style.tooltip?.showShare,
+											mode: v as "single" | "axis",
 										},
 									})
 								}
-							>
-								<Check on={Boolean(style.tooltip?.showShare)} />
-								Show each value as a share of the total
-							</button>
-						</>
+								ariaLabel="Tooltip mode"
+								options={[
+									{
+										value: "axis",
+										label: "Every series at that point",
+									},
+									{
+										value: "single",
+										label: "Just the hovered point",
+									},
+								]}
+							/>
+						</div>
+					)}
+
+					{supports.tooltipShare && (
+						<button
+							type="button"
+							className={styles.checkRow}
+							onClick={() =>
+								updateStyle({
+									tooltip: {
+										...style.tooltip,
+										showShare: !style.tooltip?.showShare,
+									},
+								})
+							}
+						>
+							<Check on={Boolean(style.tooltip?.showShare)} />
+							Show each value as a share of the total
+						</button>
 					)}
 				</Section>
 			)}
@@ -1890,9 +1984,13 @@ function FormatTab({
 				/>
 			)}
 
-			{supports.conditionalFormat && (
+			{(supports.conditionalFormat || supports.colorScale) && (
 				<ConditionsEditor
 					style={style}
+					// A chart that shades a whole grid or map takes one ramp and
+					// has no cells to set a rule on.
+					scaleOnly={!supports.conditionalFormat}
+					ruleStyle={supports.ruleStyle ?? "cell"}
 					// A rule tests a value, so measures come first. Dimensions
 					// are offered too, for a rule that paints a row based on a
 					// category.

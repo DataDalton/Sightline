@@ -11,7 +11,7 @@ import {
 	renameInSheet,
 	renameInVisual,
 } from "../platform/fieldRefs";
-import { loadRegistry } from "./registry";
+import { reloadRegistryEverywhere } from "./registry";
 
 // Pointing everything that names a missing field at its new name, in one step.
 //
@@ -486,7 +486,7 @@ export async function remapField(
 	if (reports.length > 0) invalidateDefinitions("report:");
 	// Saved views name fields too, and are held per page.
 	invalidateDefinitions("views:");
-	await loadRegistry(true);
+	await reloadRegistryEverywhere(true);
 
 	void insertLog({
 		recordType: "source",

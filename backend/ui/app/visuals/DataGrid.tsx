@@ -28,19 +28,21 @@ import {
 	toNumber,
 	type FormatHint,
 } from "../../lib/format";
-import {
-	evaluateConditions,
-	scalePosition,
-	type VisualStyle,
-} from "../../lib/visuals/style";
+import type { VisualStyle } from "../../lib/visuals/style";
 import {
 	matchesSelection,
 	selectionCovers,
 	type SelectionPart,
 } from "../../lib/visuals/selection";
-import { readThemeColors, mix, withAlpha } from "./colors";
+import { readThemeColors } from "./colors";
 import { useTheme } from "../context/ThemeContext";
 import { ColumnFilter } from "./ColumnFilter";
+import { VisualLoadingState } from "./LoadingState";
+import {
+	cellAppearance,
+	type CellAppearance,
+	type ColumnRange,
+} from "./cellAppearance";
 import {
 	FilteredEmptyState,
 	useEmptyGuidance,
@@ -161,19 +163,6 @@ interface FirstPage {
 }
 
 const firstPages = createResultMemo<FirstPage>(40, resultMaxAge);
-
-// Combines threshold rules and colour scales for one cell.
-//
-// A rule that paints a background also carries a marker or a weight change,
-// so the meaning survives greyscale printing and does not rely on the reader
-// distinguishing hues.
-interface CellAppearance {
-	background?: string;
-	color?: string;
-	bold?: boolean;
-	marker?: string;
-	bar?: { width: number; color: string };
-}
 
 // How one cell is drawn, beyond its value. The change is against the earlier
 // window, or null when there is nothing to compare.
@@ -704,7 +693,7 @@ export function DataGrid({
 	// scale describes what is on screen rather than the entire dataset.
 	const columnStats = useMemo(() => {
 		const scales = style?.colorScales ?? [];
-		const stats = new Map<string, { min: number; max: number }>();
+		const stats = new Map<string, ColumnRange>();
 		if (scales.length === 0 || rows.length === 0) return stats;
 
 		for (const scale of scales) {
@@ -1291,80 +1280,13 @@ export function DataGrid({
 			rowIndex: number,
 		): CellAppearance => {
 			if (!themeColors) return {};
-			const result: CellAppearance = {};
-
-			const match = evaluateConditions(conditions, row, column, {
-				position: rowIndex,
-				total,
+			return cellAppearance(row, column, {
+				rank: { position: rowIndex, total },
+				conditions,
+				scales,
+				stats: columnStats,
+				colors: themeColors,
 			});
-			if (match) {
-				if (match.background) {
-					result.background = withAlpha(
-						themeColors.resolve(
-							match.background,
-							themeColors.series[0],
-						),
-						0.18,
-					);
-				}
-				if (match.textColor) {
-					result.color = themeColors.resolve(
-						match.textColor,
-						themeColors.text,
-					);
-				}
-				result.bold = match.bold;
-				result.marker = match.marker;
-			}
-
-			const scale = scales.find((s) => s.field === column);
-			if (scale) {
-				const stats = columnStats.get(column);
-				const value = toNumber(row[column]);
-				if (stats && value !== null) {
-					const position = scalePosition(
-						value,
-						stats.min,
-						stats.max,
-						scale.kind === "diverging"
-							? (scale.midpoint ?? 0)
-							: undefined,
-					);
-					if (position) {
-						const endpoint =
-							position.side === "low"
-								? themeColors.resolve(
-										scale.low,
-										themeColors.negative,
-									)
-								: themeColors.resolve(
-										scale.high,
-										themeColors.positive,
-									);
-
-						if (scale.asDataBar) {
-							// A bar compares more precisely than a colour
-							// wash and reads without colour at all.
-							result.bar = {
-								width: Math.round(position.ratio * 100),
-								color: withAlpha(endpoint, 0.25),
-							};
-						} else {
-							const base = themeColors.resolve(
-								scale.mid,
-								themeColors.surface,
-							);
-							result.background = mix(
-								base,
-								endpoint,
-								position.ratio * 0.7,
-							);
-						}
-					}
-				}
-			}
-
-			return result;
 		};
 
 		return (row: Row, column: string, rowIndex: number): CellLook => {
@@ -1734,7 +1656,12 @@ export function DataGrid({
 					})}
 				</div>
 
-				{loading && rows.length === 0 ? (
+				{loading &&
+				rows.length === 0 &&
+				style?.loadingAnimation &&
+				style.loadingAnimation !== "skeleton" ? (
+					<VisualLoadingState variant={style.loadingAnimation} />
+				) : loading && rows.length === 0 ? (
 					// Table shaped, and the width of the real columns, so the
 					// placeholder holds the layout instead of announcing itself
 					// with a word in the middle of an empty card.

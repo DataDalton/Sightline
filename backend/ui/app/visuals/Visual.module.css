@@ -129,6 +129,52 @@
 	white-space: nowrap;
 }
 
+/* A label with an explanation behind it. Dashed rather than solid, so it reads
+   as "this term is defined" and not as a link. */
+.hintLabel {
+	padding: 0;
+	border: 0;
+	background: none;
+	font: inherit;
+	max-width: 100%;
+	width: fit-content;
+	text-align: left;
+	cursor: help;
+	text-decoration: underline dashed var(--text-muted);
+	text-decoration-thickness: 1px;
+	text-underline-offset: 3px;
+}
+
+.hintLabel:hover {
+	color: var(--text-primary);
+	text-decoration-color: currentColor;
+}
+
+.hintLabel:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: 2px;
+	border-radius: var(--radius-sm);
+}
+
+.hintPopover {
+	position: fixed;
+	z-index: 300;
+	max-width: 320px;
+	padding: var(--space-2) var(--space-3);
+	border-radius: var(--radius-md);
+	background: var(--chart-tooltip-bg);
+	color: var(--chart-tooltip-text);
+	font-size: var(--text-sm);
+	line-height: 1.45;
+	white-space: pre-line;
+	pointer-events: none;
+}
+
+.hintName {
+	font-weight: 600;
+	margin-bottom: 2px;
+}
+
 .kpiValue {
 	font-size: var(--text-3xl);
 	font-weight: 600;
