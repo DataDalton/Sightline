@@ -1,6 +1,15 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { useSinceLastLooked } from "./SinceLastLooked";
+import {
+	isSigned,
+	kpiChange,
+	kpiChangeWords,
+} from "../../lib/visuals/kpiChange";
+import { ValueNotesStrip } from "./ValueNotes";
+import { useScenario } from "./ScenarioContext";
+import { scenarioFactor } from "../../lib/insight/insight";
 import { useMemo, useState } from "react";
 import { useVisualQuery } from "../hooks/useVisualQuery";
 import { queryForVisual } from "../../lib/query/visualSpec";
@@ -13,7 +22,6 @@ import {
 } from "../../lib/format";
 import {
 	comparePeriodLabels,
-	relativeChange,
 	shiftDateFilters,
 	type ComparePeriod,
 	type DateClause,
@@ -136,12 +144,15 @@ function TargetLine({ progress }: { progress: TargetProgress }) {
 	);
 }
 
-// A growth measure carries its own sign, so a tile colours it without anyone
-// configuring a rule. Everything else stays neutral: colouring an absolute
-// figure implies a judgement the data does not support.
-function isSigned(name: string): boolean {
-	const n = name.toLowerCase();
-	return n.includes("growth") || n.includes("variance") || n.includes(" vs ");
+function SinceNote({
+	figureKey,
+	figure,
+}: {
+	figureKey: string;
+	figure: number | null;
+}) {
+	const words = useSinceLastLooked(figureKey, figure);
+	return words ? <span className={styles.kpiSince}>{words}</span> : null;
 }
 
 export function KpiRow({
@@ -160,6 +171,7 @@ export function KpiRow({
 	// The tile whose change is being broken down, if any.
 	const [explaining, setExplaining] = useState<string | null>(null);
 
+	const scenario = useScenario();
 	const { rows, error, isLoading } = useVisualQuery(
 		queryForVisual("kpiRow", {
 			sourceKey,
@@ -383,26 +395,14 @@ export function KpiRow({
 				: undefined;
 
 		// The change since the earlier window, when there is one to report.
-		//
-		// A measure that already carries its own sign is left alone: putting a
-		// delta under a figure that is itself a delta gives a tile two
-		// different changes and no way to tell which is which.
 		const previous = earlier ? toNumber(earlier[name]) : null;
-		const absolute =
-			signed || numeric === null || previous === null
-				? null
-				: numeric - previous;
-		// A percentage already is a share, so its change is the difference in
-		// percentage points. A relative change of a rate reads as a second
-		// percentage and is easily taken for the points.
-		const inPoints = hint === "percent";
-		const change = signed
-			? null
-			: inPoints
-				? absolute
-				: relativeChange(numeric, previous);
+		const moved = kpiChange(name, hint, numeric, previous);
+		const absolute = moved?.absolute ?? null;
+		const inPoints = moved?.inPoints ?? false;
+		const change = moved?.change ?? null;
 
 		const spark = sparkline ? trendFor(name) : [];
+		const whatIfFactor = scenarioFactor(scenario, name, {});
 
 		const target = targetByMeasure[name];
 		const base =
@@ -456,6 +456,13 @@ export function KpiRow({
 					{formatCompact(raw, hint)}
 				</span>
 
+				{whatIfFactor !== 1 && numeric !== null && (
+					<span className={styles.kpiChange}>
+						Was {formatCompact(numeric / whatIfFactor, hint)} before
+						this what if
+					</span>
+				)}
+
 				{/* The change, under the figure rather than beside it, so a
 				    row of tiles keeps one column of figures to read down. */}
 				{/* The change is also the way to what drove it, so the
@@ -480,13 +487,7 @@ export function KpiRow({
 						<span aria-hidden="true">
 							{change > 0 ? "▲" : change < 0 ? "▼" : "="}
 						</span>
-						{inPoints
-							? Math.abs(change) < 0.05
-								? "no change"
-								: `${change > 0 ? "+" : "-"}${Math.abs(change).toFixed(1)} pts`
-							: Math.abs(change * 100) < 0.05
-								? "no change"
-								: `${change > 0 ? "+" : "-"}${Math.abs(change * 100).toFixed(1)}%`}
+						{moved && kpiChangeWords(moved)}
 						<span className={styles.kpiWhy}>Why?</span>
 					</button>
 				)}
@@ -500,6 +501,11 @@ export function KpiRow({
 						&nbsp;
 					</span>
 				)}
+
+				<SinceNote
+					figureKey={`${sourceKey}|${name}|${filterKey}`}
+					figure={numeric}
+				/>
 
 				{progress && <TargetLine progress={progress} />}
 
@@ -542,6 +548,7 @@ export function KpiRow({
 					</div>
 				</div>
 			))}
+			<ValueNotesStrip sourceKey={sourceKey} filters={filters} />
 		</div>
 	);
 }

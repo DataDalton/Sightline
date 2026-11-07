@@ -67,6 +67,18 @@ export const adminNav = [
 				feed: "own",
 			},
 			{
+				id: "profiles",
+				label: "Person profile",
+				blurb: "Everything one person or group holds and where it comes from, plus single permissions, exceptions, labels and rules.",
+				feed: "own",
+			},
+			{
+				id: "editingRules",
+				label: "Editing rules",
+				blurb: "Who can edit a report that has Maintainers, and how requests get answered.",
+				feed: "settings",
+			},
+			{
 				id: "grants",
 				label: "Direct grants",
 				blurb: "Permission attached to one report or category rather than held through a role.",
@@ -112,6 +124,18 @@ export const adminNav = [
 	{
 		label: "Content",
 		panes: [
+			{
+				id: "themes",
+				label: "Themes",
+				blurb: "Colour sets for reports. Editors pick one per report, and it changes that report's charts and accents, not the app around them.",
+				feed: "own",
+			},
+			{
+				id: "updateTypes",
+				label: "Update types",
+				blurb: "The kinds of update people can post, and the templates saved for them.",
+				feed: "own",
+			},
 			{
 				id: "sources",
 				label: "Sources",
@@ -174,7 +198,7 @@ export const adminNav = [
 			{
 				id: "notifications",
 				label: "Notifications",
-				blurb: "Alerts people set, the pushes that reach their devices, and announcements to everyone.",
+				blurb: "Alerts people set and the pushes that reach their devices.",
 				feed: "settings",
 			},
 			{

@@ -22,8 +22,11 @@ import type { QueryParams, Row } from "./types";
 //
 // So the service principal can reach data it must never return, and what keeps
 // on-behalf-of intact is which code calls this rather than what the principal
-// is allowed. Call it from catalogue metadata only. Nothing that answers a
-// dataset request may reach it.
+// is allowed. Call it from catalogue metadata and from data rule checks only.
+// Nothing that answers a dataset request may reach it.
+//
+// A data rule check has nobody signed in, so it is the one read of a table that runs
+// here. It keeps counts and never returns a row. See lib/dataRules/runner.
 
 // Databricks parameter markers are :name; the statement API takes them as a
 // typed list. Types are inferred from the JavaScript value, matching how the

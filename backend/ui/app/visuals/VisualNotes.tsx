@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import useSWR from "swr";
+import { ValueNoteComposer } from "./ValueNotes";
 import { DatePicker } from "../components/shared/DatePicker";
 import { maxNoteLength, type VisualNote } from "../../lib/platform/noteTypes";
 import styles from "./Visual.module.css";
@@ -20,6 +21,9 @@ import styles from "./Visual.module.css";
 // own, so a page of eight visuals costs one round trip rather than eight.
 
 interface VisualNotesProps {
+	// What a note on a value can be about.
+	sourceKey?: string | null;
+	dimensions?: string[];
 	reportId: string;
 	pageId: string;
 	visualId: string;
@@ -46,6 +50,8 @@ export function VisualNotes({
 	notes,
 	onChanged,
 	onClose,
+	sourceKey,
+	dimensions = [],
 }: VisualNotesProps) {
 	const [draft, setDraft] = useState("");
 	const [anchor, setAnchor] = useState("");
@@ -197,6 +203,7 @@ export function VisualNotes({
 					{failure}
 				</p>
 			)}
+			<ValueNoteComposer sourceKey={sourceKey} dimensions={dimensions} />
 		</div>
 	);
 }

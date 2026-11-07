@@ -14,6 +14,9 @@ import { maxExportRows } from "../../lib/query/exportLimits";
 import { createResultMemo, resultMaxAge } from "./resultMemo";
 import { canonical } from "../hooks/canonicalKey";
 import { runBatchedQuery } from "../hooks/queryBatch";
+import { ValueNotesStrip } from "./ValueNotes";
+import { useScenario } from "./ScenarioContext";
+import { applyScenario } from "../../lib/insight/insight";
 import { useExport } from "../hooks/useExport";
 import type { QueryTransform } from "../../lib/query/transform";
 import {
@@ -38,6 +41,7 @@ import { readThemeColors } from "./colors";
 import { useTheme } from "../context/ThemeContext";
 import { ColumnFilter } from "./ColumnFilter";
 import { VisualLoadingState } from "./LoadingState";
+import { useGridState } from "./GridStates";
 import {
 	cellAppearance,
 	type CellAppearance,
@@ -65,6 +69,10 @@ import styles from "./DataGrid.module.css";
 
 interface DataGridProps {
 	sourceKey: string;
+	// Rows already read elsewhere, such as the rows failing a data rule. Nothing is fetched.
+	// They are searched and sorted on screen, and column filters and export are left off,
+	// since both need a query behind them.
+	suppliedRows?: Record<string, unknown>[];
 	dimensions: string[];
 	measures: string[];
 	baseFilters?: unknown[];
@@ -187,8 +195,16 @@ function leftVar(index: number): string {
 	return `--dg-l${index}`;
 }
 
+function compareCells(left: unknown, right: unknown): number {
+	const a = toNumber(left);
+	const b = toNumber(right);
+	if (a !== null && b !== null) return a - b;
+	return String(left ?? "").localeCompare(String(right ?? ""));
+}
+
 export function DataGrid({
 	sourceKey,
+	suppliedRows,
 	dimensions,
 	measures,
 	baseFilters = [],
@@ -213,7 +229,9 @@ export function DataGrid({
 	onCellSelect,
 	selection,
 }: DataGridProps) {
-	const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+	const [heldRows, setRows] = useState<Record<string, unknown>[]>([]);
+	const scenario = useScenario();
+	const supplied = suppliedRows !== undefined;
 	// Seeded from the fields the visual is defined with, not left empty until
 	// the first response. The placeholder is drawn from these, so an empty list
 	// means a skeleton of no columns inside a container of no width, which is
@@ -223,10 +241,62 @@ export function DataGrid({
 		...dimensions,
 		...measures,
 	]);
-	const [sortState, setSort] = useState<SortState | null>(null);
-	const [columnFilterState, setColumnFilters] = useState<
-		Record<string, string[]>
-	>({});
+	// Held by the page, so a reload, a link and a saved view can carry them.
+	const [gridState, updateGridState] = useGridState(visualId);
+	const sortState = useMemo<SortState | null>(
+		() =>
+			gridState.sort
+				? {
+						field: gridState.sort.key,
+						direction: gridState.sort.direction,
+					}
+				: null,
+		[gridState.sort],
+	);
+	const setSort = useCallback(
+		(
+			next:
+				| SortState
+				| null
+				| ((prev: SortState | null) => SortState | null),
+		) =>
+			updateGridState((current) => {
+				const before: SortState | null = current.sort
+					? {
+							field: current.sort.key,
+							direction: current.sort.direction,
+						}
+					: null;
+				const after = typeof next === "function" ? next(before) : next;
+				if (after === before) return current;
+				const { sort: _dropped, ...rest } = current;
+				return after
+					? {
+							...rest,
+							sort: {
+								key: after.field,
+								direction: after.direction,
+							},
+						}
+					: rest;
+			}),
+		[updateGridState],
+	);
+	const columnFilterState = useMemo(
+		() => gridState.filters ?? {},
+		[gridState.filters],
+	);
+	const setColumnFilters = useCallback(
+		(next: (prev: Record<string, string[]>) => Record<string, string[]>) =>
+			updateGridState((current) => {
+				const before = current.filters ?? {};
+				const after = next(before);
+				return after === before
+					? current
+					: { ...current, filters: after };
+			}),
+		[updateGridState],
+	);
 
 	// The fields the query can sort and filter on. A breakdown switch can take
 	// away the column a sort or a column filter names, and sending it anyway
@@ -262,8 +332,30 @@ export function DataGrid({
 					),
 		);
 	}, [queryFields]);
-	const [search, setSearch] = useState("");
-	const [debouncedSearch, setDebouncedSearch] = useState("");
+	const [search, setSearch] = useState(gridState.search ?? "");
+	const [debouncedSearch, setDebouncedSearch] = useState(
+		gridState.search ?? "",
+	);
+	const rows = useMemo(() => {
+		if (!suppliedRows) return applyScenario(heldRows, scenario);
+		const term = debouncedSearch.trim().toLowerCase();
+		const found = term
+			? suppliedRows.filter((row) =>
+					Object.values(row).some((value) =>
+						String(value ?? "")
+							.toLowerCase()
+							.includes(term),
+					),
+				)
+			: suppliedRows;
+		if (!sortState) return found;
+		const direction = sortState.direction === "asc" ? 1 : -1;
+		return [...found].sort(
+			(a, b) =>
+				direction *
+				compareCells(a[sortState.field], b[sortState.field]),
+		);
+	}, [heldRows, scenario, suppliedRows, debouncedSearch, sortState]);
 	const [loading, setLoading] = useState(true);
 	const [loadingMore, setLoadingMore] = useState(false);
 	const [hasMore, setHasMore] = useState(true);
@@ -360,9 +452,23 @@ export function DataGrid({
 	const queryKeyRef = useRef("");
 
 	useEffect(() => {
-		const timer = setTimeout(() => setDebouncedSearch(search), 300);
+		const timer = setTimeout(() => {
+			setDebouncedSearch(search);
+			updateGridState((current) =>
+				(current.search ?? "") === search
+					? current
+					: { ...current, search: search || undefined },
+			);
+		}, 300);
 		return () => clearTimeout(timer);
-	}, [search]);
+	}, [search, updateGridState]);
+
+	// A saved view being applied replaces the search from outside.
+	const heldSearch = gridState.search ?? "";
+	useEffect(() => {
+		setSearch(heldSearch);
+		setDebouncedSearch(heldSearch);
+	}, [heldSearch]);
 
 	// Free-text search maps to a contains filter across the dimensions on show,
 	// which is what a reader means by "find this".
@@ -617,6 +723,12 @@ export function DataGrid({
 	// result they are no longer looking at.
 	useEffect(() => {
 		scrollerRef.current?.scrollTo({ top: 0 });
+
+		if (supplied) {
+			setLoading(false);
+			setHasMore(false);
+			return;
+		}
 
 		// Straight back on screen if this exact query has been answered before,
 		// with no request and no placeholder. The server caches the answer too,
@@ -1347,7 +1459,7 @@ export function DataGrid({
 						type="text"
 						className={styles.searchInput}
 						placeholder={
-							dimensions.length > 0
+							dimensions.length > 0 && !supplied
 								? `Search ${dimensions[0]}`
 								: "Search"
 						}
@@ -1374,38 +1486,40 @@ export function DataGrid({
 					</span>
 				)}
 
-				<button
-					type="button"
-					className={styles.toolButton}
-					onClick={runExport}
-					disabled={exporter.busy || rows.length === 0}
-					title={
-						exportError
-							? exportError.message
-							: "Exports are recorded in the audit log. Large ones keep running if you leave the page."
-					}
-				>
-					<svg
-						width="13"
-						height="13"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						strokeWidth="2"
-						strokeLinecap="round"
-						strokeLinejoin="round"
+				{!supplied && (
+					<button
+						type="button"
+						className={styles.toolButton}
+						onClick={runExport}
+						disabled={exporter.busy || rows.length === 0}
+						title={
+							exportError
+								? exportError.message
+								: "Exports are recorded in the audit log. Large ones keep running if you leave the page."
+						}
 					>
-						<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-						<path d="M7 10l5 5 5-5M12 15V3" />
-					</svg>
-					{exporter.busy
-						? exporter.job && exporter.job.rowCount > 0
-							? `${exporter.job.rowCount.toLocaleString()} rows`
-							: "Exporting"
-						: exportError
-							? "Export failed"
-							: "Export"}
-				</button>
+						<svg
+							width="13"
+							height="13"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						>
+							<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+							<path d="M7 10l5 5 5-5M12 15V3" />
+						</svg>
+						{exporter.busy
+							? exporter.job && exporter.job.rowCount > 0
+								? `${exporter.job.rowCount.toLocaleString()} rows`
+								: "Exporting"
+							: exportError
+								? "Export failed"
+								: "Export"}
+					</button>
+				)}
 			</div>
 
 			{activeChips.length > 0 && (
@@ -1437,7 +1551,7 @@ export function DataGrid({
 					<button
 						type="button"
 						className={styles.clearAll}
-						onClick={() => setColumnFilters({})}
+						onClick={() => setColumnFilters(() => ({}))}
 					>
 						Clear all
 					</button>
@@ -1621,7 +1735,7 @@ export function DataGrid({
 
 								{/* Only a dimension has a meaningful value list;
 								    a measure is an aggregate. */}
-								{isDimension && (
+								{isDimension && !supplied && (
 									<button
 										type="button"
 										className={`${styles.filterButton} ${
@@ -1833,6 +1947,11 @@ export function DataGrid({
 					onClose={() => setOpenFilter(null)}
 				/>
 			)}
+			<ValueNotesStrip
+				sourceKey={sourceKey}
+				dimensions={dimensions}
+				rows={rows}
+			/>
 		</div>
 	);
 }

@@ -104,6 +104,7 @@ function ScheduleDialog({
 	const [weekday, setWeekday] = useState(
 		String(existing?.schedule.weekday ?? 1),
 	);
+	const [attachPdf, setAttachPdf] = useState(existing?.attachPdf ?? false);
 	const [busy, setBusy] = useState(false);
 	const [failure, setFailure] = useState<string | null>(null);
 
@@ -119,6 +120,7 @@ function ScheduleDialog({
 							body: JSON.stringify({
 								reportSlug,
 								pageId,
+								attachPdf,
 								schedule: {
 									frequency,
 									hour: Number(hour),
@@ -197,6 +199,33 @@ function ScheduleDialog({
 						{Intl.DateTimeFormat().resolvedOptions().timeZone}.
 					</span>
 				</label>
+
+				<label className={styles.field}>
+					<span>
+						<input
+							type="checkbox"
+							checked={attachPdf}
+							onChange={(e) => setAttachPdf(e.target.checked)}
+						/>{" "}
+						Include a PDF of the whole page
+					</span>
+					<span className={styles.hint}>
+						Drawn at this time and waiting in your Inbox and here,
+						if you used the app in the day before and every dataset
+						on the page can be limited to what you see. Otherwise it
+						comes when you are next in the app. Each one is recorded
+						in Export audit.
+					</span>
+				</label>
+
+				{existing?.lastFileId && (
+					<a
+						className={styles.hint}
+						href={`/api/deliveries/file/${existing.lastFileId}`}
+					>
+						Download the latest PDF
+					</a>
+				)}
 
 				{failure && (
 					<p className={styles.error} role="alert">

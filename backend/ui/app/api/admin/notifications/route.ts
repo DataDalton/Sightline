@@ -11,7 +11,7 @@ import { checkWriteRateLimit } from "@/lib/rateLimit";
 
 // Notifications and alerts, seen from the administration screen: how many
 // alerts and devices there are, what is failing, and the two actions that
-// act on everyone: replacing the push keys and sending an announcement.
+// acts on everyone: replacing the push keys.
 
 async function administrator(request: NextRequest) {
 	await ensureReadyOrDegrade();
@@ -125,49 +125,6 @@ export async function POST(request: NextRequest) {
 			changedBy: identity.email,
 		});
 		return NextResponse.json({ push: await pushStats() });
-	}
-
-	if (body.action === "announce") {
-		const title = typeof body.title === "string" ? body.title.trim() : "";
-		const text = typeof body.body === "string" ? body.body.trim() : "";
-		if (!title) {
-			return NextResponse.json(
-				{ error: "An announcement needs a title." },
-				{ status: 400 },
-			);
-		}
-		const people = await sql<{ user_email: string }>(
-			`SELECT DISTINCT user_email FROM usage_daily
-			 WHERE day > now() - interval '${announceWindow}'`,
-		);
-		// One at a time, so a large population is not a burst of pushes
-		// arriving at the push services together.
-		let sent = 0;
-		for (const person of people) {
-			try {
-				await notify(person.user_email, {
-					kind: "system",
-					title,
-					body: text,
-					link: safeLink(body.link as string),
-					data: { from: identity.email },
-				});
-				sent++;
-			} catch (error) {
-				console.warn(
-					`Announcement to ${person.user_email} failed:`,
-					error,
-				);
-			}
-		}
-		void insertLog({
-			recordType: "platform_settings",
-			recordId: "announcement",
-			action: "send_announcement",
-			changedBy: identity.email,
-			newValue: title,
-		});
-		return NextResponse.json({ sent });
 	}
 
 	return NextResponse.json({ error: "Unknown action" }, { status: 400 });

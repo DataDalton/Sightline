@@ -45,7 +45,8 @@ export function PageActions({
 	if (!isPersonal || !user) return null;
 
 	const mine = ownerEmail.toLowerCase() === user.email.toLowerCase();
-	const canPublish = user.capabilities?.includes("report.publish") ?? false;
+	const canPublish =
+		user.capabilities?.includes("report.makeOfficial") ?? false;
 
 	// An administrator acts on any personal page. Offering the actions to
 	// somebody who can already open and edit the page but cannot share or
@@ -77,13 +78,13 @@ export function PageActions({
 			{/* Offered to an editor on somebody else's page as well as on their
 			    own. Publishing is about whether the team should keep it, which
 			    is not a question about who wrote it. */}
-			{canPublish && (
+			{(canPublish || mine) && (
 				<button
 					type="button"
 					className={styles.openButton}
 					onClick={() => setPublishing(true)}
 				>
-					Publish
+					{canPublish ? "Publish" : "Ask to publish"}
 				</button>
 			)}
 
@@ -175,6 +176,7 @@ export function PageActions({
 				<PublishDialog
 					reportId={reportId}
 					title={title}
+					direct={canPublish}
 					onClose={() => setPublishing(false)}
 				/>
 			)}
@@ -323,15 +325,19 @@ export function ShareDialog({
 function PublishDialog({
 	reportId,
 	title,
+	direct,
 	onClose,
 }: {
 	reportId: string;
 	title: string;
+	// Publishes straight away. Otherwise it asks a Report Publisher to.
+	direct: boolean;
 	onClose: () => void;
 }) {
 	const router = useRouter();
+	const [note, setNote] = useState("");
 	const { data } = useSWR<{ categories: { id: string; name: string }[] }>(
-		"/api/authoring",
+		direct ? "/api/authoring" : "/api/requests",
 	);
 	const [categoryId, setCategoryId] = useState("");
 	const [busy, setBusy] = useState(false);
@@ -347,9 +353,10 @@ function PublishDialog({
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
-					action: "publish",
+					action: direct ? "publish" : "askToPublish",
 					reportId,
 					categoryId,
+					note,
 				}),
 			});
 			const detail = await response.json().catch(() => null);
@@ -377,7 +384,7 @@ function PublishDialog({
 		<Modal
 			isOpen
 			onClose={onClose}
-			title={`Publish ${title}`}
+			title={direct ? `Publish ${title}` : `Ask to publish ${title}`}
 			width="480px"
 		>
 			<div className={styles.form}>
@@ -393,6 +400,23 @@ function PublishDialog({
 						}))}
 					/>
 				</label>
+
+				{!direct && (
+					<label className={styles.field}>
+						<span className={styles.label}>
+							Why it should be official
+						</span>
+						<input
+							className={styles.input}
+							value={note}
+							onChange={(e) => setNote(e.target.value)}
+						/>
+						<span className={styles.hint}>
+							A Report Publisher decides. It stays your page until
+							they do, and they can open it to look.
+						</span>
+					</label>
+				)}
 
 				{failure && <div className={styles.failure}>{failure}</div>}
 
@@ -410,7 +434,13 @@ function PublishDialog({
 						disabled={busy || !categoryId}
 						onClick={publish}
 					>
-						{busy ? "Publishing" : "Publish"}
+						{direct
+							? busy
+								? "Publishing"
+								: "Publish"
+							: busy
+								? "Sending"
+								: "Ask"}
 					</button>
 				</div>
 			</div>

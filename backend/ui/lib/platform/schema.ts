@@ -1615,6 +1615,434 @@ const migrations: string[] = [
 	// Which sources a stored access answer asked about, so a source registered
 	// after it is asked about rather than refused. See lib/auth/sourceCoverage.
 	`ALTER TABLE reader_access ADD COLUMN IF NOT EXISTS asked_keys JSONB`,
+
+	// The theme a report is drawn in, by id. See lib/visuals/themes.
+	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS theme TEXT`,
+
+	// Who can hold a role, and where, now include service principals, tags and
+	// pages, and a right can end by itself. See lib/platform/accessRules.
+	`ALTER TABLE role_assignments ADD COLUMN IF NOT EXISTS expires_on TIMESTAMPTZ`,
+	`ALTER TABLE role_assignments DROP CONSTRAINT IF EXISTS role_assignments_subject_type_check`,
+	`ALTER TABLE role_assignments ADD CONSTRAINT role_assignments_subject_type_check
+		CHECK (subject_type IN ('group', 'user', 'service_principal'))`,
+	`ALTER TABLE role_assignments DROP CONSTRAINT IF EXISTS role_assignments_scope_type_check`,
+	`ALTER TABLE role_assignments ADD CONSTRAINT role_assignments_scope_type_check
+		CHECK (scope_type IN ('global', 'category', 'tag', 'report', 'page'))`,
+
+	// The capability that made a personal page official, under its new name, for
+	// any custom role holding it. Built-in roles are written on every start.
+	`UPDATE role_capabilities SET capability = 'report.makeOfficial'
+		WHERE capability = 'report.publish'
+		  AND NOT EXISTS (SELECT 1 FROM role_capabilities r2
+		                  WHERE r2.role_id = role_capabilities.role_id
+		                    AND r2.capability = 'report.makeOfficial')`,
+	`DELETE FROM role_capabilities WHERE capability = 'report.publish'`,
+
+	// One permission given to, or taken from, one person or group, with no role
+	// around it. A deny wins over anything they hold.
+	`CREATE TABLE IF NOT EXISTS permission_grants (
+		grant_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		subject_type TEXT NOT NULL
+			CHECK (subject_type IN ('group', 'user', 'service_principal')),
+		subject_id   TEXT NOT NULL,
+		capability   TEXT NOT NULL,
+		effect       TEXT NOT NULL CHECK (effect IN ('allow', 'deny')),
+		scope_type   TEXT NOT NULL DEFAULT 'global'
+			CHECK (scope_type IN ('global', 'category', 'tag', 'report', 'page')),
+		scope_id     TEXT,
+		reason       TEXT,
+		granted_by   TEXT,
+		granted_on   TIMESTAMPTZ NOT NULL DEFAULT now(),
+		expires_on   TIMESTAMPTZ,
+		is_active    BOOLEAN NOT NULL DEFAULT TRUE,
+		CHECK ((scope_type = 'global') = (scope_id IS NULL))
+	)`,
+	`CREATE INDEX IF NOT EXISTS permission_grants_subject_idx
+		ON permission_grants (subject_type, lower(subject_id)) WHERE is_active`,
+
+	// Labels on a person or group, and the rules that grant a role from them.
+	`CREATE TABLE IF NOT EXISTS subject_attributes (
+		subject_type TEXT NOT NULL
+			CHECK (subject_type IN ('group', 'user', 'service_principal')),
+		subject_id   TEXT NOT NULL,
+		attribute    TEXT NOT NULL,
+		value        TEXT NOT NULL,
+		set_by       TEXT,
+		set_on       TIMESTAMPTZ NOT NULL DEFAULT now(),
+		PRIMARY KEY (subject_type, subject_id, attribute)
+	)`,
+	`CREATE TABLE IF NOT EXISTS attribute_rules (
+		rule_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		attribute  TEXT NOT NULL,
+		value      TEXT NOT NULL,
+		role_id    TEXT NOT NULL REFERENCES roles(role_id) ON DELETE CASCADE,
+		scope_type TEXT NOT NULL DEFAULT 'global'
+			CHECK (scope_type IN ('global', 'category', 'tag', 'report', 'page')),
+		scope_id   TEXT,
+		created_by TEXT,
+		created_on TIMESTAMPTZ NOT NULL DEFAULT now(),
+		is_active  BOOLEAN NOT NULL DEFAULT TRUE,
+		CHECK ((scope_type = 'global') = (scope_id IS NULL))
+	)`,
+
+	// Who can edit a report, and the tags that scope rights to it.
+	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS edit_policy TEXT`,
+	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}'`,
+	`ALTER TABLE categories ADD COLUMN IF NOT EXISTS edit_policy TEXT`,
+
+	// Whether the holder has been told a right is about to end.
+	`ALTER TABLE role_assignments ADD COLUMN IF NOT EXISTS expiry_reminded BOOLEAN NOT NULL DEFAULT FALSE`,
+	`ALTER TABLE permission_grants ADD COLUMN IF NOT EXISTS expiry_reminded BOOLEAN NOT NULL DEFAULT FALSE`,
+
+	// Rights can be held on one source, for posting about it among other things.
+	`ALTER TABLE role_assignments DROP CONSTRAINT IF EXISTS role_assignments_scope_type_check`,
+	`ALTER TABLE role_assignments ADD CONSTRAINT role_assignments_scope_type_check
+		CHECK (scope_type IN ('global', 'category', 'tag', 'report', 'page', 'source'))`,
+	`ALTER TABLE permission_grants DROP CONSTRAINT IF EXISTS permission_grants_scope_type_check`,
+	`ALTER TABLE permission_grants ADD CONSTRAINT permission_grants_scope_type_check
+		CHECK (scope_type IN ('global', 'category', 'tag', 'report', 'page', 'source'))`,
+
+	`DROP TABLE IF EXISTS decisions`,
+
+	// The headline figures somebody saw on a page when they last looked.
+	`CREATE TABLE IF NOT EXISTS last_seen_figures (
+		user_email TEXT NOT NULL,
+		page_id    TEXT NOT NULL,
+		figures    JSONB NOT NULL DEFAULT '{}'::jsonb,
+		seen_on    TIMESTAMPTZ NOT NULL DEFAULT now(),
+		PRIMARY KEY (user_email, page_id)
+	)`,
+
+	// When what an alert fired about came back.
+	`ALTER TABLE alert_events ADD COLUMN IF NOT EXISTS recovered_on TIMESTAMPTZ`,
+
+	// What a forecast said when it was made, and what happened, per person.
+	`CREATE TABLE IF NOT EXISTS forecast_records (
+		user_email TEXT NOT NULL,
+		visual_id  TEXT NOT NULL,
+		source_key TEXT NOT NULL,
+		measure    TEXT NOT NULL,
+		period     TEXT NOT NULL,
+		predicted  DOUBLE PRECISION NOT NULL,
+		low_value  DOUBLE PRECISION NOT NULL,
+		high_value DOUBLE PRECISION NOT NULL,
+		actual     DOUBLE PRECISION,
+		made_on    TIMESTAMPTZ NOT NULL DEFAULT now(),
+		PRIMARY KEY (user_email, visual_id, measure, period)
+	)`,
+
+	// Targets with an owner and a date, and how each has moved for each reader.
+	`CREATE TABLE IF NOT EXISTS goals (
+		goal_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		title       TEXT NOT NULL,
+		source_key  TEXT NOT NULL,
+		measure     TEXT NOT NULL,
+		filters     JSONB NOT NULL DEFAULT '[]'::jsonb,
+		target      DOUBLE PRECISION NOT NULL,
+		owner_email TEXT NOT NULL,
+		due_on      DATE,
+		created_by  TEXT,
+		created_on  TIMESTAMPTZ NOT NULL DEFAULT now(),
+		is_active   BOOLEAN NOT NULL DEFAULT TRUE
+	)`,
+	// A goal belongs to a report. Its readers see it and its editors look after it, so teams
+	// reading the same data can hold different targets. Whoever set it is kept for the record.
+	`ALTER TABLE goals ADD COLUMN IF NOT EXISTS report_id UUID`,
+	`CREATE INDEX IF NOT EXISTS goals_report_idx ON goals (report_id) WHERE is_active`,
+	`DO $$ BEGIN
+		IF EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_name = 'goals' AND column_name = 'owner_email'
+		) THEN
+			UPDATE goals SET created_by = coalesce(created_by, owner_email);
+			ALTER TABLE goals DROP COLUMN owner_email;
+		END IF;
+	END $$`,
+	`ALTER TABLE goals ALTER COLUMN created_by SET NOT NULL`,
+	`CREATE TABLE IF NOT EXISTS goal_progress (
+		goal_id    UUID NOT NULL REFERENCES goals(goal_id) ON DELETE CASCADE,
+		user_email TEXT NOT NULL,
+		day        DATE NOT NULL,
+		value      DOUBLE PRECISION NOT NULL,
+		PRIMARY KEY (goal_id, user_email, day)
+	)`,
+
+	// Notes on a value rather than on a visual, and the threads they start.
+	`CREATE TABLE IF NOT EXISTS value_notes (
+		note_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		source_key   TEXT NOT NULL,
+		field        TEXT NOT NULL,
+		value        TEXT NOT NULL,
+		body         TEXT NOT NULL,
+		author_email TEXT NOT NULL,
+		created_on   TIMESTAMPTZ NOT NULL DEFAULT now(),
+		expires_on   TIMESTAMPTZ,
+		is_active    BOOLEAN NOT NULL DEFAULT TRUE
+	)`,
+	`CREATE INDEX IF NOT EXISTS value_notes_lookup_idx
+		ON value_notes (source_key, field, value) WHERE is_active`,
+	`CREATE TABLE IF NOT EXISTS value_note_replies (
+		reply_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		note_id      UUID NOT NULL REFERENCES value_notes(note_id) ON DELETE CASCADE,
+		author_email TEXT NOT NULL,
+		body         TEXT NOT NULL,
+		created_on   TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
+	// What changed, what is planned and what is going on.
+	`CREATE TABLE IF NOT EXISTS updates (
+		update_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		type           TEXT NOT NULL,
+		title          TEXT NOT NULL,
+		body           TEXT NOT NULL DEFAULT '',
+		impact         TEXT NOT NULL DEFAULT 'info'
+			CHECK (impact IN ('info', 'notable', 'breaking')),
+		status         TEXT NOT NULL DEFAULT 'published'
+			CHECK (status IN ('draft', 'published', 'retracted')),
+		about          JSONB NOT NULL DEFAULT '[]'::jsonb,
+		before_value   TEXT,
+		after_value    TEXT,
+		links          JSONB NOT NULL DEFAULT '[]'::jsonb,
+		tags           TEXT[] NOT NULL DEFAULT '{}',
+		reference      TEXT UNIQUE,
+		posted_on      TIMESTAMPTZ NOT NULL DEFAULT now(),
+		effective_on   TIMESTAMPTZ,
+		period_from    TIMESTAMPTZ,
+		period_to      TIMESTAMPTZ,
+		starts_on      TIMESTAMPTZ,
+		ends_on        TIMESTAMPTZ,
+		repeat_every   TEXT NOT NULL DEFAULT 'none',
+		incident_state TEXT,
+		audience       JSONB NOT NULL DEFAULT '{"kind":"readers"}'::jsonb,
+		delivery       JSONB NOT NULL DEFAULT '{}'::jsonb,
+		show_from      TIMESTAMPTZ,
+		expires_on     TIMESTAMPTZ,
+		require_ack    BOOLEAN NOT NULL DEFAULT FALSE,
+		automatic      BOOLEAN NOT NULL DEFAULT FALSE,
+		reason         TEXT,
+		created_by     TEXT NOT NULL,
+		corrected_on   TIMESTAMPTZ,
+		delivered_on   TIMESTAMPTZ
+	)`,
+	`CREATE INDEX IF NOT EXISTS updates_posted_idx ON updates (posted_on DESC)`,
+	`CREATE TABLE IF NOT EXISTS update_events (
+		event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		update_id UUID NOT NULL REFERENCES updates(update_id) ON DELETE CASCADE,
+		by_email TEXT NOT NULL,
+		at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+		kind     TEXT NOT NULL,
+		note     TEXT,
+		snapshot JSONB
+	)`,
+	`CREATE TABLE IF NOT EXISTS update_reads (
+		update_id  UUID NOT NULL REFERENCES updates(update_id) ON DELETE CASCADE,
+		user_email TEXT NOT NULL,
+		read_on    TIMESTAMPTZ NOT NULL DEFAULT now(),
+		acked_on   TIMESTAMPTZ,
+		PRIMARY KEY (update_id, user_email)
+	)`,
+	`CREATE TABLE IF NOT EXISTS update_follows (
+		user_email TEXT NOT NULL,
+		kind       TEXT NOT NULL CHECK (kind IN ('all', 'type', 'source', 'field')),
+		value      TEXT NOT NULL DEFAULT '',
+		mode       TEXT NOT NULL DEFAULT 'instant' CHECK (mode IN ('instant', 'digest')),
+		PRIMARY KEY (user_email, kind, value)
+	)`,
+	`CREATE TABLE IF NOT EXISTS update_digest_queue (
+		update_id  UUID NOT NULL REFERENCES updates(update_id) ON DELETE CASCADE,
+		user_email TEXT NOT NULL,
+		queued_on  TIMESTAMPTZ NOT NULL DEFAULT now(),
+		PRIMARY KEY (update_id, user_email)
+	)`,
+	`CREATE TABLE IF NOT EXISTS update_types (
+		type_id   TEXT PRIMARY KEY,
+		label     TEXT NOT NULL,
+		color     TEXT NOT NULL,
+		impact    TEXT NOT NULL DEFAULT 'info',
+		delivery  JSONB NOT NULL DEFAULT '{}'::jsonb,
+		requires  JSONB NOT NULL DEFAULT '[]'::jsonb,
+		is_active BOOLEAN NOT NULL DEFAULT TRUE
+	)`,
+	`ALTER TABLE updates ADD COLUMN IF NOT EXISTS reminded_days INTEGER`,
+	`CREATE TABLE IF NOT EXISTS update_templates (
+		template_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		name        TEXT NOT NULL,
+		type        TEXT NOT NULL,
+		fields      JSONB NOT NULL DEFAULT '{}'::jsonb,
+		created_by  TEXT,
+		is_active   BOOLEAN NOT NULL DEFAULT TRUE
+	)`,
+
+	// Checks on the tables behind a source, and how each one went. Counts only, so
+	// nothing here holds a value out of those tables except a group's label.
+	`CREATE TABLE IF NOT EXISTS data_rules (
+		rule_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		source_key     TEXT NOT NULL,
+		table_name     TEXT NOT NULL,
+		name           TEXT NOT NULL,
+		kind           TEXT NOT NULL,
+		params         JSONB NOT NULL DEFAULT '{}'::jsonb,
+		severity       TEXT NOT NULL DEFAULT 'warning'
+			CHECK (severity IN ('warning', 'critical')),
+		owner_email    TEXT,
+		group_by       TEXT,
+		recent_column  TEXT,
+		recent_days    INTEGER,
+		schedule       TEXT NOT NULL DEFAULT 'afterLoad'
+			CHECK (schedule IN ('afterLoad', 'hourly', 'daily')),
+		budget_seconds INTEGER NOT NULL DEFAULT 300,
+		allow_failing  BIGINT NOT NULL DEFAULT 0,
+		muted_until    TIMESTAMPTZ,
+		created_by     TEXT,
+		created_on     TIMESTAMPTZ NOT NULL DEFAULT now(),
+		is_active      BOOLEAN NOT NULL DEFAULT TRUE
+	)`,
+	// A rule's shape saved to start other rules from, on any source.
+	`CREATE TABLE IF NOT EXISTS data_rule_templates (
+		template_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		name        TEXT NOT NULL,
+		kind        TEXT NOT NULL,
+		fields      JSONB NOT NULL DEFAULT '{}'::jsonb,
+		created_by  TEXT NOT NULL,
+		created_on  TIMESTAMPTZ NOT NULL DEFAULT now(),
+		is_active   BOOLEAN NOT NULL DEFAULT TRUE
+	)`,
+	`CREATE INDEX IF NOT EXISTS data_rules_source_idx
+		ON data_rules (source_key) WHERE is_active`,
+	`CREATE TABLE IF NOT EXISTS data_rule_runs (
+		run_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		rule_id     UUID NOT NULL REFERENCES data_rules(rule_id) ON DELETE CASCADE,
+		run_on      TIMESTAMPTZ NOT NULL DEFAULT now(),
+		status      TEXT NOT NULL CHECK (status IN ('pass', 'fail', 'error')),
+		failing     BIGINT,
+		checked     BIGINT,
+		groups      JSONB NOT NULL DEFAULT '[]'::jsonb,
+		measures    JSONB NOT NULL DEFAULT '{}'::jsonb,
+		detail      TEXT,
+		error       TEXT,
+		duration_ms INTEGER NOT NULL DEFAULT 0
+	)`,
+	`CREATE INDEX IF NOT EXISTS data_rule_runs_rule_idx
+		ON data_rule_runs (rule_id, run_on DESC)`,
+	`ALTER TABLE IF EXISTS data_incidents ADD COLUMN IF NOT EXISTS note TEXT`,
+	`CREATE TABLE IF NOT EXISTS data_incidents (
+		incident_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		rule_id         UUID NOT NULL REFERENCES data_rules(rule_id) ON DELETE CASCADE,
+		severity        TEXT NOT NULL,
+		status          TEXT NOT NULL DEFAULT 'open'
+			CHECK (status IN ('open', 'acknowledged', 'resolved')),
+		opened_on       TIMESTAMPTZ NOT NULL DEFAULT now(),
+		acknowledged_by TEXT,
+		acknowledged_on TIMESTAMPTZ,
+		resolved_by     TEXT,
+		resolved_on     TIMESTAMPTZ,
+		muted_until     TIMESTAMPTZ,
+		note            TEXT
+	)`,
+	`CREATE INDEX IF NOT EXISTS data_incidents_open_idx
+		ON data_incidents (rule_id) WHERE status <> 'resolved'`,
+
+	// Walkthroughs and slides saved against a report, and who has been through them.
+	`CREATE TABLE IF NOT EXISTS report_decks (
+		deck_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		report_id      UUID NOT NULL REFERENCES reports(report_id) ON DELETE CASCADE,
+		kind           TEXT NOT NULL CHECK (kind IN ('walkthrough', 'slides')),
+		title          TEXT NOT NULL,
+		steps          JSONB NOT NULL DEFAULT '[]'::jsonb,
+		prompt_once    BOOLEAN NOT NULL DEFAULT FALSE,
+		epoch          INTEGER NOT NULL DEFAULT 1,
+		record_field   TEXT,
+		record_source  TEXT,
+		require_record BOOLEAN NOT NULL DEFAULT FALSE,
+		modified_by    TEXT,
+		modified_on    TIMESTAMPTZ NOT NULL DEFAULT now(),
+		created_on     TIMESTAMPTZ NOT NULL DEFAULT now(),
+		is_active      BOOLEAN NOT NULL DEFAULT TRUE
+	)`,
+	`CREATE TABLE IF NOT EXISTS deck_progress (
+		deck_id     UUID NOT NULL REFERENCES report_decks(deck_id) ON DELETE CASCADE,
+		user_email  TEXT NOT NULL,
+		epoch       INTEGER NOT NULL,
+		started_on  TIMESTAMPTZ,
+		finished_on TIMESTAMPTZ,
+		PRIMARY KEY (deck_id, user_email)
+	)`,
+
+	// Sets of visuals saved once and placed in many reports.
+	`CREATE TABLE IF NOT EXISTS blocks (
+		block_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		name        TEXT NOT NULL,
+		description TEXT,
+		visuals     JSONB NOT NULL,
+		created_by  TEXT NOT NULL,
+		modified_by TEXT,
+		modified_on TIMESTAMPTZ NOT NULL DEFAULT now(),
+		is_active   BOOLEAN NOT NULL DEFAULT TRUE
+	)`,
+
+	// A scheduled page can come as a PDF, drawn for its owner as them and kept for them to
+	// fetch until it expires.
+	`ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS attach_pdf BOOLEAN NOT NULL DEFAULT FALSE`,
+	// When the owner was last seen able to export the page and read every source on it, and
+	// which sources those were. A PDF is only drawn while they are away from these sources.
+	`ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS pdf_confirmed_on TIMESTAMPTZ`,
+	`ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS pdf_sources TEXT[] NOT NULL DEFAULT '{}'`,
+	`CREATE TABLE IF NOT EXISTS delivery_files (
+		file_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		delivery_id UUID NOT NULL REFERENCES deliveries(delivery_id) ON DELETE CASCADE,
+		owner_email TEXT NOT NULL,
+		report_id   UUID NOT NULL REFERENCES reports(report_id) ON DELETE CASCADE,
+		filename    TEXT NOT NULL,
+		bytes       BYTEA NOT NULL,
+		created_on  TIMESTAMPTZ NOT NULL DEFAULT now(),
+		expires_on  TIMESTAMPTZ NOT NULL
+	)`,
+	`CREATE INDEX IF NOT EXISTS delivery_files_delivery_idx
+		ON delivery_files (delivery_id, created_on DESC)`,
+
+	// Two reports that differ on purpose, said by someone who looks after one of them.
+	`CREATE TABLE IF NOT EXISTS contradiction_reviews (
+		pair_key   TEXT PRIMARY KEY,
+		note       TEXT NOT NULL,
+		decided_by TEXT NOT NULL,
+		decided_on TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
+	// A change somebody proposed for a Maintainer to approve.
+	`CREATE TABLE IF NOT EXISTS report_suggestions (
+		suggestion_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		report_id     UUID NOT NULL REFERENCES reports(report_id) ON DELETE CASCADE,
+		author_email  TEXT NOT NULL,
+		note          TEXT,
+		base_version  BIGINT NOT NULL,
+		operations    JSONB NOT NULL,
+		summary       JSONB NOT NULL DEFAULT '[]'::jsonb,
+		status        TEXT NOT NULL DEFAULT 'open'
+			CHECK (status IN ('open', 'approved', 'declined', 'withdrawn')),
+		decided_by    TEXT,
+		decided_on    TIMESTAMPTZ,
+		decision_note TEXT,
+		created_on    TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+	`CREATE INDEX IF NOT EXISTS report_suggestions_open_idx
+		ON report_suggestions (report_id) WHERE status = 'open'`,
+
+	// A personal page somebody has asked to have made official.
+	`CREATE TABLE IF NOT EXISTS publish_requests (
+		request_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		report_id     UUID NOT NULL REFERENCES reports(report_id) ON DELETE CASCADE,
+		category_id   TEXT NOT NULL,
+		requested_by  TEXT NOT NULL,
+		note          TEXT,
+		status        TEXT NOT NULL DEFAULT 'open'
+			CHECK (status IN ('open', 'approved', 'declined', 'withdrawn')),
+		decided_by    TEXT,
+		decided_on    TIMESTAMPTZ,
+		decision_note TEXT,
+		created_on    TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS publish_requests_one_open_idx
+		ON publish_requests (report_id) WHERE status = 'open'`,
 ];
 
 // Creates anything missing. Safe to run on every startup.
@@ -1856,6 +2284,7 @@ export async function sweepExpired(): Promise<void> {
 
 	// The chunks go with the job, by the foreign key.
 	await sql(`DELETE FROM export_jobs WHERE expires_on < now()`);
+	await sql(`DELETE FROM delivery_files WHERE expires_on < now()`);
 
 	// An inbox is for what is recent. Read entries go after a quarter, unread
 	// ones after a year, so something never opened is not lost the moment it

@@ -28,6 +28,7 @@ export interface CuratedReportRow {
 	protect_edit: boolean;
 	protect_add_page: boolean;
 	sort_order: number;
+	tags?: string[] | null;
 }
 
 // Under the navigation prefix, so every write that already drops navigation
@@ -43,7 +44,7 @@ export async function curatedReports(): Promise<CuratedReportRow[]> {
 				`SELECT report_id::text AS report_id, category_id, slug, title,
 				        description, source_key, visibility, version, modified_on,
 				        is_personal, owner_email, protect_delete, protect_edit,
-				        protect_add_page, sort_order
+				        protect_add_page, sort_order, tags
 				 FROM reports
 				 WHERE is_active = TRUE AND is_personal = FALSE
 				 ORDER BY sort_order, title`,
@@ -70,6 +71,7 @@ export function invalidateReport(
 	invalidateDefinitions(`report-slug:${reportId.toLowerCase()}`);
 	invalidateDefinitions(`report-subject:${reportId.toLowerCase()}`);
 	invalidateDefinitions(curatedKey);
+	invalidateDefinitions("report-links:");
 }
 
 // Drops everything built from the catalogue as a whole: the navigation, the
@@ -86,6 +88,8 @@ export interface ReportSubject {
 	category_id: string | null;
 	is_personal: boolean;
 	owner_email: string | null;
+	tags?: string[] | null;
+	edit_policy?: string | null;
 }
 
 // What an access check needs to know about one report, its category, whether
@@ -100,7 +104,7 @@ export async function reportSubject(
 		`report-subject:${reportId.toLowerCase()}`,
 		async () =>
 			await sql<ReportSubject>(
-				`SELECT category_id, is_personal, owner_email
+				`SELECT category_id, is_personal, owner_email, tags, edit_policy
 				 FROM reports
 				 WHERE report_id = $1 AND is_active = TRUE`,
 				[reportId],

@@ -1,7 +1,9 @@
 "use client";
 
 import * as echarts from "echarts/core";
+import { worldMapName } from "./worldMapName";
 import { knownCountries } from "../../lib/visuals/countryNames";
+import { withoutDateLineJumps } from "../../lib/visuals/worldGeo";
 
 // The boundaries a choropleth draws on.
 //
@@ -15,7 +17,7 @@ import { knownCountries } from "../../lib/visuals/countryNames";
 // fetching again, and the promise is held so two maps mounting together make
 // one request between them.
 
-export const worldMapName = "sightline-world";
+export { worldMapName };
 
 // The names the loaded boundaries carry, for matching a dimension value
 // against. Null until the boundaries have loaded.
@@ -77,7 +79,10 @@ export function ensureWorldMap(): Promise<Map<string, string>> {
 			return response.json();
 		})
 		.then((geo: { features?: CountryFeature[] }) => {
-			echarts.registerMap(worldMapName, geo as never);
+			echarts.registerMap(
+				worldMapName,
+				withoutDateLineJumps(geo as never) as never,
+			);
 			bounds = new Map();
 			for (const feature of geo.features ?? []) {
 				const name = feature.properties?.name;

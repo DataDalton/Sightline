@@ -22,11 +22,15 @@ import {
 	ToggleFilter,
 	ThresholdFilter,
 } from "./FilterWidgets";
-import { usePageFilters } from "./PageFilters";
+import { useFilterGate, usePageFilters } from "./PageFilters";
 import { VisualFrame, VisualLoading, VisualScopeProvider } from "./VisualFrame";
+import { QualityTile } from "../status/QualityNotice";
 import { LazyBoundary } from "./LazyVisual";
 import { ChartActions } from "./ChartActions";
 import { NotesAction, VisualNotes, usePageNotes } from "./VisualNotes";
+import { BehindAction } from "./BehindAction";
+import { ForecastRanking, LiveText, PaceTile } from "./InsightParts";
+import type { FormatHint } from "../../lib/format";
 import { ErrorBoundary } from "../components/shared/ErrorBoundary";
 import { fieldMap, type SourceMeta } from "./types";
 import type { KpiGroup } from "../../lib/visuals/kpiGroups";
@@ -51,6 +55,10 @@ import {
 	type SelectionPart,
 } from "../../lib/visuals/selection";
 import { AddToBoard, useBoardOrigin } from "../boards/AddToBoard";
+import { NavigationLinks, OpenInLinks } from "./ReportLinks";
+import { readLinks } from "../../lib/visuals/reportLinks";
+import { requiredFields, waitingFor } from "../../lib/visuals/filterGate";
+import type { ShareClause } from "../../lib/visuals/shareState";
 import { noteUse } from "../hooks/noteUse";
 import styles from "./Visual.module.css";
 
@@ -155,7 +163,26 @@ function displayTitle(visual: VisualSpec): string | null {
 export const VisualRenderer = memo(function VisualRenderer(
 	props: VisualRendererProps,
 ) {
-	const { visual, sources } = props;
+	const { visual: asAuthored, sources } = props;
+	// A forecast chart is a line chart with its forecast switched on, so everything a
+	// line does keeps working for it.
+	const visual = useMemo(
+		() =>
+			asAuthored.visualType === "forecastChart"
+				? {
+						...asAuthored,
+						visualType: "lineChart",
+						config: {
+							...asAuthored.config,
+							options: {
+								...asAuthored.config.options,
+								forecast: true,
+							},
+						},
+					}
+				: asAuthored,
+		[asAuthored],
+	);
 	const source = visual.sourceKey ? sources[visual.sourceKey] : undefined;
 	const scope = useMemo(() => {
 		const fields = fieldMap(source);
@@ -172,11 +199,46 @@ export const VisualRenderer = memo(function VisualRenderer(
 			inline
 		>
 			<VisualScopeProvider value={scope}>
-				<VisualBody {...props} />
+				<VisualGate {...props} visual={visual} />
 			</VisualScopeProvider>
 		</ErrorBoundary>
 	);
 });
+
+// Holds a visual back until the filters it waits for have values, asking the
+// warehouse nothing until then. See lib/visuals/filterGate.
+function VisualGate(props: VisualRendererProps) {
+	const { visual, sources } = props;
+	const gate = useFilterGate();
+	const { clausesFor } = usePageFilters();
+	const waiting = gate
+		? waitingFor(
+				requiredFields(visual.visualType, visual.config.options, {
+					requireFilter: gate.pageRequireFilter,
+				}),
+				clausesFor(visual.visualId),
+			)
+		: [];
+	if (waiting.length === 0) return <VisualBody {...props} />;
+
+	const source = visual.sourceKey ? sources[visual.sourceKey] : undefined;
+	const fields = fieldMap(source);
+	const named = waiting.map((f) => fields.get(f)?.displayName || f);
+	const custom = visual.config.options?.requireFilterText;
+	return (
+		<VisualFrame
+			visualId={visual.visualId}
+			title={displayTitle(visual)}
+			lazy={false}
+		>
+			<div className={styles.waitingForFilter} role="status">
+				{typeof custom === "string" && custom.trim()
+					? custom
+					: `Choose ${named.join(" and ")} to see this.`}
+			</div>
+		</VisualFrame>
+	);
+}
 
 function VisualBody({
 	visual,
@@ -327,6 +389,16 @@ function VisualBody({
 		...((visual.config.filters ?? []) as unknown[]),
 	];
 
+	const behindMeasures = (
+		Array.isArray(visual.config.measures) ? visual.config.measures : []
+	) as string[];
+	const valueFields = (
+		Array.isArray(visual.config.dimensions) ? visual.config.dimensions : []
+	).filter(
+		(name): name is string =>
+			typeof name === "string" && !name.startsWith("<"),
+	);
+
 	// What a comparison would be asked against, and whether it can be asked at
 	// all.
 	//
@@ -438,6 +510,15 @@ function VisualBody({
 			: undefined;
 	const clearOwnSelection = () => clearCrossFilterFrom(visual.visualId);
 
+	// Reports this visual leads to, offered once something on it is selected.
+	const openIn = (
+		<OpenInLinks
+			links={readLinks(visual.config.options?.links)}
+			selection={ownSelection ? selectionClauses(ownSelection) : []}
+			pageFilters={filters as ShareClause[]}
+		/>
+	);
+
 	if (visual.visualType === "textPanel") {
 		// Rich text, sanitised on render. The stored value is whatever the
 		// author last published; formatting lives in the markup rather than in
@@ -448,8 +529,99 @@ function VisualBody({
 				: (note ?? "");
 		return (
 			<VisualFrame title={displayTitle(visual)} lazy={false}>
-				<TextPanel html={content} />
+				{content.includes("{{") ? (
+					<LiveText
+						html={content}
+						source={source}
+						filters={filters}
+					/>
+				) : (
+					<TextPanel html={content} />
+				)}
 			</VisualFrame>
+		);
+	}
+
+	if (
+		visual.visualType === "paceTile" ||
+		visual.visualType === "forecastRanking"
+	) {
+		const named = (visual.config.dimensions ?? []) as string[];
+		const measure = ((visual.config.measures ?? []) as string[])[0];
+		if (!sourceKey || !measure) {
+			return (
+				<VisualFrame title={displayTitle(visual)} lazy={false}>
+					<p className={styles.chartFootnote}>
+						Choose the fields in this visual&apos;s settings.
+					</p>
+				</VisualFrame>
+			);
+		}
+		const hint = (fields.get(measure)?.formatHint ??
+			"decimal") as FormatHint;
+		return (
+			<VisualFrame title={displayTitle(visual)}>
+				{visual.visualType === "paceTile" ? (
+					named[0] ? (
+						<PaceTile
+							sourceKey={sourceKey}
+							periodField={named[0]}
+							measure={measure}
+							target={
+								typeof visual.config.options?.paceTarget ===
+								"number"
+									? visual.config.options.paceTarget
+									: null
+							}
+							filters={filters}
+							hint={hint}
+						/>
+					) : null
+				) : named.length === 2 ? (
+					<ForecastRanking
+						sourceKey={sourceKey}
+						groupField={named[0]}
+						periodField={named[1]}
+						measure={measure}
+						filters={filters}
+						hint={hint}
+					/>
+				) : null}
+			</VisualFrame>
+		);
+	}
+
+	if (visual.visualType === "dataQualityTile") {
+		return (
+			<VisualFrame title={displayTitle(visual)} lazy={false}>
+				<QualityTile sourceKey={visual.sourceKey ?? null} />
+			</VisualFrame>
+		);
+	}
+
+	if (visual.visualType === "navLinks") {
+		return (
+			<NavigationLinks
+				links={readLinks(visual.config.options?.links)}
+				appearance={
+					optionValue<string>(
+						visual.visualType,
+						visual.config,
+						"appearance",
+					) === "tabs"
+						? "tabs"
+						: "buttons"
+				}
+				pageFilters={
+					optionValue<boolean>(
+						visual.visualType,
+						visual.config,
+						"carryFilters",
+					) === false
+						? []
+						: (filters as ShareClause[])
+				}
+			/>
 		);
 	}
 
@@ -719,14 +891,22 @@ function VisualBody({
 			<VisualFrame
 				visualId={visual.visualId}
 				actions={
-					<NotesAction
-						count={notes.length}
-						onOpen={() => {
-							setShowingNotes(true);
-							noteAction("notes");
-						}}
-						available={Boolean(reportId && pageId)}
-					/>
+					<>
+						{openIn}
+						<BehindAction
+							sourceKey={sourceKey}
+							measures={behindMeasures}
+							filters={filters}
+						/>
+						<NotesAction
+							count={notes.length}
+							onOpen={() => {
+								setShowingNotes(true);
+								noteAction("notes");
+							}}
+							available={Boolean(reportId && pageId)}
+						/>
+					</>
 				}
 				title={displayTitle(visual)}
 				notice={driftNote}
@@ -739,6 +919,8 @@ function VisualBody({
 						visualId={visual.visualId}
 						notes={notes}
 						onChanged={refreshNotes}
+						sourceKey={sourceKey}
+						dimensions={valueFields}
 						onClose={() => setShowingNotes(false)}
 					/>
 				)}
@@ -774,14 +956,22 @@ function VisualBody({
 			<VisualFrame
 				visualId={visual.visualId}
 				actions={
-					<NotesAction
-						count={notes.length}
-						onOpen={() => {
-							setShowingNotes(true);
-							noteAction("notes");
-						}}
-						available={Boolean(reportId && pageId)}
-					/>
+					<>
+						{openIn}
+						<BehindAction
+							sourceKey={sourceKey}
+							measures={behindMeasures}
+							filters={filters}
+						/>
+						<NotesAction
+							count={notes.length}
+							onOpen={() => {
+								setShowingNotes(true);
+								noteAction("notes");
+							}}
+							available={Boolean(reportId && pageId)}
+						/>
+					</>
 				}
 				title={displayTitle(visual)}
 				flush
@@ -795,6 +985,8 @@ function VisualBody({
 						visualId={visual.visualId}
 						notes={notes}
 						onChanged={refreshNotes}
+						sourceKey={sourceKey}
+						dimensions={valueFields}
 						onClose={() => setShowingNotes(false)}
 					/>
 				)}
@@ -809,6 +1001,7 @@ function VisualBody({
 					reportId={reportId}
 					pageId={pageId}
 					visualId={visual.visualId}
+					height={frameHeight ? "100%" : undefined}
 					showTotals={
 						optionValue<boolean>(
 							visual.visualType,
@@ -857,6 +1050,12 @@ function VisualBody({
 				visualId={visual.visualId}
 				actions={
 					<>
+						{openIn}
+						<BehindAction
+							sourceKey={sourceKey}
+							measures={behindMeasures}
+							filters={filters}
+						/>
 						<NotesAction
 							count={notes.length}
 							onOpen={() => {
@@ -967,6 +1166,8 @@ function VisualBody({
 						visualId={visual.visualId}
 						notes={notes}
 						onChanged={refreshNotes}
+						sourceKey={sourceKey}
+						dimensions={valueFields}
 						onClose={() => setShowingNotes(false)}
 					/>
 				)}
@@ -1064,12 +1265,18 @@ function VisualBody({
 				visualId={visual.visualId}
 				actions={
 					<>
+						{openIn}
 						<WatchAction
 							visual={visual}
 							sources={sources}
 							pageId={pageId}
 						/>
 						<AddToBoard piece={boardPiece} />
+						<BehindAction
+							sourceKey={sourceKey}
+							measures={behindMeasures}
+							filters={filters}
+						/>
 						<NotesAction
 							count={notes.length}
 							onOpen={() => {
@@ -1093,6 +1300,8 @@ function VisualBody({
 						visualId={visual.visualId}
 						notes={notes}
 						onChanged={refreshNotes}
+						sourceKey={sourceKey}
+						dimensions={valueFields}
 						onClose={() => setShowingNotes(false)}
 					/>
 				)}

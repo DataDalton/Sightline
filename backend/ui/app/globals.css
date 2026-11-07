@@ -582,3 +582,25 @@ textarea:disabled,
 ::view-transition-new(root) {
 	animation-duration: 160ms;
 }
+
+/* Presenting clears everything around the report. */
+body[data-presenting] [data-app-chrome],
+body[data-presenting] [data-report-header] {
+	display: none !important;
+}
+
+/* A report reaches paper only through its PDF button, which records it first. The
+   browser's own print menu cannot be intercepted, so without that permission it
+   prints this instead of the report. */
+@media print {
+	body[data-report-open]:not([data-print-allowed]) > * {
+		display: none !important;
+	}
+
+	body[data-report-open]:not([data-print-allowed])::before {
+		content: "Use the PDF button on the report, so the export is recorded.";
+		display: block;
+		padding: 48px;
+		font-size: 18px;
+	}
+}

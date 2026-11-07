@@ -31,7 +31,8 @@ import { pathToFileURL } from "node:url";
 import { parseEnv } from "node:util";
 
 const postgresPackage = "embedded-postgres@17.10.0-beta.17";
-const postgresPort = 55432;
+// Below the range Windows hands out and reserves for itself, which moves between restarts.
+const postgresPort = 15432;
 const appPort = 3001;
 const database = "demo";
 const credentials = { user: "sightline", password: "sightline" };
@@ -93,6 +94,8 @@ async function startPostgres() {
 		// load test's own client. Postgres's default allows fewer than the
 		// warehouse sessions alone.
 		postgresFlags: ["-c", "max_connections=300"],
+		// Not the machine's own encoding, which on Windows cannot store most alphabets.
+		initdbFlags: ["--encoding=UTF8", "--locale=C"],
 		onLog: () => {},
 		onError: () => {},
 	});

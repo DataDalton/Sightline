@@ -6,6 +6,7 @@
 
 # Binary, so git does not try to translate anything inside them.
 *.png binary
+*.ttf binary
 *.jpg binary
 *.jpeg binary
 *.gif binary

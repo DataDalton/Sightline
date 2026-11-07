@@ -62,6 +62,8 @@ interface CompareVersionsProps {
 	version: number;
 	versions: VersionMeta[];
 	onClose: () => void;
+	// Compares the report now with this suggestion applied, rather than two versions.
+	suggestionId?: string;
 }
 
 function personFor(email: string | null): string {
@@ -573,6 +575,7 @@ export function CompareVersions({
 	version,
 	versions,
 	onClose,
+	suggestionId,
 }: CompareVersionsProps) {
 	// Undefined asks for the version before this one, which is what the entry
 	// in the list is already describing.
@@ -589,7 +592,9 @@ export function CompareVersions({
 
 	const query = against === undefined ? "" : `?from=${against}`;
 	const { data, error, isLoading } = useSWR<VersionDiff>(
-		`/api/report/${encodeURIComponent(slug)}/history/${version}${query}`,
+		suggestionId
+			? `/api/report/${encodeURIComponent(slug)}/suggestions?preview=${encodeURIComponent(suggestionId)}`
+			: `/api/report/${encodeURIComponent(slug)}/history/${version}${query}`,
 	);
 
 	// The shared fetcher throws on a failed response and hangs the parsed body
@@ -609,11 +614,14 @@ export function CompareVersions({
 
 	const leftMeta = metaFor(data?.from);
 	const rightMeta = metaFor(data?.to ?? version);
-	const leftName =
-		data?.from === null || data?.from === undefined
+	const leftName = suggestionId
+		? "As it is now"
+		: data?.from === null || data?.from === undefined
 			? "Before"
 			: `Before, version ${data.from}`;
-	const rightName = `After, version ${data?.to ?? version}`;
+	const rightName = suggestionId
+		? "With this suggestion"
+		: `After, version ${data?.to ?? version}`;
 
 	const pages = data?.pages ?? [];
 	const changedPage = (page: PageDiff) =>
@@ -661,41 +669,47 @@ export function CompareVersions({
 		<Modal
 			isOpen
 			onClose={onClose}
-			title="Compare versions"
+			title={
+				suggestionId ? "Preview this suggestion" : "Compare versions"
+			}
 			width="min(1600px, 97vw)"
 		>
 			<div className={styles.body}>
-				<label className={styles.pick}>
-					<span className={styles.pickLabel}>Compare against</span>
-					<select
-						className={styles.select}
-						value={against ?? ""}
-						onChange={(event) => {
-							setOpenPage(null);
-							setFocusId(null);
-							setAgainst(
-								event.target.value === ""
-									? undefined
-									: Number(event.target.value),
-							);
-						}}
-					>
-						<option value="">The version before</option>
-						{versions
-							.filter((entry) => entry.version !== version)
-							.map((entry) => (
-								<option
-									key={entry.version}
-									value={entry.version}
-								>
-									Version {entry.version}
-									{entry.author
-										? `, ${personFor(entry.author)}`
-										: ""}
-								</option>
-							))}
-					</select>
-				</label>
+				{!suggestionId && (
+					<label className={styles.pick}>
+						<span className={styles.pickLabel}>
+							Compare against
+						</span>
+						<select
+							className={styles.select}
+							value={against ?? ""}
+							onChange={(event) => {
+								setOpenPage(null);
+								setFocusId(null);
+								setAgainst(
+									event.target.value === ""
+										? undefined
+										: Number(event.target.value),
+								);
+							}}
+						>
+							<option value="">The version before</option>
+							{versions
+								.filter((entry) => entry.version !== version)
+								.map((entry) => (
+									<option
+										key={entry.version}
+										value={entry.version}
+									>
+										Version {entry.version}
+										{entry.author
+											? `, ${personFor(entry.author)}`
+											: ""}
+									</option>
+								))}
+						</select>
+					</label>
+				)}
 
 				{isLoading && <SkeletonText lines={8} />}
 

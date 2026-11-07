@@ -89,7 +89,7 @@
 	padding: var(--space-1) var(--space-3);
 	border: 1px solid var(--border-default);
 	border-radius: var(--radius-full);
-	background: var(--surface-raised);
+	background: var(--state-hover);
 	font-size: var(--text-sm);
 	white-space: nowrap;
 }

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { refusedUnless } from "@/lib/platform/capabilityGuard";
 import { AlertDefinitionError } from "@/lib/alerts/rule";
 import { createAlert, listAlerts } from "@/lib/alerts/store";
 import { settings } from "@/lib/settings";
@@ -26,6 +27,8 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
 	const identity = await caller(request);
 	if (identity instanceof NextResponse) return identity;
+	const refused = await refusedUnless(identity, "alert.create");
+	if (refused) return refused;
 	if (!settings().alertsEnabled) {
 		return privateJson({ error: "Alerts are turned off." }, 409);
 	}

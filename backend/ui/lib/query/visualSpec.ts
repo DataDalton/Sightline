@@ -43,6 +43,7 @@ export const chartTypes = new Set([
 	"waterfallChart",
 	"heatmapChart",
 	"radarChart",
+	"forecastChart",
 	// Kept so reports authored before the real heatmap landed still render.
 	"heatmap",
 ]);

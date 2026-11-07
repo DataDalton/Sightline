@@ -855,7 +855,7 @@ export async function addTemplatePage(
 				[input.reportId],
 			);
 			const header = await client.query(
-				`SELECT title, description FROM reports WHERE report_id = $1`,
+				`SELECT title, description, theme FROM reports WHERE report_id = $1`,
 				[input.reportId],
 			);
 			await writeVersion(client, {

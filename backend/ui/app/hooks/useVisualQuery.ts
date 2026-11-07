@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { applyScenario } from "../../lib/insight/insight";
+import { useScenario } from "../visuals/ScenarioContext";
 import useSWR from "swr";
 import { useVisualVisibility } from "../visuals/LazyVisual";
 import { canonical } from "./canonicalKey";
@@ -125,6 +127,13 @@ export function useVisualQuery(query: VisualQuery | null) {
 		if (returned && live) void mutate();
 	}, [onScreen, live, mutate]);
 
+	const scenario = useScenario();
+	const held = data?.rows ?? noRows;
+	const simulated = useMemo(
+		() => applyScenario(held, scenario),
+		[held, scenario],
+	);
+
 	return {
 		// Shared constants rather than fresh literals.
 		//
@@ -134,7 +143,7 @@ export function useVisualQuery(query: VisualQuery | null) {
 		// recomputed value feeds an effect that sets state it is an infinite
 		// loop: a query with no key never has data, so it handed out a
 		// different empty array forever.
-		rows: data?.rows ?? noRows,
+		rows: simulated,
 		columns: data?.columns ?? noColumns,
 		rowCount: data?.rowCount ?? 0,
 		meta: data?.meta,

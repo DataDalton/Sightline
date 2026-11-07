@@ -7,8 +7,8 @@ import {
 	invalidateAccessCache,
 	isCapability,
 	type Capability,
-	type Permission,
 	type ScopeType,
+	type SubjectType,
 } from "@/lib/platform/access";
 import {
 	assignRole,
@@ -25,17 +25,22 @@ import { refreshTrackedGroups } from "@/lib/semantic/registry";
 
 // Roles, and who holds them.
 //
-// A role names a bundle: one permission on the resources in its scope, plus the
-// platform actions its holder may take. An assignment binds that bundle to a
-// group or to a named individual.
+// A role names a set of things its holder can do. An assignment binds that set to a
+// group, a named person or a service principal, inside a scope.
 //
 // What this replaces could only say "everyone in this group edits everything",
 // because it was two settings keys holding group names. There was no way to name
 // one person, and no way to say "edits this subject area".
 
-const permissions = ["view", "edit", "admin"] as const;
-const scopeTypes = ["global", "category", "report"] as const;
-const subjectTypes = ["group", "user"] as const;
+const scopeTypes: ScopeType[] = [
+	"global",
+	"category",
+	"tag",
+	"report",
+	"page",
+	"source",
+];
+const subjectTypes: SubjectType[] = ["group", "user", "service_principal"];
 
 // A role id is read in logs and used as a key, so it is kept to something that
 // survives both without escaping.
@@ -124,16 +129,6 @@ export async function POST(request: NextRequest) {
 				);
 			}
 
-			const permission = body.permission as Permission;
-			if (!permissions.includes(permission)) {
-				return NextResponse.json(
-					{
-						error: `permission must be one of ${permissions.join(", ")}.`,
-					},
-					{ status: 400 },
-				);
-			}
-
 			// Filtered rather than refused, so a client naming a capability
 			// this build does not have gets a role without it instead of an
 			// error it cannot act on.
@@ -150,7 +145,6 @@ export async function POST(request: NextRequest) {
 					description: body.description
 						? String(body.description).slice(0, 500)
 						: null,
-					permission,
 					capabilities: wanted as Capability[],
 				},
 				identity.email,
@@ -161,10 +155,7 @@ export async function POST(request: NextRequest) {
 				recordId: roleId,
 				action: "save_role",
 				changedBy: identity.email,
-				newValue: JSON.stringify({
-					permission,
-					capabilities: wanted,
-				}),
+				newValue: JSON.stringify({ capabilities: wanted }),
 			});
 			invalidateAccessCache();
 			return NextResponse.json({ ok: true });
@@ -185,7 +176,7 @@ export async function POST(request: NextRequest) {
 
 		if (action === "assign") {
 			const roleId = String(body.roleId ?? "").trim();
-			const subjectType = body.subjectType as "group" | "user";
+			const subjectType = body.subjectType as SubjectType;
 			if (!subjectTypes.includes(subjectType)) {
 				return NextResponse.json(
 					{
@@ -224,6 +215,7 @@ export async function POST(request: NextRequest) {
 					subjectId,
 					scopeType,
 					scopeId: body.scopeId ? String(body.scopeId).trim() : null,
+					expiresOn: body.expiresOn ? String(body.expiresOn) : null,
 				},
 				identity.email,
 			);
@@ -239,6 +231,7 @@ export async function POST(request: NextRequest) {
 					subjectId,
 					scopeType,
 					scopeId: body.scopeId ?? null,
+					expiresOn: body.expiresOn ?? null,
 				}),
 			});
 

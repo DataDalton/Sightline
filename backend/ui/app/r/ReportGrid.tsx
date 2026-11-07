@@ -1,12 +1,23 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+	createContext,
+	useContext,
+} from "react";
+import { VisualMarks } from "./VisualMarks";
+import type { VisualMark } from "../../lib/visuals/deck";
 import {
 	fillsHeight,
 	optionValue,
 	sizedByContent,
 } from "../../lib/visuals/catalog";
 import {
+	readPhoneLayout,
 	fillToViewport,
 	gridGap,
 	heightForRows,
@@ -58,6 +69,9 @@ interface StoredVisual extends VisualSpec {
 	layout?: Rect;
 }
 
+// What an author has marked on this page for good. See lib/visuals/deck.
+export const PageMarksContext = createContext<VisualMark[]>([]);
+
 interface ReportGridProps {
 	visuals: StoredVisual[];
 	sources: Record<string, SourceMeta>;
@@ -105,6 +119,7 @@ export function ReportGrid({
 	opened,
 	onOpen,
 }: ReportGridProps) {
+	const marks = useContext(PageMarksContext);
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const [width, setWidth] = useState(1200);
 	// How much screen is left below the top of the grid, so the last visual can
@@ -284,6 +299,11 @@ export function ReportGrid({
 					...i,
 					rect: { ...i.rect, h: heights[i.id] ?? i.rect.h },
 				})),
+				(id) =>
+					readPhoneLayout(
+						items.find((i) => i.id === id)?.visual.config.options
+							?.phone,
+					),
 			);
 		}
 		return fillToViewport(
@@ -523,6 +543,13 @@ export function ReportGrid({
 									: undefined
 							}
 						>
+							{!still && (
+								<VisualMarks
+									marks={marks.filter(
+										(mark) => mark.visualId === item.id,
+									)}
+								/>
+							)}
 							<div className={styles.gridBody}>
 								{visual.visualType === "group" ? (
 									<GroupBox

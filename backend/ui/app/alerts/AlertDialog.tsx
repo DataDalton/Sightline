@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "../components/AppLink";
+import { AlertBacktest } from "./AlertBacktest";
 import {
 	conditionLabel,
 	isRelative,
@@ -1093,6 +1094,10 @@ export function AlertDialog({
 							</span>
 						) : previewError ? (
 							<span className={styles.formError}>
+								<AlertBacktest
+									definition={definition}
+									ready={Boolean(sourceKey && measure)}
+								/>
 								{previewError}
 							</span>
 						) : preview ? (

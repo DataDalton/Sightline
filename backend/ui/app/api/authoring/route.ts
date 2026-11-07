@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { cachedDefinition } from "@/lib/platform/definitionCache";
 import { getIdentity, type Identity } from "@/lib/auth/identity";
 import { resolvePolicyClass, type PolicyClass } from "@/lib/auth/policy";
-import { canDo, getExplicitContext } from "@/lib/platform/access";
+import {
+	canDo,
+	canDoOnReport,
+	getExplicitContext,
+} from "@/lib/platform/access";
 import { can } from "@/lib/platform/accessRules";
 import {
 	addTemplatePage,
@@ -19,6 +23,7 @@ import {
 	setReportProtection,
 } from "@/lib/platform/authoring";
 import { assertCanEdit } from "@/lib/platform/editing";
+import { reportSubject } from "@/lib/platform/curated";
 import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
 import { reachableSet, readableSourceList } from "@/lib/platform/sources";
 import { sql } from "@/lib/data/lakebase";
@@ -203,12 +208,23 @@ export async function POST(request: NextRequest) {
 				return refused;
 			}
 
+			// Building is one right and reaching everyone is another. Without the
+			// second, the report starts as the builder's own page and goes official
+			// when a Report Publisher says so.
+			const official = await canDo(
+				policy,
+				identity,
+				"report.makeOfficial",
+				categoryId,
+			);
+
 			const sourceKey = body.sourceKey ? String(body.sourceKey) : null;
 			if (!(await canBuildOn(identity, sourceKey))) return refused;
 
 			const created = await createReport(identity, {
 				title: String(body.title ?? ""),
-				categoryId,
+				categoryId: official ? categoryId : null,
+				isPersonal: !official,
 				description: body.description
 					? String(body.description).slice(0, 500)
 					: null,
@@ -230,6 +246,8 @@ export async function POST(request: NextRequest) {
 				reportId: created.reportId,
 				slug: created.slug,
 				pageId: created.pageId,
+				// Where it was meant to go, for asking to publish it there.
+				awaitingPublish: official ? null : categoryId,
 			});
 		}
 
@@ -298,9 +316,23 @@ export async function POST(request: NextRequest) {
 			// The same check the edit path makes, so removing a report needs
 			// exactly what changing one needs. A personal page's owner holds
 			// admin on it through the ownership rule, so this covers both.
-			try {
-				await assertCanEdit(policy, identity.email, reportId);
-			} catch {
+			// A personal page's owner can always remove it. An official report takes
+			// the right to delete, which is held apart from editing it.
+			const subject = await reportSubject(reportId);
+			if (!subject) return refused;
+			if (subject.is_personal) {
+				try {
+					await assertCanEdit(policy, identity.email, reportId);
+				} catch {
+					return refused;
+				}
+			} else if (
+				!(await canDoOnReport(policy, identity, "report.delete", {
+					reportId,
+					categoryId: subject.category_id,
+					tags: subject.tags,
+				}))
+			) {
 				return refused;
 			}
 
@@ -329,12 +361,16 @@ export async function POST(request: NextRequest) {
 					`SELECT category_id FROM reports WHERE report_id = $1`,
 					[reportId],
 				);
-				const moving =
-					(current[0]?.category_id ?? null) !==
-					(String(body.categoryId ?? "") || null);
+				const from = current[0]?.category_id ?? null;
+				const to = String(body.categoryId ?? "") || null;
+				// Maintainer of both ends, so a report cannot be pushed into or
+				// pulled out of an area by somebody who only looks after the other.
 				if (
-					moving &&
-					!(await canDo(policy, identity, "category.manage"))
+					from !== to &&
+					!(
+						(await canDo(policy, identity, "report.move", from)) &&
+						(await canDo(policy, identity, "report.move", to))
+					)
 				) {
 					return refused;
 				}
@@ -397,7 +433,15 @@ export async function POST(request: NextRequest) {
 		}
 
 		if (action === "reorderReports") {
-			if (!(await canDo(policy, identity, "category.manage"))) {
+			if (
+				!(await canDo(policy, identity, "category.manage")) &&
+				!(await canDo(
+					policy,
+					identity,
+					"report.move",
+					String(body.categoryId ?? ""),
+				))
+			) {
 				return refused;
 			}
 			const reportIds = Array.isArray(body.reportIds)
@@ -427,7 +471,15 @@ export async function POST(request: NextRequest) {
 		}
 
 		if (action === "updateCategory") {
-			if (!(await canDo(policy, identity, "category.manage"))) {
+			if (
+				!(await canDo(policy, identity, "category.manage")) &&
+				!(await canDo(
+					policy,
+					identity,
+					"access.delegate",
+					String(body.categoryId ?? ""),
+				))
+			) {
 				return refused;
 			}
 			await updateCategory(identity, String(body.categoryId ?? ""), {

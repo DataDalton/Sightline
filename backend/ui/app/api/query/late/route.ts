@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { sourcesInMaintenance } from "@/lib/updates/store";
 import { getIdentity } from "@/lib/auth/identity";
 import { requestCheck } from "@/lib/freshness/checker";
 import { standingOf } from "@/lib/freshness/lateness";
@@ -40,7 +41,8 @@ export async function GET(request: NextRequest) {
 	const reachable = await reachableSet(identity);
 	const readable = asked.filter((key) => !reachable || reachable.has(key));
 
-	const sources = await standingOf(readable);
+	const quiet = await sourcesInMaintenance().catch(() => new Set<string>());
+	const sources = await standingOf(readable.filter((key) => !quiet.has(key)));
 	for (const source of sources) {
 		if (source.state === "overdue") requestCheck(source.sourceKey);
 	}

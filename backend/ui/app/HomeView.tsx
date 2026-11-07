@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "./components/AppLink";
+import { UpdatesHomeCard } from "./updates/UpdateSurfaces";
 import { useState } from "react";
 import useSWR from "swr";
 import { Briefing } from "./briefing/Briefing";
@@ -82,6 +83,7 @@ export default function HomeView({
 
 	return (
 		<div className={styles.page}>
+			<UpdatesHomeCard />
 			{cannotQuery && (
 				<div className={styles.notice}>
 					<svg

@@ -580,3 +580,39 @@ test("the next row starts below the grown height, not the stored one", () => {
 	assert.equal(items[0].rect.h, 7);
 	assert.equal(items[1].rect.y, 7);
 });
+
+test("an author can hide, order and size visuals for phones", () => {
+	const rect = (y: number, h = 2) => ({ x: 0, y, w: 6, h });
+	const items = [
+		{ id: "a", rect: rect(0) },
+		{ id: "b", rect: rect(2) },
+		{ id: "c", rect: rect(4) },
+		{ id: "d", rect: rect(6) },
+	];
+	const stacked = stackForNarrow(items, (id) =>
+		id === "a"
+			? { hidden: true }
+			: id === "d"
+				? { position: 1, rows: 5 }
+				: undefined,
+	);
+	assert.deepEqual(
+		stacked.map((item) => [item.id, item.rect.y, item.rect.h]),
+		[
+			["d", 0, 5],
+			["b", 5, 2],
+			["c", 7, 2],
+		],
+	);
+});
+
+test("with no phone layout the reading order stands", () => {
+	const stacked = stackForNarrow([
+		{ id: "right", rect: { x: 6, y: 0, w: 6, h: 2 } },
+		{ id: "left", rect: { x: 0, y: 0, w: 6, h: 2 } },
+	]);
+	assert.deepEqual(
+		stacked.map((item) => item.id),
+		["left", "right"],
+	);
+});

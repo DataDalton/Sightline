@@ -28,6 +28,8 @@ export async function register() {
 	const { rollupUsage } = await import("@/lib/telemetry/rollup");
 	const { runDailyFieldSync } = await import("@/lib/semantic/fieldWatch");
 	const { runRetention } = await import("@/lib/retention/pass");
+	const { remindOfEndingRights } =
+		await import("@/lib/platform/rightsReminders");
 	const { closePool, tryAdvisoryLock } = await import("@/lib/data/lakebase");
 	// Identifies the sweep lock, so one replica sweeps at a time.
 	const sweepLockKey = 8577411;
@@ -36,6 +38,10 @@ export async function register() {
 	const { runScheduledAlerts } = await import("@/lib/alerts/runner");
 	const { runScheduledDeliveries } = await import("@/lib/deliveries/runner");
 	const { runChecks } = await import("@/lib/freshness/checker");
+	const { pruneRuleRuns, runDueRules } =
+		await import("@/lib/dataRules/runner");
+	const { settings: currentSettings } = await import("@/lib/settings");
+	const { sweepUpdates } = await import("@/lib/updates/store");
 	const { evaluateLateness } = await import("@/lib/freshness/lateness");
 	const { startMarksPolling, stopMarksPolling } =
 		await import("@/lib/freshness/marks");
@@ -117,6 +123,9 @@ export async function register() {
 			void tryAdvisoryLock(sweepLockKey, async () => {
 				await sweepExpired().catch(() => {});
 				await pruneOps().catch(() => {});
+				await remindOfEndingRights().catch((error) => {
+					console.warn("Ending right reminders failed:", error);
+				});
 			}).catch(() => {});
 		},
 		5 * 60 * 1000,
@@ -170,6 +179,9 @@ export async function register() {
 		void runRetention().catch((error) => {
 			console.warn("Retention pass failed:", error);
 		});
+	void pruneRuleRuns(currentSettings().retentionMonths).catch((error) => {
+		console.warn("Pruning data rule runs failed:", error);
+	});
 	const retentionTimer = setInterval(retentionTick, 60 * 60 * 1000);
 	retentionTimer.unref?.();
 	// Once shortly after start, so a deployment that restarts often still
@@ -191,6 +203,12 @@ export async function register() {
 		// Scheduled pages share the tick and the rules alerts run under.
 		void runScheduledDeliveries().catch((error) => {
 			console.warn("Scheduled pages failed:", error);
+		});
+		void runDueRules().catch((error) => {
+			console.warn("Running data rules failed:", error);
+		});
+		void sweepUpdates().catch((error) => {
+			console.warn("Sweeping updates failed:", error);
 		});
 	}, 60 * 1000);
 	alertTimer.unref?.();

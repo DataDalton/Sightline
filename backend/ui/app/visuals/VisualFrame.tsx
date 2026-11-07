@@ -71,6 +71,10 @@ const VisualScopeContext = createContext<VisualScope | null>(null);
 
 export const VisualScopeProvider = VisualScopeContext.Provider;
 
+export function useVisualScope(): VisualScope | null {
+	return useContext(VisualScopeContext);
+}
+
 function freshnessLabel(meta: QueryMeta): string {
 	if (meta.refreshAfterMs) {
 		return `Live, updates every ${Math.round(meta.refreshAfterMs / 1000)}s`;

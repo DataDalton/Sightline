@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { refusedUnless } from "@/lib/platform/capabilityGuard";
 import { getIdentity } from "@/lib/auth/identity";
 import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
 import { parseQuerySpec, QuerySpecError } from "@/lib/query/spec";
@@ -27,6 +28,13 @@ export async function POST(request: NextRequest) {
 	try {
 		const body = await request.json();
 		const spec = parseQuerySpec(body?.spec ?? body);
+
+		const refused = await refusedUnless(
+			identity,
+			"export.run",
+			body?.reportId ? String(body.reportId) : null,
+		);
+		if (refused) return refused;
 
 		const job = await startExport(identity, {
 			spec,

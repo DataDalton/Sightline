@@ -9,6 +9,7 @@ import {
 	useState,
 } from "react";
 import {
+	readPhoneLayout,
 	canvasRows,
 	fillToViewport,
 	stackForNarrow,
@@ -44,6 +45,7 @@ import { useContentFit } from "../visuals/useContentFit";
 import fit from "../visuals/ContentFit.module.css";
 import { useDragResize, type GestureKind } from "./useDragResize";
 import { toVisualSpec, type EditableVisual } from "./types";
+import { useCanvasBadge } from "./ReportCheckPanel";
 import styles from "./Editor.module.css";
 
 // The editing canvas.
@@ -443,6 +445,15 @@ export function EditorCanvas({
 						...i,
 						rect: { ...i.rect, h: heights[i.id] ?? i.rect.h },
 					})),
+					// Never hidden here, because an author has to be able to
+					// select it to bring it back. The panel says it is hidden.
+					(id) => {
+						const phone = readPhoneLayout(
+							visuals.find((v) => v.visualId === id)?.config
+								.options?.phone,
+						);
+						return phone ? { ...phone, hidden: false } : undefined;
+					},
 				)
 			: previewWidth !== null
 				? resolveVerticalOverlaps(refitHeights(items, heights))
@@ -847,6 +858,29 @@ function sameItemProps(a: CanvasItemProps, b: CanvasItemProps): boolean {
 //
 // Memoised, so typing into one visual's properties draws that visual again
 // and leaves the rest of the canvas alone.
+// Speed or reader use over a visual, when the Check panel has that turned on. Its own
+// component, so changing what is shown repaints this and not the chart under it.
+function VisualBadge({ visualId }: { visualId: string }) {
+	const badge = useCanvasBadge(visualId);
+	if (!badge) return null;
+	return (
+		<>
+			{badge.heat !== null && (
+				<div
+					className={styles.heatTint}
+					style={{ opacity: 0.08 + badge.heat * 0.32 }}
+					aria-hidden="true"
+				/>
+			)}
+			<span
+				className={`${styles.visualBadge} ${styles[`checkTone${badge.tone}`]}`}
+			>
+				{badge.text}
+			</span>
+		</>
+	);
+}
+
 const CanvasItem = memo(function CanvasItem({
 	visual,
 	rect,
@@ -1055,6 +1089,8 @@ const CanvasItem = memo(function CanvasItem({
 					)}
 				</div>
 			)}
+
+			<VisualBadge visualId={visual.visualId} />
 
 			{isSelected &&
 				!ctx.readOnly &&

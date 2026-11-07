@@ -40,7 +40,12 @@ export interface SnapshotPage {
 export interface Snapshot {
 	visuals?: SnapshotVisual[];
 	pages?: SnapshotPage[];
-	report?: { title?: string | null; description?: string | null } | null;
+	report?: {
+		title?: string | null;
+		description?: string | null;
+		// Absent from a version written before themes were recorded.
+		theme?: string | null;
+	} | null;
 }
 
 export interface Change {
@@ -312,6 +317,18 @@ export function diffSnapshots(
 			(reportBefore.description ?? "") !== (reportAfter.description ?? "")
 		) {
 			changes.push({ kind: "changed", text: "Changed the subtitle" });
+		}
+		if (
+			"theme" in reportBefore &&
+			"theme" in reportAfter &&
+			(reportBefore.theme ?? "") !== (reportAfter.theme ?? "")
+		) {
+			changes.push({
+				kind: "changed",
+				text: reportAfter.theme
+					? "Changed the theme"
+					: "Went back to the app's own colours",
+			});
 		}
 	}
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { VisualTypeDefinition } from "../../lib/visuals/catalog";
 import type { SourceMeta } from "../visuals/types";
 import { Hint } from "./PanelSection";
@@ -242,76 +242,94 @@ export function FieldList({
 							!field.chosen &&
 							heldBy(field.kind).length >= limit.max;
 						const noun = kindLabels[field.kind].toLowerCase();
-						// The line between what is read and what is not. Drawn
-						// on the first row below it rather than as a heading,
-						// so the list stays one list.
-						const firstSpare = !field.chosen && i === chosenCount;
+						// Headings where the list changes, which also says what each
+						// row below is without repeating it on every row.
+						const heading = (entry: FieldEntry) =>
+							entry.chosen
+								? "In this visual"
+								: entry.kind === "dimensions"
+									? "Break it down by"
+									: "Figures";
+						const startsGroup =
+							i === 0 ||
+							heading(listed[i - 1]) !== heading(field);
 
 						return (
-							<div
-								key={`${field.kind}:${field.name}`}
-								ref={(node) => {
-									if (node)
-										rows.current.set(field.name, node);
-									else rows.current.delete(field.name);
-								}}
-								className={`${styles.fieldRow} ${
-									field.chosen ? styles.fieldOn : ""
-								} ${dragging === field.name ? styles.fieldMoving : ""} ${
-									firstSpare ? styles.fieldSplit : ""
-								}`}
-							>
-								{field.chosen && canReorder ? (
+							<Fragment key={`${field.kind}:${field.name}`}>
+								{startsGroup && (
+									<div className={styles.fieldGroupHead}>
+										{heading(field)}
+									</div>
+								)}
+								<div
+									ref={(node) => {
+										if (node)
+											rows.current.set(field.name, node);
+										else rows.current.delete(field.name);
+									}}
+									className={`${styles.fieldRow} ${
+										field.chosen ? styles.fieldOn : ""
+									} ${dragging === field.name ? styles.fieldMoving : ""}`}
+								>
+									{field.chosen && canReorder ? (
+										<button
+											type="button"
+											className={styles.fieldGrip}
+											aria-label={`Reorder ${field.name}`}
+											onPointerDown={(e) =>
+												startDrag(field, e)
+											}
+											onPointerMove={(e) => {
+												pointerY.current = e.clientY;
+											}}
+											onPointerUp={() =>
+												setDragging(null)
+											}
+											onPointerCancel={() =>
+												setDragging(null)
+											}
+											onKeyDown={(e) =>
+												onHandleKey(field, e)
+											}
+										>
+											<GripIcon />
+										</button>
+									) : (
+										// Held open so every checkbox in the list
+										// sits in the same column.
+										<span
+											className={styles.fieldGripSlot}
+											aria-hidden="true"
+										/>
+									)}
+
 									<button
 										type="button"
-										className={styles.fieldGrip}
-										aria-label={`Reorder ${field.name}`}
-										onPointerDown={(e) =>
-											startDrag(field, e)
+										className={styles.fieldBody}
+										disabled={full}
+										aria-pressed={field.chosen}
+										onClick={() =>
+											onToggle(field.name, field.kind)
 										}
-										onPointerMove={(e) => {
-											pointerY.current = e.clientY;
-										}}
-										onPointerUp={() => setDragging(null)}
-										onPointerCancel={() =>
-											setDragging(null)
+										title={
+											full
+												? `Untick one first. This visual reads at most ${limit.max} ${limit.max === 1 ? noun : `${noun}s`}.`
+												: (field.description ??
+													field.name)
 										}
-										onKeyDown={(e) => onHandleKey(field, e)}
 									>
-										<GripIcon />
+										<Check on={field.chosen} />
+										<span className={styles.fieldName}>
+											{field.name}
+										</span>
+										{field.chosen && (
+											<span className={styles.kindTag}>
+												{kindLabels[field.kind]}
+											</span>
+										)}
 									</button>
-								) : (
-									// Held open so every checkbox in the list
-									// sits in the same column.
-									<span
-										className={styles.fieldGripSlot}
-										aria-hidden="true"
-									/>
-								)}
-
-								<button
-									type="button"
-									className={styles.fieldBody}
-									disabled={full}
-									aria-pressed={field.chosen}
-									onClick={() =>
-										onToggle(field.name, field.kind)
-									}
-									title={
-										full
-											? `Untick one first. This visual reads at most ${limit.max} ${limit.max === 1 ? noun : `${noun}s`}.`
-											: (field.description ?? field.name)
-									}
-								>
-									<Check on={field.chosen} />
-									<span className={styles.fieldName}>
-										{field.name}
-									</span>
-									<span className={styles.kindTag}>
-										{kindLabels[field.kind]}
-									</span>
-								</button>
-							</div>
+								</div>
+							</Fragment>
 						);
 					})
 				)}

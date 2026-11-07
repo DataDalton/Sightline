@@ -9,6 +9,8 @@ import { ConfirmDialog } from "../components/shared/ConfirmDialog";
 import { Modal } from "../components/shared/Modal";
 import { ShareDialog } from "../authoring/PageActions";
 import { BoardsSection } from "../boards/BoardsSection";
+import { WaitingForYou } from "../components/RequestsPanel";
+import { BringReportIn } from "./BringReportIn";
 import { SkeletonCards } from "../components/shared/Skeleton";
 import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { usePageTitle } from "../hooks/usePageTitle";
@@ -228,6 +230,10 @@ export default function MyPagesView() {
 						</button>
 					</div>
 
+					<div className={styles.bringIn}>
+						<BringReportIn buttonClass={styles.bringInButton} />
+					</div>
+
 					<BoardsSection />
 
 					{authored.length > 0 && (
@@ -255,6 +261,8 @@ export default function MyPagesView() {
 							</div>
 						</>
 					)}
+
+					<WaitingForYou titleClass={styles.sectionTitle} />
 
 					<RecentlyRemoved />
 				</>

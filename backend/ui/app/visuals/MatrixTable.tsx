@@ -1,5 +1,8 @@
 "use client";
 
+import { ValueNotesStrip } from "./ValueNotes";
+import { useScenario } from "./ScenarioContext";
+import { scenarioFactor } from "../../lib/insight/insight";
 import {
 	memo,
 	useCallback,
@@ -25,6 +28,7 @@ import {
 	type ColumnRange,
 } from "./cellAppearance";
 import { useTheme } from "../context/ThemeContext";
+import { useGridState } from "./GridStates";
 import { VisualError } from "./VisualFrame";
 import { VisualLoadingState } from "./LoadingState";
 import { ColumnFilter } from "./ColumnFilter";
@@ -70,7 +74,7 @@ interface MatrixProps {
 	measures: string[];
 	baseFilters?: unknown[];
 	fields: Map<string, FieldMeta>;
-	height?: number;
+	height?: number | string;
 	style?: VisualStyle;
 	reportId?: string | null;
 	pageId?: string | null;
@@ -274,25 +278,64 @@ export function MatrixTable({
 	const [error, setError] = useState<(Error & { status?: number }) | null>(
 		null,
 	);
-	const [sort, setSort] = useState<MatrixSort | null>(null);
-	const [levelFilterState, setLevelFilters] = useState<
-		Record<string, string[]>
-	>({});
+	// Held by the page, so a reload, a link and a saved view can carry them. The
+	// sort on the row labels is stored with an empty key.
+	const [gridState, updateGridState] = useGridState(visualId);
+	const sort = useMemo<MatrixSort | null>(
+		() =>
+			gridState.sort
+				? {
+						key:
+							gridState.sort.key === ""
+								? null
+								: gridState.sort.key,
+						direction: gridState.sort.direction,
+					}
+				: null,
+		[gridState.sort],
+	);
+	const levelFilterState = useMemo(
+		() => gridState.filters ?? {},
+		[gridState.filters],
+	);
+	const setLevelFilters = useCallback(
+		(next: (prev: Record<string, string[]>) => Record<string, string[]>) =>
+			updateGridState((current) => ({
+				...current,
+				filters: next(current.filters ?? {}),
+			})),
+		[updateGridState],
+	);
 	const [openFilter, setOpenFilter] = useState<{
 		field: string;
 		x: number;
 		y: number;
 	} | null>(null);
-	const [search, setSearch] = useState("");
-	const [term, setTerm] = useState("");
+	const [search, setSearch] = useState(gridState.search ?? "");
+	const [term, setTerm] = useState((gridState.search ?? "").trim());
 	// The path keys a search matched, or null when no search is running.
 	const [matches, setMatches] = useState<Set<string> | null>(null);
 	const [searchTruncated, setSearchTruncated] = useState(false);
 
 	useEffect(() => {
-		const timer = setTimeout(() => setTerm(search.trim()), 300);
+		const timer = setTimeout(() => {
+			const typed = search.trim();
+			setTerm(typed);
+			updateGridState((current) =>
+				(current.search ?? "") === typed
+					? current
+					: { ...current, search: typed || undefined },
+			);
+		}, 300);
 		return () => clearTimeout(timer);
-	}, [search]);
+	}, [search, updateGridState]);
+
+	// A saved view being applied replaces the search from outside.
+	const heldSearch = gridState.search ?? "";
+	useEffect(() => {
+		setSearch(heldSearch);
+		setTerm(heldSearch);
+	}, [heldSearch]);
 
 	// The field lists by content, so the memoised rows below are not all
 	// re-rendered when the page hands over an equal but new array.
@@ -838,13 +881,23 @@ export function MatrixTable({
 	// Label first ascending, then descending, then the query's own order. A
 	// figure first descending, since the largest is usually what is wanted.
 	const toggleSort = (key: string | null) => {
-		setSort((prev) => {
-			const first = key === null ? "asc" : "desc";
-			if (!prev || prev.key !== key) return { key, direction: first };
-			if (prev.direction === first) {
-				return { key, direction: first === "asc" ? "desc" : "asc" };
+		const stored = key ?? "";
+		const first = key === null ? "asc" : "desc";
+		updateGridState((current) => {
+			const { sort: held, ...rest } = current;
+			if (!held || held.key !== stored) {
+				return { ...rest, sort: { key: stored, direction: first } };
 			}
-			return null;
+			if (held.direction === first) {
+				return {
+					...rest,
+					sort: {
+						key: stored,
+						direction: first === "asc" ? "desc" : "asc",
+					},
+				};
+			}
+			return rest;
 		});
 	};
 
@@ -965,9 +1018,100 @@ export function MatrixTable({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [selectionKey, columnDimension, groups]);
 
+	// The rows as they would read under the page's what if. Nothing is asked of the warehouse,
+	// so a figure adding up more than the chosen value stays as read.
+	const scenario = useScenario();
+	const moved = useMemo(() => {
+		const applies = (scenario ?? []).some(
+			(held) => held.percent !== 0 && measures.includes(held.measure),
+		);
+		if (!applies) return { top, children, totals };
+		const cells = (
+			values: Record<string, unknown>,
+			within: Record<string, string>,
+		) => {
+			const next = { ...values };
+			for (const group of groups) {
+				for (const measure of measures) {
+					const factor = scenarioFactor(
+						scenario,
+						measure,
+						group !== null && columnDimension
+							? { ...within, [columnDimension]: group }
+							: within,
+					);
+					if (factor === 1) continue;
+					const key = cellKey(group, measure);
+					const value = toNumber(next[key]);
+					if (value !== null) next[key] = value * factor;
+				}
+			}
+			return next;
+		};
+		const moveRow = (row: MatrixRow): MatrixRow => ({
+			...row,
+			values: cells(
+				row.values,
+				Object.fromEntries(
+					row.path.map((value, depth) => [
+						rowDimensions[depth],
+						value,
+					]),
+				),
+			),
+		});
+		return {
+			top: top.map(moveRow),
+			children: new Map(
+				[...children].map(([key, rows]) => [key, rows.map(moveRow)]),
+			),
+			totals: totals ? cells(totals, {}) : null,
+		};
+	}, [
+		scenario,
+		measures,
+		top,
+		children,
+		totals,
+		groups,
+		columnDimension,
+		rowDimensions,
+	]);
+	const partial = (scenario ?? []).filter(
+		(held) =>
+			held.percent !== 0 &&
+			measures.includes(held.measure) &&
+			held.field &&
+			held.value,
+	);
+
 	const items = useMemo(
-		() => buildItems(top, children, shown, expanded, sort),
-		[top, children, shown, expanded, sort],
+		() => buildItems(moved.top, moved.children, shown, expanded, sort),
+		[moved, shown, expanded, sort],
+	);
+
+	// What is on screen, for the notes on those values.
+	const noteRows = useMemo(() => {
+		const out: Record<string, unknown>[] = [];
+		for (const item of items) {
+			if (item.kind !== "row") continue;
+			out.push({
+				[rowDimensions[item.row.depth]]: item.row.label,
+			});
+		}
+		if (columnDimension) {
+			for (const value of columnValues) {
+				out.push({ [columnDimension]: value });
+			}
+		}
+		return out;
+	}, [items, rowDimensions, columnDimension, columnValues]);
+	const noteFields = useMemo(
+		() =>
+			columnDimension
+				? [...rowDimensions, columnDimension]
+				: rowDimensions,
+		[rowDimensions, columnDimension],
 	);
 
 	// How each cell is drawn under the author's rules and colour scales. Null
@@ -1455,7 +1599,7 @@ export function MatrixTable({
 							</tr>
 						)}
 					</tbody>
-					{totals && (
+					{moved.totals && (
 						<tfoot className={styles.totalRow}>
 							<tr>
 								<td className={styles.labelCell}>Total</td>
@@ -1468,7 +1612,9 @@ export function MatrixTable({
 											}`}
 										>
 											{formatValue(
-												totals[cellKey(group, measure)],
+												moved.totals?.[
+													cellKey(group, measure)
+												],
 												hints.get(measure) ?? "decimal",
 											)}
 										</td>
@@ -1649,7 +1795,7 @@ export function MatrixTable({
 					<button
 						type="button"
 						className={gridStyles.clearAll}
-						onClick={() => setLevelFilters({})}
+						onClick={() => setLevelFilters(() => ({}))}
 					>
 						Clear all
 					</button>
@@ -1657,6 +1803,19 @@ export function MatrixTable({
 			)}
 
 			{body}
+
+			{partial.length > 0 && (
+				<p className={gridStyles.exportNote}>
+					The what if applies only to{" "}
+					{partial.map((held) => held.value).join(", ")}, so totals
+					and rows adding up more than that stay as read.
+				</p>
+			)}
+			<ValueNotesStrip
+				sourceKey={sourceKey}
+				dimensions={noteFields}
+				rows={noteRows}
+			/>
 
 			{openFilter && (
 				<ColumnFilter

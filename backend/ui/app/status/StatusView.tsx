@@ -1,6 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import QualityView from "./QualityView";
+import UpdatesView from "../updates/UpdatesView";
+import ContradictionsView from "./ContradictionsView";
+import { StatusUpdates } from "../updates/UpdateSurfaces";
 import useSWR from "swr";
 import { SkeletonTable } from "../components/shared/Skeleton";
 import { Toggle } from "../components/shared/Toggle";
@@ -141,8 +145,35 @@ function explanation(source: SourceStatus): string {
 	}
 }
 
+type StatusTab = "freshness" | "quality" | "contradictions" | "updates";
+
 export default function StatusView() {
 	usePageTitle("Data status");
+
+	// Which tab, and for which source, read after mount since the server has no address
+	// bar to read it from.
+	const [tab, setTab] = useState<StatusTab>("freshness");
+	const [linked, setLinked] = useState<{ source: string | null } | null>(
+		null,
+	);
+	useEffect(() => {
+		const params = new URLSearchParams(window.location.search);
+		const named = params.get("tab");
+		if (
+			named === "quality" ||
+			named === "contradictions" ||
+			named === "updates"
+		) {
+			setTab(named);
+		}
+		setLinked({ source: params.get("source") });
+	}, []);
+	const openTab = (next: StatusTab) => {
+		setTab(next);
+		const url = new URL(window.location.href);
+		url.searchParams.set("tab", next);
+		window.history.replaceState(window.history.state, "", url);
+	};
 
 	const { data, error, isLoading, mutate } = useSWR<{
 		sources: SourceStatus[];
@@ -243,139 +274,219 @@ export default function StatusView() {
 			<header className={styles.header}>
 				<h1 className={styles.title}>Data status</h1>
 				<p className={styles.subtitle}>
-					When each source you can read last updated, and whether its
-					latest load arrived when it usually does.
+					{tab === "contradictions"
+						? "Published reports showing the same measure in ways that can disagree."
+						: tab === "updates"
+							? "What changed, what is planned and what is going on, for the data and reports you can read."
+							: tab === "quality"
+								? "Rules on the data behind each source you can read, and how each one last went."
+								: "When each source you can read last updated, and whether its latest load arrived when it usually does."}
 				</p>
 			</header>
 
-			{error ? (
-				<div className={styles.state}>
-					{describeFetchError(error, "data status")}
-				</div>
-			) : isLoading && !data ? (
-				<SkeletonTable rows={6} columns={3} />
-			) : (
+			<StatusUpdates />
+
+			<div className={styles.tabs} role="tablist">
+				{(
+					[
+						["freshness", "Freshness"],
+						["quality", "Quality"],
+						["contradictions", "Contradictions"],
+						["updates", "Updates"],
+					] as const
+				).map(([value, label]) => (
+					<button
+						key={value}
+						type="button"
+						role="tab"
+						aria-selected={tab === value}
+						className={`${styles.tab} ${tab === value ? styles.tabOn : ""}`}
+						onClick={() => openTab(value)}
+					>
+						{label}
+					</button>
+				))}
+			</div>
+
+			{tab === "quality" && (
+				<QualityView onlySource={linked?.source ?? null} />
+			)}
+			{tab === "contradictions" && <ContradictionsView />}
+			{tab === "updates" && <UpdatesView />}
+			{tab === "freshness" && (
 				<>
-					<div className={styles.toolbar}>
-						<div
-							className={styles.summary}
-							role="group"
-							aria-label="Show sources that are"
-						>
-							{(Object.keys(groupLabels) as Group[]).map((g) => (
-								<button
-									key={g}
-									type="button"
-									className={`${styles.count} ${styles[`count_${g}`]} ${
-										group === g ? styles.countActive : ""
-									}`}
-									aria-pressed={group === g}
-									onClick={() =>
-										setGroup(group === g ? null : g)
-									}
-								>
-									<span className={styles.countValue}>
-										{counts[g]}
-									</span>
-									<span className={styles.countLabel}>
-										{groupLabels[g]}
-									</span>
-								</button>
-							))}
-						</div>
-						<input
-							className={styles.search}
-							type="search"
-							placeholder="Find a source"
-							value={term}
-							onChange={(e) => setTerm(e.target.value)}
-							aria-label="Find a source"
-						/>
-					</div>
-
-					{failure && (
-						<p className={styles.failure} role="alert">
-							{failure}
-						</p>
-					)}
-
-					{shown.length === 0 ? (
+					{error ? (
 						<div className={styles.state}>
-							{sources.length === 0
-								? "There are no sources you can read."
-								: "No sources match."}
+							{describeFetchError(error, "data status")}
 						</div>
+					) : isLoading && !data ? (
+						<SkeletonTable rows={6} columns={3} />
 					) : (
-						<ul className={styles.list}>
-							{shown.map((source) => {
-								const updated = ago(source.lastChanged, now);
-								const canBeLate =
-									source.watched && source.state !== "off";
-								const g = groupOf(source.state);
-								return (
-									<li
-										key={source.sourceKey}
-										className={`${styles.row} ${styles[`row_${g}`]}`}
-									>
-										<div className={styles.main}>
-											<div className={styles.nameLine}>
-												<span className={styles.name}>
-													{source.title}
-												</span>
-												<span
-													className={`${styles.pill} ${styles[`pill_${g}`]}`}
-												>
-													{stateLabels[source.state]}
-												</span>
-											</div>
-											<p className={styles.detail}>
-												{explanation(source)}
-												{source.pattern &&
-												source.state !== "learning"
-													? ` ${source.pattern}`
-													: ""}
-											</p>
-										</div>
-										<div className={styles.updated}>
-											<span
-												className={styles.updatedLabel}
-											>
-												Last updated
-											</span>
-											<span
-												className={styles.updatedValue}
-												title={
-													source.lastChanged
-														? when(
-																source.lastChanged,
-															)
-														: undefined
+						<>
+							<div className={styles.toolbar}>
+								<div
+									className={styles.summary}
+									role="group"
+									aria-label="Show sources that are"
+								>
+									{(Object.keys(groupLabels) as Group[]).map(
+										(g) => (
+											<button
+												key={g}
+												type="button"
+												className={`${styles.count} ${styles[`count_${g}`]} ${
+													group === g
+														? styles.countActive
+														: ""
+												}`}
+												aria-pressed={group === g}
+												onClick={() =>
+													setGroup(
+														group === g ? null : g,
+													)
 												}
 											>
-												{updated ?? "Not seen yet"}
-											</span>
-										</div>
-										<div className={styles.notify}>
-											{canBeLate && (
-												<Toggle
-													checked={source.subscribed}
-													onChange={(on) =>
-														void subscribe(
-															source,
-															on,
-														)
+												<span
+													className={
+														styles.countValue
 													}
-													disabled={saving.has(
-														source.sourceKey,
+												>
+													{counts[g]}
+												</span>
+												<span
+													className={
+														styles.countLabel
+													}
+												>
+													{groupLabels[g]}
+												</span>
+											</button>
+										),
+									)}
+								</div>
+								<input
+									className={styles.search}
+									type="search"
+									placeholder="Find a source"
+									value={term}
+									onChange={(e) => setTerm(e.target.value)}
+									aria-label="Find a source"
+								/>
+							</div>
+
+							{failure && (
+								<p className={styles.failure} role="alert">
+									{failure}
+								</p>
+							)}
+
+							{shown.length === 0 ? (
+								<div className={styles.state}>
+									{sources.length === 0
+										? "There are no sources you can read."
+										: "No sources match."}
+								</div>
+							) : (
+								<ul className={styles.list}>
+									{shown.map((source) => {
+										const updated = ago(
+											source.lastChanged,
+											now,
+										);
+										const canBeLate =
+											source.watched &&
+											source.state !== "off";
+										const g = groupOf(source.state);
+										return (
+											<li
+												key={source.sourceKey}
+												className={`${styles.row} ${styles[`row_${g}`]}`}
+											>
+												<div className={styles.main}>
+													<div
+														className={
+															styles.nameLine
+														}
+													>
+														<span
+															className={
+																styles.name
+															}
+														>
+															{source.title}
+														</span>
+														<span
+															className={`${styles.pill} ${styles[`pill_${g}`]}`}
+														>
+															{
+																stateLabels[
+																	source.state
+																]
+															}
+														</span>
+													</div>
+													<p
+														className={
+															styles.detail
+														}
+													>
+														{explanation(source)}
+														{source.pattern &&
+														source.state !==
+															"learning"
+															? ` ${source.pattern}`
+															: ""}
+													</p>
+												</div>
+												<div className={styles.updated}>
+													<span
+														className={
+															styles.updatedLabel
+														}
+													>
+														Last updated
+													</span>
+													<span
+														className={
+															styles.updatedValue
+														}
+														title={
+															source.lastChanged
+																? when(
+																		source.lastChanged,
+																	)
+																: undefined
+														}
+													>
+														{updated ??
+															"Not seen yet"}
+													</span>
+												</div>
+												<div className={styles.notify}>
+													{canBeLate && (
+														<Toggle
+															checked={
+																source.subscribed
+															}
+															onChange={(on) =>
+																void subscribe(
+																	source,
+																	on,
+																)
+															}
+															disabled={saving.has(
+																source.sourceKey,
+															)}
+															label="Tell me when it is late"
+														/>
 													)}
-													label="Tell me when it is late"
-												/>
-											)}
-										</div>
-									</li>
-								);
-							})}
-						</ul>
+												</div>
+											</li>
+										);
+									})}
+								</ul>
+							)}
+						</>
 					)}
 				</>
 			)}

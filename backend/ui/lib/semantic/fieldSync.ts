@@ -58,6 +58,8 @@ export interface FieldSyncResult {
 	returned: string[];
 	// Likely renames among what went missing and what arrived.
 	renames: RenameCandidate[];
+	// Measures and dimensions whose definition in the view has changed.
+	redefined?: { name: string; before: string; after: string }[];
 	protection: ProtectionResult | null;
 	error?: string;
 }
@@ -469,6 +471,15 @@ export async function syncSourceFields(
 		);
 	}
 
+	// A definition that moved since the last look. Only where one was recorded before,
+	// since a first look has nothing to compare with.
+	const redefined = fields.flatMap((field) => {
+		const before = existingByName.get(field.name)?.fingerprint?.expression;
+		return before && field.expression && before !== field.expression
+			? [{ name: field.name, before, after: field.expression }]
+			: [];
+	});
+
 	// What every published field looks like now, in one statement. Only
 	// published fields are written, so a missing field keeps the fingerprint
 	// it had when it was last seen, which is what a rename is judged by.
@@ -548,6 +559,7 @@ export async function syncSourceFields(
 		newlyMissing,
 		returned,
 		renames,
+		redefined,
 		protection,
 	};
 }

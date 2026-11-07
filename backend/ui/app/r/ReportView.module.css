@@ -568,3 +568,8 @@
 		display: none !important;
 	}
 }
+
+.button[data-on] {
+	border-color: var(--warning);
+	color: var(--warning);
+}

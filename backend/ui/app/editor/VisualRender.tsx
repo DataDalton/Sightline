@@ -1900,6 +1900,38 @@ function body(type: string): React.ReactNode {
 				</>
 			);
 
+		case "navLinks":
+			return (
+				<>
+					{[0, 1, 2].map((i) => (
+						<g key={i}>
+							<rect
+								x={l + i * 66}
+								y={t + 40}
+								width={60}
+								height={20}
+								rx={4}
+								fill={i === 0 ? c1 : "none"}
+								stroke={c1}
+							/>
+							<Label
+								x={l + i * 66 + 30}
+								y={t + 53}
+								anchor="middle"
+								size={7.5}
+								fill={
+									i === 0
+										? "var(--surface-raised)"
+										: "var(--text-primary)"
+								}
+							>
+								{["Summary", "Orders", "Margin"][i]}
+							</Label>
+						</g>
+					))}
+				</>
+			);
+
 		case "sectionHeader":
 			return (
 				<>
@@ -1928,6 +1960,32 @@ function body(type: string): React.ReactNode {
 				</>
 			);
 
+		case "paceTile":
+		case "forecastRanking":
+		case "forecastChart":
+		case "dataQualityTile":
+			return (
+				<>
+					<rect
+						x={l}
+						y={t + 20}
+						width="44"
+						height="44"
+						rx="6"
+						fill={c1}
+						opacity="0.7"
+					/>
+					<rect
+						x={l + 56}
+						y={t + 34}
+						width={(r - l) * 0.5}
+						height="10"
+						rx="3"
+						fill={c1}
+						opacity="0.2"
+					/>
+				</>
+			);
 		case "blockedNotice":
 			return (
 				<>

@@ -102,6 +102,11 @@ export default function ExploreView() {
 		setRestored(true);
 	}, []);
 
+	// What depends on the list of sources waits for the first effect as well. The server
+	// has no list and no fetch of its own, so this keeps its render and the first client
+	// render the same however quickly the list arrives.
+	const settled = restored && !isLoading;
+
 	const current: ExploreState | null = sourceKey
 		? { sourceKey, columns, conditions }
 		: null;
@@ -496,7 +501,7 @@ export default function ExploreView() {
 
 			{showSkeleton && isLoading && <SkeletonText lines={2} />}
 
-			{!isLoading && (
+			{settled && (
 				<ExploreBar
 					sources={sources}
 					source={source}
@@ -537,7 +542,7 @@ export default function ExploreView() {
 				</div>
 			)}
 
-			{!isLoading && !source && (
+			{settled && !source && (
 				<div className={styles.state}>
 					Start by typing the name of a dataset, or of a field you
 					know.

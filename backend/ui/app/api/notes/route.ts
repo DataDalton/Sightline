@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { refusedUnless } from "@/lib/platform/capabilityGuard";
 import { getIdentity } from "@/lib/auth/identity";
 import { resolvePolicyClass } from "@/lib/auth/policy";
 import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
-import { getAccessContext } from "@/lib/platform/access";
-import { resolveReportAccess } from "@/lib/platform/accessRules";
+import { getAccessContext, getExplicitContext } from "@/lib/platform/access";
+import { canOnReport, resolveReportAccess } from "@/lib/platform/accessRules";
 import {
 	addNote,
 	listPageNotes,
@@ -60,6 +61,7 @@ async function reach(
 		categoryId: report.category_id,
 		isPersonal: report.is_personal,
 		ownerEmail: report.owner_email,
+		tags: report.tags,
 	};
 
 	const view = resolveReportAccess(
@@ -71,15 +73,24 @@ async function reach(
 	);
 	if (!view.allowed) return { ok: false, response: missing };
 
-	const edit = resolveReportAccess(
-		context.grants,
-		subject,
-		context.email,
-		"edit",
-		context.baseline,
-	);
+	// From the explicit rights, so reading a table does not let somebody clear the
+	// notes on the report above it. A personal page's owner looks after their own.
+	const explicit = await getExplicitContext(policy, context.email);
+	const moderates = report.is_personal
+		? (report.owner_email ?? "").toLowerCase() ===
+			context.email.toLowerCase()
+		: canOnReport(
+				explicit.capabilities,
+				"note.moderate",
+				{
+					reportId,
+					categoryId: report.category_id,
+					tags: report.tags,
+				},
+				explicit.denied,
+			);
 
-	return { ok: true, email: context.email, canEdit: edit.allowed };
+	return { ok: true, email: context.email, canEdit: moderates };
 }
 
 export async function GET(request: NextRequest) {
@@ -181,6 +192,16 @@ export async function POST(request: NextRequest) {
 
 	const allowed = await reach(request, reportId);
 	if (!allowed.ok) return allowed.response;
+
+	const noteIdentity = getIdentity(request);
+	if (noteIdentity) {
+		const refused = await refusedUnless(
+			noteIdentity,
+			"note.write",
+			reportId,
+		);
+		if (refused) return refused;
+	}
 
 	// The page has to belong to the report the access was checked against, or
 	// a caller could read one report and write a note onto another.

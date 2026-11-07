@@ -103,7 +103,12 @@ const behaviours: Record<string, PreviewBehaviour> = {
 
 	textPanel: "static",
 	sectionHeader: "static",
+	navLinks: "static",
 	blockedNotice: "static",
+	dataQualityTile: "static",
+	paceTile: "static",
+	forecastRanking: "static",
+	forecastChart: "static",
 };
 
 export function behaviourFor(type: string): PreviewBehaviour {

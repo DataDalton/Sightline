@@ -1,3 +1,4 @@
+import { sourcesInMaintenance } from "../updates/store";
 import { sql, transaction, tryAdvisoryLock } from "../data/lakebase";
 import { knownMembers } from "../messages/store";
 import {
@@ -248,6 +249,7 @@ async function evaluate(now: number): Promise<void> {
 	// Every source that is not newly late, written together at the end.
 	const settled: (string | null)[][] = [];
 
+	const quiet = await sourcesInMaintenance().catch(() => new Set<string>());
 	for (const source of sources) {
 		const setting = readLatenessSetting(source.lateness);
 		const names = tablesOf(source);
@@ -301,7 +303,14 @@ async function evaluate(now: number): Promise<void> {
 		// so a crash between the two can neither lose the notices nor send
 		// them twice. When the notice cannot be put together the source is
 		// left as it was and tried again on the next evaluation.
-		if (state === "late" && source.late_state !== "late" && pattern) {
+		// Maintenance on the source means a late load is expected, so its state still
+		// moves and nobody gets a notice.
+		if (
+			state === "late" &&
+			source.late_state !== "late" &&
+			pattern &&
+			!quiet.has(source.source_key)
+		) {
 			const moved = await moveToLate(
 				source,
 				values,

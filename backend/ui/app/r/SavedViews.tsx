@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { ConfirmDialog } from "../components/shared/ConfirmDialog";
+import { usePageFilters, type FilterClause } from "../visuals/PageFilters";
+import type { GridState } from "../../lib/visuals/gridState";
 import styles from "./FieldPicker.module.css";
 
 // Switching between saved views, and saving the current one.
@@ -24,6 +26,12 @@ export interface SavedViewConfig {
 	columnWidths?: Record<string, number>;
 	// Sizes the reader dragged visuals to, in grid columns and rows.
 	visualSizes?: Record<string, { w?: number; h?: number }>;
+	// What the page's filter controls and switchers were set to.
+	pageFilters?: Record<string, FilterClause[]>;
+	dimension?: string | null;
+	grain?: string | null;
+	// What was chosen inside each table: its sort, column filters and search.
+	gridStates?: Record<string, GridState>;
 }
 
 export interface SavedView {
@@ -44,6 +52,9 @@ interface SavedViewsProps {
 	// carries the view's id rather than a copy of its contents, so opening one
 	// shows the view as it stands rather than as it was when the link was sent.
 	requestedViewId?: string | null;
+	// Whether the page opened with nothing asked of it, which is when a reader's
+	// own default view is put on it. A link says what it wants, and that wins.
+	mayOpenOnDefault?: boolean;
 	onApply: (view: SavedView | null) => void;
 }
 
@@ -53,8 +64,25 @@ export function SavedViews({
 	current,
 	activeViewId,
 	requestedViewId,
-	onApply,
+	mayOpenOnDefault = false,
+	onApply: applyToPage,
 }: SavedViewsProps) {
+	const { applySelection } = usePageFilters();
+
+	// A view saved before filters were recorded leaves the filters as they are.
+	const onApply = (view: SavedView | null) => {
+		if (!view) {
+			applySelection(null);
+		} else if (view.config.pageFilters) {
+			applySelection({
+				filters: view.config.pageFilters,
+				dimension: view.config.dimension,
+				grain: view.config.grain,
+			});
+		}
+		applyToPage(view);
+	};
+
 	const [open, setOpen] = useState(false);
 	const [naming, setNaming] = useState(false);
 	const [name, setName] = useState("");
@@ -85,6 +113,49 @@ export function SavedViews({
 		if (wanted) onApply(wanted);
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [requestedViewId, views.length]);
+
+	// The reader's own default, once, when the page opens with nothing else
+	// asked of it. Only their own: somebody else's default is not this reader's
+	// choice.
+	const defaultApplied = useRef(false);
+	useEffect(() => {
+		if (!mayOpenOnDefault || !data || defaultApplied.current) return;
+		defaultApplied.current = true;
+		const own = views.find((v) => v.isDefault && v.isOwner);
+		if (own) onApply(own);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [mayOpenOnDefault, data]);
+
+	// Sets or clears the view this reader opens on. The server keeps it to one.
+	const setOpenOn = async (view: SavedView) => {
+		setBusy(true);
+		setError(null);
+		try {
+			const response = await fetch("/api/views", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					viewId: view.viewId,
+					reportId,
+					pageId,
+					name: view.name,
+					config: view.config,
+					isShared: view.isShared,
+					isDefault: !view.isDefault,
+				}),
+			});
+			if (!response.ok) throw new Error("Could not change that");
+			await mutate();
+		} catch (failure) {
+			setError(
+				failure instanceof Error
+					? failure.message
+					: "Could not change that",
+			);
+		} finally {
+			setBusy(false);
+		}
+	};
 
 	useEffect(() => {
 		if (!open) return;
@@ -239,6 +310,39 @@ export function SavedViews({
 										</span>
 									)}
 								</button>
+								{view.isOwner && (
+									<button
+										type="button"
+										className={styles.viewDelete}
+										onClick={() => void setOpenOn(view)}
+										disabled={busy}
+										aria-pressed={view.isDefault}
+										aria-label={`Open this page with ${view.name}`}
+										title={
+											view.isDefault
+												? "This page opens with this view. Click to stop."
+												: "Open this page with this view"
+										}
+									>
+										<svg
+											width="12"
+											height="12"
+											viewBox="0 0 24 24"
+											fill={
+												view.isDefault
+													? "currentColor"
+													: "none"
+											}
+											stroke="currentColor"
+											strokeWidth="2"
+											strokeLinecap="round"
+											strokeLinejoin="round"
+											aria-hidden="true"
+										>
+											<path d="M12 3l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.8 6.2 20.9l1.1-6.5L2.6 9.8l6.5-.9z" />
+										</svg>
+									</button>
+								)}
 								{view.isOwner && (
 									<button
 										type="button"

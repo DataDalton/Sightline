@@ -102,7 +102,7 @@ export async function reportUsage(
 ): Promise<ReportUsage> {
 	const report = await getReport(policy, identity, slug);
 	if (!report) throw new UsageError("Not found", 404);
-	if (report.permission === "view") {
+	if (!report.canReview && report.editMode !== "edit") {
 		throw new UsageError(
 			"Only the people who maintain a report see this.",
 			403,

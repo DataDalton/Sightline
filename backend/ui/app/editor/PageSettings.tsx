@@ -5,6 +5,7 @@ import type { PageConfig } from "./ReportEditor";
 import { Select } from "../components/shared/Select";
 import { Toggle } from "../components/shared/Toggle";
 import { Hint, Section } from "./PanelSection";
+import { RequireFilterEditor } from "./RequireFilterEditor";
 import styles from "./Editor.module.css";
 
 // Settings that belong to the page rather than to any visual on it.
@@ -53,14 +54,14 @@ export function PageSettings({
 		Boolean(freshness.field),
 		Boolean(freshness.label),
 	].filter(Boolean).length;
-	const behaviourCount = [
+	const filterCount = [
 		config.stickyFilters === true,
-		Boolean(config.emptyText),
+		Array.isArray(config.requireFilter),
 	].filter(Boolean).length;
 
 	return (
 		<>
-			<Section id="page-about" title="About">
+			<Section id="page-details" title="Details">
 				<div className={styles.field}>
 					<label className={styles.fieldLabel} htmlFor="page-name">
 						Page name
@@ -77,6 +78,58 @@ export function PageSettings({
 						page.
 					</Hint>
 				</div>
+				<div className={styles.field}>
+					<label className={styles.fieldLabel} htmlFor="empty-text">
+						When there is nothing to show
+					</label>
+					<input
+						id="empty-text"
+						type="text"
+						className={styles.input}
+						placeholder="This page has no visuals configured yet."
+						value={(config.emptyText as string) ?? ""}
+						onChange={(e) =>
+							onChange({
+								...config,
+								emptyText: e.target.value || undefined,
+							})
+						}
+					/>
+					<Hint>
+						The default is written for whoever is building the page,
+						which is the wrong audience once it is published.
+					</Hint>
+				</div>
+			</Section>
+
+			<Section
+				id="page-filters"
+				title="Filters"
+				defaultOpen={false}
+				count={filterCount}
+			>
+				<div className={styles.field}>
+					<Toggle
+						checked={config.stickyFilters === true}
+						onChange={(next) =>
+							onChange({ ...config, stickyFilters: next })
+						}
+						label="Keep the filters in view"
+					/>
+					<Hint>
+						For a page long enough that the controls scroll away. On
+						a short page it costs height and buys nothing.
+					</Hint>
+				</div>
+
+				<RequireFilterEditor
+					value={config.requireFilter}
+					fields={(source?.dimensions ?? []).map((d) => d.name)}
+					hint="Nothing on this page loads until these have a value. Put a filter on each of these fields on the page, so a reader has a way to set it."
+					onChange={(requireFilter) =>
+						onChange({ ...config, requireFilter })
+					}
+				/>
 			</Section>
 
 			{/* Which column means "when this was true" is a judgement only
@@ -88,6 +141,7 @@ export function PageSettings({
 			<Section
 				id="page-stamp"
 				title="Data through stamp"
+				defaultOpen={false}
 				count={stampCount}
 			>
 				<div className={styles.field}>
@@ -136,50 +190,6 @@ export function PageSettings({
 							setFreshness({ label: e.target.value || null })
 						}
 					/>
-				</div>
-			</Section>
-
-			<Section
-				id="page-behaviour"
-				title="Behaviour"
-				defaultOpen={false}
-				count={behaviourCount}
-			>
-				<div className={styles.field}>
-					<Toggle
-						checked={config.stickyFilters === true}
-						onChange={(next) =>
-							onChange({ ...config, stickyFilters: next })
-						}
-						label="Keep the filters in view"
-					/>
-					<Hint>
-						For a page long enough that the controls scroll away. On
-						a short page it costs height and buys nothing.
-					</Hint>
-				</div>
-
-				<div className={styles.field}>
-					<label className={styles.fieldLabel} htmlFor="empty-text">
-						When there is nothing to show
-					</label>
-					<input
-						id="empty-text"
-						type="text"
-						className={styles.input}
-						placeholder="This page has no visuals configured yet."
-						value={(config.emptyText as string) ?? ""}
-						onChange={(e) =>
-							onChange({
-								...config,
-								emptyText: e.target.value || undefined,
-							})
-						}
-					/>
-					<Hint>
-						The default is written for whoever is building the page,
-						which is the wrong audience once it is published.
-					</Hint>
 				</div>
 			</Section>
 		</>

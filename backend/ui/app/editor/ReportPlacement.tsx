@@ -42,12 +42,16 @@ export function ReportPlacement({
 	const { mutate } = useSWRConfig();
 	const { user } = useUser();
 
-	// Only fetched by somebody who could act on it. The endpoint is an admin
-	// one, so asking without the capability is a request that answers 404.
-	const canManage = user?.capabilities?.includes("category.manage") ?? false;
-	const { data } = useSWR<{ categories?: Category[] }>(
-		canManage ? "/api/admin/categories" : null,
-	);
+	// Only fetched by somebody who could act on it.
+	const canManage = user?.capabilities?.includes("report.move") ?? false;
+	const { data: waiting } = useSWR<{
+		categories?: { id: string; name: string }[];
+	}>(canManage ? "/api/requests" : null);
+	const data = {
+		categories: (waiting?.categories ?? []).map(
+			(c): Category => ({ categoryId: c.id, name: c.name }),
+		),
+	};
 
 	const [draftCategory, setDraftCategory] = useState(categoryId ?? "");
 	const [draftSlug, setDraftSlug] = useState(slug);
@@ -108,7 +112,8 @@ export function ReportPlacement({
 	return (
 		<Section
 			id="report-placement"
-			title="Placement"
+			title="Location"
+			defaultOpen={false}
 			// Not a count of what is set, since both of these always are.
 			// One when there is something waiting to be saved, which is the
 			// thing worth seeing from a closed group.

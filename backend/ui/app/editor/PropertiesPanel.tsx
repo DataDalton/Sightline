@@ -1,5 +1,7 @@
 "use client";
 
+import { useUser } from "../context/UserContext";
+import { ThemePreview } from "../components/shared/ThemePreview";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
 	visualByType,
@@ -21,6 +23,15 @@ import { MeasureTargets } from "./MeasureTargets";
 import { ConditionsEditor } from "./ConditionsEditor";
 import { ReferenceLinesEditor } from "./ReferenceLinesEditor";
 import { DerivedFigures } from "./DerivedFigures";
+import { ReportLinksEditor } from "./ReportLinksEditor";
+import { readPhoneLayout } from "../../lib/visuals/layout";
+import useSWR from "swr";
+import {
+	allThemes,
+	type ReportTheme,
+	builtinThemes,
+} from "../../lib/visuals/themes";
+import { RequireFilterEditor } from "./RequireFilterEditor";
 import { chartTypes, gridTypes } from "../../lib/query/visualSpec";
 import type { QueryTransform } from "../../lib/query/transform";
 import { Select } from "../components/shared/Select";
@@ -74,7 +85,12 @@ interface PropertiesPanelProps {
 	pageSource: SourceMeta | undefined;
 	pageConfig: PageConfig;
 	pageTitle: string;
+	reportTitle: string;
+	// Further settings in the report's Details group.
+	reportDetails?: React.ReactNode;
 	reportDescription: string;
+	reportTheme?: string | null;
+	onThemeChange?: (next: string | null) => void;
 	placement?: React.ReactNode;
 	onPageChange: (next: PageConfig) => void;
 	onPageTitleChange: (next: string) => void;
@@ -106,6 +122,63 @@ export interface GroupChoice {
 	label: string;
 }
 
+// A first draft of live text from the assistant, which is given field names and no data.
+function NarrativeDraftButton({
+	sourceKey,
+	about,
+	onDrafted,
+}: {
+	sourceKey: string;
+	about: string;
+	onDrafted: (html: string) => void;
+}) {
+	const [busy, setBusy] = useState(false);
+	const [failure, setFailure] = useState<string | null>(null);
+	return (
+		<div className={styles.field}>
+			<button
+				type="button"
+				className={styles.addButton}
+				disabled={busy}
+				onClick={async () => {
+					setBusy(true);
+					setFailure(null);
+					try {
+						const response = await fetch("/api/narrative-draft", {
+							method: "POST",
+							headers: { "Content-Type": "application/json" },
+							body: JSON.stringify({ sourceKey, about }),
+						});
+						const detail = await response.json().catch(() => null);
+						if (response.status === 404) {
+							throw new Error(
+								"The assistant is not set up here.",
+							);
+						}
+						if (!response.ok) {
+							throw new Error(
+								detail?.error ?? "That did not work.",
+							);
+						}
+						onDrafted(detail.html);
+					} catch (error) {
+						setFailure(
+							error instanceof Error
+								? error.message
+								: "That did not work.",
+						);
+					} finally {
+						setBusy(false);
+					}
+				}}
+			>
+				{busy ? "Drafting" : "Draft live text with the assistant"}
+			</button>
+			{failure && <p className={styles.guidance}>{failure}</p>}
+		</div>
+	);
+}
+
 function PanelTabs<T extends string>({
 	tabs,
 	value,
@@ -134,6 +207,8 @@ function PanelTabs<T extends string>({
 }
 
 export function PropertiesPanel({
+	reportTitle,
+	reportDetails,
 	visual,
 	source,
 	onChange,
@@ -146,6 +221,8 @@ export function PropertiesPanel({
 	pageConfig,
 	pageTitle,
 	reportDescription,
+	reportTheme,
+	onThemeChange,
 	placement,
 	onPageChange,
 	onPageTitleChange,
@@ -239,7 +316,9 @@ export function PropertiesPanel({
 								: "Page"}
 					</span>
 					<span className={styles.panelSubject}>
-						{pageTitle.trim() || "Untitled page"}
+						{panelTab === "report"
+							? reportTitle
+							: pageTitle.trim() || "Untitled page"}
 					</span>
 					{close}
 				</div>
@@ -271,8 +350,8 @@ export function PropertiesPanel({
 					/>
 				) : panelTab === "report" ? (
 					<div className={styles.panelBody}>
-						<SectionGroup>
-							<Section id="report-about" title="About">
+						<SectionGroup compactHints>
+							<Section id="report-details" title="Details">
 								<div className={styles.field}>
 									<label
 										className={styles.fieldLabel}
@@ -295,6 +374,13 @@ export function PropertiesPanel({
 										every page.
 									</Hint>
 								</div>
+								{onThemeChange && (
+									<ThemePicker
+										value={reportTheme ?? null}
+										onChange={onThemeChange}
+									/>
+								)}
+								{reportDetails}
 							</Section>
 
 							{placement}
@@ -304,7 +390,7 @@ export function PropertiesPanel({
 					<div
 						className={`${styles.panelBody} ${readOnly ? styles.panelReadOnly : ""}`}
 					>
-						<SectionGroup>
+						<SectionGroup compactHints>
 							<PageSettings
 								source={pageSource}
 								config={pageConfig}
@@ -391,6 +477,14 @@ export function PropertiesPanel({
 						<span>{definition.label}</span>
 						<Chevron open={false} />
 					</button>
+					<input
+						className={`${styles.titleInput} ${styles.headTitle}`}
+						value={visual.title ?? ""}
+						placeholder="Untitled"
+						aria-label="Title"
+						readOnly={readOnly}
+						onChange={(e) => update({ title: e.target.value })}
+					/>
 					<span className={styles.visualHeadActions}>
 						<button
 							type="button"
@@ -446,14 +540,6 @@ export function PropertiesPanel({
 						{close}
 					</span>
 				</div>
-				<input
-					className={styles.titleInput}
-					value={visual.title ?? ""}
-					placeholder="Untitled"
-					aria-label="Title"
-					readOnly={readOnly}
-					onChange={(e) => update({ title: e.target.value })}
-				/>
 				{trimmed && (
 					<p className={styles.hint}>
 						{describeTrim(trimmed)} The rest carried over.
@@ -530,7 +616,7 @@ export function PropertiesPanel({
 			>
 				<SectionGroup
 					query={query}
-					persistKey="sightline.editor.visualSections"
+					persistKey="sightline.editor.visualGroups"
 					compactHints
 				>
 					{(query || tab === "data") && (
@@ -645,6 +731,8 @@ const optionTab: Record<string, "data" | "behaviour"> = {
 	groupTail: "data",
 	bins: "data",
 	showTotals: "data",
+	links: "data",
+	carryFilters: "behaviour",
 	columnDimension: "data",
 	onValue: "data",
 	forecast: "data",
@@ -753,7 +841,7 @@ function DataTab({
 
 			<VisualOptions
 				id="visual-shaping"
-				title="Ranking and comparison"
+				title="Sort, rank and forecast"
 				keywords="filter limit sort order top rank compare total period forecast predict ahead"
 				tab="data"
 				visual={visual}
@@ -824,6 +912,19 @@ function BehaviourTab({
 	// cross-filter, so it is only offered where that makes sense.
 	const canDrill = definition.category !== "filter" && dimensions.length > 1;
 	const drilling = Boolean(visual.config.options?.drillFields);
+	// Everything that asks the source for something can wait for a filter.
+	const loadsData =
+		definition.category !== "filter" &&
+		definition.category !== "layout" &&
+		definition.category !== "text";
+	// A click has to select something for a link to carry, and a tile, a filter
+	// or a heading selects nothing.
+	const canOpenReports =
+		dimensions.length > 0 &&
+		definition.category !== "filter" &&
+		definition.category !== "layout" &&
+		definition.category !== "text" &&
+		definition.category !== "summary";
 	const hasReaderControls = (definition.options ?? []).some(
 		(option) => tabOf(option.key) === "behaviour",
 	);
@@ -833,7 +934,7 @@ function BehaviourTab({
 			{canDrill && (
 				<Section
 					id="visual-drill"
-					title="Clicking"
+					title="What clicking does"
 					keywords="drill hierarchy cross filter click descend"
 					count={drilling ? 1 : 0}
 					defaultOpen
@@ -863,6 +964,86 @@ function BehaviourTab({
 				</Section>
 			)}
 
+			{loadsData && (
+				<Section
+					id="visual-wait"
+					title="Wait for a filter"
+					keywords="require hide until selected filter gate load"
+					count={
+						Array.isArray(visual.config.options?.requireFilter)
+							? visual.config.options.requireFilter.length
+							: 0
+					}
+					defaultOpen={false}
+				>
+					<RequireFilterEditor
+						value={visual.config.options?.requireFilter}
+						fields={(source?.dimensions ?? []).map((d) => d.name)}
+						hint="This visual asks for nothing until these have a value, and says what to choose instead. A reader sets one with a filter on the page, or by clicking another visual."
+						onChange={(requireFilter) =>
+							updateConfig({
+								options: {
+									...visual.config.options,
+									requireFilter,
+								},
+							})
+						}
+					/>
+					{Array.isArray(visual.config.options?.requireFilter) && (
+						<div className={styles.field}>
+							<label className={styles.fieldLabel}>
+								Message while it waits
+							</label>
+							<input
+								className={styles.input}
+								placeholder="Choose a customer to see this."
+								value={
+									typeof visual.config.options
+										?.requireFilterText === "string"
+										? visual.config.options
+												.requireFilterText
+										: ""
+								}
+								onChange={(e) =>
+									updateConfig({
+										options: {
+											...visual.config.options,
+											requireFilterText:
+												e.target.value || undefined,
+										},
+									})
+								}
+							/>
+						</div>
+					)}
+				</Section>
+			)}
+
+			{canOpenReports && (
+				<Section
+					id="visual-links"
+					title="Open another report"
+					keywords="link click through navigate report drill across"
+					count={Array.isArray(visual.config.options?.links) ? 1 : 0}
+					defaultOpen={false}
+				>
+					<Hint>
+						When someone clicks something on this visual, they are
+						offered these reports, filtered to what they clicked.
+					</Hint>
+					<ReportLinksEditor
+						value={visual.config.options?.links}
+						fields={dimensions.filter((d) => !d.startsWith("<"))}
+						requireReceiver
+						onChange={(links) =>
+							updateConfig({
+								options: { ...visual.config.options, links },
+							})
+						}
+					/>
+				</Section>
+			)}
+
 			<VisualOptions
 				id="visual-interaction"
 				title="Reader controls"
@@ -883,7 +1064,7 @@ function BehaviourTab({
 					title={isNotice ? "Message" : "Note"}
 					keywords="caveat caption subtitle"
 					count={noteValue ? 1 : 0}
-					defaultOpen
+					defaultOpen={false}
 				>
 					<textarea
 						id="visual-note"
@@ -1022,7 +1203,13 @@ function VisualOptions({
 			: 0);
 
 	return (
-		<Section id={id} title={title} keywords={keywords} count={chosen}>
+		<Section
+			id={id}
+			title={title}
+			keywords={keywords}
+			count={chosen}
+			defaultOpen={id === "visual-display"}
+		>
 			{declared.map((option) => {
 				const value = stored(option.key);
 
@@ -1115,6 +1302,23 @@ function VisualOptions({
 											: e.target.value,
 									)
 								}
+							/>
+							{option.help && <Hint>{option.help}</Hint>}
+						</div>
+					);
+				}
+
+				if (option.kind === "reportLinks") {
+					return (
+						<div key={option.key} className={styles.field}>
+							<label className={styles.fieldLabel}>
+								{option.label}
+							</label>
+							<ReportLinksEditor
+								value={value}
+								fields={[]}
+								requireReceiver={false}
+								onChange={(links) => set(option.key, links)}
 							/>
 							{option.help && <Hint>{option.help}</Hint>}
 						</div>
@@ -1379,6 +1583,97 @@ function MeasureBands({
 	);
 }
 
+// A number that may be left empty, which means the chart decides.
+function OptionalNumber({
+	label,
+	value,
+	onChange,
+}: {
+	label: string;
+	value: number | undefined;
+	onChange: (next: number | undefined) => void;
+}) {
+	return (
+		<div className={styles.field}>
+			<label className={styles.fieldLabel}>{label}</label>
+			<input
+				type="number"
+				className={styles.input}
+				value={value ?? ""}
+				placeholder="Automatic"
+				onChange={(e) => {
+					const text = e.target.value.trim();
+					const parsed = Number(text);
+					onChange(
+						text === "" || !Number.isFinite(parsed)
+							? undefined
+							: parsed,
+					);
+				}}
+			/>
+		</div>
+	);
+}
+
+// Which theme a report is drawn in.
+function ThemePicker({
+	value,
+	onChange,
+}: {
+	value: string | null;
+	onChange: (next: string | null) => void;
+}) {
+	const { user } = useUser();
+	const { data } = useSWR<{ customThemes?: ReportTheme[] }>("/api/info");
+	const themes = allThemes(data?.customThemes ?? []);
+	const builtinIds = new Set(builtinThemes.map((theme) => theme.id));
+	const chosen = themes.find((theme) => theme.id === value);
+	const canManage = user?.capabilities?.includes("theme.manage") ?? false;
+	return (
+		<div className={styles.field}>
+			<label className={styles.fieldLabel}>Theme</label>
+			<Select
+				value={value ?? ""}
+				onChange={(next) => onChange(next || null)}
+				ariaLabel="Theme"
+				options={[
+					{ value: "", label: "The app's own colours" },
+					...themes.map((theme) => ({
+						value: theme.id,
+						label: theme.name,
+						group: builtinIds.has(theme.id)
+							? "Built in"
+							: "Made for this workspace",
+					})),
+				]}
+			/>
+			{chosen && (
+				<div className={styles.themeChosen}>
+					<ThemePreview theme={chosen} />
+				</div>
+			)}
+			<Hint>
+				The accent and chart colours for this report. Light and dark
+				stay the reader&apos;s choice.
+			</Hint>
+			<p className={styles.panelAbout}>
+				{canManage ? (
+					<a
+						className={styles.themeLink}
+						href="/admin?pane=themes"
+						target="_blank"
+						rel="noreferrer"
+					>
+						See and change themes in Administration
+					</a>
+				) : (
+					"Your administrators look after this list."
+				)}
+			</p>
+		</div>
+	);
+}
+
 function FormatTab({
 	visual,
 	definition,
@@ -1417,6 +1712,23 @@ function FormatTab({
 		definition.category !== "filter" &&
 		definition.category !== "text" &&
 		definition.category !== "layout";
+	const phone = readPhoneLayout(visual.config.options?.phone);
+	const setPhone = (patch: {
+		hidden?: boolean;
+		position?: number;
+		rows?: number;
+	}) => {
+		const next = { ...phone, ...patch };
+		for (const key of Object.keys(next) as (keyof typeof next)[]) {
+			if (next[key] === undefined) delete next[key];
+		}
+		updateConfig({
+			options: {
+				...visual.config.options,
+				phone: Object.keys(next).length > 0 ? next : undefined,
+			},
+		});
+	};
 	const hasAppearance = Boolean(
 		supports.fillHeight ||
 		supports.rounding ||
@@ -1477,11 +1789,29 @@ function FormatTab({
 	return (
 		<>
 			{visual.visualType === "textPanel" && (
-				<p className={styles.guidance}>
-					Select the panel on the canvas and type into it. The
-					formatting toolbar appears with it, and the styling is kept
-					with the text.
-				</p>
+				<>
+					<p className={styles.guidance}>
+						Select the panel on the canvas and type into it. The
+						formatting toolbar appears with it, and the styling is
+						kept with the text. Write {"{{Revenue}}"} or{" "}
+						{"{{top Region by Revenue}}"} for a number or name that
+						stays true as the data changes.
+					</p>
+					{source && (
+						<NarrativeDraftButton
+							sourceKey={source.sourceKey}
+							about={visual.title ?? ""}
+							onDrafted={(html) =>
+								updateConfig({
+									options: {
+										...visual.config.options,
+										html,
+									},
+								})
+							}
+						/>
+					)}
+				</>
 			)}
 
 			<VisualOptions
@@ -1504,6 +1834,7 @@ function FormatTab({
 						id="visual-series"
 						title="Series"
 						count={(style.series ?? []).length}
+						defaultOpen={false}
 					>
 						{measures.length > 1 &&
 							!supports.singleColor &&
@@ -1689,6 +2020,78 @@ function FormatTab({
 							</>
 						)}
 
+						{supports.lineStyle && (
+							<>
+								<button
+									type="button"
+									className={styles.checkRow}
+									onClick={() =>
+										updateSeries({
+											smooth: !seriesEntry?.smooth,
+										})
+									}
+								>
+									<Check on={Boolean(seriesEntry?.smooth)} />
+									Curve the line
+								</button>
+								<div className={styles.field}>
+									<label className={styles.fieldLabel}>
+										Line width
+										<span className={styles.fieldCount}>
+											{seriesEntry?.lineWidth ?? 2}
+										</span>
+									</label>
+									<input
+										type="range"
+										className={styles.range}
+										min={1}
+										max={6}
+										step={1}
+										value={seriesEntry?.lineWidth ?? 2}
+										onChange={(e) =>
+											updateSeries({
+												lineWidth: Number(
+													e.target.value,
+												),
+											})
+										}
+									/>
+								</div>
+								<div className={styles.field}>
+									<label className={styles.fieldLabel}>
+										Points on the line
+									</label>
+									<Select
+										value={
+											seriesEntry?.showPoints ===
+											undefined
+												? "auto"
+												: seriesEntry.showPoints
+													? "on"
+													: "off"
+										}
+										onChange={(v) =>
+											updateSeries({
+												showPoints:
+													v === "auto"
+														? undefined
+														: v === "on",
+											})
+										}
+										ariaLabel="Points on the line"
+										options={[
+											{
+												value: "auto",
+												label: "When there is room",
+											},
+											{ value: "on", label: "Always" },
+											{ value: "off", label: "Never" },
+										]}
+									/>
+								</div>
+							</>
+						)}
+
 						{supports.secondAxis && (
 							<button
 								type="button"
@@ -1774,6 +2177,152 @@ function FormatTab({
 								A truncated axis makes small differences look
 								large. Worth a note on the visual saying so.
 							</Hint>
+						)}
+
+					{supports.axisBounds && (
+						<>
+							<OptionalNumber
+								label="Lowest value on the axis"
+								value={style.yAxis?.min}
+								onChange={(min) =>
+									updateStyle({
+										yAxis: { ...style.yAxis, min },
+									})
+								}
+							/>
+							<OptionalNumber
+								label="Highest value on the axis"
+								value={style.yAxis?.max}
+								onChange={(max) =>
+									updateStyle({
+										yAxis: { ...style.yAxis, max },
+									})
+								}
+							/>
+							<button
+								type="button"
+								className={styles.checkRow}
+								onClick={() =>
+									updateStyle({
+										yAxis: {
+											...style.yAxis,
+											showGrid:
+												style.yAxis?.showGrid === false,
+										},
+									})
+								}
+							>
+								<Check on={style.yAxis?.showGrid !== false} />
+								Show gridlines
+							</button>
+						</>
+					)}
+					{supports.crossAxisLabel && (
+						<div className={styles.field}>
+							<label className={styles.fieldLabel}>
+								{definition.type === "scatterChart"
+									? "Horizontal axis label"
+									: "Category axis label"}
+							</label>
+							<input
+								className={styles.input}
+								value={style.xAxis?.label ?? ""}
+								onChange={(e) =>
+									updateStyle({
+										xAxis: {
+											...style.xAxis,
+											label: e.target.value,
+										},
+									})
+								}
+							/>
+						</div>
+					)}
+					{supports.labelRotation && (
+						<div className={styles.field}>
+							<label className={styles.fieldLabel}>
+								Turn the names
+							</label>
+							<Select
+								value={String(style.xAxis?.labelRotation ?? 0)}
+								onChange={(v) =>
+									updateStyle({
+										xAxis: {
+											...style.xAxis,
+											labelRotation: Number(v),
+										},
+									})
+								}
+								ariaLabel="Turn the names"
+								options={[
+									{ value: "0", label: "Level" },
+									{ value: "30", label: "A little" },
+									{ value: "45", label: "Halfway" },
+									{ value: "90", label: "Straight up" },
+								]}
+							/>
+						</div>
+					)}
+					{supports.secondAxis &&
+						(style.series ?? []).some(
+							(entry) => entry.axis === "right",
+						) && (
+							<>
+								<div className={styles.field}>
+									<label className={styles.fieldLabel}>
+										Right axis label
+									</label>
+									<input
+										className={styles.input}
+										value={style.rightAxis?.label ?? ""}
+										onChange={(e) =>
+											updateStyle({
+												rightAxis: {
+													...style.rightAxis,
+													label: e.target.value,
+												},
+											})
+										}
+									/>
+								</div>
+								<div className={styles.field}>
+									<label className={styles.fieldLabel}>
+										Right axis figures
+									</label>
+									<Select
+										value={
+											style.rightAxis?.format ?? "decimal"
+										}
+										onChange={(v) =>
+											updateStyle({
+												rightAxis: {
+													...style.rightAxis,
+													format: v as "decimal",
+												},
+											})
+										}
+										ariaLabel="Right axis figures"
+										options={[
+											{
+												value: "decimal",
+												label: "Number",
+											},
+											{
+												value: "integer",
+												label: "Whole number",
+											},
+											{
+												value: "currency",
+												label: "Currency",
+											},
+											{
+												value: "percent",
+												label: "Percentage",
+											},
+										]}
+									/>
+								</div>
+							</>
 						)}
 				</Section>
 			)}
@@ -1887,6 +2436,39 @@ function FormatTab({
 				</Section>
 			)}
 
+			<Section
+				id="visual-phone"
+				title="On phones"
+				keywords="phone mobile hide order height responsive small screen"
+				defaultOpen={false}
+				count={phone ? Object.keys(phone).length : 0}
+			>
+				<div className={styles.field}>
+					<Toggle
+						checked={phone?.hidden !== true}
+						onChange={(show) =>
+							setPhone({ hidden: !show || undefined })
+						}
+						label="Show on phones"
+					/>
+				</div>
+				<OptionalNumber
+					label="Position on a phone"
+					value={phone?.position}
+					onChange={(position) => setPhone({ position })}
+				/>
+				<OptionalNumber
+					label="Height on a phone, in rows"
+					value={phone?.rows}
+					onChange={(rows) => setPhone({ rows })}
+				/>
+				<Hint>
+					Phones stack visuals in one column. Lower positions come
+					first, ahead of any without one. Choose Phone in the preview
+					list above to see the result.
+				</Hint>
+			</Section>
+
 			{/* One group for the two smallest: a legend is a single switch and
 			    a tooltip is a switch and a choice, and each as its own titled
 			    group cost more height in headings than in controls. */}
@@ -1917,6 +2499,37 @@ function FormatTab({
 						</button>
 					)}
 
+					{supports.legend && style.legend?.show !== false && (
+						<div className={styles.field}>
+							<label className={styles.fieldLabel}>
+								Legend position
+							</label>
+							<Select
+								value={
+									style.legend?.position === "bottom"
+										? "bottom"
+										: "top"
+								}
+								onChange={(v) =>
+									updateStyle({
+										legend: {
+											...style.legend,
+											position: v as "top" | "bottom",
+										},
+									})
+								}
+								ariaLabel="Legend position"
+								options={[
+									{ value: "top", label: "Above the chart" },
+									{
+										value: "bottom",
+										label: "Below the chart",
+									},
+								]}
+							/>
+						</div>
+					)}
+
 					{supports.tooltipMode && (
 						<div className={styles.field}>
 							<label className={styles.fieldLabel}>
@@ -1945,6 +2558,22 @@ function FormatTab({
 								]}
 							/>
 						</div>
+					)}
+
+					{supports.tooltipMode && (
+						<RequireFilterEditor
+							value={style.tooltip?.extraFields}
+							fields={(source?.measures ?? [])
+								.map((m) => m.name)
+								.filter((name) => !measures.includes(name))}
+							placeholder="Also show in the tooltip"
+							hint="Extra figures shown when a reader hovers, without adding them to the chart."
+							onChange={(extraFields) =>
+								updateStyle({
+									tooltip: { ...style.tooltip, extraFields },
+								})
+							}
+						/>
 					)}
 
 					{supports.tooltipShare && (

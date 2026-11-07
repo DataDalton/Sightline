@@ -8,6 +8,7 @@ import { parseQuerySpec } from "./spec";
 import { pagedSpec, sliceWindow, type RowWindow } from "./paging";
 import { canonicalRequest } from "./requestKey";
 import { initialQueryForVisual } from "./visualSpec";
+import { requiredFields, waitingFor } from "../visuals/filterGate";
 import { openingBreakdown, openingFilters } from "../visuals/pageDefaults";
 import { perProcess } from "../perProcess";
 
@@ -63,6 +64,7 @@ interface WarmableVisual {
 interface WarmablePage {
 	pageId: string;
 	sourceKey: string | null;
+	config?: { requireFilter?: unknown } | null;
 	visuals: WarmableVisual[];
 }
 
@@ -114,6 +116,15 @@ function queriesFor(
 			const sourceKey =
 				visual.sourceKey ?? page.sourceKey ?? report.sourceKey;
 			if (!sourceKey) continue;
+
+			// A visual waiting for a filter asks nothing as the page opens, so
+			// warming it would spend the warehouse on what that exists to save.
+			const required = requiredFields(
+				visual.visualType,
+				visual.config?.options,
+				page.config ?? undefined,
+			);
+			if (waitingFor(required, pageFilters).length > 0) continue;
 
 			const source = getSource(sourceKey);
 			if (!source) continue;

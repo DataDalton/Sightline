@@ -1,0 +1,185 @@
+.themes {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+}
+
+.intro {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-3);
+}
+
+.intro p {
+	flex: 1;
+	min-width: 280px;
+	margin: 0;
+	color: var(--text-secondary);
+	font-size: var(--text-sm);
+}
+
+.segments {
+	display: inline-flex;
+	padding: 2px;
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-sm);
+}
+
+.segment {
+	padding: 2px var(--space-3);
+	border: none;
+	border-radius: var(--radius-sm);
+	background: none;
+	color: var(--text-secondary);
+	font: inherit;
+	font-size: var(--text-xs);
+	cursor: pointer;
+}
+
+.segmentOn {
+	background: var(--surface-active);
+	color: var(--text-primary);
+	font-weight: 600;
+}
+
+.heading {
+	margin: var(--space-2) 0 0;
+	font-size: var(--text-sm);
+	font-weight: 600;
+}
+
+.headingRow {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-3);
+}
+
+.grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+	gap: var(--space-3);
+}
+
+.card {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	padding: var(--space-2);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+}
+
+.cardHead {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-2);
+	font-size: var(--text-sm);
+}
+
+.name {
+	flex: 1;
+	min-width: 120px;
+	padding: 2px var(--space-2);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-sm);
+	background: var(--surface-sunken);
+	color: var(--text-primary);
+	font: inherit;
+}
+
+.badge {
+	padding: 1px var(--space-2);
+	border-radius: var(--radius-sm);
+	background: var(--surface-active);
+	color: var(--text-secondary);
+	font-size: var(--text-xs);
+}
+
+.cardActions {
+	display: flex;
+	gap: var(--space-1);
+	margin-left: auto;
+}
+
+.button,
+.add {
+	padding: 2px var(--space-2);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-sm);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font: inherit;
+	font-size: var(--text-xs);
+	cursor: pointer;
+}
+
+.add {
+	padding: var(--space-1) var(--space-3);
+	font-weight: 600;
+}
+
+.button:hover,
+.add:hover {
+	background: var(--surface-active);
+}
+
+.swatches {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	gap: var(--space-1);
+}
+
+.swatch {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 2px;
+	color: var(--text-muted);
+	font-size: 10px;
+	cursor: default;
+}
+
+.swatch input[type="color"] {
+	width: 26px;
+	height: 26px;
+	padding: 0;
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-sm);
+	background: none;
+	cursor: pointer;
+}
+
+.swatchChip {
+	width: 26px;
+	height: 26px;
+	border-radius: var(--radius-sm);
+}
+
+.divider {
+	align-self: stretch;
+	width: 1px;
+	margin: 0 var(--space-1);
+	background: var(--border-subtle);
+}
+
+.help {
+	margin: 0;
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+}
+
+.none {
+	margin: 0;
+	padding: var(--space-3);
+	border: 1px dashed var(--border-default);
+	border-radius: var(--radius-md);
+	color: var(--text-muted);
+	font-size: var(--text-sm);
+	text-align: center;
+}

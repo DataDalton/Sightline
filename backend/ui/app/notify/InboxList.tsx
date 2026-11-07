@@ -87,7 +87,11 @@ export function InboxList({
 			await patch([item.id], true);
 			onChanged();
 		}
-		if (item.link) router.push(item.link);
+		if (item.link?.startsWith("/api/")) {
+			window.location.assign(item.link);
+		} else if (item.link) {
+			router.push(item.link);
+		}
 	};
 
 	return (

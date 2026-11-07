@@ -138,18 +138,49 @@ export function overlaps(a: Rect, b: Rect): boolean {
 // Collapses the canvas to a single column, for a narrow screen. Order is taken
 // from reading order rather than from the stored y, so a visual placed to the
 // right of another appears after it rather than jumping above.
+//
+// An author can arrange this themselves, per visual: hide one on phones, give it a
+// position, or give it a height of its own. A visual with a position comes before
+// those without, lowest first, and the rest keep their reading order.
+export interface PhoneLayout {
+	hidden?: boolean;
+	position?: number;
+	rows?: number;
+}
+
+export function readPhoneLayout(value: unknown): PhoneLayout | undefined {
+	if (!value || typeof value !== "object") return undefined;
+	const held = value as Record<string, unknown>;
+	const layout: PhoneLayout = {};
+	if (held.hidden === true) layout.hidden = true;
+	if (typeof held.position === "number") layout.position = held.position;
+	if (typeof held.rows === "number" && held.rows > 0) layout.rows = held.rows;
+	return layout;
+}
+
 export function stackForNarrow(
 	items: { id: string; rect: Rect }[],
+	phoneOf?: (id: string) => PhoneLayout | undefined,
 ): { id: string; rect: Rect }[] {
-	const ordered = [...items].sort((a, b) => {
-		if (a.rect.y !== b.rect.y) return a.rect.y - b.rect.y;
-		return a.rect.x - b.rect.x;
-	});
+	const ordered = items
+		.filter((item) => !phoneOf?.(item.id)?.hidden)
+		.sort((a, b) => {
+			const first = phoneOf?.(a.id)?.position;
+			const second = phoneOf?.(b.id)?.position;
+			if (first !== undefined || second !== undefined) {
+				if (first === undefined) return 1;
+				if (second === undefined) return -1;
+				if (first !== second) return first - second;
+			}
+			if (a.rect.y !== b.rect.y) return a.rect.y - b.rect.y;
+			return a.rect.x - b.rect.x;
+		});
 
 	let y = 0;
 	return ordered.map((item) => {
-		const rect = { x: 0, y, w: gridColumns, h: item.rect.h };
-		y += item.rect.h;
+		const h = phoneOf?.(item.id)?.rows ?? item.rect.h;
+		const rect = { x: 0, y, w: gridColumns, h };
+		y += h;
 		return { id: item.id, rect };
 	});
 }

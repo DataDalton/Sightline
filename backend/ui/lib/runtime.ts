@@ -183,6 +183,12 @@ export const accessTokenHeader = "X-Forwarded-Access-Token";
 // a deployed app the platform always sets the forwarded headers, so a request
 // without them is rejected rather than served as a local user.
 export const allowLocalIdentity = !isDatabricksApp;
+
+// Outside a deployment whoever runs the app administers it. Setting this makes rights
+// come from the role tables instead, so limits on what somebody can do can be tried
+// on a developer machine. Has no effect in a deployment.
+export const localRightsFromRoles =
+	!isDatabricksApp && env("LOCAL_RIGHTS_FROM_ROLES") === "1";
 export const localIdentityEmail = env(
 	"LOCAL_IDENTITY_EMAIL",
 	"developer@localhost",

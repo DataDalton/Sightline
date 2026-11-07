@@ -510,6 +510,7 @@ export async function publishPage(
 		is_personal: boolean;
 		owner_email: string | null;
 		is_shared: boolean;
+		is_requested: boolean;
 	}>(
 		`SELECT r.title, r.slug, r.is_personal, r.owner_email,
 		        EXISTS (
@@ -517,7 +518,11 @@ export async function publishPage(
 		          WHERE p.resource_type = 'report'
 		            AND p.resource_id = r.report_id::text
 		            AND p.is_active = TRUE
-		        ) AS is_shared
+		        ) AS is_shared,
+		        EXISTS (
+		          SELECT 1 FROM publish_requests q
+		          WHERE q.report_id = r.report_id AND q.status = 'open'
+		        ) AS is_requested
 		 FROM reports r
 		 WHERE r.report_id = $1 AND r.is_active = TRUE`,
 		[reportId],
@@ -530,11 +535,12 @@ export async function publishPage(
 
 	// Holding the publish capability on the category says where a page may
 	// go, not whose page it may be. The caller has to own it, or its owner
-	// has to have shared it, which is the same set publishablePages offers.
+	// has to have shared it, which is the same set publishablePages offers, or
+	// has to have asked for it to be published.
 	const owns =
 		(report.owner_email ?? "").toLowerCase() ===
 		identity.email.toLowerCase();
-	if (!owns && !report.is_shared) {
+	if (!owns && !report.is_shared && !report.is_requested) {
 		throw new AuthoringError("That is not one of your pages.");
 	}
 
@@ -553,6 +559,14 @@ export async function publishPage(
 		     modified_by = $3, modified_on = now()
 		 WHERE report_id = $1`,
 		[reportId, categoryId, identity.email],
+	);
+	// Published some other way than through the request, so nobody is left being
+	// asked about a decision already made.
+	await sql(
+		`UPDATE publish_requests
+		 SET status = 'approved', decided_by = $2, decided_on = now()
+		 WHERE report_id = $1 AND status = 'open'`,
+		[reportId, identity.email],
 	);
 
 	await insertLog({

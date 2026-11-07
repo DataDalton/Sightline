@@ -1,3 +1,4 @@
+import { parseCustomThemes, type ReportTheme } from "../visuals/themes";
 import type { Identity } from "../auth/identity";
 import { resolvePolicyClass, type PolicyClass } from "../auth/policy";
 import { warmSourceAccess } from "../auth/sourceAccess";
@@ -143,8 +144,12 @@ export async function userPayload(
 			isEditor(policy) ||
 			(context.baseline !== null && context.baseline !== "view"),
 		canAdminister: isAdmin(policy) || context.baseline === "admin",
-		capabilities: [...context.capabilities.keys()],
-		assistant: assistantConfigured(),
+		capabilities: [...context.capabilities.keys()].filter(
+			(capability) => !context.denied.get(capability)?.has("*"),
+		),
+		assistant:
+			assistantConfigured() &&
+			!context.denied.get("assistant.use")?.has("*"),
 	};
 }
 
@@ -171,6 +176,7 @@ interface CategoryRow {
 }
 
 interface ReportRow {
+	tags?: string[] | null;
 	report_id: string;
 	category_id: string | null;
 	slug: string;
@@ -194,6 +200,7 @@ function visibleCounts(
 				reportId: report.report_id,
 				categoryId: report.category_id,
 				isPersonal: false,
+				tags: report.tags,
 				ownerEmail: null,
 			},
 			context.email,
@@ -273,6 +280,7 @@ export async function navigationPayload(
 				reportId: report.report_id,
 				categoryId: report.category_id,
 				isPersonal: false,
+				tags: report.tags,
 				ownerEmail: null,
 			},
 			context.email,
@@ -410,6 +418,7 @@ export interface InfoPayload {
 	// own rows outside SWR and used a constant that mirrored this, which was
 	// only ever right while both happened to be the same number.
 	resultTtlSeconds: number;
+	customThemes: ReportTheme[];
 }
 
 // What the installation calls itself. No identity in it, but the header cannot
@@ -429,6 +438,7 @@ export function infoPayload(): InfoPayload {
 		settingsLoadedAt: settingsLoadedAt() || null,
 		registryLoadedAt: registryLoadedAt() || null,
 		resultTtlSeconds: current.resultTtlSeconds,
+		customThemes: parseCustomThemes(current.customThemes),
 	};
 }
 

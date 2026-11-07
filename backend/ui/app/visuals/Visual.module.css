@@ -129,6 +129,105 @@
 	white-space: nowrap;
 }
 
+/* In place of a visual that waits for a filter. */
+.waitingForFilter {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 100%;
+	min-height: 96px;
+	padding: var(--space-4);
+	color: var(--text-muted);
+	font-size: var(--text-sm);
+	text-align: center;
+}
+
+/* Reports a selection can be opened in. Always visible once there is a selection,
+   unlike the hover actions beside it, because it only appears when it applies. */
+.openIn {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-2);
+}
+
+.openInLink {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1);
+	padding: 2px var(--space-2);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	color: var(--text-link);
+	font-size: var(--text-xs);
+	font-weight: 600;
+	white-space: nowrap;
+	text-decoration: none;
+}
+
+.openInLink:hover {
+	background: var(--state-hover);
+}
+
+.openInLink:focus-visible,
+.navLink:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: 2px;
+}
+
+/* A row of links between reports. */
+.navLinks,
+.navLinksTabs {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-2);
+}
+
+.navLink {
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font-size: var(--text-sm);
+	font-weight: 500;
+	text-decoration: none;
+}
+
+.navLink:hover {
+	background: var(--state-hover);
+}
+
+.navLinkCurrent {
+	border-color: var(--brand-strong);
+	font-weight: 600;
+}
+
+.navLinksTabs {
+	gap: var(--space-1);
+	border-bottom: 1px solid var(--border-subtle);
+}
+
+.navLinksTabs .navLink {
+	border: 0;
+	border-bottom: 2px solid transparent;
+	border-radius: 0;
+	background: none;
+	color: var(--text-secondary);
+}
+
+.navLinksTabs .navLink:hover {
+	color: var(--text-primary);
+	background: none;
+}
+
+.navLinksTabs .navLinkCurrent {
+	border-bottom-color: var(--brand-strong);
+	color: var(--text-primary);
+}
+
 /* A label with an explanation behind it. Dashed rather than solid, so it reads
    as "this term is defined" and not as a link. */
 .hintLabel {
@@ -1116,4 +1215,9 @@
 	font-size: var(--text-xs);
 	line-height: 1.4;
 	color: var(--text-muted);
+}
+
+.kpiSince {
+	color: var(--text-muted);
+	font-size: var(--text-xs);
 }

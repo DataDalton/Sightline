@@ -101,6 +101,9 @@ function NewReportDialog({
 		sourceKey !== "" &&
 		slotsComplete(template, slots);
 
+	const { user } = useUser();
+	const startsAsDraft = !user?.capabilities?.includes("report.makeOfficial");
+
 	const create = async () => {
 		setBusy(true);
 		setFailure(null);
@@ -205,6 +208,14 @@ function NewReportDialog({
 				/>
 
 				{failure && <div className={styles.failure}>{failure}</div>}
+
+				{startsAsDraft && (
+					<span className={styles.hint}>
+						It starts as your own page. Ask to publish it when it is
+						ready, and a Report Publisher makes it official in this
+						category.
+					</span>
+				)}
 
 				<div className={styles.actions}>
 					<button

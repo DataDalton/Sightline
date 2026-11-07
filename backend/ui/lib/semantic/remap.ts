@@ -269,6 +269,31 @@ export async function remapField(
 	const reports: string[] = [];
 
 	await transaction(async (client) => {
+		const blocks = await client.query<{
+			block_id: string;
+			visuals: { sourceKey?: string | null; config: unknown }[];
+		}>(
+			`SELECT block_id::text AS block_id, visuals FROM blocks
+			 WHERE is_active = TRUE FOR UPDATE`,
+		);
+		for (const block of blocks.rows) {
+			let renamedAny = false;
+			const visuals = block.visuals.map((visual) => {
+				if (visual.sourceKey !== sourceKey) return visual;
+				const renamed = renameInVisual(visual.config, from, to);
+				if (!renamed.changed) return visual;
+				renamedAny = true;
+				return { ...visual, config: renamed.value };
+			});
+			if (renamedAny) {
+				await client.query(
+					`UPDATE blocks SET visuals = $2::jsonb WHERE block_id = $1`,
+					[block.block_id, JSON.stringify(visuals)],
+				);
+				count(changed, "block");
+			}
+		}
+
 		const byReport = new Map<string, Dependent[]>();
 		const seen = new Set<string>();
 		for (const dependent of dependents) {

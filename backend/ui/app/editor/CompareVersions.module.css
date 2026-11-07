@@ -30,7 +30,7 @@
 	padding: 5px var(--space-2);
 	border: 1px solid var(--border-default);
 	border-radius: var(--radius-sm);
-	background: var(--surface-raised);
+	background: var(--state-hover);
 	color: var(--text-primary);
 	font-size: var(--text-sm);
 	font-family: inherit;
@@ -292,7 +292,7 @@
 	padding: 3px var(--space-3);
 	border: 1px solid var(--border-default);
 	border-radius: var(--radius-full);
-	background: var(--surface-raised);
+	background: var(--state-hover);
 	color: var(--text-secondary);
 	font: inherit;
 	font-size: var(--text-sm);

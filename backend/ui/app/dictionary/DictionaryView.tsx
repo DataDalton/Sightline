@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "../components/AppLink";
+import { FieldUpdates } from "../updates/UpdateSurfaces";
+import { NewRuleButton } from "../status/QualityView";
 import { useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { Select } from "../components/shared/Select";
@@ -110,6 +112,19 @@ function readableType(type: string | null): string {
 }
 
 export default function DictionaryView() {
+	const { data: ruleAnswer, mutate: mutateRules } = useSWR<{
+		sources: SourceRules[];
+	}>("/api/data-rules?dictionary=1");
+	const rulesBySource = useMemo(
+		() =>
+			new Map(
+				(ruleAnswer?.sources ?? []).map((held) => [
+					held.sourceKey,
+					held,
+				]),
+			),
+		[ruleAnswer],
+	);
 	usePageTitle("Dictionary");
 
 	const { data, error, isLoading } = useSWR<{ fields: Field[] }>(
@@ -191,6 +206,10 @@ export default function DictionaryView() {
 		);
 		if (target) setOpen(target);
 	};
+
+	const chosenRules = rulesBySource.get(source);
+	const chosenFailing =
+		chosenRules?.rules.filter((rule) => rule.status === "fail").length ?? 0;
 
 	if (error) {
 		return (
@@ -277,6 +296,32 @@ export default function DictionaryView() {
 							" that no visual references. Safe to retire, or missing from the reports that should use them."}
 					</p>
 
+					{source && chosenRules && (
+						<div className={styles.sourceRules}>
+							<span>
+								{chosenRules.rules.length === 0
+									? "No data rules on this source yet."
+									: `${chosenRules.rules.length} data rule${chosenRules.rules.length === 1 ? "" : "s"} on this source${chosenFailing > 0 ? `, ${chosenFailing} failing` : ", all passing"}.`}
+							</span>
+							{chosenRules.rules.length > 0 && (
+								<Link
+									className={styles.rulesLink}
+									href={`/status?tab=quality&source=${encodeURIComponent(source)}`}
+								>
+									See them
+								</Link>
+							)}
+							{chosenRules.canManage && (
+								<NewRuleButton
+									sourceKey={source}
+									label="Add a rule"
+									className={styles.ruleAdd}
+									onSaved={() => void mutateRules()}
+								/>
+							)}
+						</div>
+					)}
+
 					<div className={styles.tableWrap} ref={scrollRef}>
 						<table className={styles.table}>
 							<thead>
@@ -286,6 +331,7 @@ export default function DictionaryView() {
 									<th>Type</th>
 									<th>Definition</th>
 									<th className={styles.numeric}>Used on</th>
+									<th>Data rules</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -350,6 +396,20 @@ export default function DictionaryView() {
 												f.uses
 											)}
 										</td>
+										<td
+											className={styles.ruleCell}
+											onClick={(e) => e.stopPropagation()}
+										>
+											<FieldRules
+												field={f}
+												rules={rulesBySource.get(
+													f.sourceKey,
+												)}
+												onSaved={() =>
+													void mutateRules()
+												}
+											/>
+										</td>
 									</tr>
 								))}
 								{drawn < matching.length && (
@@ -389,6 +449,61 @@ export default function DictionaryView() {
 // Fetched when the field is opened rather than with the list: the list is
 // hundreds of rows and this is a handful per row, so asking for all of it up
 // front is a query nobody reads the answer to.
+interface SourceRules {
+	sourceKey: string;
+	canManage: boolean;
+	rules: {
+		ruleId: string;
+		name: string;
+		status: "pass" | "fail" | "error" | null;
+		columns: string[];
+	}[];
+	fieldColumns: Record<string, string>;
+}
+
+// The rules checking the column behind a field, or a way to add one.
+function FieldRules({
+	field,
+	rules,
+	onSaved,
+}: {
+	field: Field;
+	rules: SourceRules | undefined;
+	onSaved: () => void;
+}) {
+	if (!rules) return null;
+	const column = rules.fieldColumns[field.name];
+	if (!column) return null;
+	const own = rules.rules.filter((rule) => rule.columns.includes(column));
+	if (own.length > 0) {
+		const failing = own.filter((rule) => rule.status === "fail").length;
+		return (
+			<Link
+				className={`${styles.ruleCount} ${failing > 0 ? styles.ruleCountBad : ""}`}
+				href={`/status?tab=quality&source=${encodeURIComponent(field.sourceKey)}`}
+				title={own.map((rule) => rule.name).join("\n")}
+			>
+				{failing > 0
+					? `${failing} failing`
+					: `${own.length} rule${own.length === 1 ? "" : "s"}`}
+			</Link>
+		);
+	}
+	if (!rules.canManage) return null;
+	return (
+		<span className={styles.ruleAddOnRow}>
+			<NewRuleButton
+				sourceKey={field.sourceKey}
+				column={column}
+				fieldName={field.name}
+				label="Add a rule"
+				className={styles.ruleAdd}
+				onSaved={onSaved}
+			/>
+		</span>
+	);
+}
+
 function UsagePanel({
 	field,
 	onOpen,
@@ -489,6 +604,7 @@ function UsagePanel({
 						×
 					</button>
 				</header>
+				<FieldUpdates sourceKey={field.sourceKey} field={field.name} />
 
 				{field.description && (
 					<p className={styles.panelBody}>{field.description}</p>

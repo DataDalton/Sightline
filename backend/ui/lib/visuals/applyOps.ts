@@ -54,7 +54,12 @@ export type RemoteOperation =
 	  }
 	| { type: "removeVisual"; visualId: string }
 	| { type: "reorderVisuals"; pageId: string; visualIds: string[] }
-	| { type: "updateReport"; title?: string; description?: string | null }
+	| {
+			type: "updateReport";
+			theme?: string;
+			title?: string;
+			description?: string | null;
+	  }
 	| {
 			type: "updatePage";
 			pageId: string;

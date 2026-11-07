@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { refusedUnless } from "@/lib/platform/capabilityGuard";
 import { createBoard, listBoards } from "@/lib/boards/store";
 import { caller, privateJson, readJson } from "../notifications/guard";
 import { failure } from "./respond";
@@ -19,6 +20,8 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
 	const identity = await caller(request);
 	if (identity instanceof NextResponse) return identity;
+	const refused = await refusedUnless(identity, "board.create");
+	if (refused) return refused;
 	const body = ((await readJson(request)) ?? {}) as Record<string, unknown>;
 	try {
 		return privateJson({

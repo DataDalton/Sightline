@@ -7,6 +7,13 @@ import {
 	resolveCategoryAccess,
 	resolveReportAccess,
 	type Permission,
+	canOnReport,
+	editingFacts,
+	editModeOn,
+	pageModesOn,
+	pagesLimitedTo,
+	getExplicitContext,
+	type EditMode,
 } from "./access";
 import { insertLog } from "../activityLog";
 import { curatedReports } from "./curated";
@@ -78,6 +85,16 @@ export interface ReportDetail extends ReportSummary {
 	protectDelete: boolean;
 	protectEdit: boolean;
 	protectAddPage: boolean;
+	theme: string | null;
+	// Whether this reader edits it, suggests a change to it, or neither.
+	editMode: EditMode;
+	// Pages where somebody's answer differs from the report's, through a right or an
+	// exception on the page itself.
+	pageModes: Record<string, EditMode>;
+	// Looks after at least one page, so may have suggestions to decide.
+	reviewsPages: boolean;
+	// Whether they decide on changes others suggest.
+	canReview: boolean;
 	pages: PageDefinition[];
 }
 
@@ -100,6 +117,9 @@ interface ReportRow {
 	// added at all, which is the report's own business.
 	protect_delete: boolean;
 	protect_edit: boolean;
+	theme?: string | null;
+	tags?: string[] | null;
+	edit_policy?: string | null;
 	protect_add_page: boolean;
 }
 
@@ -107,7 +127,7 @@ interface ReportRow {
 const reportColumns = `report_id, category_id, slug, title, description,
 	        source_key, visibility, version, modified_on,
 	        is_personal, owner_email, protect_delete, protect_edit,
-	        protect_add_page`;
+	        protect_add_page, theme, tags, edit_policy`;
 
 export async function listReports(
 	policy: PolicyClass,
@@ -138,6 +158,7 @@ export async function listReports(
 				categoryId: row.category_id,
 				isPersonal: row.is_personal,
 				ownerEmail: row.owner_email,
+				tags: row.tags,
 			},
 			context.email,
 			"view",
@@ -252,17 +273,9 @@ function noteAdministrativeRead(
 	});
 }
 
-export async function getReport(
-	policy: PolicyClass,
-	identity: Identity,
-	slug: string,
-): Promise<ReportDetail | null> {
-	const context = await getAccessContext(policy, identity);
-
-	// Fetched before the access check because the check needs the report id,
-	// and cached because the answer does not vary by reader. The check itself
-	// still runs per request, against this reader grants.
-	const report = await cachedDefinition(`report:${slug}`, async () => {
+// A report's row by its address. The same for every reader, so it is cached.
+function reportRowBySlug(slug: string) {
+	return cachedDefinition(`report:${slug}`, async () => {
 		const rows = await sql<ReportRow>(
 			`SELECT ${reportColumns}
 			 FROM reports
@@ -271,30 +284,10 @@ export async function getReport(
 		);
 		return rows[0] ?? null;
 	});
-	if (!report) return null;
+}
 
-	const access = resolveReportAccess(
-		context.grants,
-		{
-			reportId: report.report_id,
-			categoryId: report.category_id,
-			isPersonal: report.is_personal,
-			ownerEmail: report.owner_email,
-		},
-		context.email,
-		"view",
-		context.baseline,
-	);
-	if (!access.allowed || !access.permission) return null;
-
-	if (access.viaAdministration) {
-		noteAdministrativeRead(
-			context.email,
-			report.report_id,
-			report.owner_email,
-		);
-	}
-
+// Every page of a report with its visuals, before any reader's page limits.
+async function reportBody(report: ReportRow) {
 	// Two more round trips, and the same for every reader. Cached against the
 	// report id rather than the slug, so a rename does not orphan the entry.
 	const [pageRows, visualRows] = await cachedDefinition(
@@ -375,6 +368,107 @@ export async function getReport(
 		visualsByPage.set(v.page_id, list);
 	}
 
+	const pages = pageRows.map((p) => ({
+		pageId: p.page_id,
+		slug: p.slug,
+		title: p.title,
+		template: p.template,
+		sourceKey: p.source_key ?? report.source_key,
+		config: p.config ?? {},
+		protectDelete: p.protect_delete === true,
+		protectEdit: p.protect_edit === true,
+		sortOrder: p.sort_order,
+		visuals: visualsByPage.get(p.page_id) ?? [],
+	}));
+	return { pageRows, pages };
+}
+
+// A report for a scheduled run while its owner is away, when there is nobody to check.
+// Performs no access check, so it is only for a run whose owner was confirmed able to open
+// the page while they were here. See lib/deliveries/runner.
+export async function reportForScheduledRun(slug: string) {
+	const report = await reportRowBySlug(slug);
+	if (!report) return null;
+	const { pages } = await reportBody(report);
+	return {
+		reportId: report.report_id,
+		title: report.title,
+		sourceKey: report.source_key,
+		theme: report.theme ?? null,
+		pages,
+	};
+}
+
+export async function getReport(
+	policy: PolicyClass,
+	identity: Identity,
+	slug: string,
+): Promise<ReportDetail | null> {
+	const context = await getAccessContext(policy, identity);
+
+	// Fetched before the access check because the check needs the report id,
+	// and cached because the answer does not vary by reader. The check itself
+	// still runs per request, against this reader grants.
+	const report = await reportRowBySlug(slug);
+	if (!report) return null;
+
+	const access = resolveReportAccess(
+		context.grants,
+		{
+			reportId: report.report_id,
+			categoryId: report.category_id,
+			isPersonal: report.is_personal,
+			ownerEmail: report.owner_email,
+			tags: report.tags,
+		},
+		context.email,
+		"view",
+		context.baseline,
+	);
+	if (!access.allowed || !access.permission) return null;
+
+	if (access.viaAdministration) {
+		noteAdministrativeRead(
+			context.email,
+			report.report_id,
+			report.owner_email,
+		);
+	}
+
+	// From the explicit context, so reading a table never makes somebody able to
+	// change the report on it.
+	const reportRef = {
+		reportId: report.report_id,
+		categoryId: report.category_id,
+		isPersonal: report.is_personal,
+		ownerEmail: report.owner_email,
+		tags: report.tags,
+		editPolicy: report.edit_policy,
+	};
+	const [explicit, facts] = await Promise.all([
+		getExplicitContext(policy, identity.email),
+		editingFacts(),
+	]);
+	const editMode = editModeOn(explicit, reportRef, facts);
+	const limitedTo = pagesLimitedTo(
+		context.grants,
+		reportRef,
+		context.email,
+		context.baseline,
+		context.pagesByReport,
+		context.addedForPages,
+	);
+	const canReview =
+		!report.is_personal &&
+		canOnReport(
+			explicit.capabilities,
+			"report.review",
+			reportRef,
+			explicit.denied,
+		);
+
+	const { pageRows, pages } = await reportBody(report);
+
 	return {
 		reportId: report.report_id,
 		categoryId: report.category_id,
@@ -391,18 +485,22 @@ export async function getReport(
 		protectDelete: report.protect_delete === true,
 		protectEdit: report.protect_edit === true,
 		protectAddPage: report.protect_add_page === true,
-		pages: pageRows.map((p) => ({
-			pageId: p.page_id,
-			slug: p.slug,
-			title: p.title,
-			template: p.template,
-			sourceKey: p.source_key ?? report.source_key,
-			config: p.config ?? {},
-			protectDelete: p.protect_delete === true,
-			protectEdit: p.protect_edit === true,
-			sortOrder: p.sort_order,
-			visuals: visualsByPage.get(p.page_id) ?? [],
-		})),
+		theme: report.theme ?? null,
+		editMode,
+		pageModes: pageModesOn(
+			explicit,
+			reportRef,
+			pageRows.map((p) => p.page_id),
+			editMode,
+			facts,
+		),
+		canReview,
+		reviewsPages: pageRows.some(
+			(p) =>
+				explicit.capabilities.get("report.review")?.has(p.page_id) &&
+				!explicit.denied.get("report.review")?.has(p.page_id),
+		),
+		pages: pages.filter((p) => !limitedTo || limitedTo.has(p.pageId)),
 	};
 }
 

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { refusedUnless } from "@/lib/platform/capabilityGuard";
 import { resolvePolicyClass } from "@/lib/auth/policy";
 import {
 	DeliveryError,
@@ -35,6 +36,8 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
 	const identity = await caller(request);
 	if (identity instanceof NextResponse) return identity;
+	const refused = await refusedUnless(identity, "schedule.create");
+	if (refused) return refused;
 	if (!settings().alertsEnabled) {
 		return privateJson({ error: "Scheduled pages are turned off." }, 409);
 	}
@@ -45,6 +48,7 @@ export async function POST(request: NextRequest) {
 			reportSlug: String(body.reportSlug ?? ""),
 			pageId: String(body.pageId ?? ""),
 			schedule: body.schedule,
+			attachPdf: body.attachPdf === true,
 		});
 		return privateJson({ delivery });
 	} catch (error) {

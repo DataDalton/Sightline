@@ -49,6 +49,7 @@ export interface Preview {
 
 export type StepKind =
 	| "remember"
+	| "list_updates"
 	| "list_sources"
 	| "describe_source"
 	| "run_query"

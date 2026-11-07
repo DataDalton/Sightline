@@ -246,6 +246,34 @@ export async function executeQuery(
 	);
 }
 
+// Runs a query against the warehouse whatever the cache holds, and says how long
+// the warehouse took. The answer replaces what was cached, as any refresh does. The
+// same checks as an ordinary query, so it can reach nothing that one could not.
+export async function timeQueryCold(
+	identity: Identity,
+	spec: QuerySpec,
+): Promise<{ warehouseMs: number; rowCount: number }> {
+	const source = getSource(spec.sourceKey);
+	if (!source) {
+		throw new QuerySpecError(`Unknown source "${spec.sourceKey}"`);
+	}
+	await assertCanReadSource(identity, source.sourceKey);
+	assertFieldsPresent(source, spec);
+
+	const policy = await resolvePolicyClass(identity);
+	if (policy.degraded) {
+		throw new QueryAccessError(
+			"Access could not be verified. Group membership is temporarily unavailable.",
+		);
+	}
+
+	const { spec: runSpec } = pagedSpec(spec);
+	const key = buildCacheKey(source, runSpec, policy);
+	const startedAt = Date.now();
+	const entry = await runAndCache(identity, source, runSpec, policy, key);
+	return { warehouseMs: Date.now() - startedAt, rowCount: entry.rowCount };
+}
+
 // A watched source that has gone too long without a look, because the
 // warehouse was stopped and the looks were skipped, is looked at now that a
 // reader is here. The answer already held is served meanwhile, as an expired

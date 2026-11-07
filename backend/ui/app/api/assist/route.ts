@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { refusedUnless } from "@/lib/platform/capabilityGuard";
 import { getIdentity } from "@/lib/auth/identity";
 import { resolvePolicyClass } from "@/lib/auth/policy";
 import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
@@ -59,6 +60,8 @@ export async function POST(request: NextRequest) {
 			{ status: 401 },
 		);
 	}
+	const refusedHere = await refusedUnless(identity, "assistant.use");
+	if (refusedHere) return refusedHere;
 
 	let question = "";
 	let asked: string | null = null;

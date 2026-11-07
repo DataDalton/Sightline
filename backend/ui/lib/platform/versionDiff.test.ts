@@ -234,3 +234,21 @@ test("an older snapshot with no layout recorded does not report a phantom move",
 	const changes = diffSnapshots(snapshot([bare]), snapshot([bare]));
 	assert.ok(!changes.some((c) => c.kind === "moved"));
 });
+
+test("a change of theme is recorded, and a version from before themes is not", () => {
+	const visuals: never[] = [];
+	const text = (before: object, after: object) =>
+		diffSnapshots(
+			{ visuals, report: before },
+			{ visuals, report: after },
+		).map((change) => change.text);
+	assert.deepEqual(text({ theme: null }, { theme: "ocean" }), [
+		"Changed the theme",
+	]);
+	assert.deepEqual(text({ theme: "ocean" }, { theme: null }), [
+		"Went back to the app's own colours",
+	]);
+	assert.deepEqual(text({}, { theme: "ocean" }), [
+		"Saved with no visible change",
+	]);
+});

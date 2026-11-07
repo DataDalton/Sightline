@@ -53,7 +53,7 @@ export default memo(function Header() {
 		(user.policy.stale || user.policy.degraded || !user.canQueryAsUser);
 
 	return (
-		<header className={styles.header}>
+		<header data-app-chrome className={styles.header}>
 			<div className={styles.brand}>
 				<button
 					type="button"

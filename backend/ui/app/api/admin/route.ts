@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getIdentity } from "@/lib/auth/identity";
 import { resolvePolicyClass } from "@/lib/auth/policy";
-import { canAdminister } from "@/lib/platform/access";
+import { canAdminister, canDo, type Capability } from "@/lib/platform/access";
 import {
 	bootstrapLastError,
 	bootstrapReadyAt,
@@ -53,6 +53,16 @@ import { latenessDetail, latenessOf } from "@/lib/freshness/lateness";
 // Admin data, gated on group membership rather than on a per-resource grant.
 // Everything here describes other people's activity, so it is not something a
 // per-report permission should ever unlock.
+// What needs the audit permission. Everything else here is usage.
+const auditSections = new Set([
+	"activity",
+	"probes",
+	"reportAccess",
+	"subjectAccess",
+	"security",
+	"platform",
+]);
+
 export async function GET(request: NextRequest) {
 	await ensureReadyOrDegrade();
 
@@ -78,6 +88,21 @@ export async function GET(request: NextRequest) {
 		90,
 	);
 	const section = request.nextUrl.searchParams.get("section") ?? "overview";
+
+	// Someone given the audit or usage permission reaches only that. Access and
+	// settings administrators keep seeing everything, because the panes they run
+	// lean on these answers.
+	const runsAccess =
+		(await canDo(policy, identity, "access.grant")) ||
+		(await canDo(policy, identity, "settings.manage"));
+	if (!runsAccess) {
+		const needs: Capability = auditSections.has(section)
+			? "audit.view"
+			: "usage.view";
+		if (!(await canDo(policy, identity, needs))) {
+			return NextResponse.json({ error: "Not found" }, { status: 404 });
+		}
+	}
 
 	try {
 		// Drill-ins. Both take the subject from the query string, so a row in

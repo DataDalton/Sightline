@@ -28,7 +28,7 @@ import {
 	type ForecastResult,
 } from "../../lib/visuals/forecast";
 import { optionValue } from "../../lib/visuals/catalog";
-import { worldMapName } from "./worldMap";
+import { worldMapName } from "./worldMapName";
 
 // Builds the ECharts option for each visual type.
 //
@@ -345,6 +345,13 @@ function listAxisLabel(ctx: ChartContext) {
 }
 
 const baseGrid = { left: 8, right: 16, top: 30, bottom: 8, containLabel: true };
+
+// How far the plot stops above the bottom edge. A slider or a legend sits under
+// the plot, so the plot has to stop above it rather than be drawn behind it.
+function gridBottom(ctx: ChartContext): number {
+	if (ctx.options?.zoomSlider === true) return 34;
+	return ctx.style?.legend?.position === "bottom" ? 32 : baseGrid.bottom;
+}
 
 // A window onto a long series, when the author has asked for one.
 //
@@ -1134,9 +1141,7 @@ export function buildCartesian(
 				style?.legend?.show === false ? 12 : 30,
 				style?.yAxis?.label ? axisNameTop : 0,
 			),
-			// The slider sits under the plot, so the plot has to stop above
-			// it rather than being drawn behind it.
-			bottom: ctx.options?.zoomSlider === true ? 34 : baseGrid.bottom,
+			bottom: gridBottom(ctx),
 		},
 		dataZoom: zoomWindow(ctx, orientation === "horizontal" ? 1 : 0),
 		legend: legend(ctx, measures.length > 1),
@@ -2662,7 +2667,7 @@ export function buildPareto(ctx: ChartContext) {
 		animation: false,
 		color: colors.series,
 		textStyle: { color: colors.text, fontFamily: colors.font },
-		grid: { ...baseGrid, top: 30 },
+		grid: { ...baseGrid, top: 30, bottom: gridBottom(ctx) },
 		legend: legend(ctx, true),
 		tooltip: {
 			...tooltip(ctx),
@@ -3365,4 +3370,57 @@ export function buildRadar(ctx: ChartContext) {
 			},
 		],
 	};
+}
+
+// The option for a chart type, for everything but a map, which needs country shapes loaded
+// first. Shared by the page and by what the server draws for a PDF.
+export function buildForType(visualType: string, ctx: ChartContext) {
+	switch (visualType) {
+		case "pieChart":
+			return buildPie(ctx, false);
+		case "donutChart":
+			return buildPie(ctx, true);
+		case "treemapChart":
+			return buildTreemap(ctx);
+		case "funnelChart":
+			return buildFunnel(ctx);
+		case "gauge":
+			return buildGauge(ctx);
+		case "waterfallChart":
+			return buildWaterfall(ctx);
+		case "bulletChart":
+			return buildBullet(ctx);
+		case "slopeChart":
+			return buildSlope(ctx);
+		case "paretoChart":
+			return buildPareto(ctx);
+		case "histogramChart":
+			return buildHistogram(ctx);
+		case "boxPlot":
+			return buildBoxPlot(ctx);
+		case "calendarChart":
+			return buildCalendar(ctx);
+		case "timelineChart":
+			return buildTimeline(ctx);
+		case "sankeyChart":
+			return buildSankey(ctx);
+		case "heatmapChart":
+			return buildHeatmap(ctx);
+		case "radarChart":
+			return buildRadar(ctx);
+		case "horizontalBarChart":
+			return buildCartesian(ctx, "bar", "horizontal");
+		case "stackedBarChart":
+			return buildCartesian(ctx, "stacked100");
+		case "comboChart":
+			return buildCartesian(ctx, "combo");
+		case "areaChart":
+			return buildCartesian(ctx, "area");
+		case "scatterChart":
+			return buildScatter(ctx);
+		case "lineChart":
+			return buildCartesian(ctx, "line");
+		default:
+			return buildCartesian(ctx, "bar");
+	}
 }

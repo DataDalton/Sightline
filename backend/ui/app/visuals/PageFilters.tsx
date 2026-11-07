@@ -75,6 +75,15 @@ interface PageState {
 	drillUp: (visualId: string, toDepth?: number) => void;
 
 	clearAll: () => void;
+	// Puts the page on what a saved view recorded, or back on what it opens on
+	// when given nothing.
+	applySelection: (
+		selection: {
+			filters?: Record<string, FilterClause[]>;
+			dimension?: string | null;
+			grain?: string | null;
+		} | null,
+	) => void;
 	activeClauses: FilterClause[];
 	// Everything a given visual should apply. Excludes that visual's own cross
 	// filter, and includes its own drill path.
@@ -100,6 +109,7 @@ const PageFilterContext = createContext<PageState>({
 	drillDown: () => {},
 	drillUp: () => {},
 	clearAll: () => {},
+	applySelection: () => {},
 	activeClauses: [],
 	clausesFor: () => [],
 	clausesExcept: () => [],
@@ -236,6 +246,23 @@ export function PageFilterProvider({
 		// not a filter applied on top of it.
 	}, []);
 
+	const applySelection = useCallback(
+		(
+			selection: {
+				filters?: Record<string, FilterClause[]>;
+				dimension?: string | null;
+				grain?: string | null;
+			} | null,
+		) => {
+			setCrossFilterState(null);
+			setDrillByVisual({});
+			setByWidget(selection?.filters ?? opening ?? {});
+			setSelectedDimension(selection?.dimension ?? null);
+			setSelectedGrain(selection?.grain ?? null);
+		},
+		[opening],
+	);
+
 	const widgetClauses = useMemo(
 		() => Object.values(byWidget).flat(),
 		[byWidget],
@@ -295,6 +322,7 @@ export function PageFilterProvider({
 			drillDown,
 			drillUp,
 			clearAll,
+			applySelection,
 			activeClauses,
 			clausesFor,
 			clausesExcept,
@@ -316,6 +344,7 @@ export function PageFilterProvider({
 			drillDown,
 			drillUp,
 			clearAll,
+			applySelection,
 			activeClauses,
 			clausesFor,
 			clausesExcept,
@@ -328,6 +357,18 @@ export function PageFilterProvider({
 			{children}
 		</PageFilterContext.Provider>
 	);
+}
+
+// The fields the open page waits for. Only given on a page being read, so an author
+// editing the page still sees what they are building.
+const FilterGateContext = createContext<{
+	pageRequireFilter: unknown;
+} | null>(null);
+
+export const FilterGateProvider = FilterGateContext.Provider;
+
+export function useFilterGate() {
+	return useContext(FilterGateContext);
 }
 
 export function usePageFilters() {

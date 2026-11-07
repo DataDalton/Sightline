@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "../components/AppLink";
+import { aftermathOf } from "../../lib/alerts/backtest";
 import useSWR from "swr";
 import type { AlertEvent, AlertRecord } from "../../lib/alerts/store";
 import { describeConditions } from "../../lib/explore/conditions";
@@ -51,19 +52,39 @@ function History({ id }: { id: string }) {
 	if (data.events.length === 0) {
 		return <p className={styles.fieldHint}>It has not fired yet.</p>;
 	}
+	const outcome = aftermathOf(data.events);
 	return (
-		<ol className={styles.history}>
-			{data.events.map((e) => (
-				<li key={e.id}>
-					<time dateTime={e.firedOn} className={styles.historyTime}>
-						{clock(e.firedOn)}
-					</time>
-					<span className={styles.historyBody}>
-						{e.body || e.title}
-					</span>
-				</li>
-			))}
-		</ol>
+		<>
+			<p className={styles.fieldHint}>
+				Fired {outcome.fired} time{outcome.fired === 1 ? "" : "s"},
+				recovered {outcome.recovered}
+				{outcome.typicalDaysToRecover !== null
+					? `, typically after ${outcome.typicalDaysToRecover.toFixed(1)} days`
+					: ""}
+				.
+				{outcome.verdict === "noisy"
+					? " It goes off often, so it may need a tighter line."
+					: ""}
+			</p>
+			<ol className={styles.history}>
+				{data.events.map((e) => (
+					<li key={e.id}>
+						<time
+							dateTime={e.firedOn}
+							className={styles.historyTime}
+						>
+							{clock(e.firedOn)}
+						</time>
+						<span className={styles.historyBody}>
+							{e.body || e.title}
+							{e.recoveredOn
+								? ` Recovered ${clock(e.recoveredOn)}.`
+								: ""}
+						</span>
+					</li>
+				))}
+			</ol>
+		</>
 	);
 }
 

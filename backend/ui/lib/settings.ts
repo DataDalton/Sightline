@@ -113,6 +113,20 @@ export interface PlatformSettings {
 	// endpoint is one model already and needs none. An AI Gateway serves
 	// several from one address and picks by this.
 	assistantModel: string;
+	// Report themes an administrator has defined, as text. See lib/visuals/themes.
+	customThemes: string;
+	// Who can edit a report that has Maintainers, where neither it nor its category
+	// says. "maintainers" has other Editors suggest. "any" lets them edit.
+	defaultEditPolicy: string;
+	// Whether the person who asked for a change can also be the one to approve it.
+	requireSecondApprover: boolean;
+	// Days a suggestion or publish request waits before administrators see it too.
+	requestEscalationDays: number;
+	// Which findings of a field sync post themselves to Updates.
+	autoUpdateFieldAdded: boolean;
+	autoUpdateFieldRemoved: boolean;
+	autoUpdateFieldRenamed: boolean;
+	autoUpdateDefinitionChanged: boolean;
 
 	// Alerts somebody sets on a measure. Off stops every check and hides the
 	// feature, without deleting anybody's alerts.
@@ -161,6 +175,14 @@ export const defaultSettings: PlatformSettings = {
 	assistantEndpoint: "",
 	assistantEndpointUrl: "",
 	assistantModel: "",
+	customThemes: "",
+	defaultEditPolicy: "maintainers",
+	requireSecondApprover: false,
+	requestEscalationDays: 7,
+	autoUpdateFieldAdded: true,
+	autoUpdateFieldRemoved: true,
+	autoUpdateFieldRenamed: true,
+	autoUpdateDefinitionChanged: true,
 
 	alertsEnabled: true,
 	pushEnabled: false,
@@ -246,6 +268,7 @@ const numericBounds: Record<NumericSetting, [number, number]> = {
 	telemetryMaxBatch: [1, 100_000],
 	telemetryMaxBuffer: [1, 1_000_000],
 	retentionMonths: [0, 120],
+	requestEscalationDays: [1, 365],
 };
 
 export function coerceNumber(key: NumericSetting, raw: string): number {
@@ -360,6 +383,14 @@ export const writableSettings = [
 	"assistantEndpoint",
 	"assistantEndpointUrl",
 	"assistantModel",
+	"customThemes",
+	"defaultEditPolicy",
+	"requireSecondApprover",
+	"requestEscalationDays",
+	"autoUpdateFieldAdded",
+	"autoUpdateFieldRemoved",
+	"autoUpdateFieldRenamed",
+	"autoUpdateDefinitionChanged",
 	"alertsEnabled",
 	"pushEnabled",
 	"retentionMonths",

@@ -612,6 +612,12 @@ export function diffVersions(
 			scalar(reportAfter?.description),
 			true,
 		),
+		field(
+			"Theme",
+			scalar(reportBefore?.theme),
+			scalar(reportAfter?.theme),
+			true,
+		),
 	].filter((row): row is FieldRow => row !== null);
 
 	const counts = {

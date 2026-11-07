@@ -79,6 +79,9 @@ export type VisualOption =
 	// A line of text for each measure on the visual, stored as a map of measure
 	// name to text.
 	| { key: string; label: string; kind: "measureText"; help?: string }
+	// Other reports, chosen from the ones the author can open, stored as a list
+	// of { slug, title, label }.
+	| { key: string; label: string; kind: "reportLinks"; help?: string }
 	// A field chosen from the source the visual reads. "none" is always
 	// offered, because every field option here is one an author may not want.
 	| {
@@ -128,6 +131,14 @@ export interface VisualTypeDefinition {
 		// False where the value axis is fixed by what the chart draws, so
 		// starting it at zero is not a choice.
 		axisZero?: boolean;
+		// A lowest and highest value for the value axis, and its gridlines.
+		axisBounds?: boolean;
+		// A label for the axis that is not the value axis.
+		crossAxisLabel?: boolean;
+		// Turning the names along the bottom, for names that collide.
+		labelRotation?: boolean;
+		// Curving a line, its width and its points.
+		lineStyle?: boolean;
 		legend?: boolean;
 		// "Tooltip shows" for a chart that can show either every series at a
 		// position or one point. Elsewhere the chart's shape decides.
@@ -192,6 +203,13 @@ export function optionValue<T = unknown>(
 // A forecast past the last date, for the chart types drawn across periods.
 // Shared so every type offers the same two controls with the same limits.
 const forecastOptions: VisualOption[] = [
+	{
+		key: "hideUnusual",
+		label: "Do not mark unusual points",
+		kind: "toggle",
+		fallback: false,
+		help: "Marks are on by default, with a one line reason on hover. Unusual is measured against the rest of the chart, or on a time axis against the points beside it.",
+	},
 	{
 		key: "forecast",
 		label: "Forecast ahead",
@@ -371,6 +389,9 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			tooltipShare: true,
 			rounding: true,
 			ruleStyle: "mark",
+			axisBounds: true,
+			crossAxisLabel: true,
+			labelRotation: true,
 		},
 		options: [
 			{
@@ -440,6 +461,8 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			tooltipShare: true,
 			rounding: true,
 			ruleStyle: "mark",
+			axisBounds: true,
+			crossAxisLabel: true,
 		},
 		options: [
 			{
@@ -506,6 +529,10 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			tooltipShare: true,
 			rounding: true,
 			ruleStyle: "mark",
+			axisBounds: true,
+			crossAxisLabel: true,
+			labelRotation: true,
+			lineStyle: true,
 		},
 		options: [
 			{
@@ -559,6 +586,10 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			referenceLines: true,
 			tooltipMode: true,
 			tooltipShare: true,
+			axisBounds: true,
+			crossAxisLabel: true,
+			labelRotation: true,
+			lineStyle: true,
 		},
 		options: [
 			{
@@ -602,6 +633,10 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			referenceLines: true,
 			tooltipMode: true,
 			tooltipShare: true,
+			axisBounds: true,
+			crossAxisLabel: true,
+			labelRotation: true,
+			lineStyle: true,
 		},
 		options: [
 			{
@@ -663,7 +698,14 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			dimensions: { min: 1, max: 1 },
 			measures: { min: 1, max: 1 },
 		},
-		supports: { axes: true, referenceLines: true, tooltipMode: true },
+		supports: {
+			axes: true,
+			referenceLines: true,
+			tooltipMode: true,
+			axisBounds: true,
+			crossAxisLabel: true,
+			labelRotation: true,
+		},
 		defaultLayout: { w: 6, h: 5 },
 	},
 
@@ -815,6 +857,9 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			legend: true,
 			tooltipMode: true,
 			rounding: true,
+			axisBounds: true,
+			crossAxisLabel: true,
+			labelRotation: true,
 		},
 		defaultLayout: { w: 6, h: 5 },
 	},
@@ -891,6 +936,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			axes: true,
 			singleColor: true,
 			axisZero: false,
+			crossAxisLabel: true,
 		},
 		options: [
 			{
@@ -948,7 +994,15 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			dimensions: { min: 1, max: 1, label: "Ranked by" },
 			measures: { min: 1, max: 1 },
 		},
-		supports: { color: true, axes: true, legend: true, singleColor: true },
+		supports: {
+			color: true,
+			axes: true,
+			legend: true,
+			singleColor: true,
+			axisBounds: true,
+			crossAxisLabel: true,
+			labelRotation: true,
+		},
 		options: [
 			{
 				key: "cutoff",
@@ -1035,6 +1089,8 @@ export const visualCatalog: VisualTypeDefinition[] = [
 			axes: true,
 			referenceLines: true,
 			singleColor: true,
+			axisBounds: true,
+			crossAxisLabel: true,
 		},
 		options: [
 			{
@@ -1524,6 +1580,46 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		defaultLayout: { w: 12, h: 3 },
 	},
 
+	// --- Navigation --------------------------------------------------------
+	{
+		type: "navLinks",
+		label: "Report navigation",
+		category: "layout",
+		guidance:
+			"Buttons or tabs that move between related reports, so a set of them reads as one application. Readers only see the reports they can open.",
+		encoding: {
+			dimensions: { min: 0, max: 0 },
+			measures: { min: 0, max: 0 },
+		},
+		supports: {},
+		options: [
+			{
+				key: "links",
+				label: "Reports",
+				kind: "reportLinks",
+				help: "The order here is the order on the page. The report being read is marked rather than linked, so the same row can go on every report in the set.",
+			},
+			{
+				key: "appearance",
+				label: "Drawn as",
+				kind: "select",
+				choices: [
+					{ value: "buttons", label: "Buttons" },
+					{ value: "tabs", label: "Tabs" },
+				],
+				fallback: "buttons",
+			},
+			{
+				key: "carryFilters",
+				label: "Keep the page's filters when moving",
+				kind: "toggle",
+				fallback: true,
+				help: "Moving to another report keeps whatever the reader has set. A report with no filter on a field ignores it.",
+			},
+		],
+		defaultLayout: { w: 12, h: 1 },
+	},
+
 	// --- Text --------------------------------------------------------------
 	{
 		type: "sectionHeader",
@@ -1603,6 +1699,82 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		category: "text",
 		guidance:
 			"A note, caveat or definition. Worth adding wherever a number needs explaining.",
+		encoding: {
+			dimensions: { min: 0, max: 0 },
+			measures: { min: 0, max: 0 },
+		},
+		supports: {},
+		defaultLayout: { w: 4, h: 2 },
+	},
+	{
+		type: "forecastChart",
+		label: "Forecast",
+		category: "comparison",
+		guidance:
+			"History, a forecast line, the likely range and a plain sentence saying how far to trust it.",
+		encoding: {
+			dimensions: { min: 1, max: 1 },
+			measures: { min: 1, max: 3 },
+		},
+		supports: {
+			color: true,
+			legend: true,
+			axisZero: true,
+			axisBounds: true,
+		},
+		options: [
+			{
+				key: "forecastPeriods",
+				label: "Periods to forecast",
+				kind: "number",
+				min: 1,
+				max: 180,
+				step: 1,
+				help: "Left empty it forecasts 90 days, 13 weeks, 12 months or 4 quarters ahead, fewer where the history is short.",
+			},
+		],
+		defaultLayout: { w: 6, h: 6 },
+	},
+	{
+		type: "paceTile",
+		label: "On pace",
+		category: "summary",
+		guidance:
+			"Where a figure that adds up is heading by the end of the year, against a target. Choose the date field and the measure.",
+		encoding: {
+			dimensions: { min: 1, max: 1 },
+			measures: { min: 1, max: 1 },
+		},
+		supports: {},
+		options: [
+			{
+				key: "paceTarget",
+				label: "Target for the year",
+				kind: "number",
+				step: 1,
+			},
+		],
+		defaultLayout: { w: 4, h: 3 },
+	},
+	{
+		type: "forecastRanking",
+		label: "Forecast ranking",
+		category: "comparison",
+		guidance:
+			"Which region or product is heading where. Choose the group, then the date field, and a measure.",
+		encoding: {
+			dimensions: { min: 2, max: 2 },
+			measures: { min: 1, max: 1 },
+		},
+		supports: {},
+		defaultLayout: { w: 6, h: 5 },
+	},
+	{
+		type: "dataQualityTile",
+		label: "Data quality",
+		category: "text",
+		guidance:
+			"How the data rules on this source are doing, so readers see it beside the figures.",
 		encoding: {
 			dimensions: { min: 0, max: 0 },
 			measures: { min: 0, max: 0 },
@@ -1768,6 +1940,7 @@ const contentSized = new Set([
 	"kpiRow",
 	"entityHeader",
 	"sectionHeader",
+	"navLinks",
 	"textPanel",
 	"blockedNotice",
 	"dimensionSwitch",

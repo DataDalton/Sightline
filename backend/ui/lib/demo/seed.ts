@@ -28,6 +28,7 @@ import {
 	type ReportSeed,
 } from "./content";
 import { seedArrivals } from "./arrivals";
+import { seedDataRules, seedGoals, seedUpdates } from "./reviewContent";
 import { sampleTables, sources } from "./datasets";
 
 // Everything the demonstration shows, written into the local Postgres on
@@ -638,6 +639,10 @@ async function seedAlert(): Promise<void> {
 // separate module instances under the development server, and both seed.
 // Whichever arrives second waits, then finds everything there.
 const seedLockKey = 8577410;
+// Someone other than the demo reader, so not every goal is theirs to change.
+const colleague =
+	people.find((person) => person.email !== localIdentityEmail)?.email ??
+	localIdentityEmail;
 
 // The catalogue the sample tables sit in is the database itself, so the
 // three part names the platform writes resolve in Postgres.
@@ -666,6 +671,15 @@ export async function seedDemo(): Promise<void> {
 		});
 		await seedPageAlerts().catch((error) => {
 			console.warn("Demo page alerts were not created:", error);
+		});
+		await seedDataRules().catch((error) => {
+			console.warn("Demo data rules were not created:", error);
+		});
+		await seedUpdates().catch((error) => {
+			console.warn("Demo updates were not created:", error);
+		});
+		await seedGoals(colleague).catch((error) => {
+			console.warn("Demo goals were not created:", error);
 		});
 	});
 	await loadRegistry(true);

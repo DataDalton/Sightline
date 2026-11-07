@@ -38,7 +38,7 @@ export async function GET(
 			entries: await listHistory(report.reportId),
 			// Restoring is an edit, so the client only offers it to someone
 			// who would be allowed to make one.
-			canRestore: report.permission !== "view",
+			canRestore: report.editMode === "edit",
 		});
 	} catch (error) {
 		console.error("History read failed:", error);

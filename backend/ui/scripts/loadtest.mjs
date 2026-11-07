@@ -56,7 +56,7 @@ function option(name, fallback) {
 const base = option("url", "http://localhost:3001");
 const databaseUrl = option(
 	"database",
-	"postgres://sightline:sightline@localhost:55432/demo",
+	"postgres://sightline:sightline@localhost:15432/demo",
 );
 const stages = option("stages", "250,500,1000,2000,4000,8000")
 	.split(",")

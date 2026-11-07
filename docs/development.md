@@ -29,7 +29,7 @@ npm run dev2 -- --reset   # starts again from the sample data
 
 Runs the whole platform at `http://localhost:3001` with no Databricks
 workspace, no login and nothing in `.env`. It needs Node 20.12 or newer,
-internet on the first run, and ports 3001 and 55432 free. Run it or `npm run
+internet on the first run, and ports 3001 and 15432 free. Run it or `npm run
 dev` at one time, not both, because they build into the same `.next` folder.
 
 - **Postgres** comes from the `embedded-postgres` package, installed on first
@@ -62,11 +62,23 @@ npm run dev2          # in one terminal
 npm run screenshots   # in another
 ```
 
-Photographs a set of demo pages into `docs/images` at twice the pixel density,
-using an installed Chrome or Edge through its debugging protocol, so no
+Photographs a set of demo pages into `docs/images` at 4K, a full HD window at
+twice the pixel density, using an installed Chrome or Edge through its debugging protocol, so no
 browser package is added. Set `CHROME_PATH` when neither is found where they
 usually install. The pages are listed at the top of
 `backend/ui/scripts/screenshots.mjs`.
+
+### Checking the layout at other sizes
+
+```bash
+npm run dev2            # in one terminal
+npm run check:scaling   # in another
+```
+
+Opens each page at phone, tablet, laptop, full HD, QHD and 4K sizes, then resizes
+it without a reload. Fails when a page scrolls sideways, cuts something off, leaves
+a wide monitor unused or leaves a chart the wrong size. Pictures of each go to
+`backend/ui/.demo/scaling`.
 
 ## Tests
 
@@ -114,3 +126,7 @@ backend/ui/
   scripts/        The demo launcher and the documentation screenshots
 docs/             This documentation and the logo
 ```
+
+## Trying permissions locally
+
+Outside a deployment whoever runs the app administers it, so nobody can be limited. Start the demo with `LOCAL_RIGHTS_FROM_ROLES=1` to take rights from the role tables instead, and send `X-Forwarded-Email` to act as someone else. Give yourself the Administrator role first, because the switch applies to you too. It has no effect in a deployment.

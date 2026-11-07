@@ -86,7 +86,7 @@ export function slug(name: string): string {
 }
 
 // The parameter a field is written under, kept clear of the names this owns.
-function fieldParam(field: string): string {
+export function fieldParam(field: string): string {
 	const key = slug(field);
 	return reserved.has(key) ? `${key}_` : key;
 }

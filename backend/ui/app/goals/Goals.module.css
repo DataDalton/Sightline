@@ -1,0 +1,88 @@
+.strip {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+	gap: var(--space-2);
+	margin-bottom: var(--space-3);
+}
+
+.goal {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+}
+
+.goalHead {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+}
+
+.goalTitle {
+	flex: 1;
+	font-size: var(--text-sm);
+}
+
+.state {
+	padding: 2px var(--space-2);
+	border-radius: var(--radius-sm);
+	color: var(--surface-raised);
+	font-size: var(--text-xs);
+	font-weight: 600;
+}
+
+.statedone,
+.stateonTrack {
+	background: var(--success);
+}
+
+.statebehind {
+	background: var(--warning);
+}
+
+.statelate {
+	background: var(--danger);
+}
+
+.figures {
+	margin: 0;
+	font-size: var(--text-sm);
+	font-variant-numeric: tabular-nums;
+}
+
+.bar {
+	position: relative;
+	height: 6px;
+	border-radius: 3px;
+	background: var(--state-hover);
+}
+
+.fill {
+	height: 100%;
+	border-radius: 3px;
+	background: var(--brand);
+}
+
+.expected {
+	position: absolute;
+	top: -3px;
+	bottom: -3px;
+	width: 2px;
+	background: var(--text-primary);
+}
+
+.goalFoot {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-2);
+}
+
+.muted {
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+}

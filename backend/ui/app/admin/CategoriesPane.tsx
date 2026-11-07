@@ -59,7 +59,7 @@ export default function CategoriesPane() {
 	const [busy, setBusy] = useState(false);
 	const [failure, setFailure] = useState<string | null>(null);
 	// The category a removal is being confirmed for. Removing one also removes
-	// its editor role and every assignment of it.
+	// its Maintainer role and every assignment of it.
 	const [removingCategory, setRemovingCategory] = useState<{
 		categoryId: string;
 		name: string;
@@ -382,8 +382,8 @@ export default function CategoriesPane() {
 					body={
 						<>
 							<strong>{removingCategory.name}</strong> leaves the
-							navigation, and its editor role stops applying to
-							everybody it was assigned to.
+							navigation, and its Maintainer role stops applying
+							to everybody it was assigned to.
 						</>
 					}
 					confirmLabel="Remove category"

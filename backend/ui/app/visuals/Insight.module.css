@@ -1,0 +1,231 @@
+.scenario {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	margin-bottom: var(--space-3);
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid var(--brand);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	font-size: var(--text-sm);
+}
+
+.select {
+	padding: var(--space-1) var(--space-2);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-sm);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font: inherit;
+}
+
+.percent {
+	min-width: 44px;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.simulated {
+	flex: 1;
+	min-width: 200px;
+	color: var(--warning);
+}
+
+.button {
+	padding: var(--space-1) var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-sm);
+	background: none;
+	color: var(--text-primary);
+	font: inherit;
+	font-size: var(--text-sm);
+	cursor: pointer;
+}
+
+.button:hover {
+	background: var(--state-hover);
+}
+
+.unusual {
+	padding: var(--space-3) var(--space-5) 0;
+}
+
+.unusualList {
+	margin: var(--space-2) 0 0;
+	padding-left: var(--space-4);
+	font-size: var(--text-sm);
+}
+
+.link {
+	padding: 0;
+	border: none;
+	background: none;
+	color: var(--brand);
+	font: inherit;
+	cursor: pointer;
+}
+
+.track {
+	margin: var(--space-1) var(--space-3);
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+}
+
+.muted {
+	color: var(--text-muted);
+	font-size: var(--text-sm);
+}
+
+.pace {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	padding: var(--space-3);
+	font-size: var(--text-sm);
+}
+
+.paceValue {
+	font-size: 28px;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+}
+
+.good {
+	color: var(--success);
+	font-weight: 600;
+}
+
+.bad {
+	color: var(--danger);
+	font-weight: 600;
+}
+
+.paceBar {
+	height: 6px;
+	border-radius: 3px;
+	background: var(--state-hover);
+}
+
+.paceFillGood,
+.paceFillBad {
+	height: 100%;
+	border-radius: 3px;
+}
+
+.paceFillGood {
+	background: var(--success);
+}
+
+.paceFillBad {
+	background: var(--danger);
+}
+
+.ranking {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: var(--text-sm);
+}
+
+.ranking th,
+.ranking td {
+	padding: var(--space-1) var(--space-3);
+	border-bottom: 1px solid var(--border-subtle);
+	text-align: left;
+}
+
+.ranking .number {
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+
+.scenarioHead,
+.scenarioRow {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-2);
+}
+
+.scenarioSpacer {
+	flex: 1;
+}
+
+.scenarioNote {
+	margin: 0;
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+}
+
+.percentInput {
+	width: 64px;
+	padding: var(--space-1) var(--space-2);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-sm);
+	background: none;
+	color: var(--text-primary);
+	font: inherit;
+	font-variant-numeric: tabular-nums;
+}
+
+/* Along the bottom of the page, so the figures it changes stay in view above it. */
+.dock {
+	position: sticky;
+	bottom: var(--space-3);
+	z-index: 40;
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	margin: var(--space-4) var(--space-5) var(--space-3);
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid var(--warning);
+	border-radius: var(--radius-lg);
+	background: var(--surface-raised);
+	font-size: var(--text-sm);
+	box-shadow: 0 8px 28px rgb(0 0 0 / 30%);
+}
+
+.dockHead {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-2);
+}
+
+.dockTag {
+	padding: 1px var(--space-2);
+	border-radius: 999px;
+	background: var(--warning);
+	color: var(--brand-contrast);
+	font-size: var(--text-xs);
+	font-weight: 700;
+}
+
+.dockSummary {
+	color: var(--text-secondary);
+}
+
+.dockRows {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	padding-top: var(--space-2);
+	border-top: 1px solid var(--border-subtle);
+}
+
+.rowField {
+	flex: 0 1 200px;
+	min-width: 140px;
+}
+
+.slider {
+	flex: 1 1 200px;
+	min-width: 120px;
+	accent-color: var(--brand);
+}
+
+.percentBox {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-variant-numeric: tabular-nums;
+}

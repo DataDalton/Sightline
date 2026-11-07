@@ -351,6 +351,7 @@ export interface AlertEvent {
 	title: string;
 	body: string;
 	firings: number;
+	recoveredOn: string | null;
 }
 
 export async function alertEvents(
@@ -364,8 +365,9 @@ export async function alertEvents(
 		title: string;
 		body: string;
 		firings: number;
+		recovered_on: string | null;
 	}>(
-		`SELECT e.event_id::text, e.fired_on::text, e.title, e.body, e.firings
+		`SELECT e.event_id::text, e.fired_on::text, e.title, e.body, e.firings, e.recovered_on::text
 		 FROM alert_events e
 		 JOIN alert_rules r ON r.rule_id = e.rule_id
 		 WHERE r.owner_email = $1 AND e.rule_id = $2
@@ -378,6 +380,7 @@ export async function alertEvents(
 		title: r.title,
 		body: r.body,
 		firings: r.firings,
+		recoveredOn: r.recovered_on,
 	}));
 }
 

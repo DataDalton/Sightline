@@ -1,6 +1,7 @@
 import { isDatabricksApp, workspaceHost } from "../runtime";
 import { settings } from "../settings";
 import { readChatStream, type ToolCall } from "./chatStream";
+import { refusalMessage } from "./refusal";
 
 export type { ToolCall };
 
@@ -72,6 +73,15 @@ export type ChatMessage =
 	| { role: "assistant"; content: string | null; tool_calls?: ToolCall[] }
 	| { role: "tool"; tool_call_id: string; content: string };
 
+// One message with a picture in it, for a single question about that picture.
+export interface PictureMessage {
+	role: "user";
+	content: (
+		| { type: "text"; text: string }
+		| { type: "image_url"; image_url: { url: string } }
+	)[];
+}
+
 export interface ToolDefinition {
 	type: "function";
 	function: {
@@ -106,7 +116,7 @@ export interface StreamHandlers {
 async function post(
 	url: string,
 	authorization: string,
-	messages: ChatMessage[],
+	messages: (ChatMessage | PictureMessage)[],
 	tools: ToolDefinition[],
 	maxTokens: number,
 	handlers: StreamHandlers,
@@ -141,9 +151,10 @@ async function post(
 
 	if (!response.ok) {
 		const detail = await response.text().catch(() => "");
-		throw new AssistantFailed(
-			`The model endpoint answered ${response.status}. ${detail.slice(0, 300)}`,
+		console.warn(
+			`Assistant model answered ${response.status}: ${detail.slice(0, 300)}`,
 		);
+		throw new AssistantFailed(refusalMessage(response.status));
 	}
 
 	// An endpoint that ignores the stream flag answers with one JSON body,
@@ -186,7 +197,7 @@ async function post(
 // answer.
 export async function converse(
 	callerToken: string | null,
-	messages: ChatMessage[],
+	messages: (ChatMessage | PictureMessage)[],
 	tools: ToolDefinition[] = [],
 	handlers: StreamHandlers = {},
 	maxTokens = 8000,

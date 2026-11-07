@@ -1,5 +1,3 @@
-"use client";
-
 import type { ColorSpec, PaletteToken } from "../../lib/visuals/style";
 
 // Resolves stored colour specs against the active theme.
@@ -59,7 +57,22 @@ export interface ThemeColors {
 	resolve: (spec: ColorSpec | undefined, fallback: string) => string;
 }
 
-function readVariable(name: string, fallback: string): string {
+// A report's theme, read here as well as written to the document. A chart reads its
+// colours while the page first draws, which is before an effect could have written
+// them anywhere, and the first draw would otherwise use the wrong palette.
+let themeOverrides: Record<string, string> | null = null;
+
+export function setThemeOverrides(tokens: Record<string, string> | null): void {
+	themeOverrides = tokens;
+}
+
+function readVariable(
+	name: string,
+	fallback: string,
+	tokens: Record<string, string> | null,
+): string {
+	const themed = tokens?.[name];
+	if (themed) return themed;
 	if (typeof window === "undefined") return fallback;
 	const value = getComputedStyle(document.documentElement)
 		.getPropertyValue(name)
@@ -67,9 +80,14 @@ function readVariable(name: string, fallback: string): string {
 	return value || fallback;
 }
 
-export function readThemeColors(): ThemeColors {
-	const token = (t: PaletteToken) =>
-		readVariable(tokenVariable[t], fallbacks[t]);
+// The server has no document to read and several reports drawing at once, so it names the
+// theme's tokens here rather than setting them for everyone.
+export function readThemeColors(
+	tokens: Record<string, string> | null = themeOverrides,
+): ThemeColors {
+	const variable = (name: string, fallback: string) =>
+		readVariable(name, fallback, tokens);
+	const token = (t: PaletteToken) => variable(tokenVariable[t], fallbacks[t]);
 
 	const resolve = (spec: ColorSpec | undefined, fallback: string): string => {
 		if (!spec) return fallback;
@@ -88,16 +106,16 @@ export function readThemeColors(): ThemeColors {
 			token("chart-7"),
 			token("chart-8"),
 		],
-		grid: readVariable("--chart-grid", "#e5e8ec"),
-		axis: readVariable("--chart-axis", "#767d87"),
-		text: readVariable("--text-secondary", "#4a5059"),
-		textMuted: readVariable("--text-muted", "#767d87"),
-		surface: readVariable("--surface-raised", "#ffffff"),
-		tooltipBg: readVariable("--chart-tooltip-bg", "#16181d"),
-		tooltipText: readVariable("--chart-tooltip-text", "#ffffff"),
-		positive: readVariable("--delta-positive", "#1a7f45"),
-		negative: readVariable("--delta-negative", "#c22b2b"),
-		font: readVariable("--font-sans", "system-ui, sans-serif"),
+		grid: variable("--chart-grid", "#e5e8ec"),
+		axis: variable("--chart-axis", "#767d87"),
+		text: variable("--text-secondary", "#4a5059"),
+		textMuted: variable("--text-muted", "#767d87"),
+		surface: variable("--surface-raised", "#ffffff"),
+		tooltipBg: variable("--chart-tooltip-bg", "#16181d"),
+		tooltipText: variable("--chart-tooltip-text", "#ffffff"),
+		positive: variable("--delta-positive", "#1a7f45"),
+		negative: variable("--delta-negative", "#c22b2b"),
+		font: variable("--font-sans", "system-ui, sans-serif"),
 		resolve,
 	};
 }

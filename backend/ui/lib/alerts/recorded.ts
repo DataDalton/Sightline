@@ -66,6 +66,9 @@ export async function recordAccess(
 		   SELECT owner_email, source_key FROM deliveries
 		   WHERE enabled AND source_key IS NOT NULL
 		   UNION
+		   SELECT owner_email, unnest(pdf_sources) FROM deliveries
+		   WHERE enabled AND attach_pdf
+		   UNION
 		   SELECT s.email AS owner_email, a.source_key
 		   FROM page_alert_subscriptions s
 		   JOIN page_alerts a ON a.alert_id = s.alert_id AND a.is_active

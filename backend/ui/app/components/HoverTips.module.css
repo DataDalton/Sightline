@@ -1,0 +1,13 @@
+.tip {
+	position: fixed;
+	z-index: 1000;
+	width: max-content;
+	padding: var(--space-2) var(--space-3);
+	border-radius: var(--radius-md);
+	background: var(--chart-tooltip-bg);
+	color: var(--chart-tooltip-text);
+	font-size: var(--text-xs);
+	line-height: 1.45;
+	white-space: pre-line;
+	pointer-events: none;
+}

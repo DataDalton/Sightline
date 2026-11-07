@@ -3,7 +3,7 @@ import type { Identity } from "../auth/identity";
 import type { PolicyClass } from "../auth/policy";
 import { catalogAccessEnabled, readableSources } from "../auth/sourceAccess";
 import { effectiveAdminGroups, settings } from "../settings";
-import { isDatabricksApp } from "../runtime";
+import { isDatabricksApp, localRightsFromRoles } from "../runtime";
 import { loadAssignments } from "./roles";
 import { announce, onChange } from "./changes";
 import {
@@ -23,7 +23,25 @@ import {
 	type Capability,
 	type CapabilityMap,
 	type Permission,
+	atLeast,
+	canOnReport,
+	editModeFor,
+	personalViewKey,
+	readerCapabilities,
+	resolveReportAccess,
+	tagScope,
+	type EditMode,
+	type EditPolicy,
+	type ReportRef,
 } from "./accessRules";
+import {
+	editingFacts,
+	loadAttributeAssignments,
+	loadPermissionGrants,
+	maintainersOf,
+	type EditingFacts,
+} from "./permissionStore";
+import { openPublishRequests } from "./publishRequests";
 import { perProcess } from "../perProcess";
 
 // Resolves what a caller may open and what they may do, from the tables that
@@ -53,15 +71,27 @@ export type {
 	ReportRef,
 	RoleDefinition,
 	ScopeType,
+	EditMode,
+	EditPolicy,
+	SubjectType,
 } from "./accessRules";
+
+export { editingFacts };
 
 export {
 	atLeast,
 	builtinRoles,
 	can,
+	canOnReport,
+	permissionFor,
+	tagScope,
+	isEditPolicy,
+	explainRights,
 	capabilities,
 	isCapability,
 	resolveCategoryAccess,
+	pagesLimitedTo,
+	personalViewKey,
 	resolvePageAccess,
 	resolveReportAccess,
 } from "./accessRules";
@@ -97,7 +127,7 @@ export function isAdmin(policy: PolicyClass): boolean {
 	// Keyed on DATABRICKS_APP_PORT, which only the Apps runtime sets. See the
 	// note on isDatabricksApp: client id looks like the obvious signal and is
 	// wrong, because local development against a service principal sets it too.
-	if (!isDatabricksApp) return true;
+	if (!isDatabricksApp && !localRightsFromRoles) return true;
 	return inAnyGroup(policy, effectiveAdminGroups());
 }
 
@@ -126,8 +156,14 @@ export interface AccessContext {
 	grants: Map<string, Permission>;
 	baseline: Permission | null;
 	capabilities: CapabilityMap;
+	// Exceptions, by capability and scope. Win over anything held.
+	denied: CapabilityMap;
 	// Whose context this is, needed by the ownership rule.
 	email: string;
+	// Reports somebody holds rights on only some pages of, and which pages.
+	pagesByReport?: Map<string, Set<string>>;
+	// Reports made reachable only so those pages can be opened.
+	addedForPages?: Set<string>;
 }
 
 interface CacheEntry {
@@ -222,7 +258,21 @@ function floorContext(policy: PolicyClass, email: string): AccessContext {
 		}
 	}
 
-	return { grants: new Map(), baseline: configured, capabilities, email };
+	for (const capability of readerCapabilities) {
+		capabilities.set(capability, new Set([globalScope]));
+	}
+
+	return {
+		grants: new Map(
+			configured === "admin"
+				? [[personalViewKey, "admin" as Permission]]
+				: [],
+		),
+		baseline: configured,
+		capabilities,
+		denied: new Map(),
+		email,
+	};
 }
 
 interface PolicyRow {
@@ -378,29 +428,45 @@ async function loadExplicit(
 	// reports built on data they hold SELECT on, which for most people is every
 	// report they have ever opened.
 	let incomplete = false;
-	const [policies, assignments] = await Promise.all([
-		loadPolicies(policy, email).catch((error) => {
-			incomplete = true;
-			console.error("Access policies could not be read:", error);
-			return new Map<string, Permission>();
-		}),
-		loadAssignments(policy, email).catch((error) => {
-			// The role tables arrived after the grant table, so a process
-			// running against a schema that has not caught up finds one and not
-			// the other. Losing the roles costs what they add; losing the
-			// grants as well would cost what somebody was given years ago.
-			console.error(
-				"Role assignments could not be read. If this persists, the " +
-					"roles, role_capabilities and role_assignments tables may " +
-					"not exist yet: restart so the schema is applied.",
-				error,
-			);
-			incomplete = true;
-			return [];
-		}),
-	]);
+	const [policies, assignments, attributeRoles, singleGrants, requests] =
+		await Promise.all([
+			loadPolicies(policy, email).catch((error) => {
+				incomplete = true;
+				console.error("Access policies could not be read:", error);
+				return new Map<string, Permission>();
+			}),
+			loadAssignments(policy, email).catch((error) => {
+				// The role tables arrived after the grant table, so a process
+				// running against a schema that has not caught up finds one and not
+				// the other. Losing the roles costs what they add; losing the
+				// grants as well would cost what somebody was given years ago.
+				console.error(
+					"Role assignments could not be read. If this persists, the " +
+						"roles, role_capabilities and role_assignments tables may " +
+						"not exist yet: restart so the schema is applied.",
+					error,
+				);
+				incomplete = true;
+				return [];
+			}),
+			loadAttributeAssignments(policy.grants, email).catch((error) => {
+				incomplete = true;
+				console.error("Attribute rules could not be read:", error);
+				return [];
+			}),
+			loadPermissionGrants(policy.grants, email).catch((error) => {
+				incomplete = true;
+				console.error("Single permissions could not be read:", error);
+				return [];
+			}),
+			openPublishRequests().catch((error) => {
+				incomplete = true;
+				console.error("Publish requests could not be read:", error);
+				return [];
+			}),
+		]);
 
-	const roles = resolveAssignments(assignments);
+	const roles = resolveAssignments([...assignments, ...attributeRoles]);
 
 	// Merged into one map, strongest wins. A scoped role and a per-resource
 	// grant naming the same thing are two ways of saying it, not two answers.
@@ -424,11 +490,104 @@ async function loadExplicit(
 		}
 	}
 
+	// What everyone can do, without being assigned anything.
+	for (const capability of readerCapabilities) {
+		const scopes = capabilities.get(capability) ?? new Set<string>();
+		scopes.add(globalScope);
+		capabilities.set(capability, scopes);
+	}
+
+	// One permission given or taken, on top of what the roles said.
+	const denied: CapabilityMap = new Map();
+	for (const grant of singleGrants) {
+		const scope =
+			grant.scopeType === "global"
+				? globalScope
+				: grant.scopeType === "tag" && grant.scopeId
+					? tagScope(grant.scopeId)
+					: grant.scopeId;
+		if (!scope) continue;
+		const target = grant.effect === "deny" ? denied : capabilities;
+		const scopes = target.get(grant.capability) ?? new Set<string>();
+		scopes.add(scope);
+		target.set(grant.capability, scopes);
+	}
+
+	// Reaching other people's personal pages, which every later check reads from the grants.
+	if (can(capabilities, "personal.viewAny", null, denied)) {
+		grants.set(
+			personalViewKey,
+			strongest([roles.baseline, configured]) === "admin"
+				? "admin"
+				: "view",
+		);
+	}
+
+	// A right on a page lets its holder open that page, so its report has to be reachable.
+	// What they then see of the report is narrowed in lib/platform/reports.
+	const heldPages = [
+		...[...grants.keys()].flatMap((key) =>
+			key.startsWith("page:") ? [key.slice("page:".length)] : [],
+		),
+		...singleGrants.flatMap((grant) =>
+			grant.scopeType === "page" &&
+			grant.effect === "allow" &&
+			grant.scopeId
+				? [grant.scopeId]
+				: [],
+		),
+	];
+	const pagesByReport = new Map<string, Set<string>>();
+	const addedForPages = new Set<string>();
+	if (heldPages.length > 0) {
+		const rows = await sql<{ page_id: string; report_id: string }>(
+			`SELECT page_id::text AS page_id, report_id::text AS report_id
+			 FROM report_pages
+			 WHERE is_active = TRUE AND page_id::text = ANY($1::text[])`,
+			[heldPages],
+		).catch((error) => {
+			incomplete = true;
+			console.error("Page rights could not be read:", error);
+			return [];
+		});
+		for (const row of rows) {
+			const pages = pagesByReport.get(row.report_id) ?? new Set<string>();
+			pages.add(row.page_id);
+			pagesByReport.set(row.report_id, pages);
+			const key = grantKey("report", row.report_id);
+			if (!grants.has(key)) {
+				grants.set(key, "view");
+				addedForPages.add(row.report_id);
+			}
+		}
+	}
+
+	// A personal page somebody asked to have made official has to be readable by
+	// whoever can decide, or they would be deciding about something they cannot see.
+	// Maintainers of the category it would join can look at it too.
+	for (const request of requests) {
+		if (
+			can(
+				capabilities,
+				"report.makeOfficial",
+				request.categoryId,
+				denied,
+			) ||
+			can(capabilities, "report.review", request.categoryId, denied)
+		) {
+			const key = grantKey("report", request.reportId);
+			grants.set(key, strongest([grants.get(key), "view"]) ?? "view");
+		}
+	}
+
 	const context: AccessContext = {
 		grants,
 		baseline: strongest([roles.baseline, configured]),
 		capabilities,
+		denied,
 		email,
+		pagesByReport,
+		addedForPages,
 	};
 	if (incomplete) partial.add(context);
 	return context;
@@ -505,7 +664,146 @@ export async function canDo(
 	scopeId?: string | null,
 ): Promise<boolean> {
 	const context = await getExplicitContext(policy, identity.email);
-	return can(context.capabilities, capability, scopeId);
+	return can(context.capabilities, capability, scopeId, context.denied);
+}
+
+// The same question about a report, reached through itself, its category or a tag.
+export async function canDoOnReport(
+	policy: PolicyClass,
+	identity: { email: string },
+	capability: Capability,
+	report: {
+		reportId: string;
+		categoryId: string | null;
+		tags?: string[] | null;
+	},
+): Promise<boolean> {
+	const context = await getExplicitContext(policy, identity.email);
+	return canOnReport(
+		context.capabilities,
+		capability,
+		report,
+		context.denied,
+	);
+}
+
+// Whether this person edits a report, suggests a change to it, or neither.
+//
+// A personal page has nothing to do with Maintainers. Its owner holds it, and
+// whoever it is shared with as an editor edits it.
+export function editModeOn(
+	context: AccessContext,
+	report: ReportRef & { editPolicy?: string | null },
+	facts: EditingFacts,
+): EditMode {
+	const access = resolveReportAccess(
+		context.grants,
+		report,
+		context.email,
+		"view",
+		context.baseline,
+	);
+	if (report.isPersonal) {
+		return access.permission && atLeast(access.permission, "edit")
+			? "edit"
+			: null;
+	}
+
+	const on = (capability: Capability) =>
+		canOnReport(context.capabilities, capability, report, context.denied);
+	const editDenied = (() => {
+		const refused = context.denied.get("report.edit");
+		if (!refused) return false;
+		return (
+			refused.has(globalScope) ||
+			refused.has(report.reportId) ||
+			(report.categoryId !== null && refused.has(report.categoryId)) ||
+			(report.tags ?? []).some((tag) => refused.has(tagScope(tag)))
+		);
+	})();
+
+	return editModeFor({
+		permission: access.permission,
+		canSuggest: on("report.suggest"),
+		isMaintainer: on("report.review"),
+		canEditAny: on("report.editAny"),
+		editDenied,
+		hasMaintainers: maintainersOf(facts, report).length > 0,
+		policies: [
+			report.editPolicy as EditPolicy | null | undefined,
+			report.categoryId
+				? facts.categoryPolicy.get(report.categoryId)
+				: null,
+			settings().defaultEditPolicy as EditPolicy,
+		],
+	});
+}
+
+// What somebody holds on one page of a report, through a right on that page alone. Follows
+// the same "who can edit" rule as the report does.
+export function pageEditMode(
+	context: AccessContext,
+	report: ReportRef & { editPolicy?: string | null },
+	pageId: string,
+	facts: EditingFacts,
+): EditMode {
+	if (report.isPersonal) return null;
+	const onPage = (capability: Capability) =>
+		Boolean(context.capabilities.get(capability)?.has(pageId)) &&
+		!pageDenied(context, capability, pageId);
+	const canEdit = onPage("report.edit");
+	return editModeFor({
+		permission: canEdit
+			? "edit"
+			: (context.grants.get(grantKey("page", pageId)) ?? null),
+		canSuggest: onPage("report.suggest"),
+		isMaintainer: onPage("report.review"),
+		canEditAny: onPage("report.editAny"),
+		editDenied: pageDenied(context, "report.edit", pageId),
+		hasMaintainers: maintainersOf(facts, report).length > 0,
+		policies: [
+			report.editPolicy as EditPolicy | null | undefined,
+			report.categoryId
+				? facts.categoryPolicy.get(report.categoryId)
+				: null,
+			settings().defaultEditPolicy as EditPolicy,
+		],
+	});
+}
+
+// An exception naming one page, which wins over a right on the report around it.
+export function pageDenied(
+	context: AccessContext,
+	capability: Capability,
+	pageId: string,
+): boolean {
+	return Boolean(context.denied.get(capability)?.has(pageId));
+}
+
+// Each page whose answer differs from the report's, which is what a person on a page level
+// right or a page level exception needs to be told. Empty for almost everyone.
+export function pageModesOn(
+	context: AccessContext,
+	report: ReportRef & { editPolicy?: string | null },
+	pageIds: string[],
+	reportMode: EditMode,
+	facts: EditingFacts,
+): Record<string, EditMode> {
+	const out: Record<string, EditMode> = {};
+	for (const pageId of pageIds) {
+		const own = pageEditMode(context, report, pageId, facts);
+		const widest =
+			own === "edit" || reportMode === "edit"
+				? "edit"
+				: (own ?? reportMode);
+		const here = !pageDenied(context, "report.edit", pageId)
+			? widest
+			: pageDenied(context, "report.suggest", pageId) || !widest
+				? null
+				: "suggest";
+		if (here !== reportMode) out[pageId] = here;
+	}
+	return out;
 }
 
 // Administering covers the platform itself rather than any one resource, so it
@@ -517,8 +815,12 @@ export async function canAdminister(
 	if (isAdmin(policy)) return true;
 	const context = await getExplicitContext(policy, identity.email);
 	return (
-		can(context.capabilities, "access.grant") ||
-		can(context.capabilities, "settings.manage")
+		can(context.capabilities, "access.grant", null, context.denied) ||
+		can(context.capabilities, "settings.manage", null, context.denied) ||
+		can(context.capabilities, "audit.view", null, context.denied) ||
+		can(context.capabilities, "usage.view", null, context.denied) ||
+		can(context.capabilities, "semantic.sync", null, context.denied) ||
+		can(context.capabilities, "theme.manage", null, context.denied)
 	);
 }
 

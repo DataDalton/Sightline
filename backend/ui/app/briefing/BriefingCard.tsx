@@ -1,6 +1,8 @@
 "use client";
 
+import { useMemo } from "react";
 import Link from "../components/AppLink";
+import { forecastRows, localToday } from "../../lib/visuals/forecast";
 import type { Card } from "../../lib/briefing/card";
 import type { WatchItem } from "../../lib/briefing/watch";
 import {
@@ -243,6 +245,22 @@ export function BriefingCard({
 	// Briefing.
 	transition?: string;
 }) {
+	const nextUp = useMemo(() => {
+		const forecast = forecastRows(
+			card.series
+				.filter((point) => !point.pending)
+				.map((point) => ({ period: point.period, value: point.value })),
+			"period",
+			["value"],
+			{
+				horizon: 1,
+				today: localToday(),
+				additive: { value: true },
+			},
+		);
+		const values = forecast?.series[0]?.values ?? [];
+		return values.length > 0 ? values[values.length - 1] : null;
+	}, [card.series]);
 	const named = transition
 		? ({ viewTransitionName: transition } as React.CSSProperties)
 		: undefined;
@@ -290,6 +308,11 @@ export function BriefingCard({
 					/>
 					{waiting && (
 						<span className={styles.tileNote}>{waiting}</span>
+					)}
+					{nextUp !== null && (
+						<span className={styles.tileNote}>
+							Next: about {formatCompact(nextUp, item.hint)}
+						</span>
 					)}
 					<span className={styles.tileMeta}>
 						{item.reportTitle}

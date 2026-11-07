@@ -10,7 +10,8 @@ import {
 import { routineLooksAllowed } from "../freshness/warehouse";
 import { demoMode } from "../runtime";
 import { syncSourceFields, type FieldSyncResult } from "./fieldSync";
-import { reloadRegistryEverywhere } from "./registry";
+import { getSource, reloadRegistryEverywhere } from "./registry";
+import { postAutomatic } from "../updates/store";
 
 // Noticing that a field went away, and telling the people it affects.
 //
@@ -421,7 +422,26 @@ async function syncDueSources(warehouseUp: boolean): Promise<void> {
 				error,
 			);
 		});
-		if (result) results.push(result);
+		if (result) {
+			results.push(result);
+			if (!result.error) {
+				await postAutomatic(
+					{
+						sourceKey: result.sourceKey,
+						added: result.added,
+						newlyMissing: result.newlyMissing,
+						renames: result.renames.map((r) => ({
+							from: r.from,
+							to: r.to,
+						})),
+						redefined: result.redefined ?? [],
+					},
+					getSource(result.sourceKey)?.title ?? result.sourceKey,
+				).catch((error) => {
+					console.warn("Automatic updates were not posted:", error);
+				});
+			}
+		}
 	}
 
 	const changed = results.some(

@@ -60,7 +60,7 @@ export function MobileTabBar() {
 		`${styles.tab} ${active ? styles.active : ""}`;
 
 	return (
-		<nav className={styles.bar} aria-label="Main">
+		<nav data-app-chrome className={styles.bar} aria-label="Main">
 			<Link href="/" className={tab(at("/"))} onClick={closeNav}>
 				<Icon d={paths.home} />
 				<span>Home</span>

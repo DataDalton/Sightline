@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { refusedUnless } from "@/lib/platform/capabilityGuard";
 import { getIdentity } from "@/lib/auth/identity";
 import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
 import { cleanState } from "@/lib/explore/state";
@@ -39,6 +40,8 @@ export async function POST(request: NextRequest) {
 			{ status: 401 },
 		);
 	}
+	const refused = await refusedUnless(identity, "explore.use");
+	if (refused) return refused;
 
 	let name = "";
 	let state = null;

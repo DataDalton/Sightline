@@ -11,6 +11,16 @@ import {
 	strongest,
 	type Permission,
 	type ReportRef,
+	canOnReport,
+	editModeFor,
+	permissionFor,
+	tagScope,
+	builtinRoles,
+	type CapabilityMap,
+	explainRights,
+	leavesNoMaintainer,
+	pagesLimitedTo,
+	personalViewKey,
 } from "./accessRules";
 
 // The property these tests exist to protect: a page somebody built for
@@ -135,7 +145,7 @@ test("a global administrator reaches a personal page, and it is marked", () => {
 	// The flag is what makes it recordable: reaching somebody's page as an
 	// administrator is a different act from opening your own.
 	const access = resolveReportAccess(
-		new Map(),
+		new Map<string, Permission>([[personalViewKey, "admin"]]),
 		personal(),
 		"admin@example.com",
 		"edit",
@@ -415,6 +425,275 @@ test("its author keeps no special hold on it once it is published", () => {
 	};
 	assert.equal(
 		resolveReportAccess(new Map(), after, "reader@example.com").allowed,
+		false,
+	);
+});
+
+// --- Who can edit, and exceptions --------------------------------------------
+
+const editor = {
+	permission: "edit" as const,
+	canSuggest: true,
+	isMaintainer: false,
+	canEditAny: false,
+	editDenied: false,
+	hasMaintainers: true,
+	policies: [],
+};
+
+test("an Editor suggests on a report that has Maintainers", () => {
+	assert.equal(editModeFor(editor), "suggest");
+});
+
+test("an Editor edits a report nobody maintains, so nothing is stuck", () => {
+	assert.equal(editModeFor({ ...editor, hasMaintainers: false }), "edit");
+});
+
+test("the nearest setting decides, and Any Editor opens it up", () => {
+	assert.equal(editModeFor({ ...editor, policies: ["any"] }), "edit");
+	assert.equal(
+		editModeFor({ ...editor, policies: ["maintainers", "any"] }),
+		"suggest",
+	);
+	assert.equal(
+		editModeFor({ ...editor, policies: [null, "any", "maintainers"] }),
+		"edit",
+	);
+});
+
+test("a Maintainer always edits", () => {
+	assert.equal(editModeFor({ ...editor, isMaintainer: true }), "edit");
+});
+
+test("edit any report goes past Maintainers only", () => {
+	assert.equal(editModeFor({ ...editor, canEditAny: true }), "edit");
+});
+
+test("a Contributor suggests, and a Reader cannot do either", () => {
+	const contributor = { ...editor, permission: "view" as const };
+	assert.equal(editModeFor(contributor), "suggest");
+	assert.equal(editModeFor({ ...contributor, canSuggest: false }), null);
+});
+
+test("an exception on editing stops even a Maintainer", () => {
+	assert.equal(
+		editModeFor({
+			...editor,
+			isMaintainer: true,
+			editDenied: true,
+			canSuggest: false,
+		}),
+		null,
+	);
+});
+
+test("an exception wins over a right held everywhere", () => {
+	const held: CapabilityMap = new Map([["export.run", new Set(["*"])]]);
+	assert.equal(can(held, "export.run"), true);
+	const everywhere: CapabilityMap = new Map([["export.run", new Set(["*"])]]);
+	assert.equal(can(held, "export.run", null, everywhere), false);
+	const one: CapabilityMap = new Map([["export.run", new Set(["sales"])]]);
+	assert.equal(can(held, "export.run", "sales", one), false);
+	assert.equal(can(held, "export.run", "finance", one), true);
+});
+
+test("a report is reached through itself, its category or a tag", () => {
+	const report = { reportId: "r", categoryId: "c", tags: ["Finance"] };
+	const through = (scope: string): CapabilityMap =>
+		new Map([["report.review", new Set([scope])]]);
+	assert.equal(canOnReport(through("r"), "report.review", report), true);
+	assert.equal(canOnReport(through("c"), "report.review", report), true);
+	assert.equal(
+		canOnReport(through(tagScope("finance")), "report.review", report),
+		true,
+	);
+	assert.equal(canOnReport(through("x"), "report.review", report), false);
+	assert.equal(
+		canOnReport(through("c"), "report.review", report, through("r")),
+		false,
+	);
+});
+
+test("a tag grant reaches a report carrying it", () => {
+	const { grants } = resolveAssignments([
+		{
+			permission: "edit",
+			capabilities: [],
+			scopeType: "tag",
+			scopeId: "Finance",
+		},
+	]);
+	const check = resolveReportAccess(
+		grants,
+		{
+			reportId: "r",
+			categoryId: null,
+			isPersonal: false,
+			ownerEmail: null,
+			tags: ["finance"],
+		},
+		"a@example.com",
+		"edit",
+	);
+	assert.equal(check.allowed, true);
+});
+
+test("a role's level follows what it can do", () => {
+	assert.equal(permissionFor(["report.suggest"]), "view");
+	assert.equal(permissionFor(["report.edit"]), "edit");
+	assert.equal(permissionFor(["report.editAny", "access.grant"]), "admin");
+});
+
+test("only Administrator and Report Publisher can make a report official", () => {
+	const holders = builtinRoles
+		.filter((role) => role.capabilities.includes("report.makeOfficial"))
+		.map((role) => role.roleId)
+		.sort();
+	assert.deepEqual(holders, ["admin", "publisher"]);
+});
+
+test("each built-in role holds everything the one before it does", () => {
+	const of = (id: string) =>
+		builtinRoles.find((role) => role.roleId === id)?.capabilities ?? [];
+	const chain = ["reader", "contributor", "editor", "maintainer", "admin"];
+	for (let i = 1; i < chain.length; i++) {
+		for (const capability of of(chain[i - 1])) {
+			assert.ok(
+				of(chain[i]).includes(capability),
+				`${chain[i]} lacks ${capability}`,
+			);
+		}
+	}
+});
+
+test("explains where a right comes from, and leaves out what has ended", () => {
+	const rights = explainRights({
+		assignments: [
+			{
+				roleName: "Maintainer",
+				capabilities: ["report.review"],
+				scopeType: "category",
+				scopeId: "sales",
+				expiresOn: "2026-01-01",
+			},
+			{
+				roleName: "Report Publisher",
+				capabilities: ["report.makeOfficial"],
+				scopeType: "global",
+				scopeId: null,
+				expiresOn: null,
+			},
+		],
+		rules: [],
+		grants: [
+			{
+				capability: "export.run",
+				effect: "deny",
+				scopeType: "global",
+				scopeId: null,
+				reason: "Contractor",
+				expiresOn: null,
+			},
+		],
+		now: new Date("2026-06-01").getTime(),
+	});
+	const find = (capability: string) =>
+		rights.find((right) => right.capability === capability);
+	assert.equal(find("report.review"), undefined);
+	assert.equal(
+		find("report.makeOfficial")?.sources[0].name,
+		"Report Publisher",
+	);
+	assert.equal(find("export.run")?.sources[0].kind, "everyone");
+	assert.equal(find("export.run")?.exceptions[0].reason, "Contractor");
+});
+
+test("the last Maintainer stays unless the category can take over", () => {
+	const one = { assignmentId: "a", isMaintainer: true };
+	const other = { assignmentId: "b", isMaintainer: true };
+	const editorOnly = { assignmentId: "c", isMaintainer: false };
+	assert.equal(
+		leavesNoMaintainer({
+			removing: one,
+			onReport: [one, editorOnly],
+			onCategory: [],
+		}),
+		true,
+	);
+	assert.equal(
+		leavesNoMaintainer({
+			removing: one,
+			onReport: [one, other],
+			onCategory: [],
+		}),
+		false,
+	);
+	assert.equal(
+		leavesNoMaintainer({
+			removing: one,
+			onReport: [one],
+			onCategory: [other],
+		}),
+		false,
+	);
+	assert.equal(
+		leavesNoMaintainer({
+			removing: editorOnly,
+			onReport: [one, editorOnly],
+			onCategory: [],
+		}),
+		false,
+	);
+});
+
+test("a page right opens only that page, unless something wider opens the report", () => {
+	const report = {
+		reportId: "r1",
+		categoryId: "sales",
+		isPersonal: false,
+		ownerEmail: null,
+	};
+	const pages = new Map([["r1", new Set(["p1"])]]);
+	const added = new Set(["r1"]);
+	const reached = new Map<string, Permission>([
+		[grantKey("report", "r1"), "view"],
+	]);
+	assert.deepEqual(
+		[...(pagesLimitedTo(reached, report, "a@x", null, pages, added) ?? [])],
+		["p1"],
+	);
+	assert.equal(
+		pagesLimitedTo(reached, report, "a@x", "view", pages, added),
+		null,
+	);
+	reached.set(grantKey("category", "sales"), "view");
+	assert.equal(
+		pagesLimitedTo(reached, report, "a@x", null, pages, added),
+		null,
+	);
+	assert.equal(
+		pagesLimitedTo(reached, report, "a@x", null, undefined, undefined),
+		null,
+	);
+});
+
+test("looking at a personal page through the right to see them changes nothing", () => {
+	const page = {
+		reportId: "r9",
+		categoryId: null,
+		isPersonal: true,
+		ownerEmail: "owner@x",
+	};
+	const held = resolveReportAccess(
+		new Map<string, Permission>([[personalViewKey, "view"]]),
+		page,
+		"support@x",
+	);
+	assert.equal(held.allowed, true);
+	assert.equal(held.permission, "view");
+	assert.equal(held.viaAdministration, true);
+	assert.equal(
+		resolveReportAccess(new Map(), page, "support@x").allowed,
 		false,
 	);
 });

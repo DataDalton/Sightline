@@ -10,6 +10,8 @@ import {
 	type Permission,
 	type ResolvedAssignment,
 	type ScopeType,
+	permissionFor,
+	type SubjectType,
 } from "./accessRules";
 
 // Reading and maintaining the role tables.
@@ -30,13 +32,13 @@ export interface RoleRecord {
 	permission: Permission;
 	capabilities: Capability[];
 	isBuiltin: boolean;
-	// Set on a category's own editor role. See syncCategoryRoles.
+	// Set on a category's own Maintainer role. See syncCategoryRoles.
 	categoryId: string | null;
 }
 
 // --- A role per category ---------------------------------------------------
 
-// Every category has an editor role of its own, named after it, so making
+// Every category has a Maintainer role of its own, named after it, so making
 // somebody the editor of one subject area is assigning them a role that says
 // so rather than building a scoped assignment by hand.
 //
@@ -58,8 +60,8 @@ export function categoryOfRole(roleId: string): string | null {
 }
 
 export async function syncCategoryRoles(): Promise<void> {
-	const editor = builtinRoles.find((r) => r.roleId === "editor");
-	if (!editor) return;
+	const maintainer = builtinRoles.find((r) => r.roleId === "maintainer");
+	if (!maintainer) return;
 
 	const categories = await sql<{
 		category_id: string;
@@ -85,8 +87,8 @@ export async function syncCategoryRoles(): Promise<void> {
 				   category_id = EXCLUDED.category_id`,
 				[
 					roleId,
-					`${category.name} - Editor`,
-					`Builds and maintains the reports in ${category.name}, and nowhere else. Kept in step with the category, so it is renamed and retired with it.`,
+					`${category.name} - Maintainer`,
+					`Looks after the reports in ${category.name}, and nowhere else: edits them, approves suggested changes, decides who else can edit, and is who readers ask.`,
 					category.is_active,
 					category.category_id,
 				],
@@ -94,9 +96,9 @@ export async function syncCategoryRoles(): Promise<void> {
 			await client.query(
 				`DELETE FROM role_capabilities
 				 WHERE role_id = $1 AND capability <> ALL($2)`,
-				[roleId, editor.capabilities],
+				[roleId, maintainer.capabilities],
 			);
-			for (const capability of editor.capabilities) {
+			for (const capability of maintainer.capabilities) {
 				await client.query(
 					`INSERT INTO role_capabilities (role_id, capability)
 					 VALUES ($1, $2) ON CONFLICT DO NOTHING`,
@@ -111,12 +113,13 @@ export interface AssignmentRecord {
 	assignmentId: string;
 	roleId: string;
 	roleName: string;
-	subjectType: "group" | "user";
+	subjectType: SubjectType;
 	subjectId: string;
 	scopeType: ScopeType;
 	scopeId: string | null;
 	grantedBy: string | null;
 	grantedOn: string;
+	expiresOn: string | null;
 }
 
 // Re-asserts the built-in roles from lib/platform/accessRules.
@@ -125,7 +128,7 @@ export interface AssignmentRecord {
 // role everyone recognises by name is owned by the code and cannot drift by
 // hand. Custom roles are untouched, and so are the assignments pointing at
 // built-in ones.
-// Who holds a category's editor role, as the people to ask about it. See
+// Who holds a category's Maintainer role, as the people to ask about it. See
 // lib/platform/categoryContacts.
 export async function categoryContacts(
 	categoryId: string,
@@ -230,6 +233,7 @@ interface AssignmentRow {
 	scope_type: ScopeType;
 	scope_id: string | null;
 	capabilities: string[] | null;
+	expires_on: string | null;
 }
 
 // Every active assignment, grouped by the group or person it names. Held
@@ -247,7 +251,7 @@ async function assignmentIndex(): Promise<Map<string, AssignmentRow[]>> {
 			AssignmentRow & { subject_type: string; subject: string }
 		>(
 			`SELECT ra.subject_type, lower(ra.subject_id) AS subject,
-			        r.permission, ra.scope_type, ra.scope_id,
+			        r.permission, ra.scope_type, ra.scope_id, ra.expires_on,
 			        coalesce(
 			          array_agg(rc.capability) FILTER (WHERE rc.capability IS NOT NULL),
 			          '{}'
@@ -257,7 +261,7 @@ async function assignmentIndex(): Promise<Map<string, AssignmentRow[]>> {
 			 LEFT JOIN role_capabilities rc ON rc.role_id = ra.role_id
 			 WHERE ra.is_active = TRUE
 			 GROUP BY ra.assignment_id, ra.subject_type, ra.subject_id,
-			          r.permission, ra.scope_type, ra.scope_id`,
+			          r.permission, ra.scope_type, ra.scope_id, ra.expires_on`,
 		);
 		const index = new Map<string, AssignmentRow[]>();
 		for (const row of rows) {
@@ -284,16 +288,25 @@ export async function loadAssignments(
 			(group) => index.get(`group|${group.toLowerCase()}`) ?? [],
 		),
 		...(index.get(`user|${email.toLowerCase()}`) ?? []),
+		...(index.get(`service_principal|${email.toLowerCase()}`) ?? []),
 	];
-	return rows.map((row) => ({
-		permission: row.permission,
-		// Filtered against the closed list, so a capability written into the
-		// table by hand and checked nowhere cannot quietly become one somebody
-		// holds.
-		capabilities: (row.capabilities ?? []).filter(isCapability),
-		scopeType: row.scope_type,
-		scopeId: row.scope_id,
-	}));
+	// Compared here rather than in the query, because the index is held until
+	// something changes and an end date passing changes nothing in the table.
+	const now = Date.now();
+	return rows
+		.filter(
+			(row) =>
+				!row.expires_on || new Date(row.expires_on).getTime() > now,
+		)
+		.map((row) => ({
+			permission: row.permission,
+			// Filtered against the closed list, so a capability written into the
+			// table by hand and checked nowhere cannot quietly become one somebody
+			// holds.
+			capabilities: (row.capabilities ?? []).filter(isCapability),
+			scopeType: row.scope_type,
+			scopeId: row.scope_id,
+		}));
 }
 
 export async function listRoles(): Promise<RoleRecord[]> {
@@ -335,16 +348,17 @@ export async function listAssignments(): Promise<AssignmentRecord[]> {
 		assignment_id: string;
 		role_id: string;
 		role_name: string;
-		subject_type: "group" | "user";
+		subject_type: SubjectType;
 		subject_id: string;
 		scope_type: ScopeType;
 		scope_id: string | null;
 		granted_by: string | null;
 		granted_on: string;
+		expires_on: string | null;
 	}>(
 		`SELECT ra.assignment_id, ra.role_id, r.name AS role_name,
 		        ra.subject_type, ra.subject_id, ra.scope_type, ra.scope_id,
-		        ra.granted_by, ra.granted_on
+		        ra.granted_by, ra.granted_on, ra.expires_on
 		 FROM role_assignments ra
 		 JOIN roles r ON r.role_id = ra.role_id
 		 WHERE ra.is_active = TRUE
@@ -362,6 +376,7 @@ export async function listAssignments(): Promise<AssignmentRecord[]> {
 		scopeId: row.scope_id,
 		grantedBy: row.granted_by,
 		grantedOn: row.granted_on,
+		expiresOn: row.expires_on,
 	}));
 }
 
@@ -370,14 +385,13 @@ export async function saveRole(
 		roleId: string;
 		name: string;
 		description?: string | null;
-		permission: Permission;
 		capabilities: Capability[];
 	},
 	actor: string,
 ): Promise<void> {
 	if (categoryOfRole(input.roleId)) {
 		throw new Error(
-			"A category's editor role is kept in step with the category and cannot be changed. Make a role of your own instead.",
+			"A category's maintainer role is kept in step with the category and cannot be changed. Make a role of your own instead.",
 		);
 	}
 	const builtin = builtinRoles.some((r) => r.roleId === input.roleId);
@@ -400,7 +414,7 @@ export async function saveRole(
 				input.roleId,
 				input.name,
 				input.description ?? null,
-				input.permission,
+				permissionFor(input.capabilities),
 				actor,
 			],
 		);
@@ -427,7 +441,7 @@ export async function deleteRole(roleId: string): Promise<void> {
 	}
 	if (categoryOfRole(roleId)) {
 		throw new Error(
-			"A category's editor role is removed with the category, not on its own.",
+			"A category's maintainer role is removed with the category, not on its own.",
 		);
 	}
 	// Deactivated rather than dropped, so the assignments pointing at it stay
@@ -440,14 +454,15 @@ export async function deleteRole(roleId: string): Promise<void> {
 export async function assignRole(
 	input: {
 		roleId: string;
-		subjectType: "group" | "user";
+		subjectType: SubjectType;
 		subjectId: string;
 		scopeType: ScopeType;
 		scopeId?: string | null;
+		expiresOn?: string | null;
 	},
 	actor: string,
 ): Promise<string> {
-	// A category's editor role only ever applies in its category, whatever
+	// A category's Maintainer role only ever applies in its category, whatever
 	// scope the request named. Holding it everywhere would make it the Editor
 	// role under a narrower name.
 	const pinned = categoryOfRole(input.roleId);
@@ -484,12 +499,20 @@ export async function assignRole(
 				scopeId,
 			],
 		);
-		if (existing.rows[0]) return existing.rows[0].assignment_id;
+		if (existing.rows[0]) {
+			// Asking again with a different end date changes the end date.
+			await client.query(
+				`UPDATE role_assignments SET expires_on = $2 WHERE assignment_id = $1`,
+				[existing.rows[0].assignment_id, input.expiresOn ?? null],
+			);
+			return existing.rows[0].assignment_id;
+		}
 
 		const rows = await client.query<{ assignment_id: string }>(
 			`INSERT INTO role_assignments
-			   (role_id, subject_type, subject_id, scope_type, scope_id, granted_by)
-			 VALUES ($1, $2, $3, $4, $5, $6)
+			   (role_id, subject_type, subject_id, scope_type, scope_id, granted_by,
+			    expires_on)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7)
 			 RETURNING assignment_id`,
 			[
 				input.roleId,
@@ -498,6 +521,7 @@ export async function assignRole(
 				input.scopeType,
 				scopeId,
 				actor,
+				input.expiresOn ?? null,
 			],
 		);
 		return rows.rows[0].assignment_id;

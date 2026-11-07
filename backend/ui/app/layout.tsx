@@ -18,6 +18,8 @@ import { ThemeProvider, themeBootstrapScript } from "./context/ThemeContext";
 import { ShellProvider } from "./context/ShellContext";
 import NavScrim from "./components/NavScrim";
 import PaletteHost from "./components/PaletteHost";
+import { HoverTips } from "./components/HoverTips";
+import { UpdatesBanner } from "./updates/UpdateSurfaces";
 import styles from "./layout.module.css";
 import { AssistantProvider } from "./assist/AssistantContext";
 import { AssistantDock } from "./assist/AssistantDock";
@@ -169,11 +171,13 @@ export default async function RootLayout({
 												tabIndex={-1}
 												className={styles.main}
 											>
+												<UpdatesBanner />
 												{children}
 											</main>
 										</div>
 										<MobileTabBar />
 										<PaletteHost />
+										<HoverTips />
 										<AssistantDock />
 									</AssistantProvider>
 								</NotifyProvider>

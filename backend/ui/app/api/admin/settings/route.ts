@@ -69,6 +69,8 @@ export async function POST(request: NextRequest) {
 
 		for (const key of writableSettings) {
 			if (!(key in body)) continue;
+			// Themes have a permission of their own. See app/api/themes.
+			if (key === "customThemes") continue;
 			changes[key] = body[key];
 		}
 

@@ -140,7 +140,7 @@ export async function GET(request: NextRequest) {
 	);
 	const offset = Math.max(0, Math.floor(Number(asked.get("offset")) || 0));
 
-	const [grants, total, categories, reports] = await Promise.all([
+	const [grants, total, categories, reports, pages] = await Promise.all([
 		sql<{
 			policy_id: string;
 			subject_type: string;
@@ -185,6 +185,14 @@ export async function GET(request: NextRequest) {
 			 FROM reports WHERE is_active = TRUE AND is_personal = FALSE
 			 ORDER BY title`,
 		),
+		sql<{ id: string; name: string }>(
+			`SELECT p.page_id::text AS id, r.title || ', ' || p.title AS name
+			 FROM report_pages p
+			 JOIN reports r ON r.report_id = p.report_id
+			   AND r.is_active = TRUE AND r.is_personal = FALSE
+			 WHERE p.is_active = TRUE
+			 ORDER BY r.title, p.sort_order`,
+		),
 	]);
 
 	const response = NextResponse.json({
@@ -192,6 +200,7 @@ export async function GET(request: NextRequest) {
 		grantsTotal: Number(total[0]?.n ?? 0),
 		categories,
 		reports,
+		pages,
 	});
 	response.headers.set("Cache-Control", "private, no-store");
 	return response;

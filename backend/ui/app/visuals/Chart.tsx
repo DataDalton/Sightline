@@ -1,6 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useUpdateMarkers } from "../updates/UpdateSurfaces";
+import { withOddMarks, withUpdateMarkers } from "./updateMarkers";
+import { findOddOnes } from "../../lib/insight/insight";
+import { ForecastTrack, useReportUnusual } from "./InsightParts";
+import { useVisualScope } from "./VisualFrame";
+import { ValueNotesStrip } from "./ValueNotes";
 import dynamic from "next/dynamic";
 import * as echarts from "echarts/core";
 import {
@@ -24,6 +30,7 @@ import {
 	DataZoomComponent,
 	VisualMapComponent,
 	MarkLineComponent,
+	MarkPointComponent,
 	BrushComponent,
 	ToolboxComponent,
 	CalendarComponent,
@@ -74,24 +81,8 @@ import type { VisualStyle } from "../../lib/visuals/style";
 import { readThemeColors } from "./colors";
 import { ensureWorldMap, regionBounds } from "./worldMap";
 import {
-	buildBoxPlot,
-	buildBullet,
-	buildCalendar,
-	buildCartesian,
+	buildForType,
 	buildChoropleth,
-	buildHistogram,
-	buildFunnel,
-	buildGauge,
-	buildHeatmap,
-	buildPareto,
-	buildPie,
-	buildRadar,
-	buildSankey,
-	buildScatter,
-	buildSlope,
-	buildTimeline,
-	buildTreemap,
-	buildWaterfall,
 	forecastSeriesPrefix,
 	type ChartContext,
 } from "./chartOptions";
@@ -119,6 +110,13 @@ const periodCharts = new Set([
 
 // Charts that can carry a forecast past their last period, when their first
 // dimension is a date.
+const oddCharts = new Set([
+	"barChart",
+	"horizontalBarChart",
+	"lineChart",
+	"areaChart",
+]);
+
 const forecastCharts = new Set([
 	"barChart",
 	"lineChart",
@@ -177,6 +175,7 @@ echarts.use([
 	DataZoomComponent,
 	VisualMapComponent,
 	MarkLineComponent,
+	MarkPointComponent,
 	BrushComponent,
 	ToolboxComponent,
 	CalendarComponent,
@@ -334,7 +333,13 @@ export function Chart({
 			? queryForVisual(visualType, {
 					sourceKey,
 					dimensions,
-					measures,
+					measures: [
+						...measures,
+						// Asked for alongside what is drawn, for the tooltip.
+						...(style?.tooltip?.extraFields ?? []).filter(
+							(field) => !measures.includes(field),
+						),
+					],
 					filters,
 					limit,
 					options,
@@ -519,7 +524,11 @@ export function Chart({
 		],
 	);
 
-	const explainable = Boolean(periodField || previousWindow);
+	const explainable = Boolean(
+		periodField ||
+		previousWindow ||
+		(dimensions.length === 1 && oddCharts.has(visualType)),
+	);
 	const [pointed, setPointed] = useState<Pointed | null>(null);
 	const [explaining, setExplaining] = useState<Pointed | null>(null);
 
@@ -604,60 +613,12 @@ export function Chart({
 			ctx.selection = selection;
 		}
 
-		const built = (() => {
-			switch (visualType) {
-				case "pieChart":
-					return buildPie(ctx, false);
-				case "donutChart":
-					return buildPie(ctx, true);
-				case "treemapChart":
-					return buildTreemap(ctx);
-				case "funnelChart":
-					return buildFunnel(ctx);
-				case "gauge":
-					return buildGauge(ctx);
-				case "waterfallChart":
-					return buildWaterfall(ctx);
-				case "bulletChart":
-					return buildBullet(ctx);
-				case "slopeChart":
-					return buildSlope(ctx);
-				case "paretoChart":
-					return buildPareto(ctx);
-				case "histogramChart":
-					return buildHistogram(ctx);
-				case "boxPlot":
-					return buildBoxPlot(ctx);
-				case "calendarChart":
-					return buildCalendar(ctx);
-				case "timelineChart":
-					return buildTimeline(ctx);
-				case "choroplethChart":
-					return countries
-						? buildChoropleth(ctx, countries, regionBounds).option
-						: null;
-				case "sankeyChart":
-					return buildSankey(ctx);
-				case "heatmapChart":
-					return buildHeatmap(ctx);
-				case "radarChart":
-					return buildRadar(ctx);
-				case "horizontalBarChart":
-					return buildCartesian(ctx, "bar", "horizontal");
-				case "stackedBarChart":
-					return buildCartesian(ctx, "stacked100");
-				case "comboChart":
-					return buildCartesian(ctx, "combo");
-				case "areaChart":
-					return buildCartesian(ctx, "area");
-				case "scatterChart":
-					return buildScatter(ctx);
-				case "lineChart":
-					return buildCartesian(ctx, "line");
-				default:
-					return buildCartesian(ctx, "bar");
-			}
-		})();
+		const built =
+			visualType === "choroplethChart"
+				? countries
+					? buildChoropleth(ctx, countries, regionBounds).option
+					: null
+				: buildForType(visualType, ctx);
 
 		// The library puts a pointer over every mark by default, which on a
 		// chart that does nothing with a click promises something it does not
@@ -696,6 +657,52 @@ export function Chart({
 		// a theme change has to build it again.
 		resolved,
 	]);
+
+	// Where updates about this source took effect, drawn on a time axis. Added to the
+	// built option so the builders stay about the data alone.
+	const updateMarkers = useUpdateMarkers(sourceKey);
+	const scope = useVisualScope();
+	// What stands out on this chart, for its marks and the page's list of them.
+	const oddOnes = useMemo(() => {
+		const measure = measures[0];
+		if (
+			options?.hideUnusual ||
+			!oddCharts.has(visualType) ||
+			dimensions.length !== 1 ||
+			!measure
+		) {
+			return [];
+		}
+		const hint = (fields.get(measure)?.formatHint ??
+			"decimal") as FormatHint;
+		return findOddOnes(
+			rows.map((row) => ({
+				label: String(row[dimensions[0]] ?? ""),
+				value: Number(row[measure]),
+			})),
+			periodField ? "time" : "category",
+			(value) => formatValue(value, hint),
+		);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [
+		rows,
+		visualType,
+		JSON.stringify(dimensions),
+		JSON.stringify(measures),
+		periodField,
+		options?.hideUnusual,
+		fields,
+	]);
+	useReportUnusual(scope?.visualId, title ?? null, oddOnes);
+	const marked = useMemo(
+		() =>
+			withOddMarks(
+				withUpdateMarkers(option, updateMarkers),
+				oddOnes,
+				readThemeColors().negative,
+			),
+		[option, updateMarkers, oddOnes, resolved],
+	);
 
 	// Whether the built chart carries forecast marks. Read back off the option,
 	// because the builder leaves them off a chart whose categories the
@@ -826,7 +833,7 @@ export function Chart({
 	}, [imageRef]);
 
 	useEffect(() => {
-		if (!containerRef.current || !option) return;
+		if (!containerRef.current || !marked) return;
 
 		// Created on whichever element is mounted now. The container is
 		// replaced whenever a placeholder has stood in for the chart, and
@@ -839,7 +846,7 @@ export function Chart({
 
 		// Replace rather than merge, so a series or axis removed from the
 		// config does not linger from the previous render.
-		chartRef.current.setOption(option, { notMerge: true });
+		chartRef.current.setOption(marked, { notMerge: true });
 
 		// Brushing is enabled through the toolbox rather than the toolbox
 		// being shown: the reader drags directly on the chart, and the buttons
@@ -1006,6 +1013,27 @@ export function Chart({
 							}
 						: null,
 				);
+			} else if (dims.length === 1 && params.name) {
+				// No earlier period to set it against, so it is compared with the rest.
+				const clause =
+					params.name === blankLabel
+						? { field: dims[0], op: "is_empty" }
+						: { field: dims[0], op: "eq", value: params.name };
+				const others =
+					params.name === blankLabel
+						? { field: dims[0], op: "is_not_empty" }
+						: { field: dims[0], op: "neq", value: params.name };
+				setPointed(
+					usable
+						? {
+								label: params.name,
+								measure,
+								current: [...base, clause],
+								previous: [...base, others],
+								against: "everything else",
+							}
+						: null,
+				);
 			}
 
 			if (!pick) return;
@@ -1102,7 +1130,7 @@ export function Chart({
 		// Deliberately narrow. The handlers read what they need at call time, so
 		// a fresh callback from the page is not a reason to rebuild the chart
 		// and throw away whatever the reader was doing in it.
-	}, [option, resolved, supportsBrush, container]);
+	}, [marked, resolved, supportsBrush, container]);
 
 	// The focused mark drawn as hovered, with its tooltip. Applied again after
 	// every redraw, because replacing the option clears the library's own
@@ -1336,7 +1364,9 @@ export function Chart({
 						className={styles.chartWhyButton}
 						onClick={() => setExplaining(pointed)}
 					>
-						Why did {pointed.label} change?
+						{pointed.against === "everything else"
+							? `Why is ${pointed.label} different?`
+							: `Why did ${pointed.label} change?`}
 					</button>
 					<button
 						type="button"
@@ -1377,6 +1407,18 @@ export function Chart({
 			{forecastCaption && (
 				<p className={styles.chartFootnote}>{forecastCaption}</p>
 			)}
+			<ForecastTrack
+				visualId={scope?.visualId}
+				sourceKey={sourceKey}
+				result={forecast}
+				rows={rows}
+				periodField={periodField}
+			/>
+			<ValueNotesStrip
+				sourceKey={sourceKey}
+				dimensions={dimensions}
+				rows={rows}
+			/>
 			{clipped > 0 && (
 				<p className={styles.chartFootnote} role="status">
 					{clipped === 1

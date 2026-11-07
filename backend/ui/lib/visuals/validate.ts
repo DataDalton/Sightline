@@ -133,6 +133,11 @@ function checkOption(
 			return null;
 		}
 
+		case "reportLinks": {
+			if (!Array.isArray(value)) return wrong("a list of reports");
+			return null;
+		}
+
 		case "measureText": {
 			if (!value || typeof value !== "object" || Array.isArray(value)) {
 				return wrong("text for each measure");
@@ -310,6 +315,16 @@ export function validateVisual(
 		// Targets per measure are declared apart from the option list, since
 		// they hold one entry for each measure rather than a single value.
 		if (key === definition.measureTargets?.key) continue;
+
+		// Reports a visual leads to, offered on any type that can be clicked
+		// rather than declared on each.
+		if (key === "links") continue;
+
+		// What a visual waits for, also offered on any type that asks for data.
+		if (key === "requireFilter" || key === "requireFilterText") continue;
+
+		// How it sits on a phone, offered on every type.
+		if (key === "phone") continue;
 
 		const option = declared.get(key);
 		if (!option) {

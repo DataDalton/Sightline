@@ -134,6 +134,7 @@ export default memo(function Sidebar() {
 
 	return (
 		<aside
+			data-app-chrome
 			className={`${styles.sidebar} ${navOpen ? styles.open : ""}`}
 			aria-hidden={false}
 		>

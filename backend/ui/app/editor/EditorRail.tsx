@@ -1,5 +1,6 @@
 "use client";
 
+import type { EditorPanel } from "./editorPanels";
 import type { ReactNode } from "react";
 import styles from "./Editor.module.css";
 
@@ -12,7 +13,7 @@ import styles from "./Editor.module.css";
 // it was. The assistant has a button of its own, so asking for a change is next
 // to making it by hand.
 
-export type EditorPanel = "visual" | "page" | "alerts" | "report" | "history";
+export type { EditorPanel };
 
 function Icon({ children }: { children: ReactNode }) {
 	return (
@@ -66,18 +67,27 @@ export function EditorRail({
 	panel,
 	onPanel,
 	hasSelection,
+	showAccess,
 	assistant,
+	finder,
 }: {
 	panel: EditorPanel | null;
 	onPanel: (panel: EditorPanel | null) => void;
 	hasSelection: boolean;
+	// A personal page has nobody else to give access to.
+	showAccess: boolean;
 	// Absent where no assistant is configured.
 	assistant?: { open: boolean; onToggle: () => void };
+	finder?: ReactNode;
 }) {
 	const toggle = (next: EditorPanel) => onPanel(panel === next ? null : next);
 
 	return (
 		<nav className={styles.rail} aria-label="Editor panels">
+			{finder}
+			{finder && (
+				<span className={styles.railDivider} aria-hidden="true" />
+			)}
 			<RailButton
 				label="Visual"
 				active={panel === "visual"}
@@ -97,7 +107,7 @@ export function EditorRail({
 			<RailButton
 				label="Page"
 				active={panel === "page"}
-				title="This page's name, filters and settings"
+				title="This page's name, filters and data through stamp"
 				onClick={() => toggle("page")}
 			>
 				<Icon>
@@ -105,6 +115,32 @@ export function EditorRail({
 					<path d="M8 8h8M8 12h8M8 16h5" />
 				</Icon>
 			</RailButton>
+			<RailButton
+				label="Report"
+				active={panel === "report"}
+				title="The report's subtitle, theme, location and protection"
+				onClick={() => toggle("report")}
+			>
+				<Icon>
+					<path d="M4 5a2 2 0 0 1 2-2h9l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
+					<path d="M14 3v5h5" />
+				</Icon>
+			</RailButton>
+			{showAccess && (
+				<RailButton
+					label="Access"
+					active={panel === "access"}
+					title="Who can edit this report, and who looks after it"
+					onClick={() => toggle("access")}
+				>
+					<Icon>
+						<circle cx="9" cy="8" r="4" />
+						<path d="M2 21a7 7 0 0 1 14 0" />
+						<path d="M17 4a4 4 0 0 1 0 8M19 15a6 6 0 0 1 3 6" />
+					</Icon>
+				</RailButton>
+			)}
+			<span className={styles.railDivider} aria-hidden="true" />
 			<RailButton
 				label="Alerts"
 				active={panel === "alerts"}
@@ -117,14 +153,38 @@ export function EditorRail({
 				</Icon>
 			</RailButton>
 			<RailButton
-				label="Report"
-				active={panel === "report"}
-				title="The report's subtitle, placement and protection"
-				onClick={() => toggle("report")}
+				label="Goals"
+				active={panel === "goals"}
+				title="Targets on the measures this report shows"
+				onClick={() => toggle("goals")}
 			>
 				<Icon>
-					<path d="M4 5a2 2 0 0 1 2-2h9l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
-					<path d="M14 3v5h5" />
+					<circle cx="12" cy="12" r="9" />
+					<circle cx="12" cy="12" r="5" />
+					<circle cx="12" cy="12" r="1" />
+				</Icon>
+			</RailButton>
+			<RailButton
+				label="Slides"
+				active={panel === "present"}
+				title="Walkthroughs, slides and marks kept on the page"
+				onClick={() => toggle("present")}
+			>
+				<Icon>
+					<rect x="3" y="4" width="18" height="12" rx="2" />
+					<path d="M12 16v4M8 20h8" />
+				</Icon>
+			</RailButton>
+			<span className={styles.railDivider} aria-hidden="true" />
+			<RailButton
+				label="Doctor"
+				active={panel === "check"}
+				title="Grade the page and the report, time the visuals and see how readers use them"
+				onClick={() => toggle("check")}
+			>
+				<Icon>
+					<path d="M9 12l2 2 4-4" />
+					<path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z" />
 				</Icon>
 			</RailButton>
 			<RailButton

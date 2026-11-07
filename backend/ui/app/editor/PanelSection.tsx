@@ -94,15 +94,44 @@ export function SectionGroup({
 	);
 }
 
+// What each group holds, shown while it is closed so nobody has to open it to find out.
+const sectionContents: Record<string, string> = {
+	"page-details": "Page name and what shows when it is empty",
+	"page-filters": "Keep filters in view, or require one",
+	"page-stamp": "The date shown on the page, and its wording",
+	"report-details": "Subtitle, theme and tags",
+	"report-placement": "Category and address",
+	"report-file": "A file to bring into another workspace",
+	"report-protection": "Locks on editing and deleting",
+	"report-danger": "Back to a draft, or remove it",
+	"access-editing": "Who may edit this report",
+	"access-people": "Who looks after it, and adding someone",
+	"visual-shaping": "Top rows, sort, compare, missing data, forecast",
+	"visual-derived": "Figures worked out from these fields",
+	"visual-drill": "Drill levels and what a click filters",
+	"visual-wait": "Hold this visual until a filter is chosen",
+	"visual-links": "Send a click to another report",
+	"visual-interaction": "What readers can change for themselves",
+	"visual-note": "A caveat or definition shown with it",
+	"visual-group": "Hold this visual inside a group",
+	"visual-display": "Labels, density and how it is drawn",
+	"visual-series": "Colours, lines and fills per measure",
+	"visual-axes": "Titles, scale and gridlines",
+	"visual-appearance": "Colour rules, frame and loading",
+	"visual-phone": "Hide, reorder or resize on a phone",
+	"visual-chrome": "Legend position and what the tooltip shows",
+	"visual-references": "Target and average lines",
+};
+
 export function Section({
 	id,
 	title,
 	// How many settings inside carry a value. Left undefined where counting is
 	// meaningless, and hidden at zero so an untouched group stays quiet.
 	count,
-	// Whether it starts open before anyone has opened or closed it. A group
-	// that holds a change starts open whatever this says, so what has been set
-	// is on screen without hunting for it.
+	// Whether it starts open before anyone has opened or closed it. A closed group
+	// says what is inside it and how many settings in it are in use, so the panel
+	// can be read down as a list of what there is.
 	defaultOpen = true,
 	// Other words somebody might search for that the group's text does not
 	// use, such as "color" for a group that says "colour".
@@ -117,7 +146,7 @@ export function Section({
 	children: ReactNode;
 }) {
 	const store = useContext(SectionContext);
-	const fallback = defaultOpen || (count ?? 0) > 0;
+	const fallback = defaultOpen;
 	const [local, setLocal] = useState(fallback);
 	const query = store?.query ?? "";
 	const open = query ? true : store ? store.isOpen(id, fallback) : local;
@@ -152,7 +181,14 @@ export function Section({
 				disabled={Boolean(query)}
 			>
 				<Chevron open={open} />
-				<span className={styles.sectionTitle}>{title}</span>
+				<span className={styles.sectionWords}>
+					<span className={styles.sectionTitle}>{title}</span>
+					{!open && sectionContents[id] && (
+						<span className={styles.sectionContents}>
+							{sectionContents[id]}
+						</span>
+					)}
+				</span>
 				{count !== undefined && count > 0 && (
 					<span className={styles.sectionCount}>{count}</span>
 				)}
@@ -167,15 +203,19 @@ export function Section({
 // A quiet line rather than the bordered block the panel used to put under every
 // setting. Forty of those in one column stop being explanation and become the
 // thing the reader has to look past to find the controls. Where the panel asks
-// for it, the line waits behind a small "About this" until somebody wants it.
+// for it, the line waits behind a small icon beside the setting until somebody
+// wants it.
 export function Hint({ children }: { children: ReactNode }) {
 	const store = useContext(SectionContext);
 	if (store?.compactHints) {
 		return (
 			<details className={styles.hintMore}>
-				<summary className={styles.hintSummary}>
+				<summary
+					className={styles.hintSummary}
+					title="About this setting"
+					aria-label="About this setting"
+				>
 					<InfoIcon />
-					About this
 				</summary>
 				<p className={styles.hint}>{children}</p>
 			</details>

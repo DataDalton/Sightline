@@ -13,7 +13,15 @@ import {
 	type ReportProtection,
 } from "./pageProtection";
 import { record } from "../telemetry/usage";
-import { getExplicitContext, resolveReportAccess } from "./access";
+import {
+	getExplicitContext,
+	editingFacts,
+	editModeOn,
+	pageDenied,
+	pageEditMode,
+	canOnReport,
+} from "./access";
+import { maintainersOf } from "./permissionStore";
 import { getSource } from "../semantic/registry";
 import {
 	describeProblems,
@@ -93,6 +101,8 @@ export type EditOperation =
 			type: "updateReport";
 			title?: string;
 			description?: string | null;
+			// A theme's id. An empty string goes back to the default.
+			theme?: string;
 	  }
 	| {
 			type: "updatePage";
@@ -133,34 +143,111 @@ export interface EditResult {
 
 // Returns whether the report is a personal page, which the caller needs anyway
 // and which is already loaded here.
+//
+// With the operations named, a right on a page covers what changes that page alone, and an
+// exception on a page refuses them. Adding, removing or reordering pages, and anything
+// about the report as a whole, takes the right on the report.
 export async function assertCanEdit(
 	policy: PolicyClass,
 	email: string,
 	reportId: string,
+	operations?: EditOperation[],
 ): Promise<boolean> {
 	const report = await reportSubject(reportId);
 	if (!report) throw new EditForbiddenError("Report not found");
 
-	const context = await getExplicitContext(policy, email);
-	const access = resolveReportAccess(
-		context.grants,
-		{
-			reportId,
-			categoryId: report.category_id,
-			isPersonal: report.is_personal,
-			ownerEmail: report.owner_email,
-		},
-		context.email,
-		"edit",
-		context.baseline,
-	);
-	if (!access.allowed) {
+	const [context, facts] = await Promise.all([
+		getExplicitContext(policy, email),
+		editingFacts(),
+	]);
+	const ref = {
+		reportId,
+		categoryId: report.category_id,
+		isPersonal: report.is_personal,
+		ownerEmail: report.owner_email,
+		tags: report.tags,
+		editPolicy: report.edit_policy,
+	};
+	const mode = editModeOn(context, ref, facts);
+
+	if (operations && !report.is_personal) {
+		const { pageIds, touchesReport } = await pagesTouched(operations);
+		for (const pageId of pageIds) {
+			if (pageDenied(context, "report.edit", pageId)) {
+				throw new EditForbiddenError(
+					"You do not have permission to edit one of these pages.",
+				);
+			}
+		}
+		if (
+			mode !== "edit" &&
+			!touchesReport &&
+			pageIds.length > 0 &&
+			pageIds.every(
+				(pageId) =>
+					pageEditMode(context, ref, pageId, facts) === "edit",
+			)
+		) {
+			return false;
+		}
+		if (
+			!mode &&
+			!touchesReport &&
+			pageIds.length > 0 &&
+			pageIds.every((pageId) => pageEditMode(context, ref, pageId, facts))
+		) {
+			throw new EditForbiddenError(
+				"Only this report's Maintainers change it directly. Suggest your change instead.",
+			);
+		}
+	}
+
+	if (mode === "suggest") {
+		throw new EditForbiddenError(
+			"Only this report's Maintainers change it directly. Suggest your change instead.",
+		);
+	}
+	if (mode !== "edit") {
 		throw new EditForbiddenError(
 			"You do not have permission to edit this report",
 		);
 	}
 
 	return report.is_personal;
+}
+
+// Which pages a batch of operations changes, and whether anything in it reaches beyond one
+// page. A visual somebody names without its page is looked up.
+export async function pagesTouched(
+	operations: EditOperation[],
+): Promise<{ pageIds: string[]; touchesReport: boolean }> {
+	const pageIds = new Set<string>();
+	const visuals: string[] = [];
+	let touchesReport = false;
+	for (const op of operations) {
+		switch (op.type) {
+			case "addVisual":
+			case "reorderVisuals":
+			case "updatePage":
+				pageIds.add(op.pageId.toLowerCase());
+				break;
+			case "updateVisual":
+			case "removeVisual":
+				visuals.push(op.visualId);
+				break;
+			default:
+				touchesReport = true;
+		}
+	}
+	if (visuals.length > 0) {
+		const rows = await sql<{ page_id: string }>(
+			`SELECT DISTINCT page_id::text AS page_id FROM report_visuals
+			 WHERE visual_id::text = ANY($1::text[])`,
+			[visuals.map((id) => String(id).toLowerCase())],
+		);
+		for (const row of rows) pageIds.add(row.page_id);
+	}
+	return { pageIds: [...pageIds], touchesReport };
 }
 
 // Checks every visual an edit would store against the catalogue.
@@ -413,7 +500,7 @@ async function assertTargetsBelongToReport(
 	}
 }
 
-async function assertDefinitionsAreDrawable(
+export async function assertDefinitionsAreDrawable(
 	operations: EditOperation[],
 ): Promise<void> {
 	// An update that changes only a title or a layout draws the same thing it
@@ -532,6 +619,61 @@ function lowerCaseIds(op: EditOperation): EditOperation {
 	return next as EditOperation;
 }
 
+// An edit past "Maintainers only" by someone who is not one of them is recorded, so
+// reaching around the people responsible for a report never goes unseen.
+async function logOverride(
+	policy: PolicyClass,
+	email: string,
+	reportId: string,
+	operationCount: number,
+): Promise<void> {
+	const report = await reportSubject(reportId);
+	if (!report || report.is_personal) return;
+	const [context, facts] = await Promise.all([
+		getExplicitContext(policy, email),
+		editingFacts(),
+	]);
+	const ref = {
+		reportId,
+		categoryId: report.category_id,
+		tags: report.tags,
+	};
+	if (maintainersOf(facts, ref).length === 0) return;
+	if (
+		canOnReport(context.capabilities, "report.review", ref, context.denied)
+	) {
+		return;
+	}
+	if (
+		!canOnReport(
+			context.capabilities,
+			"report.editAny",
+			ref,
+			context.denied,
+		)
+	) {
+		return;
+	}
+	await insertLog({
+		recordType: "report",
+		recordId: reportId,
+		action: "edit_override",
+		changedBy: email,
+		newValue: JSON.stringify({ operationCount }),
+	});
+}
+
+// Everything that makes a set of operations refusable before any are applied, so a
+// suggestion is turned down when it is made rather than when someone approves it.
+export async function checkOperations(
+	reportId: string,
+	operations: EditOperation[],
+): Promise<void> {
+	const lowered = operations.map(lowerCaseIds);
+	await assertTargetsBelongToReport(reportId, lowered);
+	await assertDefinitionsAreDrawable(lowered);
+}
+
 export async function applyEdits(
 	policy: PolicyClass,
 	email: string,
@@ -543,7 +685,18 @@ export async function applyEdits(
 			? asked.operations.map(lowerCaseIds)
 			: asked.operations,
 	};
-	const personal = await assertCanEdit(policy, email, request.reportId);
+	const personal = await assertCanEdit(
+		policy,
+		email,
+		request.reportId,
+		request.operations,
+	);
+	await logOverride(
+		policy,
+		email,
+		request.reportId,
+		request.operations.length,
+	);
 
 	if (request.operations.length === 0) {
 		throw new Error("No operations supplied");
@@ -699,12 +852,15 @@ export async function applyEdits(
 					await client.query(
 						`UPDATE reports SET
 						   title = COALESCE($2, title),
-						   description = COALESCE($3, description)
+						   description = COALESCE($3, description),
+						   theme = CASE WHEN $4::text IS NULL THEN theme
+						                ELSE NULLIF($4, '') END
 						 WHERE report_id = $1`,
 						[
 							request.reportId,
 							op.title ?? null,
 							op.description ?? null,
+							op.theme ?? null,
 						],
 					);
 					break;
@@ -841,7 +997,7 @@ export async function applyEdits(
 			[request.reportId],
 		);
 		const reportSnapshot = await client.query(
-			`SELECT title, description FROM reports WHERE report_id = $1`,
+			`SELECT title, description, theme FROM reports WHERE report_id = $1`,
 			[request.reportId],
 		);
 

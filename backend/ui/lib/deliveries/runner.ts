@@ -10,7 +10,7 @@ import {
 	type InboxItem,
 	type NewNotification,
 } from "../notify/store";
-import { getReport } from "../platform/reports";
+import { getReport, reportForScheduledRun } from "../platform/reports";
 import { parseQuerySpec } from "../query/spec";
 import { queryForVisual } from "../query/visualSpec";
 import { getSource, listSources } from "../semantic/registry";
@@ -35,6 +35,14 @@ import {
 import type { RunIdentity } from "../alerts/shared";
 import { hasOwnedChecks } from "../alerts/owners";
 import { pageLink } from "./store";
+import {
+	drawPagePdf,
+	drawPagePdfWhileAway,
+	PagePdfRefused,
+	saveDeliveryFile,
+} from "./pagePdf";
+import { pageSourceKeys, pdfMayDrawWhileAway } from "./pdfSources";
+import { canDoOnReport } from "../platform/access";
 import { perProcess } from "../perProcess";
 
 // Works out and sends the pages people have scheduled.
@@ -49,6 +57,10 @@ import { perProcess } from "../perProcess";
 //     what the owner was recorded seeing. See lib/alerts/recorded.
 //   - Anything else is sent when the owner is next in the app, under their
 //     own token, and the page says so.
+//   - One with a PDF follows the same rule for every source on the page, since
+//     all of them are read to draw it. While here, the owner is confirmed able
+//     to export the page and read each source. If any source then fails the
+//     rule, the PDF waits until they are next in the app. See pdfSources.
 
 const claimLease = "15 minutes";
 const accessWindow = "24 hours";
@@ -64,11 +76,13 @@ interface DeliveryRow {
 	state: { values?: Record<string, number | null> };
 	last_run_on: string | null;
 	next_run_on: string;
+	attach_pdf: boolean;
+	pdf_sources: string[];
 }
 
 const deliveryColumns = `delivery_id::text, owner_email, report_id::text,
 	page_id::text, source_key, schedule, state, last_run_on::text,
-	next_run_on::text`;
+	next_run_on::text, attach_pdf, pdf_sources`;
 
 interface PageRow {
 	slug: string;
@@ -185,6 +199,8 @@ async function deliver(
 	// The time to put back instead of moving the schedule, for a send the
 	// owner asked for.
 	keep: string | null = null,
+	// The owner, signed in, which is the only way a PDF of the page can be drawn.
+	owner: Identity | null = null,
 ): Promise<void> {
 	let status = "ok";
 	let error: string | null = null;
@@ -239,13 +255,51 @@ async function deliver(
 						.join(". ") + "."
 				: "Your scheduled page is ready.";
 
+		// A PDF that cannot be drawn does not hold back the figures. The note says what
+		// went wrong, and the person still gets what could be worked out.
+		let pdf: { fileId: string | null; note: string } | null = null;
+		if (row.attach_pdf) {
+			try {
+				const drawn = owner
+					? await drawPagePdf(owner, {
+							slug: page.slug,
+							pageId: row.page_id,
+						})
+					: await drawPagePdfWhileAway(reads, {
+							slug: page.slug,
+							pageId: row.page_id,
+							ownerEmail: row.owner_email,
+							confirmedSources: row.pdf_sources,
+						});
+				pdf = {
+					fileId: await saveDeliveryFile(
+						row.delivery_id,
+						row.owner_email,
+						drawn,
+					),
+					note: " The PDF is ready.",
+				};
+			} catch (e) {
+				const refused = e instanceof PagePdfRefused;
+				if (!refused) console.warn("A PDF was not drawn:", e);
+				pdf = {
+					fileId: null,
+					note: refused
+						? ` There is no PDF this time. ${(e as Error).message}`
+						: " The PDF could not be drawn this time.",
+				};
+			}
+		}
+
 		message = {
 			ownerEmail: row.owner_email,
 			input: {
 				kind: "delivery",
 				title,
-				body,
-				link: pageLink(page.slug, page.page_title, page.is_first),
+				body: `${body}${pdf?.note ?? ""}`,
+				link: pdf?.fileId
+					? `/api/deliveries/file/${pdf.fileId}`
+					: pageLink(page.slug, page.page_title, page.is_first),
 				data: { deliveryId: row.delivery_id },
 			},
 		};
@@ -312,6 +366,7 @@ async function runAll(
 	run: RunQuery,
 	identity: RunIdentity,
 	restricted: (row: DeliveryRow) => boolean = () => false,
+	owner: Identity | null = null,
 ): Promise<void> {
 	// One set of reads for the batch, so two people who scheduled the same
 	// page share its figure queries.
@@ -319,9 +374,11 @@ async function runAll(
 	const queue = [...rows];
 	const workers = Array.from({ length: 3 }, async () => {
 		for (let row = queue.shift(); row; row = queue.shift()) {
-			await deliver(row, reads, restricted(row)).catch((error) => {
-				console.warn(`Delivery ${row.delivery_id} failed:`, error);
-			});
+			await deliver(row, reads, restricted(row), null, owner).catch(
+				(error) => {
+					console.warn(`Delivery ${row.delivery_id} failed:`, error);
+				},
+			);
 		}
 	});
 	await Promise.all(workers);
@@ -330,6 +387,56 @@ async function runAll(
 // --- On the timer ----------------------------------------------------------
 
 let running = false;
+
+// The due PDFs that may be drawn now. A source added to a page since its owner was last here
+// has not been confirmed, so that PDF waits for them.
+async function pdfsReadyToDraw(
+	unattended: string[],
+	restrictable: string[],
+): Promise<string[]> {
+	const due = await sql<{
+		delivery_id: string;
+		owner_email: string;
+		slug: string;
+		page_id: string;
+		pdf_sources: string[];
+	}>(
+		`SELECT d.delivery_id::text, d.owner_email, r.slug, d.page_id::text,
+		        d.pdf_sources
+		 FROM deliveries d
+		 JOIN reports r ON r.report_id = d.report_id AND r.is_active
+		 WHERE d.enabled AND d.attach_pdf
+		   AND d.next_run_on <= now()
+		   AND d.access_confirmed_on > now() - interval '${accessWindow}'
+		   AND d.pdf_confirmed_on > now() - interval '${accessWindow}'`,
+	);
+	if (due.length === 0) return [];
+
+	const recordings = await sql<{ owner_email: string; source_key: string }>(
+		`SELECT owner_email, source_key FROM alert_access
+		 WHERE owner_email = ANY($1::text[])
+		   AND NOT too_many
+		   AND captured_on > now() - interval '${recordingWindow}'`,
+		[[...new Set(due.map((row) => row.owner_email))]],
+	);
+	const ready: string[] = [];
+	for (const row of due) {
+		const report = await reportForScheduledRun(row.slug);
+		const page = report?.pages.find((p) => p.pageId === row.page_id);
+		if (!report || !page) continue;
+		const mayDraw = pdfMayDrawWhileAway({
+			pageSources: pageSourceKeys(page, report.sourceKey),
+			confirmedSources: row.pdf_sources,
+			unattended,
+			restrictable,
+			recorded: recordings
+				.filter((held) => held.owner_email === row.owner_email)
+				.map((held) => held.source_key),
+		});
+		if (mayDraw) ready.push(row.delivery_id);
+	}
+	return ready;
+}
 
 export async function runScheduledDeliveries(): Promise<void> {
 	if (!settings().alertsEnabled || running) return;
@@ -341,6 +448,8 @@ export async function runScheduledDeliveries(): Promise<void> {
 		const restrictable = [...(await restrictableSources()).keys()];
 		if (unattended.length === 0 && restrictable.length === 0) return;
 
+		const pdfsReady = await pdfsReadyToDraw(unattended, restrictable);
+
 		// Claimed in one statement, so two replicas ticking at once take
 		// different deliveries rather than both sending the same one.
 		const rows = await sql<DeliveryRow>(
@@ -348,6 +457,7 @@ export async function runScheduledDeliveries(): Promise<void> {
 			 WHERE delivery_id IN (
 			   SELECT d.delivery_id FROM deliveries d
 			   WHERE d.enabled
+			     AND (NOT d.attach_pdf OR d.delivery_id::text = ANY($4::text[]))
 			     AND d.next_run_on <= now()
 			     AND d.access_confirmed_on > now() - interval '${accessWindow}'
 			     AND (
@@ -368,7 +478,7 @@ export async function runScheduledDeliveries(): Promise<void> {
 			   FOR UPDATE SKIP LOCKED
 			 )
 			 RETURNING ${deliveryColumns}`,
-			[unattended, batchSize, restrictable],
+			[unattended, batchSize, restrictable, pdfsReady],
 		);
 		const open = new Set(unattended);
 		if (rows.length > 0) {
@@ -418,11 +528,16 @@ export function runDeliveriesForOwner(identity: Identity): void {
 			delivery_id: string;
 			slug: string;
 			source_key: string | null;
+			page_id: string;
+			attach_pdf: boolean;
 			recent: boolean;
 		}>(
 			`SELECT d.delivery_id::text, r.slug, d.source_key,
+			        d.page_id::text, d.attach_pdf,
 			        coalesce(d.access_confirmed_on
 			                   > now() - interval '${confirmationRefresh}', false)
+			        AND (NOT d.attach_pdf OR coalesce(d.pdf_confirmed_on
+			                   > now() - interval '${confirmationRefresh}', false))
 			          AS recent
 			 FROM deliveries d
 			 JOIN reports r ON r.report_id = d.report_id AND r.is_active
@@ -446,12 +561,39 @@ export function runDeliveriesForOwner(identity: Identity): void {
 		if (stale.length > 0) {
 			const readable = await confirmableSources(identity);
 			const policy = await resolvePolicyClass(identity);
-			for (const { delivery_id, slug, source_key } of stale) {
+			for (const row of stale) {
+				const { delivery_id, slug, source_key } = row;
 				if (!source_key) continue;
 				if (readable && !readable.has(source_key)) continue;
-				if (await getReport(policy, identity, slug)) {
-					renewed.push(delivery_id);
-				}
+				const report = await getReport(policy, identity, slug);
+				if (!report) continue;
+				renewed.push(delivery_id);
+				if (!row.attach_pdf) continue;
+
+				// The figures carry on without the PDF, so losing the right to it
+				// only takes the PDF away.
+				const page = report.pages.find(
+					(held) => held.pageId === row.page_id,
+				);
+				const sources = page
+					? pageSourceKeys(page, report.sourceKey)
+					: [];
+				const mayDraw =
+					page !== undefined &&
+					sources.every((key) => !readable || readable.has(key)) &&
+					(await canDoOnReport(
+						policy,
+						identity,
+						"export.run",
+						report,
+					));
+				await sql(
+					`UPDATE deliveries SET
+					   pdf_confirmed_on = CASE WHEN $2::boolean THEN now() END,
+					   pdf_sources = $3::text[]
+					 WHERE delivery_id = $1::uuid`,
+					[delivery_id, mayDraw, sources],
+				);
 			}
 		}
 		if (renewed.length > 0) {
@@ -478,7 +620,13 @@ export function runDeliveriesForOwner(identity: Identity): void {
 			[confirmed, batchSize],
 		);
 		if (rows.length > 0) {
-			await runAll(rows, run, { app: false, ownerEmail: email });
+			await runAll(
+				rows,
+				run,
+				{ app: false, ownerEmail: email },
+				() => false,
+				identity,
+			);
 		}
 	})().catch((error) => {
 		console.warn(`Deliveries for ${email} could not be sent:`, error);
@@ -524,5 +672,5 @@ export async function sendNow(identity: Identity, id: string): Promise<void> {
 	});
 	if (!row) throw new Error("Not found");
 	const reads = new BatchReads({ app: false, ownerEmail: email }, run);
-	await deliver(row, reads, false, row.next_run_on);
+	await deliver(row, reads, false, row.next_run_on, identity);
 }

@@ -1,4 +1,5 @@
 import type { Identity } from "../auth/identity";
+import { visibleUpdates } from "../updates/store";
 import { resolvePolicyClass } from "../auth/policy";
 import { executeQuery, QueryAccessError } from "../query/execute";
 import {
@@ -134,6 +135,24 @@ const rememberTool: ToolDefinition = {
 };
 
 const tools: ToolDefinition[] = [
+	{
+		type: "function",
+		function: {
+			name: "list_updates",
+			description:
+				"Announced changes to the data and reports this person can read: definition changes, maintenance, incidents and so on. Use it to answer whether a measure changed, or to explain a jump in a figure.",
+			parameters: {
+				type: "object",
+				properties: {
+					about: {
+						type: "string",
+						description:
+							"Words to look for, such as a field or source name. Leave out for the latest.",
+					},
+				},
+			},
+		},
+	},
 	{
 		type: "function",
 		function: {
@@ -431,6 +450,7 @@ export async function runAgent(
 		name === "remember" ||
 		name === "list_sources" ||
 		name === "describe_source" ||
+		name === "list_updates" ||
 		name === "run_query"
 			? name
 			: "unknown";
@@ -572,6 +592,40 @@ export async function runAgent(
 						`${s.sourceKey}: ${s.title}${s.description ? `. ${s.description}` : ""}`,
 				)
 				.join("\n");
+		}
+
+		if (kind === "list_updates") {
+			emit({ type: "step", id, kind, label: "Reading what has changed" });
+			const needle = String(args.about ?? "").toLowerCase();
+			const seen = await visibleUpdates(policy, identity).catch(() => []);
+			const found = seen
+				.filter(
+					(update) =>
+						!needle ||
+						[
+							update.title,
+							update.body,
+							...update.about.map((item) => item.id),
+						]
+							.join(" ")
+							.toLowerCase()
+							.includes(needle),
+				)
+				.slice(0, 15);
+			done(true, `${found.length} updates`);
+			return JSON.stringify(
+				found.map((update) => ({
+					type: update.type,
+					title: update.title,
+					impact: update.impact,
+					posted: update.postedOn,
+					effective: update.effectiveOn,
+					before: update.before,
+					after: update.after,
+					reason: update.reason,
+					about: update.about,
+				})),
+			);
 		}
 
 		const source = bySource.get(String(args.sourceKey ?? ""));

@@ -1490,6 +1490,24 @@ export function VisualThumbnail({ type, size = 40 }: ThumbnailProps) {
 					</>
 				);
 
+			case "navLinks":
+				return (
+					<>
+						{[8, 26, 44].map((x, i) => (
+							<rect
+								key={x}
+								x={x}
+								y="16"
+								width="15"
+								height="9"
+								rx="2"
+								fill={i === 0 ? bar : muted}
+								opacity={i === 0 ? 0.9 : 0.5}
+							/>
+						))}
+					</>
+				);
+
 			case "sectionHeader":
 				return (
 					<>
@@ -1514,6 +1532,10 @@ export function VisualThumbnail({ type, size = 40 }: ThumbnailProps) {
 					</>
 				);
 
+			case "dataQualityTile":
+			case "paceTile":
+			case "forecastRanking":
+			case "forecastChart":
 			case "blockedNotice":
 				return (
 					<>

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
+import { NewRuleButton } from "../status/QualityView";
 import useSWR from "swr";
 import { describeFetchError } from "../../lib/swr";
 import { sanitizeSvg } from "../../lib/visuals/svgSanitize";
@@ -27,6 +28,9 @@ import { SyncFreshness } from "./SyncFreshness";
 import CategoriesPane from "./CategoriesPane";
 import PersonalPagesPane from "./PersonalPagesPane";
 import RolesPane from "./RolesPane";
+import ProfilesPane from "./ProfilesPane";
+import ThemesPane from "./ThemesPane";
+import UpdateTypesPane from "./UpdateTypesPane";
 import { AdminRail } from "./AdminRail";
 import { DailyActivity } from "./DailyActivity";
 import { ago, clock } from "./when";
@@ -220,6 +224,12 @@ export default function AdminView() {
 				return <RolesPane show="roles" />;
 			case "assignments":
 				return <RolesPane show="assignments" />;
+			case "profiles":
+				return <ProfilesPane />;
+			case "themes":
+				return <ThemesPane />;
+			case "updateTypes":
+				return <UpdateTypesPane />;
 			case "grants":
 				return <AccessGrants />;
 			case "review":
@@ -232,6 +242,7 @@ export default function AdminView() {
 				return <CategoriesPane />;
 			case "personal":
 				return <PersonalPagesPane />;
+			case "editingRules":
 			case "branding":
 			case "warehouse":
 			case "caching":
@@ -903,6 +914,13 @@ interface ConfigValues {
 	alertsEnabled: boolean;
 	pushEnabled: boolean;
 	retentionMonths: number;
+	defaultEditPolicy: string;
+	requireSecondApprover: boolean;
+	requestEscalationDays: number;
+	autoUpdateFieldAdded: boolean;
+	autoUpdateFieldRemoved: boolean;
+	autoUpdateFieldRenamed: boolean;
+	autoUpdateDefinitionChanged: boolean;
 }
 
 // What an admin can change without a redeploy.
@@ -1533,6 +1551,84 @@ function ConfigurationSection({ group }: { group: PaneId }) {
 					</>
 				)}
 
+				{group === "editingRules" && (
+					<SettingGroup
+						title="What posts itself to Updates"
+						blurb="After the daily field sync. Somebody can add the reason afterwards. A change inside a pipeline cannot be seen from here, so a person or automation has to post it."
+					>
+						<SwitchSetting
+							label="A field was added"
+							hint="An info entry."
+							checked={values.autoUpdateFieldAdded}
+							onChange={(v) => set({ autoUpdateFieldAdded: v })}
+						/>
+						<SwitchSetting
+							label="A field was removed"
+							hint="A breaking entry, with a banner."
+							checked={values.autoUpdateFieldRemoved}
+							onChange={(v) => set({ autoUpdateFieldRemoved: v })}
+						/>
+						<SwitchSetting
+							label="A field looks renamed"
+							hint="A notable entry."
+							checked={values.autoUpdateFieldRenamed}
+							onChange={(v) => set({ autoUpdateFieldRenamed: v })}
+						/>
+						<SwitchSetting
+							label="A definition changed"
+							hint="A notable entry, with the old and new definition."
+							checked={values.autoUpdateDefinitionChanged}
+							onChange={(v) =>
+								set({ autoUpdateDefinitionChanged: v })
+							}
+						/>
+					</SettingGroup>
+				)}
+
+				{group === "editingRules" && (
+					<>
+						<SettingGroup
+							title="Who can edit"
+							blurb="Applies to a report that has Maintainers, where neither it nor its category says otherwise. A report nobody maintains stays open to Editors."
+						>
+							<SwitchSetting
+								label="Maintainers only"
+								hint="On means other Editors suggest changes for a Maintainer to approve. Off means any Editor changes the report directly."
+								checked={values.defaultEditPolicy !== "any"}
+								onChange={(v) =>
+									set({
+										defaultEditPolicy: v
+											? "maintainers"
+											: "any",
+									})
+								}
+							/>
+						</SettingGroup>
+						<SettingGroup
+							title="Approvals"
+							blurb="Suggested changes and requests to publish."
+						>
+							<SwitchSetting
+								label="Require a second person"
+								hint="On means nobody can approve their own suggestion or publish request."
+								checked={values.requireSecondApprover}
+								onChange={(v) =>
+									set({ requireSecondApprover: v })
+								}
+							/>
+							<NumberSetting
+								label="Pass to administrators after"
+								hint="Unanswered for this long, a request shows up for administrators too."
+								unit="days"
+								value={values.requestEscalationDays}
+								onChange={(v) =>
+									set({ requestEscalationDays: v })
+								}
+							/>
+						</SettingGroup>
+					</>
+				)}
+
 				{group === "notifications" && (
 					<>
 						<SettingGroup
@@ -1754,49 +1850,12 @@ function NotificationsActivity() {
 			)}
 
 			<SettingGroup
-				title="Announcement"
-				blurb={`Lands in the inbox of everyone who used the app in the last 90 days, ${data.announceReach.toLocaleString()} people now, and on their devices if they allow announcements.`}
+				title="Announcements"
+				blurb="Announcements, maintenance and incidents are posted from Updates, which also says who they reach and how."
 			>
-				<Field label="Title">
-					<input
-						className={styles.input}
-						value={title}
-						maxLength={200}
-						onChange={(e) => setTitle(e.target.value)}
-						placeholder="Planned maintenance on Saturday"
-					/>
-				</Field>
-				<Field label="Message">
-					<textarea
-						className={styles.input}
-						value={body}
-						rows={3}
-						maxLength={2000}
-						onChange={(e) => setBody(e.target.value)}
-					/>
-				</Field>
-				<Field
-					label="Link"
-					hint="Optional. A page in this app, such as /explore/."
-				>
-					<input
-						className={styles.input}
-						value={link}
-						onChange={(e) => setLink(e.target.value)}
-						placeholder="/"
-					/>
-				</Field>
-				<div className={styles.inlineActions}>
-					<button
-						type="button"
-						className={styles.saveButton}
-						onClick={announce}
-						disabled={sending || !title.trim()}
-					>
-						{sending ? "Sending" : "Send announcement"}
-					</button>
-					{sent && <span className={styles.saveNote}>{sent}</span>}
-				</div>
+				<a className={styles.saveButton} href="/status?tab=updates">
+					Go to Updates
+				</a>
 			</SettingGroup>
 
 			{data.push.keysCreatedOn && (
@@ -2777,6 +2836,12 @@ function PlatformSection({
 							)}
 							onFinished={onRefresh}
 						/>
+						<a
+							className={styles.actionPrimary}
+							href="/status?tab=quality"
+						>
+							Data rules
+						</a>
 					</div>
 
 					<SyncFreshness run={data.lastSync ?? null} />
@@ -2847,7 +2912,11 @@ function PlatformSection({
 												}
 											>
 												Edit
-											</button>
+											</button>{" "}
+											<NewRuleButton
+												sourceKey={s.sourceKey}
+												className={styles.linkButton}
+											/>
 										</td>
 									</tr>
 								))}

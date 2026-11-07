@@ -6,6 +6,7 @@ import { queryAsUser } from "../data/userSession";
 import { encodeState } from "../explore/state";
 import { groupLabel, toNumber } from "../format";
 import { notifyInTransaction, pushNotification } from "../notify/store";
+import { sourcesInMaintenance } from "../updates/store";
 import { confirmableSources, reachableSet } from "../platform/sources";
 import { compileQuery } from "../query/builder";
 import { maxLimit, parseQuerySpec, type QuerySpec } from "../query/spec";
@@ -315,6 +316,9 @@ async function check(
 	// claiming the row moved it to the end of the lease.
 	keep: string | null = null,
 ): Promise<CheckOutcome> {
+	const quietNow = await sourcesInMaintenance().catch(
+		() => new Set<string>(),
+	);
 	const definition = row.definition;
 	const now = new Date();
 	const next = reschedule ? nextRun(definition.schedule, now) : null;
@@ -396,7 +400,23 @@ async function check(
 		);
 		const record = updated.rows[0];
 		if (!record) return null;
-		if (!message) return { record, item: null };
+		// Back on the right side, so whatever it last fired about has recovered.
+		if (
+			!error &&
+			!waiting &&
+			Object.values(state).every((group) => !group.met)
+		) {
+			await client.query(
+				`UPDATE alert_events SET recovered_on = now()
+				 WHERE rule_id = $1 AND recovered_on IS NULL`,
+				[row.rule_id],
+			);
+		}
+		// Expected while the source is down for maintenance. What it found stays on
+		// record, and the owner is not told.
+		if (!message || quietNow.has(definition.sourceKey)) {
+			return { record, item: null };
+		}
 		await client.query(
 			`INSERT INTO alert_events (rule_id, title, body, firings)
 			 VALUES ($1, $2, $3, $4)`,

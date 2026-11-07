@@ -1206,3 +1206,11 @@
 	outline: 2px solid var(--focus-ring);
 	outline-offset: -2px;
 }
+
+.themesIntro {
+	max-width: 70ch;
+	margin: 0;
+	color: var(--text-secondary);
+	font-size: var(--text-sm);
+	line-height: 1.5;
+}

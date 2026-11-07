@@ -102,6 +102,20 @@ async function printWhenLoaded(): Promise<void> {
 	window.print();
 }
 
+// Asked before anything goes to paper. Set by a report page, whose printing has to be
+// recorded first. False means it was refused and the page says why.
+let printGate: (() => Promise<boolean>) | null = null;
+
+export function setPrintGate(gate: (() => Promise<boolean>) | null): void {
+	printGate = gate;
+}
+
+// Printing the report through its gate, from the button and the shortcut alike.
+export async function printReport(): Promise<void> {
+	if (printGate && !(await printGate())) return;
+	await printWhenLoaded();
+}
+
 let printHooked = false;
 
 // The print shortcut is taken over only while something on the page has not
@@ -121,12 +135,12 @@ function hookPrinting(): void {
 				!(event.ctrlKey || event.metaKey) ||
 				event.altKey ||
 				event.shiftKey ||
-				deferred.size === 0
+				(deferred.size === 0 && !printGate)
 			) {
 				return;
 			}
 			event.preventDefault();
-			void printWhenLoaded();
+			void printReport();
 		},
 		true,
 	);

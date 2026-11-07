@@ -23,12 +23,40 @@ import type { AppliedVisual } from "../../lib/visuals/applyOps";
 import { EditorCanvas, previewWidths } from "./EditorCanvas";
 import { useLiveSync } from "./useLiveSync";
 import { isTypingTarget, useEditorHistory } from "./useEditorHistory";
+import { MultiEditPanel } from "./MultiEditPanel";
+import { useReportTheme } from "../visuals/useReportTheme";
+import { ShortcutsHelp } from "../components/ShortcutsHelp";
 import { opsForRestore } from "../../lib/visuals/undo";
 import { ConfirmDialog } from "../components/shared/ConfirmDialog";
 import { NewPageDialog } from "../authoring/NewPage";
 import { PageStrip } from "./PageStrip";
 import { Select } from "../components/shared/Select";
 import { ReportPlacement } from "./ReportPlacement";
+import {
+	ReportAccessPanel,
+	ReportTagsField,
+	TakeBackBlock,
+} from "./ReportAccessPanel";
+import { SettingsFinder } from "./SettingsFinder";
+import { BlocksDialog } from "./BlocksDialog";
+import { DeckPanel } from "./DeckPanel";
+import type { VisualMark } from "../../lib/visuals/deck";
+import {
+	blockRefOf,
+	placeBlock,
+	withoutBlockRef,
+	type BlockVisual,
+} from "../../lib/visuals/blocks";
+import {
+	CanvasOverlayContext,
+	doctorOpensOn,
+	overlayBadges,
+	ReportCheckPanel,
+	useReadership,
+	type CanvasOverlayMode,
+	type DoctorPage,
+	type Timing,
+} from "./ReportCheckPanel";
 import { PageDateRangeContext } from "./MeasureTargets";
 import { UnsavedEditsContext } from "./HistoryPanel";
 import { Hint, Section } from "./PanelSection";
@@ -38,6 +66,7 @@ import type { VisualPreset } from "../../lib/visuals/presets";
 import { PropertiesPanel } from "./PropertiesPanel";
 import { EditorRail, type EditorPanel } from "./EditorRail";
 import { PageAlertsPanel } from "./PageAlertsPanel";
+import { GoalsPanel } from "../goals/GoalsPanel";
 import { useAssistantPanel } from "../assist/AssistantContext";
 import { useAssistantSurface } from "../assist/useAssistantSurface";
 import type { EditorOp } from "../../lib/assistant/surfaces/editor";
@@ -205,6 +234,9 @@ interface ReportEditorProps {
 	// The line under the report title. Report-level rather than page-level,
 	// because that is where it is stored and where every page shows it.
 	reportDescription: string | null;
+	reportTheme?: string | null;
+	// "suggest" sends the changes for a Maintainer to approve instead of applying them.
+	editMode?: "edit" | "suggest" | null;
 	// Which section of the navigation the report sits in, and whether it is a
 	// personal page. A personal page is placed by publishing it rather than by
 	// moving it, so the placement controls are not offered for one.
@@ -212,6 +244,8 @@ interface ReportEditorProps {
 	isPersonal: boolean;
 	// Every page in the report, for the strip under the toolbar.
 	pages: { pageId: string; title: string }[];
+	// The same pages as published, for grading the whole report.
+	reportPages: DoctorPage[];
 	// What this page refuses, as the server holds it: the report's locks and the
 	// page's own, already combined. The editor stops offering what would be
 	// refused; the refusal itself is applyEdits's.
@@ -246,6 +280,7 @@ interface EditorSnapshot {
 	pageConfig: PageConfig;
 	pageTitle: string;
 	description: string;
+	theme: string | null;
 }
 
 type PendingOp =
@@ -271,6 +306,8 @@ export function ReportEditor({
 	pageTitle: initialPageTitle,
 	reportTitle,
 	reportDescription: initialDescription,
+	reportTheme,
+	editMode,
 	categoryId,
 	isPersonal,
 	pages,
@@ -281,6 +318,7 @@ export function ReportEditor({
 	reportProtectAddPage,
 	pageLocks,
 	onSelectPage,
+	reportPages,
 	onExit,
 	onSaved,
 }: ReportEditorProps) {
@@ -367,7 +405,9 @@ export function ReportEditor({
 	const [pageTitle, setPageTitle] = useState(initialPageTitle);
 	// Which panel is open over the canvas, or none. Selecting a visual opens its panel, and deselecting it
 	// goes back to whatever was open before, or to nothing.
-	const [panel, setPanel] = useState<EditorPanel | null>(null);
+	const [panel, setPanel] = useState<EditorPanel | null>(() =>
+		doctorOpensOn(pageId) ? "check" : null,
+	);
 	const beforeVisualPanel = useRef<EditorPanel | null>(null);
 	// Which screen the canvas is being laid out for. "fit" is the editor's own
 	// width, which is the normal way to work.
@@ -376,6 +416,17 @@ export function ReportEditor({
 	// the new version rather than showing what it read when it opened.
 	const [historyKey, setHistoryKey] = useState(0);
 	const [description, setDescription] = useState(initialDescription ?? "");
+	const [suggestionNote, setSuggestionNote] = useState("");
+	const [blocksOpen, setBlocksOpen] = useState(false);
+	// Kept here rather than in the panel, so the canvas keeps showing them with the
+	// panel closed.
+	const [timings, setTimings] = useState<Record<string, Timing>>({});
+	const [overlay, setOverlay] = useState<CanvasOverlayMode>("off");
+	const readership = useReadership(slug, editMode === "edit");
+	const [theme, setTheme] = useState<string | null>(reportTheme ?? null);
+	useReportTheme(theme);
+	const themeRef = useRef(theme);
+	themeRef.current = theme;
 
 	const { user } = useUser();
 	const history = useEditorHistory<EditorSnapshot>();
@@ -630,6 +681,7 @@ export function ReportEditor({
 			pageConfig: pageConfigRef.current,
 			pageTitle: pageTitleRef.current,
 			description: descriptionRef.current,
+			theme: themeRef.current,
 		}),
 		[],
 	);
@@ -676,6 +728,7 @@ export function ReportEditor({
 			setPageConfig(target.pageConfig);
 			setPageTitle(target.pageTitle);
 			setDescription(target.description);
+			setTheme(target.theme);
 			markPending({ type: "updatePage" });
 			markPending({ type: "updateReport" });
 
@@ -710,6 +763,24 @@ export function ReportEditor({
 			setDirty(true);
 		},
 		[markPending, record],
+	);
+
+	// Several at once, undone as one step.
+	const updateVisuals = useCallback(
+		(next: EditableVisual[]) => {
+			if (locks.protectEdit || next.length === 0) return;
+			record(`visuals:${next.map((v) => v.visualId).join(",")}`);
+			const byId = new Map(next.map((v) => [v.visualId, v]));
+			setVisuals((prev) => prev.map((v) => byId.get(v.visualId) ?? v));
+			for (const visual of next) {
+				markPending({
+					type: "updateVisual",
+					visualId: visual.visualId,
+				});
+			}
+			setDirty(true);
+		},
+		[markPending, record, locks.protectEdit],
 	);
 
 	const beginGesture = useCallback((visualId: string) => {
@@ -762,6 +833,65 @@ export function ReportEditor({
 			setDirty(true);
 		},
 		[markPending, record],
+	);
+
+	// Dropped below everything on the page, keeping the block's own arrangement.
+	const placeBlockOnPage = useCallback(
+		(block: { blockId: string; visuals: BlockVisual[] }) => {
+			if (locks.protectEdit) return;
+			record();
+			const bottom = Math.max(
+				0,
+				...visuals.map((v) => v.layout.y + v.layout.h),
+			);
+			const placed = placeBlock(
+				block.blockId,
+				block.visuals,
+				{ x: 0, y: bottom },
+				{
+					placementId: crypto.randomUUID(),
+					visualId: () => crypto.randomUUID(),
+				},
+			).map(
+				(visual): EditableVisual => ({
+					...visual,
+					isNew: true,
+				}),
+			) as EditableVisual[];
+			setVisuals((prev) => [...prev, ...placed]);
+			for (const visual of placed) {
+				markPending({ type: "addVisual", visual });
+			}
+			setDirty(true);
+		},
+		[visuals, markPending, record, locks.protectEdit],
+	);
+
+	// The visuals a block was saved or updated from now follow it.
+	const linkSelectionToBlock = useCallback(
+		(block: { blockId: string; visuals: BlockVisual[] }) => {
+			const chosen = visuals.filter((v) =>
+				selection.includes(v.visualId),
+			);
+			const left = Math.min(...chosen.map((v) => v.layout.x));
+			const top = Math.min(...chosen.map((v) => v.layout.y));
+			const placementId = crypto.randomUUID();
+			updateVisuals(
+				chosen.map((visual, index) => ({
+					...visual,
+					config: {
+						...visual.config,
+						blockRef: {
+							blockId: block.blockId,
+							key: block.visuals[index].key,
+							placementId,
+							origin: { x: left, y: top },
+						},
+					},
+				})),
+			);
+		},
+		[visuals, selection],
 	);
 
 	const addVisual = useCallback(
@@ -1453,7 +1583,11 @@ export function ReportEditor({
 				};
 			}
 			if (op.type === "updateReport") {
-				return { type: "updateReport", description };
+				return {
+					type: "updateReport",
+					description,
+					theme: theme ?? "",
+				};
 			}
 			if (op.type === "addPage") {
 				return {
@@ -1496,6 +1630,48 @@ export function ReportEditor({
 				config: v ? { ...v.config, layout: v.layout } : undefined,
 			};
 		});
+
+		// A suggestion is the operations as they stand, stored for someone to approve.
+		// Nothing has happened to the report, so the editor closes on the real thing.
+		if (editMode === "suggest") {
+			try {
+				const response = await fetch(
+					`/api/report/${encodeURIComponent(slug)}/suggestions`,
+					{
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							baseVersion,
+							operations,
+							note: suggestionNote,
+						}),
+					},
+				);
+				if (!response.ok) {
+					const detail = await response.json().catch(() => null);
+					setConflict(
+						detail?.error ?? "Could not send that suggestion",
+					);
+					return false;
+				}
+				landed = true;
+				pendingRef.current.clear();
+				history.clear();
+				setDirty(false);
+				onExit();
+				return true;
+			} catch (error) {
+				setConflict(
+					error instanceof Error
+						? error.message
+						: "Could not send that suggestion",
+				);
+				return false;
+			} finally {
+				inFlightRef.current = null;
+				setSaving(false);
+			}
+		}
 
 		try {
 			const response = await fetch(
@@ -1592,6 +1768,8 @@ export function ReportEditor({
 			setSaving(false);
 		}
 	}, [
+		editMode,
+		suggestionNote,
 		slug,
 		baseVersion,
 		activePageId,
@@ -1599,6 +1777,7 @@ export function ReportEditor({
 		visuals,
 		pageConfig,
 		pageTitle,
+		theme,
 		description,
 		onSaved,
 	]);
@@ -1633,6 +1812,56 @@ export function ReportEditor({
 		setDirty(true);
 		return newId;
 	};
+
+	// The shortcuts that need saving and the page list, which are set up above
+	// this point.
+	const [showingShortcuts, setShowingShortcuts] = useState(false);
+	useEffect(() => {
+		const onKey = (event: KeyboardEvent) => {
+			if (isTypingTarget(event.target)) {
+				// Publishing is the one that still means the same in a text box.
+				if (
+					(event.metaKey || event.ctrlKey) &&
+					event.key.toLowerCase() === "s"
+				) {
+					event.preventDefault();
+					void save();
+				}
+				return;
+			}
+			const modified = event.metaKey || event.ctrlKey;
+			const key = event.key.toLowerCase();
+			if (modified && key === "s") {
+				event.preventDefault();
+				void save();
+				return;
+			}
+			if (modified && key === "a") {
+				event.preventDefault();
+				const [first, ...rest] = visuals.map((v) => v.visualId);
+				setSelectedId(first ?? null);
+				setExtraSelected(rest);
+				return;
+			}
+			if (modified || event.altKey) return;
+			if (event.key === "?") {
+				event.preventDefault();
+				setShowingShortcuts(true);
+				return;
+			}
+			if (event.key === "[" || event.key === "]") {
+				// Moving pages would lose what is unsaved here.
+				if (dirty) return;
+				const at = orderedPages.findIndex(
+					(p) => p.pageId === activePageId,
+				);
+				const next = orderedPages[at + (event.key === "]" ? 1 : -1)];
+				if (at >= 0 && next) onSelectPage(next.pageId);
+			}
+		};
+		document.addEventListener("keydown", onKey);
+		return () => document.removeEventListener("keydown", onKey);
+	}, [save, visuals, dirty, orderedPages, activePageId, onSelectPage]);
 
 	// Edits the assistant made, applied to the draft as one step back.
 	//
@@ -1911,6 +2140,26 @@ export function ReportEditor({
 					+ Add visual
 				</button>
 
+				<button
+					type="button"
+					className={styles.toolButton}
+					disabled={locks.protectEdit}
+					title="Save selected visuals as a block, or add one to this page"
+					onClick={() => setBlocksOpen(true)}
+				>
+					Blocks
+				</button>
+				{blocksOpen && (
+					<BlocksDialog
+						selected={visuals.filter((v) =>
+							selection.includes(v.visualId),
+						)}
+						onPlace={placeBlockOnPage}
+						onLinked={linkSelectionToBlock}
+						onClose={() => setBlocksOpen(false)}
+					/>
+				)}
+
 				{/* What this page refuses, stated rather than left to be
 				    inferred from controls that quietly do nothing. An editor
 				    cannot lift it, so this says who can. */}
@@ -2163,6 +2412,18 @@ export function ReportEditor({
 								: `Version ${baseVersion}`}
 				</button>
 
+				{editMode === "suggest" && (
+					<input
+						type="text"
+						className={styles.input}
+						style={{ width: 240 }}
+						value={suggestionNote}
+						placeholder="Why, for whoever approves it"
+						aria-label="A note for whoever approves this"
+						onChange={(e) => setSuggestionNote(e.target.value)}
+					/>
+				)}
+
 				<button
 					type="button"
 					className={styles.toolButton}
@@ -2179,7 +2440,17 @@ export function ReportEditor({
 					onClick={save}
 					disabled={!dirty || saving}
 				>
-					{saving ? "Publishing" : "Publish to everyone"}
+					{editMode === "suggest"
+						? saving
+							? "Sending"
+							: "Send suggestion"
+						: isPersonal
+							? saving
+								? "Saving"
+								: "Save"
+							: saving
+								? "Publishing"
+								: "Publish to everyone"}
 				</button>
 			</div>
 
@@ -2410,34 +2681,81 @@ export function ReportEditor({
 			/>
 
 			<div className={styles.workspace}>
-				<EditorCanvas
-					visuals={visuals}
-					sources={sources}
-					selectedId={selectedId}
-					selectedIds={selection}
-					zoom={zoom}
-					onSelect={selectVisual}
-					onLayoutChange={changeLayout}
-					onGestureStart={beginGesture}
-					onGestureEnd={endGesture}
-					remoteSelections={remoteSelections}
-					onContentChange={changeContent}
-					readOnly={locks.protectEdit}
-					onMoveControl={moveControl}
-					onReparent={reparent}
-					onAddControl={() => {
-						setPickerCategory("filter");
-						setPickerOpen(true);
-					}}
-					previewWidth={
-						previewWidths.find((w) => w.id === preview)?.width ??
-						null
-					}
+				<CanvasOverlayContext.Provider
+					value={overlayBadges(overlay, visuals, timings, readership)}
+				>
+					<EditorCanvas
+						key={theme ?? "app-colours"}
+						visuals={visuals}
+						sources={sources}
+						selectedId={selectedId}
+						selectedIds={selection}
+						zoom={zoom}
+						onSelect={selectVisual}
+						onLayoutChange={changeLayout}
+						onGestureStart={beginGesture}
+						onGestureEnd={endGesture}
+						remoteSelections={remoteSelections}
+						onContentChange={changeContent}
+						readOnly={locks.protectEdit}
+						onMoveControl={moveControl}
+						onReparent={reparent}
+						onAddControl={() => {
+							setPickerCategory("filter");
+							setPickerOpen(true);
+						}}
+						previewWidth={
+							previewWidths.find((w) => w.id === preview)
+								?.width ?? null
+						}
+					/>
+				</CanvasOverlayContext.Provider>
+				<ShortcutsHelp
+					isOpen={showingShortcuts}
+					mode="editing"
+					onClose={() => setShowingShortcuts(false)}
 				/>
+				{panel === "visual" && selection.length > 1 && (
+					<MultiEditPanel
+						visuals={visuals.filter((v) =>
+							selection.includes(v.visualId),
+						)}
+						readOnly={locks.protectEdit}
+						onApply={updateVisuals}
+						onClose={() => selectVisual(null)}
+					/>
+				)}
+				{panel === "visual" &&
+					selection.length <= 1 &&
+					selected &&
+					blockRefOf(selected.config) && (
+						<div className={styles.conflict} role="status">
+							This comes from a block, so it follows the block and
+							changes here would be overwritten.
+							<button
+								type="button"
+								onClick={() =>
+									updateVisual({
+										...selected,
+										config: withoutBlockRef(
+											selected.config as Record<
+												string,
+												unknown
+											>,
+										) as typeof selected.config,
+									})
+								}
+							>
+								Detach
+							</button>
+						</div>
+					)}
 				{(panel === "page" ||
 					panel === "report" ||
 					panel === "history" ||
-					(panel === "visual" && selected)) && (
+					(panel === "visual" &&
+						selected &&
+						selection.length <= 1)) && (
 					<UnsavedEditsContext.Provider value={dirty}>
 						<PageDateRangeContext.Provider
 							value={visuals.some(
@@ -2459,7 +2777,11 @@ export function ReportEditor({
 								onRemove={removeVisual}
 								onDuplicate={duplicateVisual}
 								onDeselect={() => selectVisual(null)}
-								readOnly={locks.protectEdit}
+								readOnly={
+									locks.protectEdit ||
+									(panel === "visual" &&
+										blockRefOf(selected?.config) !== null)
+								}
 								groups={groups}
 								pageSource={
 									pageSourceKey
@@ -2469,9 +2791,24 @@ export function ReportEditor({
 								pageConfig={pageConfig}
 								pageTitle={pageTitle}
 								reportDescription={description}
+								reportTheme={theme}
+								onThemeChange={(next) => {
+									record("theme");
+									setTheme(next);
+									pendingRef.current.set("report", {
+										type: "updateReport",
+									});
+									setDirty(true);
+								}}
+								reportTitle={reportTitle}
+								reportDetails={
+									!isPersonal ? (
+										<ReportTagsField slug={slug} />
+									) : undefined
+								}
 								placement={
 									<>
-										{!isPersonal && (
+										{!isPersonal && editMode === "edit" && (
 											<ReportPlacement
 												reportId={reportId}
 												slug={slug}
@@ -2495,6 +2832,7 @@ export function ReportEditor({
 											<Section
 												id="report-protection"
 												title="Protection"
+												defaultOpen={false}
 												count={
 													pageLocks.filter(
 														(p) =>
@@ -2546,31 +2884,85 @@ export function ReportEditor({
 											</Section>
 										)}
 
-										{/* Kept away from the toolbar, where it sat between
-							    Done and Publish and was one slip from either.
-							    Down here it takes a deliberate trip into the
-							    settings panel, and still asks. */}
-										<div className={styles.dangerBlock}>
-											<span className={styles.fieldLabel}>
-												Delete this report
-											</span>
-											<Hint>
-												Removes every page on it. Anyone
-												who could open it loses it.
-											</Hint>
-											<button
-												type="button"
-												className={styles.dangerButton}
-												onClick={() =>
-													setConfirmingRemove(true)
-												}
-												disabled={saving || removing}
+										{editMode === "edit" && (
+											<Section
+												id="report-file"
+												title="Report file"
+												defaultOpen={false}
 											>
-												{removing
-													? "Deleting"
-													: "Delete report"}
-											</button>
-										</div>
+												<div
+													className={
+														styles.panelDanger
+													}
+												>
+													<p
+														className={
+															styles.panelAbout
+														}
+													>
+														A file of this report,
+														for bringing it into
+														another workspace.
+													</p>
+													<a
+														className={
+															styles.panelAdd
+														}
+														href={`/api/report/${encodeURIComponent(slug)}/package`}
+													>
+														Download report file
+													</a>
+												</div>
+											</Section>
+										)}
+
+										{/* Kept away from the toolbar, where it sat between
+										    Done and Publish and was one slip from either. */}
+										<Section
+											id="report-danger"
+											title="Take back or delete"
+											defaultOpen={false}
+										>
+											{!isPersonal && (
+												<TakeBackBlock slug={slug} />
+											)}
+											<div className={styles.panelDanger}>
+												<span
+													className={
+														styles.fieldLabel
+													}
+												>
+													Delete this report
+												</span>
+												<p
+													className={
+														styles.panelAbout
+													}
+												>
+													Removes every page on it.
+													Anyone who could open it
+													loses it.
+												</p>
+												<button
+													type="button"
+													className={
+														styles.dangerButton
+													}
+													onClick={() =>
+														setConfirmingRemove(
+															true,
+														)
+													}
+													disabled={
+														saving || removing
+													}
+												>
+													{removing
+														? "Deleting"
+														: "Delete report"}
+												</button>
+											</div>
+										</Section>
 									</>
 								}
 								panelTab={
@@ -2622,6 +3014,70 @@ export function ReportEditor({
 						</PageDateRangeContext.Provider>
 					</UnsavedEditsContext.Provider>
 				)}
+				{panel === "present" && (
+					<DeckPanel
+						slug={slug}
+						pageId={activePageId}
+						pageTitle={pageTitle}
+						pages={orderedPages}
+						visuals={visuals}
+						selection={selection}
+						sources={sources}
+						pageSourceKey={pageSourceKey ?? null}
+						canAskAssistant={Boolean(user?.assistant)}
+						marks={(pageConfig.marks ?? []) as VisualMark[]}
+						onMarks={(marks) => {
+							record("page");
+							setPageConfig((held) => ({ ...held, marks }));
+							pendingRef.current.set("page", {
+								type: "updatePage",
+							});
+							setDirty(true);
+						}}
+						readOnly={locks.protectEdit}
+						onClose={() => setPanel(null)}
+					/>
+				)}
+				{panel === "access" && !isPersonal && (
+					<ReportAccessPanel
+						slug={slug}
+						reportTitle={reportTitle}
+						onClose={() => setPanel(null)}
+					/>
+				)}
+				{panel === "check" && (
+					<ReportCheckPanel
+						slug={slug}
+						visuals={visuals}
+						reportPages={reportPages}
+						onOpenPage={onSelectPage}
+						sources={sources}
+						pageId={activePageId}
+						pageSourceKey={pageSourceKey ?? null}
+						pageConfig={pageConfig}
+						canSeeUse={editMode === "edit"}
+						readOnly={locks.protectEdit}
+						timings={timings}
+						onTimings={(next) =>
+							setTimings((held) => ({ ...held, ...next }))
+						}
+						overlay={overlay}
+						onOverlay={setOverlay}
+						readership={readership}
+						onSelect={(visualId) => {
+							setSelectedId(visualId);
+						}}
+						onApply={updateVisual}
+						onClose={() => setPanel(null)}
+					/>
+				)}
+				{panel === "goals" && (
+					<GoalsPanel
+						pageId={activePageId}
+						pageTitle={pageTitle}
+						onClose={() => setPanel(null)}
+					/>
+				)}
 				{panel === "alerts" && (
 					<PageAlertsPanel
 						pageId={activePageId}
@@ -2632,9 +3088,16 @@ export function ReportEditor({
 					/>
 				)}
 				<EditorRail
+					finder={
+						<SettingsFinder
+							hasSelection={selection.length > 0}
+							onOpen={setPanel}
+						/>
+					}
 					panel={panel}
 					onPanel={setPanel}
 					hasSelection={selected !== null}
+					showAccess={!isPersonal}
 					assistant={
 						user?.assistant
 							? {

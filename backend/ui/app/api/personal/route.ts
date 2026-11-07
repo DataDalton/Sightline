@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { refusedUnless } from "@/lib/platform/capabilityGuard";
+import { askToPublish, RequestError } from "@/lib/platform/requests";
 import { getIdentity } from "@/lib/auth/identity";
 import { resolvePolicyClass } from "@/lib/auth/policy";
 import { canDo } from "@/lib/platform/access";
@@ -44,7 +46,7 @@ export async function GET(request: NextRequest) {
 		// being able to open a page you cannot list is not the same as being
 		// able to answer for what the platform holds.
 		if (request.nextUrl.searchParams.get("scope") === "all") {
-			if (!(await canDo(policy, identity, "access.grant"))) {
+			if (!(await canDo(policy, identity, "personal.viewAny"))) {
 				return NextResponse.json(
 					{ error: "Not found" },
 					{ status: 404 },
@@ -125,6 +127,21 @@ export async function POST(request: NextRequest) {
 	const asAdministrator = await canDo(policy, identity, "access.grant");
 
 	try {
+		if (action === "create" || action === "copy") {
+			const refused = await refusedUnless(identity, "personal.create");
+			if (refused) return refused;
+		}
+
+		if (action === "askToPublish") {
+			await askToPublish(
+				identity,
+				reportId,
+				String(body.categoryId ?? "").trim(),
+				body.note,
+			);
+			return NextResponse.json({ ok: true });
+		}
+
 		if (action === "create") {
 			const sourceKey = body.sourceKey ? String(body.sourceKey) : null;
 
@@ -223,7 +240,12 @@ export async function POST(request: NextRequest) {
 			// Scoped, so publishing into a subject area is held per area rather
 			// than everywhere at once.
 			if (
-				!(await canDo(policy, identity, "report.publish", categoryId))
+				!(await canDo(
+					policy,
+					identity,
+					"report.makeOfficial",
+					categoryId,
+				))
 			) {
 				return NextResponse.json(
 					{ error: "Not found" },
@@ -241,6 +263,12 @@ export async function POST(request: NextRequest) {
 			{ status: 400 },
 		);
 	} catch (error) {
+		if (error instanceof RequestError) {
+			return NextResponse.json(
+				{ error: error.message },
+				{ status: error.status },
+			);
+		}
 		if (error instanceof AuthoringError) {
 			return NextResponse.json({ error: error.message }, { status: 400 });
 		}

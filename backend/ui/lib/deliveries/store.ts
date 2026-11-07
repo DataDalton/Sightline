@@ -1,3 +1,5 @@
+import { pageSourceKeys } from "./pdfSources";
+import { canDoOnReport } from "../platform/access";
 import type { Identity } from "../auth/identity";
 import type { PolicyClass } from "../auth/policy";
 import { sql } from "../data/lakebase";
@@ -47,6 +49,9 @@ export interface DeliveryRecord {
 	lastStatus: string;
 	lastError: string | null;
 	nextRunOn: string;
+	attachPdf: boolean;
+	// The most recent PDF still held, to fetch again.
+	lastFileId: string | null;
 }
 
 interface DeliveryListRow {
@@ -62,6 +67,8 @@ interface DeliveryListRow {
 	last_status: string;
 	last_error: string | null;
 	next_run_on: string;
+	attach_pdf: boolean;
+	last_file_id: string | null;
 }
 
 function toRecord(row: DeliveryListRow): DeliveryRecord {
@@ -79,6 +86,8 @@ function toRecord(row: DeliveryListRow): DeliveryRecord {
 		lastStatus: row.last_status,
 		lastError: row.last_error,
 		nextRunOn: row.next_run_on,
+		attachPdf: row.attach_pdf,
+		lastFileId: row.last_file_id,
 	};
 }
 
@@ -92,7 +101,10 @@ export async function listDeliveries(
 		`SELECT d.delivery_id::text, d.report_id::text, r.slug,
 		        r.title AS report_title, d.page_id::text, p.title AS page_title,
 		        d.schedule, d.enabled, d.last_run_on::text, d.last_status,
-		        d.last_error, d.next_run_on::text
+		        d.last_error, d.next_run_on::text, d.attach_pdf,
+		        (SELECT f.file_id::text FROM delivery_files f
+		         WHERE f.delivery_id = d.delivery_id AND f.expires_on > now()
+		         ORDER BY f.created_on DESC LIMIT 1) AS last_file_id
 		 FROM deliveries d
 		 JOIN reports r ON r.report_id = d.report_id AND r.is_active
 		 JOIN report_pages p ON p.page_id = d.page_id AND p.is_active
@@ -109,7 +121,12 @@ export async function listDeliveries(
 export async function subscribe(
 	identity: Identity,
 	policy: PolicyClass,
-	input: { reportSlug: string; pageId: string; schedule: unknown },
+	input: {
+		reportSlug: string;
+		pageId: string;
+		schedule: unknown;
+		attachPdf?: boolean;
+	},
 ): Promise<DeliveryRecord> {
 	const report = await getReport(policy, identity, input.reportSlug);
 	if (!report) throw new DeliveryError("Report not found", 404);
@@ -124,6 +141,17 @@ export async function subscribe(
 	}
 
 	const email = identity.email.toLowerCase();
+
+	// A PDF takes data out of the app, so it follows the rule every export does.
+	if (
+		input.attachPdf &&
+		!(await canDoOnReport(policy, identity, "export.run", report))
+	) {
+		throw new DeliveryError(
+			"You do not hold the right to export this.",
+			403,
+		);
+	}
 
 	const figureSource =
 		page.visuals.find((v) => v.visualType === "kpiRow")?.sourceKey ??
@@ -144,13 +172,26 @@ export async function subscribe(
 		figureSource !== undefined &&
 		(!confirmable || confirmable.has(figureSource));
 
+	// Every source on the page is read to draw a PDF, so the owner has to be able to read them
+	// all for it to be drawn while they are away.
+	const pdfSources = input.attachPdf
+		? pageSourceKeys(page, report.sourceKey)
+		: [];
+	const pdfConfirmed =
+		input.attachPdf === true &&
+		pdfSources.every((key) => !confirmable || confirmable.has(key));
+
 	await sql(
 		`INSERT INTO deliveries
 		   (owner_email, report_id, page_id, source_key, schedule, next_run_on,
-		    access_confirmed_on)
+		    access_confirmed_on, attach_pdf, pdf_confirmed_on, pdf_sources)
 		 VALUES ($1, $2::uuid, $3::uuid, $4, $5, $6,
-		         CASE WHEN $7::boolean THEN now() END)
+		         CASE WHEN $7::boolean THEN now() END, $8,
+		         CASE WHEN $9::boolean THEN now() END, $10::text[])
 		 ON CONFLICT (owner_email, page_id) DO UPDATE SET
+		   attach_pdf = EXCLUDED.attach_pdf,
+		   pdf_confirmed_on = EXCLUDED.pdf_confirmed_on,
+		   pdf_sources = EXCLUDED.pdf_sources,
 		   schedule = EXCLUDED.schedule,
 		   next_run_on = EXCLUDED.next_run_on,
 		   source_key = EXCLUDED.source_key,
@@ -164,6 +205,9 @@ export async function subscribe(
 			JSON.stringify(schedule),
 			nextRun(schedule, new Date()).toISOString(),
 			confirmed,
+			input.attachPdf === true,
+			pdfConfirmed,
+			pdfSources,
 		],
 	);
 	ownersChanged();

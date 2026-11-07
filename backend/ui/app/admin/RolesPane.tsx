@@ -7,6 +7,7 @@ import { ConfirmDialog } from "../components/shared/ConfirmDialog";
 import { Skeleton } from "../components/shared/Skeleton";
 import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { Select } from "../components/shared/Select";
+import { areaOrder, capabilityInfo } from "./capabilityLabels";
 import admin from "./Admin.module.css";
 import form from "../authoring/Authoring.module.css";
 import styles from "./Roles.module.css";
@@ -25,12 +26,13 @@ interface AssignmentRecord {
 	assignmentId: string;
 	roleId: string;
 	roleName: string;
-	subjectType: "group" | "user";
+	subjectType: "group" | "user" | "service_principal";
 	subjectId: string;
-	scopeType: "global" | "category" | "report";
+	scopeType: "global" | "category" | "tag" | "report" | "page" | "source";
 	scopeId: string | null;
 	grantedBy: string | null;
 	grantedOn: string;
+	expiresOn: string | null;
 }
 
 interface RolesResponse {
@@ -42,41 +44,13 @@ interface RolesResponse {
 interface ResourceResponse {
 	categories: { id: string; name: string }[];
 	reports: { id: string; name: string }[];
+	pages?: { id: string; name: string }[];
 }
-
-const capabilityInfo: Record<string, { label: string; area: string }> = {
-	"report.create": { label: "Create reports", area: "Authoring" },
-	"page.create": { label: "Add pages", area: "Authoring" },
-	"report.publish": { label: "Publish personal pages", area: "Authoring" },
-	"page.protect": { label: "Lock pages", area: "Authoring" },
-	"category.create": { label: "Create categories", area: "Navigation" },
-	"category.manage": { label: "Rename and reorder", area: "Navigation" },
-	"access.grant": { label: "Access and roles", area: "Administration" },
-	"semantic.sync": { label: "Sources", area: "Administration" },
-	"settings.manage": { label: "Platform settings", area: "Administration" },
-};
-
-const areaOrder = ["Authoring", "Navigation", "Administration"];
-
-// What each level reaches, said once here rather than left for somebody to
-// infer from the word.
-const levels = [
-	{ value: "view", name: "View", what: "Open what the role reaches" },
-	{ value: "edit", name: "Edit", what: "And change it" },
-	{ value: "admin", name: "Admin", what: "And decide who else can" },
-] as const;
-
-const levelClass: Record<string, string> = {
-	view: "",
-	edit: styles.levelEdit,
-	admin: styles.levelAdmin,
-};
 
 type Draft = {
 	roleId: string;
 	name: string;
 	description: string;
-	permission: "view" | "edit" | "admin";
 	capabilities: string[];
 };
 
@@ -84,7 +58,6 @@ const emptyDraft: Draft = {
 	roleId: "",
 	name: "",
 	description: "",
-	permission: "view",
 	capabilities: [],
 };
 
@@ -114,7 +87,7 @@ export default function RolesPane({
 	// correctly named group that nobody in it has signed in under yet looks
 	// exactly the same, so this reports what was observed rather than a verdict.
 	const resolution = (a: AssignmentRecord) => {
-		if (a.subjectType === "user") return "Named directly";
+		if (a.subjectType !== "group") return "Named directly";
 		const probe = probes.get(a.subjectId.toLowerCase());
 		if (!probe) {
 			return (
@@ -154,7 +127,7 @@ export default function RolesPane({
 	} | null>(null);
 
 	const allRoles = data?.roles ?? [];
-	// A category's own editor role is listed with its category rather than as
+	// A category's own Maintainer role is listed with its category rather than as
 	// a card among the roles people made, since there is one per category and
 	// nothing about it can be changed.
 	const roles = allRoles.filter((r) => !r.categoryId);
@@ -191,6 +164,7 @@ export default function RolesPane({
 		return (
 			resources?.categories.find((c) => c.id === id)?.name ??
 			resources?.reports.find((r) => r.id === id)?.name ??
+			resources?.pages?.find((page) => page.id === id)?.name ??
 			id
 		);
 	};
@@ -203,8 +177,8 @@ export default function RolesPane({
 						<div>
 							<h3 className={styles.groupTitle}>Roles</h3>
 							<p className={styles.groupBlurb}>
-								A level on the resources in scope, plus what
-								else the holder may do.
+								What each one lets its holder do. Reader is what
+								everyone has, and the rest add to it.
 							</p>
 						</div>
 					</div>
@@ -215,11 +189,6 @@ export default function RolesPane({
 								<div className={styles.cardHead}>
 									<span className={styles.cardName}>
 										{role.name}
-									</span>
-									<span
-										className={`${styles.level} ${levelClass[role.permission]}`}
-									>
-										{role.permission}
 									</span>
 								</div>
 
@@ -251,9 +220,30 @@ export default function RolesPane({
 
 								<div className={styles.cardActions}>
 									{role.isBuiltin ? (
-										<span className={styles.builtin}>
-											Built in
-										</span>
+										<>
+											<span className={styles.builtin}>
+												Built in
+											</span>
+											<button
+												type="button"
+												className={admin.linkButton}
+												disabled={busy}
+												onClick={() =>
+													setEditing({
+														...emptyDraft,
+														name: `${role.name} copy`,
+														roleId: `${role.roleId}-copy`,
+														description:
+															role.description ??
+															"",
+														capabilities:
+															role.capabilities,
+													})
+												}
+											>
+												Copy
+											</button>
+										</>
 									) : (
 										<>
 											<button
@@ -267,8 +257,7 @@ export default function RolesPane({
 														description:
 															role.description ??
 															"",
-														permission:
-															role.permission,
+
 														capabilities:
 															role.capabilities,
 													})
@@ -331,14 +320,13 @@ export default function RolesPane({
 					<div className={styles.groupHead}>
 						<div>
 							<h3 className={styles.groupTitle}>
-								Category editors
+								Category Maintainers
 							</h3>
 							<p className={styles.groupBlurb}>
-								Every category has an editor role of its own.
-								Whoever holds it builds and maintains the
-								reports in that category and nowhere else. The
-								role follows the category, so it is renamed and
-								retired with it.
+								Every category has a Maintainer role of its own.
+								Whoever holds it looks after the reports in that
+								category and nowhere else. The role follows the
+								category, so it is renamed and retired with it.
 							</p>
 						</div>
 					</div>
@@ -427,8 +415,8 @@ export default function RolesPane({
 								Who holds what
 							</h3>
 							<p className={styles.groupBlurb}>
-								Everywhere, or inside a single category or
-								report.
+								Everywhere, or inside a single category, tag or
+								report. A role can end on a date.
 							</p>
 						</div>
 						<button
@@ -472,12 +460,27 @@ export default function RolesPane({
 														{a.subjectType ===
 														"user"
 															? "person"
-															: "group"}
+															: a.subjectType ===
+																  "group"
+																? "group"
+																: "service principal"}
 													</span>
 													{a.subjectId}
 												</span>
 											</td>
-											<td>{a.roleName}</td>
+											<td>
+												{a.roleName}
+												{a.expiresOn && (
+													<div
+														className={styles.scope}
+													>
+														Ends{" "}
+														{new Date(
+															a.expiresOn,
+														).toLocaleDateString()}
+													</div>
+												)}
+											</td>
 											<td>
 												{a.scopeType === "global" ? (
 													"Everywhere"
@@ -664,39 +667,6 @@ function RoleDialog({
 					/>
 				</label>
 
-				<div className={form.field}>
-					<span className={form.label}>Level</span>
-					<div className={styles.levels}>
-						{levels.map((level) => {
-							const on = value.permission === level.value;
-							return (
-								<button
-									key={level.value}
-									type="button"
-									className={`${styles.levelCard} ${
-										on ? styles.levelCardOn : ""
-									}`}
-									onClick={() =>
-										setValue((v) => ({
-											...v,
-											permission:
-												level.value as Draft["permission"],
-										}))
-									}
-									aria-pressed={on}
-								>
-									<span className={styles.levelCardName}>
-										{level.name}
-									</span>
-									<span className={styles.levelCardWhat}>
-										{level.what}
-									</span>
-								</button>
-							);
-						})}
-					</div>
-				</div>
-
 				<label className={form.field}>
 					<span className={form.label}>Description</span>
 					<input
@@ -713,7 +683,7 @@ function RoleDialog({
 				</label>
 
 				<div className={form.field}>
-					<span className={form.label}>Can also</span>
+					<span className={form.label}>What it lets someone do</span>
 					<div className={styles.areas}>
 						{areaOrder.map((area) => {
 							const inArea = known.filter(
@@ -812,14 +782,17 @@ function AssignDialog({
 	onClose: () => void;
 }) {
 	const [roleId, setRoleId] = useState(presetRoleId);
-	// A category's editor role carries its own scope, so there is no "where"
+	// A category's Maintainer role carries its own scope, so there is no "where"
 	// to choose.
 	const pinnedCategory =
 		roles.find((r) => r.roleId === roleId)?.categoryId ?? null;
-	const [subjectType, setSubjectType] = useState<"group" | "user">("group");
+	const [subjectType, setSubjectType] = useState<
+		"group" | "user" | "service_principal"
+	>("group");
+	const [expiresOn, setExpiresOn] = useState("");
 	const [subjectId, setSubjectId] = useState("");
 	const [scopeType, setScopeType] = useState<
-		"global" | "category" | "report"
+		"global" | "category" | "tag" | "report" | "source" | "page"
 	>("global");
 	const [scopeId, setScopeId] = useState("");
 
@@ -828,7 +801,9 @@ function AssignDialog({
 			? (resources?.categories ?? [])
 			: scopeType === "report"
 				? (resources?.reports ?? [])
-				: [];
+				: scopeType === "page"
+					? (resources?.pages ?? [])
+					: [];
 
 	const ready =
 		roleId !== "" &&
@@ -849,9 +824,8 @@ function AssignDialog({
 							options={roles.map((r) => ({
 								value: r.roleId,
 								label: r.name,
-								note: r.permission,
 								group: r.categoryId
-									? "Category editors"
+									? "Category Maintainers"
 									: "Roles",
 							}))}
 						/>
@@ -862,11 +836,15 @@ function AssignDialog({
 						<Select
 							value={subjectType}
 							onChange={(v) =>
-								setSubjectType(v as "group" | "user")
+								setSubjectType(v as typeof subjectType)
 							}
 							options={[
 								{ value: "group", label: "A group" },
 								{ value: "user", label: "One person" },
+								{
+									value: "service_principal",
+									label: "A service principal",
+								},
 							]}
 						/>
 					</label>
@@ -874,7 +852,11 @@ function AssignDialog({
 
 				<label className={form.field}>
 					<span className={form.label}>
-						{subjectType === "group" ? "Group name" : "Email"}
+						{subjectType === "group"
+							? "Group name"
+							: subjectType === "user"
+								? "Email"
+								: "Application id"}
 					</span>
 					<input
 						className={form.input}
@@ -917,12 +899,29 @@ function AssignDialog({
 										value: "category",
 										label: "One category",
 									},
+									{ value: "tag", label: "A tag" },
 									{ value: "report", label: "One report" },
+									{ value: "page", label: "One page" },
+									{ value: "source", label: "One source" },
 								]}
 							/>
 						</label>
 
-						{scopeType !== "global" && (
+						{(scopeType === "tag" || scopeType === "source") && (
+							<label className={form.field}>
+								<span className={form.label}>
+									{scopeType === "tag" ? "Tag" : "Source key"}
+								</span>
+								<input
+									className={form.input}
+									value={scopeId}
+									onChange={(e) => setScopeId(e.target.value)}
+								/>
+							</label>
+						)}
+
+						{(scopeType === "category" ||
+							scopeType === "report") && (
 							<label className={form.field}>
 								<span className={form.label}>
 									{scopeType === "category"
@@ -944,6 +943,16 @@ function AssignDialog({
 					</div>
 				)}
 
+				<label className={form.field}>
+					<span className={form.label}>Ends on, if it should</span>
+					<input
+						type="date"
+						className={form.input}
+						value={expiresOn}
+						onChange={(e) => setExpiresOn(e.target.value)}
+					/>
+				</label>
+
 				<div className={form.actions}>
 					<button
 						type="button"
@@ -963,6 +972,7 @@ function AssignDialog({
 								subjectId,
 								scopeType,
 								scopeId: scopeId || null,
+								expiresOn: expiresOn || null,
 							})
 						}
 					>
