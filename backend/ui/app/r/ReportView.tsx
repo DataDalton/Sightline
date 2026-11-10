@@ -25,7 +25,7 @@ import { PageGoals } from "../goals/PageGoals";
 import { SinceProvider } from "../visuals/SinceLastLooked";
 import {
 	ScenarioBar,
-	UnusualPanel,
+	InsightsMenu,
 	UnusualProvider,
 } from "../visuals/InsightParts";
 import type { Scenario } from "../../lib/insight/insight";
@@ -985,11 +985,7 @@ export default function ReportView({
 					<FilterGateProvider value={filterGate}>
 						<ScenarioProvider value={whatIfOpen ? scenarios : null}>
 							<SinceProvider pageId={page?.pageId ?? null}>
-								<UnusualProvider
-									render={(entries) => (
-										<UnusualPanel entries={entries} />
-									)}
-								>
+								<UnusualProvider>
 									<PageMarksContext.Provider
 										value={pageMarks}
 									>
@@ -1168,6 +1164,25 @@ export default function ReportView({
 																			</button>
 																		),
 																	)}
+																<InsightsMenu
+																	className={
+																		styles.button
+																	}
+																	whatIf={{
+																		available:
+																			pageMeasures.length >
+																			0,
+																		open: whatIfOpen,
+																		onToggle:
+																			() =>
+																				setWhatIfOpen(
+																					(
+																						held,
+																					) =>
+																						!held,
+																				),
+																	}}
+																/>
 																{user?.capabilities?.includes(
 																	"export.run",
 																) && (
@@ -1199,33 +1214,6 @@ export default function ReportView({
 																			styles.button
 																		}
 																	/>
-																)}
-																{pageMeasures.length >
-																	0 && (
-																	<button
-																		type="button"
-																		className={
-																			styles.button
-																		}
-																		title="Change a figure across this page and see the effect"
-																		aria-pressed={
-																			whatIfOpen
-																		}
-																		data-on={
-																			whatIfOpen ||
-																			undefined
-																		}
-																		onClick={() =>
-																			setWhatIfOpen(
-																				(
-																					held,
-																				) =>
-																					!held,
-																			)
-																		}
-																	>
-																		What if
-																	</button>
 																)}
 																<ZoomControl />
 

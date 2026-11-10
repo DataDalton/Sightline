@@ -3,12 +3,13 @@
 import { Select } from "../components/shared/Select";
 import {
 	createContext,
+	type ReactNode,
 	useCallback,
 	useContext,
 	useEffect,
 	useMemo,
+	useRef,
 	useState,
-	type ReactNode,
 } from "react";
 import useSWR from "swr";
 import { formatValue, type FormatHint } from "../../lib/format";
@@ -286,6 +287,10 @@ const UnusualContext = createContext<{
 	report: (visualId: string, title: string, items: OddOne[]) => void;
 } | null>(null);
 
+// What the visuals reported, for the button in the report's header. Apart from the context the
+// visuals write to, so a new list redraws the button and not every visual on the page.
+const UnusualEntriesContext = createContext<UnusualEntry[]>([]);
+
 export function useReportUnusual(
 	visualId: string | undefined,
 	title: string | null | undefined,
@@ -301,13 +306,7 @@ export function useReportUnusual(
 	}, [report, visualId, title, fingerprint]);
 }
 
-export function UnusualProvider({
-	children,
-	render,
-}: {
-	children: ReactNode;
-	render: (entries: UnusualEntry[]) => ReactNode;
-}) {
+export function UnusualProvider({ children }: { children: ReactNode }) {
 	const [held, setHeld] = useState<Record<string, UnusualEntry[]>>({});
 	const report = useCallback(
 		(visualId: string, title: string, items: OddOne[]) =>
@@ -323,55 +322,185 @@ export function UnusualProvider({
 		[],
 	);
 	const value = useMemo(() => ({ report }), [report]);
-	const entries = Object.values(held)
-		.flat()
-		.sort((a, b) => b.score - a.score);
+	const entries = useMemo(
+		() =>
+			Object.values(held)
+				.flat()
+				.sort((a, b) => b.score - a.score),
+		[held],
+	);
 	return (
 		<UnusualContext.Provider value={value}>
-			{render(entries)}
-			{children}
+			<UnusualEntriesContext.Provider value={entries}>
+				{children}
+			</UnusualEntriesContext.Provider>
 		</UnusualContext.Provider>
 	);
 }
 
-export function UnusualPanel({ entries }: { entries: UnusualEntry[] }) {
+// Matches the menu's width in Insight.module.css.
+const insightsMenuWidth = 420;
+
+// One button in the report's header for looking into the page: the figures that stand out, and
+// what if. The count of unusual figures rides on the button, so it is seen without opening it.
+export function InsightsMenu({
+	className,
+	whatIf,
+}: {
+	className: string;
+	// Offered on a page with a measure to change.
+	whatIf: { available: boolean; open: boolean; onToggle: () => void };
+}) {
+	const entries = useContext(UnusualEntriesContext);
 	const [open, setOpen] = useState(false);
-	if (entries.length === 0) return null;
+	// Opens toward whichever side has room, since the header row sits left on a narrow page
+	// and right on a wide one.
+	const [openLeftward, setOpenLeftward] = useState(false);
+	const box = useRef<HTMLDivElement | null>(null);
+
+	useEffect(() => {
+		if (!open) return;
+		const away = (event: MouseEvent) => {
+			if (!box.current?.contains(event.target as Node)) setOpen(false);
+		};
+		const key = (event: KeyboardEvent) => {
+			if (event.key === "Escape") setOpen(false);
+		};
+		document.addEventListener("mousedown", away);
+		document.addEventListener("keydown", key);
+		return () => {
+			document.removeEventListener("mousedown", away);
+			document.removeEventListener("keydown", key);
+		};
+	}, [open]);
+
+	if (entries.length === 0 && !whatIf.available) return null;
 	return (
-		<div className={styles.unusual}>
+		<div ref={box} className={styles.unusualWrap}>
 			<button
 				type="button"
-				className={styles.button}
+				className={className}
+				aria-haspopup="menu"
 				aria-expanded={open}
-				onClick={() => setOpen((held) => !held)}
+				data-on={whatIf.open || undefined}
+				title="What stands out on this page, and what if a figure changed"
+				onClick={() => {
+					const at = box.current?.getBoundingClientRect();
+					setOpenLeftward(
+						Boolean(
+							at &&
+							at.left + insightsMenuWidth > window.innerWidth,
+						),
+					);
+					setOpen((held) => !held);
+				}}
 			>
-				What&apos;s unusual ({entries.length})
+				<svg
+					width="13"
+					height="13"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="2"
+					strokeLinecap="round"
+					strokeLinejoin="round"
+					aria-hidden="true"
+				>
+					<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2V16h5v-.1c0-.8.4-1.5 1-2A6 6 0 0 0 12 3z" />
+				</svg>
+				Insights
+				{entries.length > 0 && (
+					<span className={styles.unusualCount}>
+						{entries.length}
+					</span>
+				)}
 			</button>
 			{open && (
-				<ol className={styles.unusualList}>
-					{entries.map((entry) => (
-						<li key={entry.key}>
-							<button
-								type="button"
-								className={styles.link}
-								onClick={() =>
-									document
-										.querySelector(
-											`[data-visual-id="${CSS.escape(entry.visualId)}"]`,
-										)
-										?.scrollIntoView({
-											behavior: "smooth",
-											block: "center",
-										})
-								}
-							>
-								<strong>{entry.label}</strong> in{" "}
-								{entry.visualTitle}
-							</button>
-							: {entry.reason}. Click it on the chart to ask why.
-						</li>
-					))}
-				</ol>
+				<div
+					className={`${styles.unusualMenu} ${openLeftward ? styles.unusualMenuLeftward : ""}`}
+					role="menu"
+				>
+					{whatIf.available && (
+						<button
+							type="button"
+							role="menuitemcheckbox"
+							aria-checked={whatIf.open}
+							className={styles.insightsItem}
+							onClick={() => {
+								setOpen(false);
+								whatIf.onToggle();
+							}}
+						>
+							<span className={styles.insightsItemHead}>
+								<strong>What if</strong>
+								{whatIf.open && (
+									<span className={styles.insightsOn}>
+										On
+									</span>
+								)}
+							</span>
+							<span className={styles.unusualReason}>
+								{whatIf.open
+									? "Close the bar at the foot of the page and put the figures back"
+									: "Change a figure across this page and see the effect"}
+							</span>
+						</button>
+					)}
+					<div className={styles.insightsSection}>
+						<span className={styles.insightsHeading}>
+							What&apos;s unusual
+						</span>
+						{entries.length === 0 ? (
+							<p className={styles.unusualIntro}>
+								Nothing stands apart on this page right now.
+							</p>
+						) : (
+							<>
+								<p className={styles.unusualIntro}>
+									Figures that stand apart from the rest of
+									their chart. Pick one to go to it, then
+									click it on the chart to ask why.
+								</p>
+								<ol className={styles.unusualList}>
+									{entries.map((entry) => (
+										<li key={entry.key}>
+											<button
+												type="button"
+												role="menuitem"
+												className={styles.unusualItem}
+												onClick={() => {
+													setOpen(false);
+													document
+														.querySelector(
+															`[data-visual-id="${CSS.escape(entry.visualId)}"]`,
+														)
+														?.scrollIntoView({
+															behavior: "smooth",
+															block: "center",
+														});
+												}}
+											>
+												<span>
+													<strong>
+														{entry.label}
+													</strong>{" "}
+													in {entry.visualTitle}
+												</span>
+												<span
+													className={
+														styles.unusualReason
+													}
+												>
+													{entry.reason}
+												</span>
+											</button>
+										</li>
+									))}
+								</ol>
+							</>
+						)}
+					</div>
+				</div>
 			)}
 		</div>
 	);
