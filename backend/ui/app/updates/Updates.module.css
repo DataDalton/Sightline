@@ -752,10 +752,15 @@
 
 .detailHead {
 	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	justify-content: space-between;
-	gap: var(--space-2);
+	flex-direction: column;
+	align-items: flex-start;
+	gap: var(--space-1);
+}
+
+/* Released, posted and by, one to a line. */
+.detailLines {
+	display: flex;
+	flex-direction: column;
 }
 
 .factLink {

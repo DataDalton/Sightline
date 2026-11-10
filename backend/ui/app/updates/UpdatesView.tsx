@@ -1531,15 +1531,9 @@ function DetailDialog({
 	const saysChanges = update.about.some((item) => item.change);
 	const facts: [string, React.ReactNode][] = [
 		...(update.reason ? [["Why", update.reason]] : []),
-		...(update.effectiveOn
-			? [
-					[
-						isPast(update.effectiveOn)
-							? "Released"
-							: "Takes effect",
-						when(update.effectiveOn),
-					],
-				]
+		// A past release date is in the line under the badges, so only a future one is a fact.
+		...(update.effectiveOn && !isPast(update.effectiveOn)
+			? [["Takes effect", when(update.effectiveOn)]]
 			: []),
 		...(update.periodFrom || update.periodTo
 			? [
@@ -1668,21 +1662,28 @@ function DetailDialog({
 							</span>
 						)}
 					</div>
-					<span className={styles.meta}>
-						{(update.authorsShown ?? []).length > 0
-							? `By ${byline(update.authorsShown ?? [])} · `
-							: ""}
-						{update.effectiveOn && isPast(update.effectiveOn)
-							? `Released ${when(update.effectiveOn)} · `
-							: ""}
-						{`Posted ${when(update.postedOn)}`}
-						{(update.authorsShown ?? []).length === 0
-							? ` by ${update.poster ?? update.createdBy}`
-							: ""}
-						{update.correctedOn
-							? ` · Corrected ${when(update.correctedOn)}`
-							: ""}
-					</span>
+					<div className={styles.detailLines}>
+						{[
+							update.effectiveOn && isPast(update.effectiveOn)
+								? `Released ${when(update.effectiveOn)}`
+								: null,
+							`Posted ${when(update.postedOn)}`,
+							update.correctedOn
+								? `Corrected ${when(update.correctedOn)}`
+								: null,
+							`By ${
+								(update.authorsShown ?? []).length > 0
+									? byline(update.authorsShown ?? [])
+									: (update.poster ?? update.createdBy)
+							}`,
+						]
+							.filter((line): line is string => line !== null)
+							.map((line) => (
+								<span key={line} className={styles.meta}>
+									{line}
+								</span>
+							))}
+					</div>
 				</div>
 
 				{update.whatToDo && (
