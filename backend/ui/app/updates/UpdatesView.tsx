@@ -273,38 +273,71 @@ function useUpdateChoices(): UpdateChoices | undefined {
 	return data;
 }
 
-// What an update is about, by the names people know, each named once. Anything the
-// caller cannot see by name, such as a table, falls back to its id.
-function aboutWords(
+// What an update is about, by the names people know. Fields sit under their dataset, so
+// a dataset named with some of its fields reads as one group. Anything the caller cannot
+// see by name, such as a table, falls back to its id.
+interface AboutGroup {
+	name: string;
+	fields: string[];
+}
+
+function aboutGroups(
 	about: AboutItem[],
 	choices: UpdateChoices | undefined,
-): string {
+): AboutGroup[] {
 	const reports = choices?.reports ?? [];
-	const nameOf = (item: AboutItem): string => {
+	const sourceName = (key: string) =>
+		choices?.sources.find((s) => s.key === key)?.title ?? key;
+	const groups = new Map<string, AboutGroup>();
+	const groupFor = (key: string, name: string) => {
+		const held = groups.get(key) ?? { name, fields: [] };
+		groups.set(key, held);
+		return held;
+	};
+	for (const item of about) {
 		if (item.kind === "source") {
-			return (
-				choices?.sources.find((s) => s.key === item.id)?.title ??
-				item.id
+			groupFor(`source:${item.id}`, sourceName(item.id));
+		} else if (item.kind === "field" && item.sourceKey) {
+			const group = groupFor(
+				`source:${item.sourceKey}`,
+				sourceName(item.sourceKey),
 			);
-		}
-		if (item.kind === "category") {
-			return (
+			if (!group.fields.includes(item.id)) group.fields.push(item.id);
+		} else if (item.kind === "category") {
+			groupFor(
+				`category:${item.id}`,
 				choices?.categories.find((c) => c.id === item.id)?.name ??
-				item.id
+					item.id,
 			);
-		}
-		if (item.kind === "report") {
-			return reports.find((r) => r.id === item.id)?.title ?? item.id;
-		}
-		if (item.kind === "page") {
+		} else if (item.kind === "report") {
+			groupFor(
+				`report:${item.id}`,
+				reports.find((r) => r.id === item.id)?.title ?? item.id,
+			);
+		} else if (item.kind === "page") {
+			let name = item.id;
 			for (const report of reports) {
 				const page = report.pages.find((p) => p.id === item.id);
-				if (page) return `${report.title}, ${page.title}`;
+				if (page) name = `${report.title}, ${page.title}`;
 			}
+			groupFor(`page:${item.id}`, name);
+		} else {
+			groupFor(`${item.kind}:${item.id}`, item.id);
 		}
-		return item.id;
-	};
-	return [...new Set(about.map(nameOf))].join(", ");
+	}
+	return [...groups.values()];
+}
+
+// One short line for a timeline card, naming each dataset or report and counting fields.
+function aboutSummary(groups: AboutGroup[]): string {
+	const fields = groups.reduce((sum, group) => sum + group.fields.length, 0);
+	const names = groups.map((group) => group.name).join(", ");
+	if (fields === 0) return names;
+	return `${names}, ${fields} field${fields === 1 ? "" : "s"}`;
+}
+
+function capitalised(word: string): string {
+	return word.charAt(0).toUpperCase() + word.slice(1);
 }
 
 const aboutKindWords: Record<AboutItem["kind"], string> = {
@@ -1224,6 +1257,7 @@ function DetailDialog({
 	onClose: () => void;
 }) {
 	const { data, mutate } = useSWR<Detail>(`/api/changes?id=${updateId}`);
+	const choices = useUpdateChoices();
 	const [note, setNote] = useState("");
 	const [failure, setFailure] = useState<string | null>(null);
 	const [retracting, setRetracting] = useState(false);
@@ -1254,7 +1288,24 @@ function DetailDialog({
 	};
 
 	const acknowledged = (update as { acknowledged?: boolean }).acknowledged;
+	const about = aboutGroups(update.about, choices);
 	const facts: [string, React.ReactNode][] = [
+		...(about.length > 0
+			? [
+					[
+						"About",
+						<span key="about" className={styles.aboutGroups}>
+							{about.map((group) => (
+								<span key={group.name}>
+									{group.fields.length > 0
+										? `${group.name}: ${group.fields.join(", ")}`
+										: group.name}
+								</span>
+							))}
+						</span>,
+					],
+				]
+			: []),
 		...(update.reason ? [["Why", update.reason]] : []),
 		...(update.effectiveOn
 			? [
@@ -1364,11 +1415,11 @@ function DetailDialog({
 				<div className={styles.metaRow}>
 					<TypeBadge type={update.type} types={types} />
 					<span className={styles[`impact${update.impact}`]}>
-						{update.impact}
+						{capitalised(update.impact)}
 					</span>
 					{update.incidentState && (
 						<span className={styles.state}>
-							{update.incidentState}
+							{capitalised(update.incidentState)}
 						</span>
 					)}
 					<span className={styles.meta}>
@@ -1729,11 +1780,11 @@ export default function UpdatesView() {
 											styles[`impact${update.impact}`]
 										}
 									>
-										{update.impact}
+										{capitalised(update.impact)}
 									</span>
 									{update.incidentState && (
 										<span className={styles.state}>
-											{update.incidentState}
+											{capitalised(update.incidentState)}
 										</span>
 									)}
 									{update.automatic && (
@@ -1767,7 +1818,12 @@ export default function UpdatesView() {
 									update.acks !== null) && (
 									<span className={styles.meta}>
 										{[
-											aboutWords(update.about, choices),
+											aboutSummary(
+												aboutGroups(
+													update.about,
+													choices,
+												),
+											),
 											update.acks !== null
 												? `Acknowledged by ${update.acks}`
 												: "",

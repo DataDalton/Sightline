@@ -324,6 +324,8 @@ export async function GET(request: NextRequest) {
 // { action: "removeAlias", alias }
 // An update takes authors as emails, "github:name" or plain names, a past effectiveOn with
 // placement "history" to sit back at that date, and notify false to tell nobody.
+// A field in about names its dataset as sourceKey. Every dataset and field named must
+// exist, or the post is refused with what was not found.
 // { action: "follow", kind, value, mode, on }
 // { action: "saveType" | "removeType" | "saveTemplate", ... }
 export async function POST(request: NextRequest) {

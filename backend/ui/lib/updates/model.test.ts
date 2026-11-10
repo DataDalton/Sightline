@@ -21,6 +21,7 @@ import {
 	timelineDate,
 	isServicePrincipal,
 	mayDelete,
+	checkAboutNames,
 	referencesToDelete,
 	type AboutItem,
 } from "./model";
@@ -504,5 +505,60 @@ test("a person who posted an entry cannot delete it outright", () => {
 	assert.equal(
 		mayDelete("pat.morgan@example.com", "pat.morgan@example.com", false),
 		false,
+	);
+});
+
+const datasets = [
+	{ sourceKey: "orders", title: "Orders", fields: ["Region", "Revenue"] },
+	{ sourceKey: "returns", title: "Returns", fields: ["Region"] },
+];
+
+test("a field sent without its dataset is refused", () => {
+	assert.throws(
+		() =>
+			cleanInput(
+				{
+					type: "dataChange",
+					title: "Region renamed",
+					about: [{ kind: "field", id: "Region" }],
+				},
+				builtinTypes.find((type) => type.typeId === "dataChange"),
+			),
+		(error: unknown) =>
+			error instanceof UpdateInputError &&
+			/needs its dataset/.test(error.message),
+	);
+});
+
+test("a dataset or field that does not exist is refused", () => {
+	assert.throws(
+		() => checkAboutNames([{ kind: "source", id: "orderz" }], datasets),
+		/There is no dataset "orderz"/,
+	);
+	assert.throws(
+		() =>
+			checkAboutNames(
+				[{ kind: "field", id: "Margin", sourceKey: "orders" }],
+				datasets,
+			),
+		/Orders has no field "Margin"/,
+	);
+});
+
+test("names are matched regardless of case and stored as the dataset spells them", () => {
+	assert.deepEqual(
+		checkAboutNames(
+			[
+				{ kind: "source", id: "ORDERS" },
+				{ kind: "field", id: "region", sourceKey: "Returns" },
+				{ kind: "report", id: "any-report" },
+			],
+			datasets,
+		),
+		[
+			{ kind: "source", id: "orders" },
+			{ kind: "field", id: "Region", sourceKey: "returns" },
+			{ kind: "report", id: "any-report" },
+		],
 	);
 });

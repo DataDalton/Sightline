@@ -724,8 +724,10 @@
 	margin-left: auto;
 }
 
-.detail .metaRow > span:not(.meta):not(.badge) {
-	text-transform: capitalize;
+.aboutGroups {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
 }
 
 .factLink {

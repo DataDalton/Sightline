@@ -16,6 +16,7 @@ import {
 } from "../platform/definitionCache";
 import { curatedReports, reportSubject } from "../platform/curated";
 import { reachableSet } from "../platform/sources";
+import { listSources } from "../semantic/registry";
 import { settings } from "../settings";
 import {
 	deprecationReminderDays,
@@ -23,6 +24,7 @@ import {
 	deprecationReminderTitle,
 	automaticEntries,
 	builtinTypes,
+	checkAboutNames,
 	cleanInput,
 	followMatches,
 	isShowing,
@@ -38,6 +40,7 @@ import {
 	type PersonAlias,
 	type Follow,
 	type IncidentState,
+	type NamedDataset,
 	type Reader,
 	type SyncDifferences,
 	type Update,
@@ -459,6 +462,17 @@ const fieldValues = (input: UpdateInput) => [
 	input.reason,
 ];
 
+// Every registered dataset with its field names, for checking what an update names.
+function namedDatasets(): NamedDataset[] {
+	return listSources().map((source) => ({
+		sourceKey: source.sourceKey,
+		title: source.title,
+		fields: [...source.dimensions, ...source.measures].map(
+			(field) => field.name,
+		),
+	}));
+}
+
 // Creates it, or with a reference already on file, changes that one. An automation
 // retrying after a dropped connection lands on the entry it already made.
 export async function postUpdate(
@@ -471,6 +485,7 @@ export async function postUpdate(
 		raw,
 		types.find((type) => type.typeId === raw.type),
 	);
+	input.about = checkAboutNames(input.about, namedDatasets());
 	await assertCanPost(policy, identity, input.type, input.about);
 
 	if (input.reference) {
@@ -538,6 +553,11 @@ export async function changeUpdate(
 		{ ...held, ...raw, type: held.type },
 		types.find((type) => type.typeId === held.type),
 	);
+	// Checked only when the change names them, so correcting a title is not refused
+	// over a field renamed since the entry was posted.
+	if (raw.about !== undefined) {
+		input.about = checkAboutNames(input.about, namedDatasets());
+	}
 	await assertCanPost(policy, identity, input.type, input.about).catch(
 		async (error) => {
 			if (held.createdBy.toLowerCase() !== identity.email.toLowerCase()) {

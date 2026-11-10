@@ -388,6 +388,12 @@ export function cleanInput(
 					const id = text(held.id, 300);
 					if (!id || !aboutKinds.includes(String(held.kind)))
 						return [];
+					// Field names repeat across datasets, so a field alone names nothing.
+					if (held.kind === "field" && !text(held.sourceKey, 300)) {
+						throw new UpdateInputError(
+							`A field needs its dataset. Send "${id}" with its sourceKey.`,
+						);
+					}
 					return [
 						{
 							kind: held.kind as AboutItem["kind"],
@@ -799,4 +805,41 @@ export function mayDelete(
 		isServicePrincipal(callerEmail) &&
 		createdBy.trim().toLowerCase() === callerEmail.trim().toLowerCase()
 	);
+}
+
+// A registered dataset as an update names it, with the fields it holds.
+export interface NamedDataset {
+	sourceKey: string;
+	title: string;
+	fields: string[];
+}
+
+// Checks every dataset and field an update names against the registered datasets, so
+// a typo or a renamed field is refused rather than attached to nothing. Field names
+// match regardless of case and are stored as the dataset spells them.
+export function checkAboutNames(
+	about: AboutItem[],
+	datasets: NamedDataset[],
+): AboutItem[] {
+	const byKey = new Map(
+		datasets.map((dataset) => [dataset.sourceKey.toLowerCase(), dataset]),
+	);
+	return about.map((item) => {
+		if (item.kind !== "source" && item.kind !== "field") return item;
+		const key = item.kind === "source" ? item.id : (item.sourceKey ?? "");
+		const dataset = byKey.get(key.toLowerCase());
+		if (!dataset) {
+			throw new UpdateInputError(`There is no dataset "${key}".`);
+		}
+		if (item.kind === "source") return { ...item, id: dataset.sourceKey };
+		const field = dataset.fields.find(
+			(name) => name.toLowerCase() === item.id.toLowerCase(),
+		);
+		if (!field) {
+			throw new UpdateInputError(
+				`${dataset.title} has no field "${item.id}".`,
+			);
+		}
+		return { ...item, id: field, sourceKey: dataset.sourceKey };
+	});
 }
