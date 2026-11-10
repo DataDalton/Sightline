@@ -49,6 +49,7 @@
 		"lib/updates/model.ts",
 		"lib/updates/model.test.ts",
 		"lib/auth/names.test.ts",
+		"lib/auth/catalogRefusal.test.ts",
 		"lib/dataRules/rules.ts",
 		"lib/dataRules/rules.test.ts",
 		"lib/visuals/deck.ts",

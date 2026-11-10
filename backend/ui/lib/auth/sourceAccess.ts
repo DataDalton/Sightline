@@ -5,6 +5,7 @@ import { quoteName, sourceRef } from "../semantic/types";
 import { settings } from "../settings";
 import type { Identity } from "./identity";
 import { answerCovers } from "./sourceCoverage";
+import { isCatalogRefusal } from "./catalogRefusal";
 import { perProcess } from "../perProcess";
 
 // Which sources a reader can read, as Unity Catalog answers it.
@@ -140,14 +141,22 @@ async function probe(
 		const list = Array.from(schemas)
 			.map((s) => `'${s.replace(/'/g, "''")}'`)
 			.join(", ");
-		const rows = await queryAsUser(
-			token,
-			`SELECT table_schema, table_name
-			 FROM ${quoteName(catalog)}.information_schema.tables
-			 WHERE table_schema IN (${list})`,
-			undefined,
-			identity.email.toLowerCase(),
-		);
+		let rows: Awaited<ReturnType<typeof queryAsUser>>;
+		try {
+			rows = await queryAsUser(
+				token,
+				`SELECT table_schema, table_name
+				 FROM ${quoteName(catalog)}.information_schema.tables
+				 WHERE table_schema IN (${list})`,
+				undefined,
+				identity.email.toLowerCase(),
+			);
+		} catch (error) {
+			// Refused the catalogue itself, so nothing registered in it is readable.
+			// Other catalogues are still asked, and other failures still throw.
+			if (!isCatalogRefusal(error)) throw error;
+			continue;
+		}
 		for (const row of rows) {
 			visible.add(
 				`${catalog}.${String(row.table_schema)}.${String(row.table_name)}`.toLowerCase(),

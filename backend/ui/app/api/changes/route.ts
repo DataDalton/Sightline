@@ -42,6 +42,7 @@ import {
 } from "@/lib/updates/store";
 import { sql } from "@/lib/data/lakebase";
 import { listReports } from "@/lib/platform/reports";
+import { curatedReports } from "@/lib/platform/curated";
 import { reachableSet } from "@/lib/platform/sources";
 import { listSources } from "@/lib/semantic/registry";
 import { caller, privateJson, readJson } from "../notifications/guard";
@@ -79,11 +80,28 @@ async function fromTemplate(
 	return { ...template.fields, type: template.type, ...rest };
 }
 
-// What the screens offer to choose from, limited to what this person can read.
+// What an update can be attached to. A person sees only what they can read. A
+// caller who may post updates everywhere, such as a changelog automation, gets
+// every dataset and report without the catalogue being asked, since attaching
+// an update names a dataset and reads none of its data.
 async function updateChoices(policy: PolicyClass, identity: Identity) {
+	const explicit = await getExplicitContext(policy, identity.email);
+	const postsEverywhere = can(
+		explicit.capabilities,
+		"update.post",
+		null,
+		explicit.denied,
+	);
 	const [reachable, reports, categories] = await Promise.all([
-		reachableSet(identity),
-		listReports(policy, identity),
+		postsEverywhere ? null : reachableSet(identity),
+		postsEverywhere
+			? curatedReports().then((rows) =>
+					rows.map((row) => ({
+						reportId: row.report_id,
+						title: row.title,
+					})),
+				)
+			: listReports(policy, identity),
 		sql<{ id: string; name: string }>(
 			`SELECT category_id AS id, name FROM categories
 			 WHERE is_active = TRUE ORDER BY sort_order, name`,
