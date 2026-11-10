@@ -328,12 +328,16 @@ function aboutGroups(
 	return [...groups.values()];
 }
 
-// One short line for a timeline card, naming each dataset or report and counting fields.
-function aboutSummary(groups: AboutGroup[]): string {
-	const fields = groups.reduce((sum, group) => sum + group.fields.length, 0);
-	const names = groups.map((group) => group.name).join(", ");
-	if (fields === 0) return names;
-	return `${names}, ${fields} field${fields === 1 ? "" : "s"}`;
+// The line on a timeline card, naming every dataset with each of its fields, and every
+// report or category.
+function aboutLine(groups: AboutGroup[]): string {
+	return groups
+		.map((group) =>
+			group.fields.length > 0
+				? `${group.name}: ${group.fields.join(", ")}`
+				: group.name,
+		)
+		.join("; ");
 }
 
 function capitalised(word: string): string {
@@ -1818,7 +1822,7 @@ export default function UpdatesView() {
 									update.acks !== null) && (
 									<span className={styles.meta}>
 										{[
-											aboutSummary(
+											aboutLine(
 												aboutGroups(
 													update.about,
 													choices,
