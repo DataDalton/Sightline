@@ -552,6 +552,18 @@ test("only Administrator and Report Publisher can make a report official", () =>
 	assert.deepEqual(holders, ["admin", "publisher"]);
 });
 
+test("only Administrator and Updates Publisher can post updates anywhere", () => {
+	const holders = builtinRoles
+		.filter((role) => role.capabilities.includes("update.post"))
+		.map((role) => role.roleId)
+		.sort();
+	assert.deepEqual(holders, ["admin", "updatesPublisher"]);
+	const publisher = builtinRoles.find(
+		(role) => role.roleId === "updatesPublisher",
+	);
+	assert.deepEqual(publisher?.capabilities, ["update.post"]);
+});
+
 test("each built-in role holds everything the one before it does", () => {
 	const of = (id: string) =>
 		builtinRoles.find((role) => role.roleId === id)?.capabilities ?? [];

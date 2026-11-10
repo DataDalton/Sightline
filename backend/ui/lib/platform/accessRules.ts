@@ -182,8 +182,8 @@ export const globalScope = "*";
 // bundle makes a role of their own, which is a thing they can name and explain,
 // rather than quietly widening one whose name everyone already trusts.
 //
-// Each builds on the one before it, except Report Publisher, which is added on top
-// of whatever somebody already holds.
+// Each builds on the one before it, except Report Publisher and Updates Publisher, which
+// are added on top of whatever somebody already holds.
 export const readerCapabilities: Capability[] = [
 	"export.run",
 	"explore.use",
@@ -265,6 +265,14 @@ export const builtinRoles: RoleDefinition[] = [
 			"Makes reports official, so they reach everyone who can read their data. Added on top of any other role.",
 		permission: "view",
 		capabilities: ["report.makeOfficial"],
+	},
+	{
+		roleId: "updatesPublisher",
+		name: "Updates Publisher",
+		description:
+			"Posts to Updates about any dataset or report, such as release notes from an automation. Added on top of any other role.",
+		permission: "view",
+		capabilities: ["update.post"],
 	},
 ];
 
