@@ -19,6 +19,9 @@ import {
 	posterName,
 	resolveAuthors,
 	timelineDate,
+	isServicePrincipal,
+	mayDelete,
+	referencesToDelete,
 	type AboutItem,
 } from "./model";
 
@@ -461,4 +464,45 @@ test("an old release can sit back at its own date", () => {
 		typeOf("releaseNotes"),
 	);
 	assert.equal(ahead.placement, "top");
+});
+
+const robot = "0f1e2d3c-4b5a-4968-8776-a5b4c3d2e1f0";
+
+test("a delete names one reference or a list, each once", () => {
+	assert.deepEqual(referencesToDelete({ reference: " repo#1 " }), ["repo#1"]);
+	assert.deepEqual(
+		referencesToDelete({
+			references: ["repo#1", "repo#2", "repo#1", "", 7],
+		}),
+		["repo#1", "repo#2"],
+	);
+	assert.deepEqual(referencesToDelete({}), []);
+});
+
+test("a service principal is known by its application id", () => {
+	assert.equal(isServicePrincipal(robot), true);
+	assert.equal(isServicePrincipal("pat.morgan@example.com"), false);
+});
+
+test("an administrator may delete any entry", () => {
+	assert.equal(
+		mayDelete("pat.morgan@example.com", "sam.lee@example.com", true),
+		true,
+	);
+});
+
+test("an automation may delete only what it posted", () => {
+	assert.equal(mayDelete(robot, robot.toUpperCase(), false), true);
+	assert.equal(mayDelete("pat.morgan@example.com", robot, false), false);
+	assert.equal(
+		mayDelete("0f1e2d3c-4b5a-4968-8776-000000000000", robot, false),
+		false,
+	);
+});
+
+test("a person who posted an entry cannot delete it outright", () => {
+	assert.equal(
+		mayDelete("pat.morgan@example.com", "pat.morgan@example.com", false),
+		false,
+	);
 });

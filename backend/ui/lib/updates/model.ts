@@ -760,3 +760,43 @@ export function automaticEntries(
 	}
 	return out;
 }
+
+// The references a delete names, from one reference or a list, trimmed and each named once.
+export function referencesToDelete(raw: Record<string, unknown>): string[] {
+	const listed = Array.isArray(raw.references)
+		? raw.references
+		: raw.reference !== undefined
+			? [raw.reference]
+			: [];
+	return [
+		...new Set(
+			listed
+				.filter((value): value is string => typeof value === "string")
+				.map((value) => value.trim().slice(0, 300))
+				.filter(Boolean),
+		),
+	];
+}
+
+// A service principal signs in under its application id rather than an email.
+const applicationIdPattern =
+	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isServicePrincipal(email: string): boolean {
+	return applicationIdPattern.test(email.trim());
+}
+
+// Deleting an update outright is for administrators, and for the automation that posted
+// it, so an automation can clear its own test and backfill entries. A person who posted
+// an entry retracts it instead, which keeps its history.
+export function mayDelete(
+	createdBy: string,
+	callerEmail: string,
+	moderates: boolean,
+): boolean {
+	if (moderates) return true;
+	return (
+		isServicePrincipal(callerEmail) &&
+		createdBy.trim().toLowerCase() === callerEmail.trim().toLowerCase()
+	);
+}

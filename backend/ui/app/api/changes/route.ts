@@ -14,6 +14,7 @@ import {
 import {
 	allTypes,
 	changeUpdate,
+	deleteUpdates,
 	historyOf,
 	listFollows,
 	listTemplates,
@@ -23,7 +24,7 @@ import {
 	postUpdate,
 	postingRule,
 	noteOnUpdate,
-	readCounts,
+	ackCounts,
 	listAliases,
 	removeAlias,
 	saveAlias,
@@ -215,11 +216,9 @@ export async function GET(request: NextRequest) {
 					}));
 				}),
 				affects: [...reports.values()],
+				// Who acknowledged it is for the poster and moderators, not other readers.
 				acknowledgedBy: canSeeWho
 					? await whoAcknowledged(updateId)
-					: null,
-				readCount: canSeeWho
-					? ((await readCounts()).get(updateId)?.reads ?? 0)
 					: null,
 			});
 		}
@@ -235,13 +234,13 @@ export async function GET(request: NextRequest) {
 			});
 		}
 
-		const [updates, types, follows, drafts, counts, templates, quiet] =
+		const [updates, types, follows, drafts, acks, templates, quiet] =
 			await Promise.all([
 				visibleUpdates(policy, identity),
 				allTypes(),
 				listFollows(identity.email),
 				ownDrafts(policy, identity),
-				readCounts(),
+				ackCounts(),
 				listTemplates(),
 				sourcesInMaintenance(),
 			]);
@@ -281,11 +280,18 @@ export async function GET(request: NextRequest) {
 		}
 
 		const context = await getExplicitContext(policy, identity.email);
+		const canModerate = await moderates(policy, identity.email);
+		const caller = identity.email.toLowerCase();
 		return privateJson({
+			// The acknowledgement count goes only to the poster and moderators, and only
+			// on an update that asks for acknowledgement.
 			updates: (await withNames(updates)).map((update) => ({
 				...update,
-				reads: counts.get(update.updateId)?.reads ?? 0,
-				acks: counts.get(update.updateId)?.acks ?? 0,
+				acks:
+					update.requireAck &&
+					(canModerate || update.createdBy.toLowerCase() === caller)
+						? (acks.get(update.updateId) ?? 0)
+						: null,
 			})),
 			types,
 			follows,
@@ -295,7 +301,7 @@ export async function GET(request: NextRequest) {
 			canPost:
 				(context.capabilities.get("update.post")?.size ?? 0) > 0 ||
 				(context.capabilities.get("report.edit")?.size ?? 0) > 0,
-			canModerate: await moderates(policy, identity.email),
+			canModerate,
 		});
 	} catch (error) {
 		console.error("Could not read updates:", error);
@@ -308,6 +314,9 @@ export async function GET(request: NextRequest) {
 // else is sent fills it in or overrides it.
 // { action: "change", updateId, ...fields }
 // { action: "retract", updateId, note }
+// { action: "delete", reference } or { action: "delete", references: [...] }, removing
+// each entry outright with its history, notes and reads. For administrators, and for the
+// automation that posted the entry. Answers { deleted, notFound }.
 // { action: "incident", updateId, state, note }
 // { action: "read", updateId, acknowledged? }
 // { action: "note", updateId, note }
@@ -377,6 +386,8 @@ async function act(
 		case "retract":
 			await retractUpdate(policy, identity, updateId, body.note);
 			return { ok: true };
+		case "delete":
+			return deleteUpdates(policy, identity, body);
 		case "incident": {
 			const state = String(body.state);
 			if (

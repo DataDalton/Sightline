@@ -47,8 +47,8 @@ type ListedUpdate = Update &
 	Named & {
 		read: boolean;
 		acknowledged: boolean;
-		reads: number;
-		acks: number;
+		// Present only for the poster and moderators, on an update asking for acknowledgement.
+		acks: number | null;
 	};
 
 interface Answer {
@@ -79,7 +79,6 @@ interface Detail {
 	}[];
 	affects: { slug: string; title: string }[];
 	acknowledgedBy: string[] | null;
-	readCount: number | null;
 }
 
 // How many reports are named before the rest wait behind a click.
@@ -272,6 +271,40 @@ export interface UpdateChoices {
 function useUpdateChoices(): UpdateChoices | undefined {
 	const { data } = useSWR<UpdateChoices>("/api/changes?choices=1");
 	return data;
+}
+
+// What an update is about, by the names people know, each named once. Anything the
+// caller cannot see by name, such as a table, falls back to its id.
+function aboutWords(
+	about: AboutItem[],
+	choices: UpdateChoices | undefined,
+): string {
+	const reports = choices?.reports ?? [];
+	const nameOf = (item: AboutItem): string => {
+		if (item.kind === "source") {
+			return (
+				choices?.sources.find((s) => s.key === item.id)?.title ??
+				item.id
+			);
+		}
+		if (item.kind === "category") {
+			return (
+				choices?.categories.find((c) => c.id === item.id)?.name ??
+				item.id
+			);
+		}
+		if (item.kind === "report") {
+			return reports.find((r) => r.id === item.id)?.title ?? item.id;
+		}
+		if (item.kind === "page") {
+			for (const report of reports) {
+				const page = report.pages.find((p) => p.id === item.id);
+				if (page) return `${report.title}, ${page.title}`;
+			}
+		}
+		return item.id;
+	};
+	return [...new Set(about.map(nameOf))].join(", ");
 }
 
 const aboutKindWords: Record<AboutItem["kind"], string> = {
@@ -1385,11 +1418,6 @@ function DetailDialog({
 				<section className={styles.activity}>
 					<div className={styles.activityHead}>
 						<strong>Activity</strong>
-						{data.readCount !== null && (
-							<span className={styles.meta}>
-								{data.readCount} read
-							</span>
-						)}
 					</div>
 
 					<div className={styles.noteRow}>
@@ -1513,6 +1541,7 @@ export default function UpdatesView() {
 		refreshInterval: 60_000,
 		dedupingInterval: 5000,
 	});
+	const choices = useUpdateChoices();
 	const { data: me } = useSWR<{ email: string }>("/api/user");
 	const [tab, setTab] = useState<"timeline" | "calendar" | "following">(
 		"timeline",
@@ -1734,18 +1763,19 @@ export default function UpdatesView() {
 										By {byline(update.authorsShown ?? [])}
 									</span>
 								)}
-								<span className={styles.meta}>
-									{update.about
-										.map((item) => item.id)
-										.join(", ")}
-									{data?.canModerate
-										? `${update.about.length > 0 ? ". " : ""}Read by ${update.reads}${
-												update.requireAck
-													? `, acknowledged by ${update.acks}`
-													: ""
-											}`
-										: ""}
-								</span>
+								{(update.about.length > 0 ||
+									update.acks !== null) && (
+									<span className={styles.meta}>
+										{[
+											aboutWords(update.about, choices),
+											update.acks !== null
+												? `Acknowledged by ${update.acks}`
+												: "",
+										]
+											.filter(Boolean)
+											.join(". ")}
+									</span>
+								)}
 							</button>
 						))}
 					</div>

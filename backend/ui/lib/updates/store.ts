@@ -1,7 +1,7 @@
-import { insertLog } from "../activityLog";
+import { insertLog, insertLogs } from "../activityLog";
 import type { Identity } from "../auth/identity";
 import type { PolicyClass } from "../auth/policy";
-import { sql } from "../data/lakebase";
+import { sql, transaction } from "../data/lakebase";
 import { notify, safeLink } from "../notify/store";
 import {
 	can,
@@ -26,9 +26,11 @@ import {
 	cleanInput,
 	followMatches,
 	isShowing,
+	mayDelete,
 	posterName,
 	quietSources,
 	reaches,
+	referencesToDelete,
 	resolveAuthors,
 	sourcesOf,
 	timelineDate,
@@ -618,6 +620,82 @@ export async function retractUpdate(
 	dropHeld();
 }
 
+// Removes entries outright by reference, with their correction history, notes, reads,
+// queued digests and the inbox notices that pointed at them. Every entry named has to
+// be one the caller may delete, or nothing is removed. A reference with no entry is
+// reported rather than refused, so a rerun after a partial failure is harmless.
+export async function deleteUpdates(
+	policy: PolicyClass,
+	identity: Identity,
+	raw: Record<string, unknown>,
+): Promise<{ deleted: string[]; notFound: string[] }> {
+	const references = referencesToDelete(raw);
+	if (references.length === 0) {
+		throw new UpdateError("Say which reference to delete.");
+	}
+	const held = await sql<{
+		update_id: string;
+		reference: string;
+		title: string;
+		created_by: string;
+	}>(
+		`SELECT update_id::text AS update_id, reference, title, created_by
+		 FROM updates WHERE reference = ANY($1::text[])`,
+		[references],
+	);
+	const context = await getExplicitContext(policy, identity.email);
+	const moderates = can(
+		context.capabilities,
+		"update.moderate",
+		null,
+		context.denied,
+	);
+	const refused = held.filter(
+		(row) => !mayDelete(row.created_by, identity.email, moderates),
+	);
+	if (refused.length > 0) {
+		throw new UpdateError(
+			`You cannot delete ${refused.map((row) => row.reference).join(", ")}.`,
+			403,
+		);
+	}
+
+	const ids = held.map((row) => row.update_id);
+	if (ids.length > 0) {
+		await transaction(async (client) => {
+			await client.query(
+				`DELETE FROM notifications WHERE data->>'updateId' = ANY($1::text[])`,
+				[ids],
+			);
+			// History, notes, reads and queued digests go with it, by their foreign keys.
+			await client.query(
+				`DELETE FROM updates WHERE update_id = ANY($1::uuid[])`,
+				[ids],
+			);
+		});
+		await insertLogs(
+			held.map((row) => ({
+				recordType: "update",
+				recordId: row.update_id,
+				action: "delete_update",
+				oldValue: JSON.stringify({
+					reference: row.reference,
+					title: row.title,
+					createdBy: row.created_by,
+				}),
+				changedBy: identity.email,
+			})),
+		);
+		dropHeld();
+	}
+
+	const found = new Set(held.map((row) => row.reference));
+	return {
+		deleted: references.filter((reference) => found.has(reference)),
+		notFound: references.filter((reference) => !found.has(reference)),
+	};
+}
+
 // Moves an incident on, adding to its timeline. Resolving also ends its banner, since
 // there is no longer anything to warn about.
 export async function moveIncident(
@@ -1176,20 +1254,13 @@ export async function noteRead(
 	);
 }
 
-export async function readCounts(): Promise<
-	Map<string, { reads: number; acks: number }>
-> {
-	const rows = await sql<{ update_id: string; reads: string; acks: string }>(
-		`SELECT update_id::text AS update_id, count(*)::text AS reads,
-		        count(acked_on)::text AS acks
-		 FROM update_reads GROUP BY update_id`,
+// How many people acknowledged each update that has acknowledgements.
+export async function ackCounts(): Promise<Map<string, number>> {
+	const rows = await sql<{ update_id: string; acks: string }>(
+		`SELECT update_id::text AS update_id, count(*)::text AS acks
+		 FROM update_reads WHERE acked_on IS NOT NULL GROUP BY update_id`,
 	);
-	return new Map(
-		rows.map((row) => [
-			row.update_id,
-			{ reads: Number(row.reads), acks: Number(row.acks) },
-		]),
-	);
+	return new Map(rows.map((row) => [row.update_id, Number(row.acks)]));
 }
 
 // A line anyone who can read an update adds to its history, such as what they did about it.
