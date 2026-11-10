@@ -302,48 +302,99 @@ export async function removeTemplate(
 
 // --- Who may post ------------------------------------------------------------------
 
-// Anybody holding the right to post, everywhere or on what the update is about. An
-// Editor can post about a report they can edit. Authors look after their own.
+// What a caller may attach an update to. Publishing checks every item with this, and the
+// New update form offers only what passes it, so nothing offered is refused on publish.
+// Holding the right to post everywhere covers everything, tables and pages included. A
+// narrower right covers a source, a field of it, a category, or a report reached through
+// itself, its category or a tag, and a page through its report. An Editor can also post a
+// report change about a report they can edit.
+export interface PostingRule {
+	everywhere: boolean;
+	onScope: (scopeId: string) => boolean;
+	onReport: (
+		ref: {
+			reportId: string;
+			categoryId: string | null;
+			tags?: string[] | null;
+		},
+		type: string,
+	) => boolean;
+}
+
+export async function postingRule(
+	policy: PolicyClass,
+	identity: Identity,
+): Promise<PostingRule> {
+	const context = await getExplicitContext(policy, identity.email);
+	const allowed = (scope?: string | null) =>
+		can(context.capabilities, "update.post", scope, context.denied);
+	return {
+		everywhere: allowed(),
+		onScope: (scopeId) => allowed(scopeId),
+		onReport: (ref, type) =>
+			canOnReport(
+				context.capabilities,
+				"update.post",
+				ref,
+				context.denied,
+			) ||
+			(type === "reportChange" &&
+				canOnReport(
+					context.capabilities,
+					"report.edit",
+					ref,
+					context.denied,
+				)),
+	};
+}
+
+async function reportOfPage(pageId: string): Promise<string | null> {
+	const rows = await sql<{ report_id: string }>(
+		`SELECT report_id::text AS report_id FROM report_pages
+		 WHERE page_id::text = $1 AND is_active = TRUE`,
+		[pageId],
+	);
+	return rows[0]?.report_id ?? null;
+}
+
+async function reportAllowed(
+	rule: PostingRule,
+	reportId: string,
+	type: string,
+): Promise<boolean> {
+	const subject = await reportSubject(reportId);
+	if (!subject) return false;
+	return rule.onReport(
+		{ reportId, categoryId: subject.category_id, tags: subject.tags },
+		type,
+	);
+}
+
 export async function assertCanPost(
 	policy: PolicyClass,
 	identity: Identity,
 	type: string,
 	about: Update["about"],
 ): Promise<void> {
-	const context = await getExplicitContext(policy, identity.email);
-	const allowed = (scope?: string | null) =>
-		can(context.capabilities, "update.post", scope, context.denied);
-	if (allowed()) return;
+	const rule = await postingRule(policy, identity);
+	if (rule.everywhere) return;
 
 	if (about.length > 0) {
 		const onAll = await Promise.all(
 			about.map(async (item) => {
-				if (item.kind === "source") return allowed(item.id);
-				if (item.kind === "field") return allowed(item.sourceKey);
-				if (item.kind === "category") return allowed(item.id);
-				if (item.kind !== "report") return false;
-				const subject = await reportSubject(item.id);
-				if (!subject) return false;
-				const ref = {
-					reportId: item.id,
-					categoryId: subject.category_id,
-					tags: subject.tags,
-				};
-				return (
-					canOnReport(
-						context.capabilities,
-						"update.post",
-						ref,
-						context.denied,
-					) ||
-					(type === "reportChange" &&
-						canOnReport(
-							context.capabilities,
-							"report.edit",
-							ref,
-							context.denied,
-						))
-				);
+				if (item.kind === "source") return rule.onScope(item.id);
+				if (item.kind === "field") {
+					return !!item.sourceKey && rule.onScope(item.sourceKey);
+				}
+				if (item.kind === "category") return rule.onScope(item.id);
+				if (item.kind === "report") {
+					return reportAllowed(rule, item.id, type);
+				}
+				if (item.kind === "page") {
+					const reportId = await reportOfPage(item.id);
+					return !!reportId && reportAllowed(rule, reportId, type);
+				}
+				return false;
 			}),
 		);
 		if (onAll.every(Boolean)) return;

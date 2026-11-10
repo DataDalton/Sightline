@@ -248,13 +248,23 @@ type Draft = Record<string, unknown> & {
 	about: AboutItem[];
 };
 
+// What the caller can see, with whether they may post about each. Following and choosing
+// an audience use everything listed. Attaching an update offers only what may be posted.
 export interface UpdateChoices {
+	postsEverywhere?: boolean;
 	people?: { email: string; name: string }[];
-	sources: { key: string; title: string; fields: string[] }[];
-	categories: { id: string; name: string }[];
+	sources: {
+		key: string;
+		title: string;
+		fields: string[];
+		canPost?: boolean;
+	}[];
+	categories: { id: string; name: string; canPost?: boolean }[];
 	reports: {
 		id: string;
 		title: string;
+		canPost?: boolean;
+		canPostReportChange?: boolean;
 		pages: { id: string; title: string }[];
 	}[];
 }
@@ -277,17 +287,35 @@ const aboutKindWords: Record<AboutItem["kind"], string> = {
 // so several columns of one source are a few clicks.
 function AboutPicker({
 	about,
+	type,
 	onChange,
 }: {
 	about: AboutItem[];
+	type: string;
 	onChange: (next: AboutItem[]) => void;
 }) {
 	const choices = useUpdateChoices();
 	const [kind, setKind] = useState<AboutItem["kind"]>("source");
 	const [sourceKey, setSourceKey] = useState("");
 	const [reportId, setReportId] = useState("");
+	// Everything listed, for naming what is already attached.
 	const sources = choices?.sources ?? [];
 	const reports = choices?.reports ?? [];
+	// Only what this caller may post about, for adding more.
+	const postableSources = sources.filter((source) => source.canPost);
+	const postableCategories = (choices?.categories ?? []).filter(
+		(category) => category.canPost,
+	);
+	const postableReports = reports.filter(
+		(report) =>
+			report.canPost ||
+			(type === "reportChange" && report.canPostReportChange),
+	);
+	// A table is not tied to anything a narrower right can name, so only a caller who
+	// may post everywhere attaches one.
+	const kindOptions = Object.entries(aboutKindWords)
+		.filter(([value]) => value !== "table" || choices?.postsEverywhere)
+		.map(([value, label]) => ({ value, label }));
 	const { data: tables } = useSWR<{
 		sources: { tables: string[] }[];
 	}>(
@@ -326,7 +354,7 @@ function AboutPicker({
 		}
 		return item.id;
 	};
-	const sourceOptions = sources.map((source) => ({
+	const sourceOptions = postableSources.map((source) => ({
 		value: source.key,
 		label: source.title,
 	}));
@@ -366,9 +394,7 @@ function AboutPicker({
 					value={kind}
 					ariaLabel="What kind of thing"
 					onChange={(next) => setKind(next as AboutItem["kind"])}
-					options={Object.entries(aboutKindWords).map(
-						([value, label]) => ({ value, label }),
-					)}
+					options={kindOptions}
 				/>
 				{kind === "source" && (
 					<Select
@@ -432,7 +458,7 @@ function AboutPicker({
 						ariaLabel="Category"
 						searchable
 						onChange={(id) => add({ kind: "category", id })}
-						options={(choices?.categories ?? []).map((c) => ({
+						options={postableCategories.map((c) => ({
 							value: c.id,
 							label: c.name,
 						}))}
@@ -453,7 +479,7 @@ function AboutPicker({
 								? setReportId(id)
 								: add({ kind: "report", id })
 						}
-						options={reports.map((r) => ({
+						options={postableReports.map((r) => ({
 							value: r.id,
 							label: r.title,
 						}))}
@@ -472,7 +498,8 @@ function AboutPicker({
 						disabled={!reportId}
 						onChange={(id) => add({ kind: "page", id })}
 						options={(
-							reports.find((r) => r.id === reportId)?.pages ?? []
+							postableReports.find((r) => r.id === reportId)
+								?.pages ?? []
 						).map((page) => ({
 							value: page.id,
 							label: page.title,
@@ -945,6 +972,7 @@ function Composer({
 
 					<AboutPicker
 						about={draft.about}
+						type={draft.type}
 						onChange={(about) => set({ about })}
 					/>
 					{failure && <div className={form.failure}>{failure}</div>}

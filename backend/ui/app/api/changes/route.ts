@@ -21,6 +21,7 @@ import {
 	noteRead,
 	ownDrafts,
 	postUpdate,
+	postingRule,
 	noteOnUpdate,
 	readCounts,
 	listAliases,
@@ -80,44 +81,42 @@ async function fromTemplate(
 	return { ...template.fields, type: template.type, ...rest };
 }
 
-// What an update can be attached to. A person sees only what they can read. A
-// caller who may post updates everywhere, such as a changelog automation, gets
-// every dataset and report without the catalogue being asked, since attaching
-// an update names a dataset and reads none of its data.
+// What the screens offer to choose from. A person sees only what they can read, and
+// each dataset, category and report says whether they may post about it, by the same
+// rule publishing checks. A caller who may post updates everywhere, such as a changelog
+// automation, gets every dataset and report without the catalogue being asked, since
+// attaching an update names a dataset and reads none of its data.
 async function updateChoices(policy: PolicyClass, identity: Identity) {
-	const explicit = await getExplicitContext(policy, identity.email);
-	const postsEverywhere = can(
-		explicit.capabilities,
-		"update.post",
-		null,
-		explicit.denied,
-	);
-	const [reachable, reports, categories] = await Promise.all([
-		postsEverywhere ? null : reachableSet(identity),
-		postsEverywhere
-			? curatedReports().then((rows) =>
-					rows.map((row) => ({
-						reportId: row.report_id,
-						title: row.title,
-					})),
-				)
-			: listReports(policy, identity),
+	const rule = await postingRule(policy, identity);
+	const [reachable, visibleReports, curated, categories] = await Promise.all([
+		rule.everywhere ? null : reachableSet(identity),
+		rule.everywhere ? null : listReports(policy, identity),
+		curatedReports(),
 		sql<{ id: string; name: string }>(
 			`SELECT category_id AS id, name FROM categories
 			 WHERE is_active = TRUE ORDER BY sort_order, name`,
 		),
 	]);
+	const visibleIds = visibleReports
+		? new Set(visibleReports.map((report) => report.reportId))
+		: null;
+	const reports = curated.filter(
+		(row) => !visibleIds || visibleIds.has(row.report_id),
+	);
 	const pages = await sql<{ id: string; title: string; report_id: string }>(
 		`SELECT page_id::text AS id, title, report_id::text AS report_id
 		 FROM report_pages
 		 WHERE is_active = TRUE AND report_id::text = ANY($1::text[])
 		 ORDER BY sort_order`,
-		[reports.map((report) => report.reportId)],
+		[reports.map((report) => report.report_id)],
 	);
 	const people = await sql<{ user_email: string }>(
 		`SELECT user_email FROM member_groups ORDER BY user_email`,
 	);
+	const onScope = (scopeId: string) =>
+		rule.everywhere || rule.onScope(scopeId);
 	return {
+		postsEverywhere: rule.everywhere,
 		people: people.map((row) => ({
 			email: row.user_email,
 			name: displayNameFromEmail(row.user_email),
@@ -130,16 +129,30 @@ async function updateChoices(policy: PolicyClass, identity: Identity) {
 				fields: [...source.dimensions, ...source.measures].map(
 					(field) => field.name,
 				),
+				canPost: onScope(source.sourceKey),
 			}))
 			.sort((a, b) => a.title.localeCompare(b.title)),
-		categories,
-		reports: reports.map((report) => ({
-			id: report.reportId,
-			title: report.title,
-			pages: pages
-				.filter((page) => page.report_id === report.reportId)
-				.map((page) => ({ id: page.id, title: page.title })),
+		categories: categories.map((category) => ({
+			...category,
+			canPost: onScope(category.id),
 		})),
+		reports: reports.map((report) => {
+			const ref = {
+				reportId: report.report_id,
+				categoryId: report.category_id,
+				tags: report.tags,
+			};
+			return {
+				id: report.report_id,
+				title: report.title,
+				canPost: rule.everywhere || rule.onReport(ref, "any"),
+				canPostReportChange:
+					rule.everywhere || rule.onReport(ref, "reportChange"),
+				pages: pages
+					.filter((page) => page.report_id === report.report_id)
+					.map((page) => ({ id: page.id, title: page.title })),
+			};
+		}),
 	};
 }
 
