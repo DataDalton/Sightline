@@ -316,7 +316,47 @@ const sectionKindWords: Record<AboutSection["kind"], string | null> = {
 	page: "Page",
 	category: "Category",
 	table: "Table",
+	tables: null,
 };
+
+function tableCount(section: AboutSection): string {
+	const count = section.groups[0]?.fields.length ?? 0;
+	return `${count} ${count === 1 ? "table" : "tables"}`;
+}
+
+// The tables of one catalog and schema, closed until opened, since one update can name
+// dozens of them.
+function TableGroup({ section }: { section: AboutSection }) {
+	return (
+		<details className={`${styles.aboutSection} ${styles.tableGroup}`}>
+			<summary className={styles.tableGroupHead}>
+				<svg
+					className={styles.tableGroupChevron}
+					width="12"
+					height="12"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="2.5"
+					strokeLinecap="round"
+					strokeLinejoin="round"
+					aria-hidden="true"
+				>
+					<path d="M9 6l6 6-6 6" />
+				</svg>
+				<strong>{section.names[0]}</strong>
+				<span className={styles.fieldCount}>{tableCount(section)}</span>
+			</summary>
+			<div className={styles.fieldChips}>
+				{(section.groups[0]?.fields ?? []).map((field) => (
+					<span key={field.name} className={styles.fieldChip}>
+						{field.name}
+					</span>
+				))}
+			</div>
+		</details>
+	);
+}
 
 // The mark before a field: a plus for added, a minus for removed and a dot for changed.
 // A rename shows its old and new names with an arrow between them instead, and nothing
@@ -355,74 +395,85 @@ function fieldKey(field: { name: string; from?: string }): string {
 function AboutChanges({ sections }: { sections: AboutSection[] }) {
 	return (
 		<div className={styles.aboutSections}>
-			{sections.map((section) => (
-				<div
-					key={`${section.kind}:${section.names.join("|")}`}
-					className={styles.aboutSection}
-				>
-					<div className={styles.aboutHead}>
-						{sectionKindWords[section.kind] && (
-							<span className={styles.aboutKind}>
-								{sectionKindWords[section.kind]}
-							</span>
-						)}
-						<strong>{joinNames(section.names)}</strong>
-						{section.change && (
-							<span
-								className={`${styles.changePill} ${styles[`tone${section.change}`]}`}
-							>
-								{changeWord(section.change)}
-							</span>
-						)}
-					</div>
-					{section.groups.map((group) => (
-						<div
-							key={group.change ?? "unsaid"}
-							className={styles.fieldGroup}
-						>
-							{group.change && (
-								<span
-									className={`${styles.fieldGroupLabel} ${styles[`text${group.change}`]}`}
-								>
-									{changeWord(group.change)}
-									<span className={styles.fieldCount}>
-										{group.fields.length}
-									</span>
+			{sections.map((section) =>
+				section.kind === "tables" ? (
+					<TableGroup
+						key={`tables:${section.names[0]}`}
+						section={section}
+					/>
+				) : (
+					<div
+						key={`${section.kind}:${section.names.join("|")}`}
+						className={styles.aboutSection}
+					>
+						<div className={styles.aboutHead}>
+							{sectionKindWords[section.kind] && (
+								<span className={styles.aboutKind}>
+									{sectionKindWords[section.kind]}
 								</span>
 							)}
-							<div className={styles.fieldChips}>
-								{group.fields.map((field) => (
-									<span
-										key={fieldKey(field)}
-										className={`${styles.fieldChip} ${
-											group.change
-												? styles[`chip${group.change}`]
-												: ""
-										}`}
-									>
-										<ChangeMark change={group.change} />
-										{field.from ? (
-											<>
-												<span
-													className={styles.oldName}
-												>
-													{field.from}
-												</span>
-												<span aria-hidden="true">
-													→
-												</span>
-												<span>{field.name}</span>
-											</>
-										) : (
-											<span>{field.name}</span>
-										)}
-									</span>
-								))}
-							</div>
+							<strong>{joinNames(section.names)}</strong>
+							{section.change && (
+								<span
+									className={`${styles.changePill} ${styles[`tone${section.change}`]}`}
+								>
+									{changeWord(section.change)}
+								</span>
+							)}
 						</div>
-					))}
-				</div>
-			))}
+						{section.groups.map((group) => (
+							<div
+								key={group.change ?? "unsaid"}
+								className={styles.fieldGroup}
+							>
+								{group.change && (
+									<span
+										className={`${styles.fieldGroupLabel} ${styles[`text${group.change}`]}`}
+									>
+										{changeWord(group.change)}
+										<span className={styles.fieldCount}>
+											{group.fields.length}
+										</span>
+									</span>
+								)}
+								<div className={styles.fieldChips}>
+									{group.fields.map((field) => (
+										<span
+											key={fieldKey(field)}
+											className={`${styles.fieldChip} ${
+												group.change
+													? styles[
+															`chip${group.change}`
+														]
+													: ""
+											}`}
+										>
+											<ChangeMark change={group.change} />
+											{field.from ? (
+												<>
+													<span
+														className={
+															styles.oldName
+														}
+													>
+														{field.from}
+													</span>
+													<span aria-hidden="true">
+														→
+													</span>
+													<span>{field.name}</span>
+												</>
+											) : (
+												<span>{field.name}</span>
+											)}
+										</span>
+									))}
+								</div>
+							</div>
+						))}
+					</div>
+				),
+			)}
 		</div>
 	);
 }
@@ -439,23 +490,30 @@ function AboutSummary({ sections }: { sections: AboutSection[] }) {
 					</span>
 					{section.change &&
 						` (${changeWord(section.change).toLowerCase()})`}
-					{section.groups.map((group) => (
-						<span key={group.change ?? "unsaid"}>
-							{" · "}
-							{group.change && (
-								<span className={styles[`text${group.change}`]}>
-									{changeWord(group.change)}:{" "}
-								</span>
-							)}
-							{group.fields
-								.map((field) =>
-									field.from
-										? `${field.from} → ${field.name}`
-										: field.name,
-								)
-								.join(", ")}
-						</span>
-					))}
+					{/* A schema's tables are counted here and listed in the detail. */}
+					{section.kind === "tables" && ` (${tableCount(section)})`}
+					{section.kind !== "tables" &&
+						section.groups.map((group) => (
+							<span key={group.change ?? "unsaid"}>
+								{" · "}
+								{group.change && (
+									<span
+										className={
+											styles[`text${group.change}`]
+										}
+									>
+										{changeWord(group.change)}:{" "}
+									</span>
+								)}
+								{group.fields
+									.map((field) =>
+										field.from
+											? `${field.from} → ${field.name}`
+											: field.name,
+									)
+									.join(", ")}
+							</span>
+						))}
 				</span>
 			))}
 		</span>

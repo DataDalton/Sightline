@@ -101,6 +101,54 @@ test("reports, pages, categories and tables follow the datasets", () => {
 	);
 });
 
+test("tables group under their catalog and schema by short name", () => {
+	const sections = aboutSections(
+		[
+			{ kind: "table", id: "cat.sap.vbak" },
+			{ kind: "table", id: "cat.lox.gpo" },
+			{ kind: "table", id: "cat.sap.vbap" },
+			{ kind: "table", id: "cat.sap.vbak" },
+			{ kind: "table", id: "cat.lox.idn" },
+		],
+		names,
+	);
+	assert.deepEqual(sections, [
+		{
+			kind: "tables",
+			names: ["cat.sap"],
+			change: null,
+			groups: [
+				{ change: null, fields: [{ name: "vbak" }, { name: "vbap" }] },
+			],
+		},
+		{
+			kind: "tables",
+			names: ["cat.lox"],
+			change: null,
+			groups: [
+				{ change: null, fields: [{ name: "gpo" }, { name: "idn" }] },
+			],
+		},
+	]);
+});
+
+test("a schema with one table shows that table by its full name", () => {
+	const sections = aboutSections(
+		[
+			{ kind: "table", id: "cat.sap.vbak" },
+			{ kind: "table", id: "orders_raw" },
+		],
+		names,
+	);
+	assert.deepEqual(
+		sections.map((section) => [section.kind, section.names[0]]),
+		[
+			["table", "cat.sap.vbak"],
+			["table", "orders_raw"],
+		],
+	);
+});
+
 test("the card line names every field and what happened to it", () => {
 	const line = aboutLine(
 		aboutSections(

@@ -23,7 +23,9 @@ export interface FieldGroup {
 }
 
 export interface AboutSection {
-	kind: "dataset" | "report" | "page" | "category" | "table";
+	// "tables" is several tables of one catalog and schema, named once as that schema with
+	// the short table names as its one group.
+	kind: "dataset" | "report" | "page" | "category" | "table" | "tables";
 	names: string[];
 	// What happened to the dataset itself, where that was said.
 	change: AboutChange | null;
@@ -69,8 +71,31 @@ export function aboutSections(
 		return held;
 	};
 	const others: AboutSection[] = [];
+	// Tables named by catalog.schema.table, held under their catalog.schema in the order
+	// each schema was first named.
+	const schemas = new Map<string, AboutSection>();
 
 	for (const item of about) {
+		const lastDot = item.kind === "table" ? item.id.lastIndexOf(".") : -1;
+		if (lastDot > 0) {
+			const schema = item.id.slice(0, lastDot);
+			const table = item.id.slice(lastDot + 1);
+			const held = schemas.get(schema) ?? {
+				kind: "tables" as const,
+				names: [schema],
+				change: null,
+				groups: [{ change: null, fields: [] }],
+			};
+			if (!schemas.has(schema)) {
+				schemas.set(schema, held);
+				others.push(held);
+			}
+			const fields = held.groups[0].fields;
+			if (!fields.some((field) => field.name === table)) {
+				fields.push({ name: table });
+			}
+			continue;
+		}
 		if (item.kind === "source") {
 			const dataset = datasetFor(item.id);
 			dataset.change = item.change ?? dataset.change;
@@ -135,7 +160,19 @@ export function aboutSections(
 			});
 		}
 	}
-	return [...merged.values(), ...others];
+	// A schema with one table is shown as that table by its full name.
+	const shownOthers = others.map((section): AboutSection => {
+		const tables = section.groups[0]?.fields ?? [];
+		return section.kind === "tables" && tables.length === 1
+			? {
+					kind: "table",
+					names: [`${section.names[0]}.${tables[0].name}`],
+					change: null,
+					groups: [],
+				}
+			: section;
+	});
+	return [...merged.values(), ...shownOthers];
 }
 
 // "A", "A and B", "A, B and C".
