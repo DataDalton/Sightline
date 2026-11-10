@@ -1958,6 +1958,18 @@ export default function UpdatesView() {
 		});
 	}, [data, term, typeFilter, impactFilter]);
 
+	const hasUnread = (data?.updates ?? []).some((update) => !update.read);
+	const [markingRead, setMarkingRead] = useState(false);
+	const markAllRead = async () => {
+		setMarkingRead(true);
+		try {
+			await post({ action: "readAll" });
+			await mutate();
+		} finally {
+			setMarkingRead(false);
+		}
+	};
+
 	const follow = async (
 		kind: Follow["kind"],
 		value: string,
@@ -1986,6 +1998,16 @@ export default function UpdatesView() {
 					onChange={setTab}
 				/>
 				<div className={styles.headerActions}>
+					{tab === "timeline" && hasUnread && (
+						<button
+							type="button"
+							className={styles.button}
+							disabled={markingRead}
+							onClick={() => void markAllRead()}
+						>
+							Mark all as read
+						</button>
+					)}
 					{tab === "timeline" && (
 						<a
 							className={styles.button}

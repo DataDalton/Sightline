@@ -19,6 +19,7 @@ import {
 	historyOf,
 	listFollows,
 	listTemplates,
+	markAllRead,
 	moveIncident,
 	noteRead,
 	ownDrafts,
@@ -348,6 +349,7 @@ export async function GET(request: NextRequest) {
 // automation that posted the entry. Answers { deleted, notFound }.
 // { action: "incident", updateId, state, note }
 // { action: "read", updateId, acknowledged? }
+// { action: "readAll" }, marking every update the caller can see as read. Answers { marked }.
 // { action: "note", updateId, note }
 // { action: "saveAlias", kind: "github" | "principal", alias, email?, displayName? }
 // { action: "removeAlias", alias }
@@ -449,6 +451,8 @@ async function act(
 				body.acknowledged === true,
 			);
 			return { ok: true };
+		case "readAll":
+			return { marked: await markAllRead(policy, identity) };
 		case "follow":
 			await setFollow(
 				identity.email,

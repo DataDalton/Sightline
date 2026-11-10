@@ -1278,6 +1278,25 @@ export async function noteRead(
 	);
 }
 
+// Marks every update this person can see as read, leaving acknowledgements as they are.
+// Answers how many were newly marked.
+export async function markAllRead(
+	policy: PolicyClass,
+	identity: Identity,
+): Promise<number> {
+	const unread = (await visibleUpdates(policy, identity))
+		.filter((update) => !update.read)
+		.map((update) => update.updateId);
+	if (unread.length === 0) return 0;
+	await sql(
+		`INSERT INTO update_reads (update_id, user_email, acked_on)
+		 SELECT id::uuid, lower($2), NULL FROM unnest($1::text[]) AS id
+		 ON CONFLICT (update_id, user_email) DO NOTHING`,
+		[unread, identity.email],
+	);
+	return unread.length;
+}
+
 // How many people acknowledged each update that has acknowledgements.
 export async function ackCounts(): Promise<Map<string, number>> {
 	const rows = await sql<{ update_id: string; acks: string }>(
