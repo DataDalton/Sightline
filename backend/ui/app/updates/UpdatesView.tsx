@@ -2,8 +2,9 @@
 
 import { TabStrip } from "../components/shared/TabStrip";
 import { EmptyState, emptyIcons } from "../components/shared/EmptyState";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
+import useSWRInfinite from "swr/infinite";
 import { Modal } from "../components/shared/Modal";
 import { Select } from "../components/shared/Select";
 import { Toggle } from "../components/shared/Toggle";
@@ -83,6 +84,17 @@ interface Answer {
 	canPost: boolean;
 	canModerate: boolean;
 }
+
+// One page of the timeline, with counts over every page.
+interface TimelineAnswer {
+	updates: ListedUpdate[];
+	next: string | null;
+	total: number;
+	unread: number;
+}
+
+// How long typing pauses before the search goes to the server.
+const searchPauseMs = 250;
 
 interface Detail {
 	update: Update & Named;
@@ -1995,35 +2007,80 @@ export default function UpdatesView() {
 		};
 	};
 
-	const shown = useMemo(() => {
-		const needle = term.trim().toLowerCase();
-		return (data?.updates ?? []).filter((update) => {
-			if (typeFilter && update.type !== typeFilter) return false;
-			if (impactFilter && update.impact !== impactFilter) return false;
-			if (!needle) return true;
-			return [
-				update.title,
-				update.body,
-				update.reference ?? "",
-				update.whatToDo ?? "",
-				...update.tags,
-				...update.about.flatMap((item) =>
-					item.from ? [item.id, item.from] : [item.id],
-				),
-			]
-				.join(" ")
-				.toLowerCase()
-				.includes(needle);
-		});
-	}, [data, term, typeFilter, impactFilter]);
+	// The search goes to the server once typing pauses, so each key press is not a request.
+	const [searched, setSearched] = useState("");
+	useEffect(() => {
+		const timer = setTimeout(() => setSearched(term.trim()), searchPauseMs);
+		return () => clearTimeout(timer);
+	}, [term]);
 
-	const hasUnread = (data?.updates ?? []).some((update) => !update.read);
+	// The timeline loads a page at a time, each continuing from where the last one ended.
+	const timelineKey = (index: number, previous: TimelineAnswer | null) => {
+		if (index > 0 && !previous?.next) return null;
+		const params = new URLSearchParams({ list: "1" });
+		if (searched) params.set("q", searched);
+		if (typeFilter) params.set("type", typeFilter);
+		if (impactFilter) params.set("impact", impactFilter);
+		if (previous?.next) params.set("after", previous.next);
+		return `/api/changes?${params}`;
+	};
+	const {
+		data: pages,
+		size,
+		setSize,
+		isValidating: loadingPages,
+		mutate: mutateTimeline,
+	} = useSWRInfinite<TimelineAnswer>(timelineKey, {
+		refreshInterval: 60_000,
+		dedupingInterval: 5000,
+		revalidateFirstPage: true,
+	});
+	const shown = useMemo(
+		() => (pages ?? []).flatMap((page) => page.updates),
+		[pages],
+	);
+	const firstPage = pages?.[0];
+	const lastPage = pages?.[pages.length - 1];
+	const hasMore = Boolean(lastPage?.next);
+	const loadingMore =
+		loadingPages ||
+		(size > 0 && pages !== undefined && pages.length < size);
+	const loadMore = () => {
+		if (hasMore && !loadingMore) void setSize(size + 1);
+	};
+
+	// The next page loads as the end of the list scrolls into view.
+	const listEnd = useRef<HTMLDivElement | null>(null);
+	const loadMoreRef = useRef(loadMore);
+	useEffect(() => {
+		loadMoreRef.current = loadMore;
+	});
+	useEffect(() => {
+		const end = listEnd.current;
+		if (!end || tab !== "timeline") return;
+		const watcher = new IntersectionObserver(
+			(entries) => {
+				if (entries.some((entry) => entry.isIntersecting)) {
+					loadMoreRef.current();
+				}
+			},
+			{ rootMargin: "400px 0px" },
+		);
+		watcher.observe(end);
+		return () => watcher.disconnect();
+	}, [tab, hasMore]);
+
+	const refresh = async () => {
+		await Promise.all([mutate(), mutateTimeline()]);
+	};
+
+	const hasUnread = (firstPage?.unread ?? 0) > 0;
 	const [markingRead, setMarkingRead] = useState(false);
 	const markAllRead = async () => {
 		setMarkingRead(true);
 		try {
 			await post({ action: "readAll" });
-			await mutate();
+			await refresh();
 		} finally {
 			setMarkingRead(false);
 		}
@@ -2140,7 +2197,7 @@ export default function UpdatesView() {
 						</div>
 					)}
 
-					{data && shown.length === 0 && (
+					{firstPage && shown.length === 0 && (
 						<EmptyState
 							icon={emptyIcons.send}
 							title={
@@ -2241,6 +2298,18 @@ export default function UpdatesView() {
 							</button>
 						))}
 					</div>
+					{hasMore && (
+						<div ref={listEnd} className={styles.listEnd}>
+							<button
+								type="button"
+								className={styles.button}
+								disabled={loadingMore}
+								onClick={loadMore}
+							>
+								{loadingMore ? "Loading" : "Load more"}
+							</button>
+						</div>
+					)}
 				</>
 			)}
 
@@ -2260,7 +2329,7 @@ export default function UpdatesView() {
 					types={types}
 					canModerate={data?.canModerate ?? false}
 					selfEmail={me?.email ?? null}
-					onChanged={() => void mutate()}
+					onChanged={() => void refresh()}
 					onEdit={(update) => {
 						setOpen(null);
 						setComposing({ ...update } as unknown as Draft);
@@ -2275,7 +2344,7 @@ export default function UpdatesView() {
 					templates={data?.templates ?? []}
 					onDone={() => {
 						setComposing(null);
-						void mutate();
+						void refresh();
 					}}
 					onClose={() => setComposing(null)}
 				/>

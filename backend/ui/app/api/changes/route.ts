@@ -44,6 +44,7 @@ import {
 	whoAcknowledged,
 	removeTemplate,
 } from "@/lib/updates/store";
+import { defaultPageSize, timelinePage } from "@/lib/updates/timelinePage";
 import { sql } from "@/lib/data/lakebase";
 import { listReports } from "@/lib/platform/reports";
 import { curatedReports } from "@/lib/platform/curated";
@@ -160,6 +161,9 @@ async function updateChoices(policy: PolicyClass, identity: Identity) {
 	};
 }
 
+// GET ?list=1 answers one page of the timeline as { updates, next, total, unread }. It takes
+// q to search, type and impact to filter, limit for the page size, and after set to the
+// previous page's next to continue.
 export async function GET(request: NextRequest) {
 	const identity = await caller(request);
 	if (identity instanceof NextResponse) return identity;
@@ -234,6 +238,40 @@ export async function GET(request: NextRequest) {
 			return privateJson({
 				aliases: await listAliases(),
 				unmatched: await unmatchedGithubNames(),
+			});
+		}
+
+		// One page of the timeline, searched and filtered over everything the caller can
+		// see, with how many match and how many are unread across every page.
+		if (params.get("list") !== null) {
+			const [visible, acks, canModerate] = await Promise.all([
+				visibleUpdates(policy, identity),
+				ackCounts(),
+				moderates(policy, identity.email),
+			]);
+			const page = timelinePage(visible, {
+				term: params.get("q") ?? "",
+				type: params.get("type") ?? "",
+				impact: params.get("impact") ?? "",
+				after: params.get("after"),
+				limit: Number(params.get("limit") ?? defaultPageSize),
+			});
+			const caller = identity.email.toLowerCase();
+			return privateJson({
+				// The acknowledgement count goes only to the poster and moderators, and
+				// only on an update that asks for acknowledgement.
+				updates: (await withNames(page.items)).map((update) => ({
+					...update,
+					acks:
+						update.requireAck &&
+						(canModerate ||
+							update.createdBy.toLowerCase() === caller)
+							? (acks.get(update.updateId) ?? 0)
+							: null,
+				})),
+				next: page.next,
+				total: page.total,
+				unread: visible.filter((update) => !update.read).length,
 			});
 		}
 

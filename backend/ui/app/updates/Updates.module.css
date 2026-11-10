@@ -92,6 +92,13 @@
 	gap: var(--space-2);
 }
 
+/* Holds the load more button, and loads the next page as it scrolls into view. */
+.listEnd {
+	display: flex;
+	justify-content: center;
+	padding: var(--space-2) 0;
+}
+
 .item {
 	display: flex;
 	flex-direction: column;
