@@ -193,17 +193,29 @@
 }
 
 .chip {
-	padding: 1px var(--space-2);
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1);
+	padding: 1px var(--space-1) 1px var(--space-2);
 	border: 1px solid var(--border-default);
 	border-radius: var(--radius-sm);
 	font-size: var(--text-xs);
 }
 
 .chipRemove {
+	display: inline-flex;
+	align-items: center;
+	padding: 2px;
 	border: none;
+	border-radius: var(--radius-sm);
 	background: none;
-	color: inherit;
+	color: var(--text-secondary);
 	cursor: pointer;
+}
+
+.chipRemove:hover {
+	background: var(--state-hover);
+	color: inherit;
 }
 
 .deliveries {
@@ -712,7 +724,7 @@
 	margin-left: auto;
 }
 
-.detail .metaRow > span:not(.meta) {
+.detail .metaRow > span:not(.meta):not(.badge) {
 	text-transform: capitalize;
 }
 

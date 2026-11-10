@@ -14,6 +14,7 @@ import {
 	currentWindow,
 	sourcesOf,
 	type AboutItem,
+	type Author,
 	type Delivery,
 	type Follow,
 	type Update,
@@ -25,12 +26,30 @@ import styles from "./Updates.module.css";
 // The Updates page. A timeline with filters and search, a maintenance calendar, what each
 // reader follows, and for those who may, posting and looking after types and templates.
 
-type ListedUpdate = Update & {
-	read: boolean;
-	acknowledged: boolean;
-	reads: number;
-	acks: number;
+// Authors and poster in words, as the API sends them.
+type Named = {
+	authorsShown?: (Author & { matched: boolean })[];
+	poster?: string;
 };
+
+// "Jane Doe", "Jane Doe and Sam Lee", "Jane Doe, Sam Lee and Pat Kim".
+function byline(authors: { name: string }[]): string {
+	const names = authors.map((author) => author.name);
+	if (names.length <= 1) return names[0] ?? "";
+	return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+function isPast(iso: string | null | undefined): boolean {
+	return Boolean(iso) && new Date(iso as string).getTime() <= Date.now();
+}
+
+type ListedUpdate = Update &
+	Named & {
+		read: boolean;
+		acknowledged: boolean;
+		reads: number;
+		acks: number;
+	};
 
 interface Answer {
 	updates: ListedUpdate[];
@@ -49,10 +68,11 @@ interface Answer {
 }
 
 interface Detail {
-	update: Update;
+	update: Update & Named;
 	history: {
 		kind: string;
 		by_email: string;
+		by_name?: string;
 		at: string;
 		note: string | null;
 		snapshot: { title?: string } | null;
@@ -229,6 +249,7 @@ type Draft = Record<string, unknown> & {
 };
 
 export interface UpdateChoices {
+	people?: { email: string; name: string }[];
 	sources: { key: string; title: string; fields: string[] }[];
 	categories: { id: string; name: string }[];
 	reports: {
@@ -334,7 +355,7 @@ function AboutPicker({
 									)
 								}
 							>
-								×
+								<RemoveMark />
 							</button>
 						</span>
 					))}
@@ -465,6 +486,114 @@ function AboutPicker({
 
 // Who an update is for, by the same lists. A group's name has no list to choose from, since
 // the app cannot read the directory, so that stays typed.
+// Who is credited. Each is somebody who has used the app, picked by name or email, or a name
+// typed for anyone else. A GitHub name can be entered as github:name.
+// The cross on a chip's remove button.
+function RemoveMark() {
+	return (
+		<svg
+			width="10"
+			height="10"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="3"
+			strokeLinecap="round"
+			aria-hidden="true"
+		>
+			<path d="M6 6l12 12M18 6L6 18" />
+		</svg>
+	);
+}
+
+function AuthorsField({
+	authors,
+	onChange,
+}: {
+	authors: Author[];
+	onChange: (next: Author[]) => void;
+}) {
+	const choices = useUpdateChoices();
+	const [typed, setTyped] = useState("");
+	const people = choices?.people ?? [];
+	const add = (raw: string) => {
+		const value = raw.trim();
+		if (!value) return;
+		const person = people.find(
+			(held) =>
+				held.email.toLowerCase() === value.toLowerCase() ||
+				held.name.toLowerCase() === value.toLowerCase(),
+		);
+		const next: Author = person
+			? { name: person.name, email: person.email }
+			: value.toLowerCase().startsWith("github:")
+				? { name: value.slice(7), github: value.slice(7) }
+				: value.includes("@")
+					? { name: value, email: value.toLowerCase() }
+					: { name: value };
+		const key = (author: Author) =>
+			(author.email ?? author.github ?? author.name).toLowerCase();
+		if (!authors.some((held) => key(held) === key(next))) {
+			onChange([...authors, next]);
+		}
+		setTyped("");
+	};
+	return (
+		<div className={form.field}>
+			<span className={form.label}>Authors</span>
+			{authors.length > 0 && (
+				<div className={styles.chips}>
+					{authors.map((author) => (
+						<span
+							key={author.email ?? author.github ?? author.name}
+							className={styles.chip}
+							title={author.email ?? author.github ?? undefined}
+						>
+							{author.name}
+							<button
+								type="button"
+								className={styles.chipRemove}
+								aria-label={`Remove ${author.name}`}
+								onClick={() =>
+									onChange(
+										authors.filter(
+											(held) => held !== author,
+										),
+									)
+								}
+							>
+								<RemoveMark />
+							</button>
+						</span>
+					))}
+				</div>
+			)}
+			<input
+				className={form.input}
+				value={typed}
+				list="update-author-choices"
+				placeholder="A name or email, then Enter"
+				aria-label="Add an author"
+				onChange={(e) => setTyped(e.target.value)}
+				onKeyDown={(e) => {
+					if (e.key === "Enter" || e.key === ",") {
+						e.preventDefault();
+						add(typed);
+					}
+				}}
+				onBlur={() => add(typed)}
+			/>
+			<datalist id="update-author-choices">
+				{people.map((person) => (
+					<option key={person.email} value={person.email}>
+						{person.name}
+					</option>
+				))}
+			</datalist>
+		</div>
+	);
+}
+
 function AudiencePicker({
 	kind,
 	ids,
@@ -525,7 +654,7 @@ function AudiencePicker({
 									onChange(ids.filter((held) => held !== id))
 								}
 							>
-								×
+								<RemoveMark />
 							</button>
 						</span>
 					))}
@@ -628,6 +757,7 @@ function Composer({
 		((draft.tags as string[]) ?? []).length > 0 ? "Tags" : null,
 	].filter(Boolean);
 	const isMaintenance = draft.type === "maintenance";
+	const released = isPast(draft.effectiveOn as string | null);
 
 	return (
 		<Modal
@@ -638,6 +768,11 @@ function Composer({
 			footer={
 				<>
 					<div className={styles.composerFootLeft}>
+						<Toggle
+							label="Notify people"
+							checked={draft.notify !== false}
+							onChange={(notify) => set({ notify })}
+						/>
 						{savingTemplate ? (
 							<>
 								<input
@@ -791,6 +926,11 @@ function Composer({
 
 					{textField("title", "Title")}
 
+					<AuthorsField
+						authors={(draft.authors as Author[]) ?? []}
+						onChange={(authors) => set({ authors })}
+					/>
+
 					<div className={form.field}>
 						<span className={form.label}>Details</span>
 						<div className={styles.rich}>
@@ -817,9 +957,15 @@ function Composer({
 						summary={
 							draft.startsOn
 								? `From ${when(draft.startsOn as string)}`
-								: draft.effectiveOn
-									? `Takes effect ${when(draft.effectiveOn as string)}`
-									: "Takes effect now, shows now"
+								: released
+									? `Released ${when(draft.effectiveOn as string)}, ${
+											draft.placement === "history"
+												? "placed at that date"
+												: "shown at the top as new"
+										}`
+									: draft.effectiveOn
+										? `Takes effect ${when(draft.effectiveOn as string)}`
+										: "Takes effect now, shows now"
 						}
 					>
 						{(isMaintenance || draft.startsOn != null) && (
@@ -853,7 +999,46 @@ function Composer({
 								</label>
 							</>
 						)}
-						{dateField("effectiveOn", "Takes effect")}
+						{dateField("effectiveOn", "Takes effect or released")}
+						{released && (
+							<div className={form.field}>
+								<span className={form.label}>
+									On the timeline
+								</span>
+								<div
+									className={styles.segments}
+									role="group"
+									aria-label="Where it sits on the timeline"
+								>
+									{(
+										[
+											["top", "At the top, as new"],
+											["history", "At its release date"],
+										] as const
+									).map(([value, label]) => (
+										<button
+											key={value}
+											type="button"
+											className={`${styles.segment} ${
+												(draft.placement ?? "top") ===
+												value
+													? styles.segmentOn
+													: ""
+											}`}
+											aria-pressed={
+												(draft.placement ?? "top") ===
+												value
+											}
+											onClick={() =>
+												set({ placement: value })
+											}
+										>
+											{label}
+										</button>
+									))}
+								</div>
+							</div>
+						)}
 						{dateField("periodFrom", "Data affected from")}
 						{dateField("periodTo", "Data affected to")}
 						{dateField("showFrom", "Show from")}
@@ -1011,7 +1196,14 @@ function DetailDialog({
 	const facts: [string, React.ReactNode][] = [
 		...(update.reason ? [["Why", update.reason]] : []),
 		...(update.effectiveOn
-			? [["Takes effect", when(update.effectiveOn)]]
+			? [
+					[
+						isPast(update.effectiveOn)
+							? "Released"
+							: "Takes effect",
+						when(update.effectiveOn),
+					],
+				]
 			: []),
 		...(update.periodFrom || update.periodTo
 			? [
@@ -1119,7 +1311,9 @@ function DetailDialog({
 						</span>
 					)}
 					<span className={styles.meta}>
-						Posted {when(update.postedOn)} by {update.createdBy}
+						{(update.authorsShown ?? []).length > 0
+							? `By ${byline(update.authorsShown ?? [])}, posted ${when(update.postedOn)}`
+							: `Posted ${when(update.postedOn)} by ${update.poster ?? update.createdBy}`}
 						{update.correctedOn
 							? `, corrected ${when(update.correctedOn)}`
 							: ""}
@@ -1195,7 +1389,8 @@ function DetailDialog({
 									{historyWords[event.kind] ?? event.kind}
 								</strong>{" "}
 								<span className={styles.meta}>
-									{event.by_email}, {when(event.at)}
+									{event.by_name ?? event.by_email},{" "}
+									{when(event.at)}
 								</span>
 							</div>
 							{event.note && <p>{event.note}</p>}
@@ -1317,6 +1512,9 @@ export default function UpdatesView() {
 			delivery: (type?.delivery ?? {}) as Delivery,
 			about: [],
 			tags: [],
+			authors: [],
+			placement: "top",
+			notify: true,
 		};
 	};
 
@@ -1492,12 +1690,22 @@ export default function UpdatesView() {
 										</span>
 									)}
 									<span className={styles.meta}>
-										{when(update.postedOn)}
+										{update.placement === "history" &&
+										update.effectiveOn
+											? `Released ${when(update.effectiveOn)}, posted ${when(update.postedOn)}`
+											: isPast(update.effectiveOn)
+												? `${when(update.postedOn)}, released ${when(update.effectiveOn)}`
+												: when(update.postedOn)}
 									</span>
 								</span>
 								<strong className={styles.itemTitle}>
 									{update.title}
 								</strong>
+								{(update.authorsShown ?? []).length > 0 && (
+									<span className={styles.meta}>
+										By {byline(update.authorsShown ?? [])}
+									</span>
+								)}
 								<span className={styles.meta}>
 									{update.about
 										.map((item) => item.id)

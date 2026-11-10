@@ -26,10 +26,14 @@ import {
 	cleanInput,
 	followMatches,
 	isShowing,
+	posterName,
 	quietSources,
 	reaches,
+	resolveAuthors,
 	sourcesOf,
+	timelineDate,
 	type AutomaticKind,
+	type PersonAlias,
 	type Follow,
 	type IncidentState,
 	type Reader,
@@ -81,12 +85,16 @@ interface UpdateRow {
 	reason: string | null;
 	created_by: string;
 	corrected_on: string | null;
+	authors: Update["authors"];
+	placement: Update["placement"];
+	notify: boolean;
 }
 
 const columns = `update_id::text AS update_id, type, title, body, impact, status, about,
 	before_value, after_value, links, tags, reference, posted_on, effective_on, period_from,
 	period_to, starts_on, ends_on, repeat_every, incident_state, audience, delivery,
-	show_from, expires_on, require_ack, automatic, reason, created_by, corrected_on`;
+	show_from, expires_on, require_ack, automatic, reason, created_by, corrected_on,
+	authors, placement, notify`;
 
 function toUpdate(row: UpdateRow): Update {
 	return {
@@ -119,6 +127,9 @@ function toUpdate(row: UpdateRow): Update {
 		reason: row.reason,
 		createdBy: row.created_by,
 		correctedOn: row.corrected_on,
+		authors: row.authors ?? [],
+		placement: row.placement === "history" ? "history" : "top",
+		notify: row.notify !== false,
 	};
 }
 
@@ -430,11 +441,18 @@ export async function postUpdate(
 		   (type, title, body, impact, status, about, before_value, after_value, links,
 		    tags, reference, effective_on, period_from, period_to, starts_on, ends_on,
 		    repeat_every, incident_state, audience, delivery, show_from, expires_on,
-		    require_ack, reason, created_by)
+		    require_ack, reason, created_by, authors, placement, notify)
 		 VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9::jsonb, $10, $11, $12, $13, $14,
-		         $15, $16, $17, $18, $19::jsonb, $20::jsonb, $21, $22, $23, $24, $25)
+		         $15, $16, $17, $18, $19::jsonb, $20::jsonb, $21, $22, $23, $24, $25,
+		         $26::jsonb, $27, $28)
 		 RETURNING ${columns}`,
-		[...fieldValues(input), identity.email],
+		[
+			...fieldValues(input),
+			identity.email,
+			JSON.stringify(input.authors),
+			input.placement,
+			input.notify,
+		],
 	);
 	const update = toUpdate(rows[0]);
 	await recordEvent(update.updateId, identity.email, "created", null, null);
@@ -487,11 +505,19 @@ export async function changeUpdate(
 		   starts_on = $15, ends_on = $16, repeat_every = $17, incident_state = $18,
 		   audience = $19::jsonb, delivery = $20::jsonb, show_from = $21, expires_on = $22,
 		   require_ack = $23, reason = $24,
+		   authors = $27::jsonb, placement = $28, notify = $29,
 		   corrected_on = CASE WHEN $26 THEN corrected_on ELSE now() END,
 		   posted_on = CASE WHEN $26 THEN now() ELSE posted_on END
 		 WHERE update_id = $25
 		 RETURNING ${columns}`,
-		[...fieldValues(input), updateId, wasDraft],
+		[
+			...fieldValues(input),
+			updateId,
+			wasDraft,
+			JSON.stringify(input.authors),
+			input.placement,
+			input.notify,
+		],
 	);
 	const update = toUpdate(rows[0]);
 	await recordEvent(
@@ -644,6 +670,8 @@ export async function deliver(update: Update): Promise<void> {
 		[update.updateId],
 	);
 	if (claimed.length === 0) return;
+	// Claimed all the same, so the sweep does not come back to send it later.
+	if (!update.notify) return;
 
 	const followers = await followersOf(update);
 	const audience =
@@ -925,13 +953,140 @@ export async function visibleUpdates(
 		marksFor(identity.email),
 	]);
 	const now = Date.now();
-	return all
-		.filter((update) => isShowing(update, now) && reaches(update, reader))
-		.map((update) => ({
-			...update,
-			read: marks.get(update.updateId)?.read ?? false,
-			acknowledged: marks.get(update.updateId)?.acked ?? false,
+	return (
+		all
+			.filter(
+				(update) => isShowing(update, now) && reaches(update, reader),
+			)
+			.map((update) => ({
+				...update,
+				read: marks.get(update.updateId)?.read ?? false,
+				acknowledged: marks.get(update.updateId)?.acked ?? false,
+			}))
+			// As times, since the driver hands dates back as dates rather than as text.
+			.sort(
+				(a, b) =>
+					new Date(timelineDate(b)).getTime() -
+					new Date(timelineDate(a)).getTime(),
+			)
+	);
+}
+
+// --- Names for authors and automations --------------------------------------------------
+
+const aliasKey = "updates:aliases";
+
+export async function listAliases(): Promise<PersonAlias[]> {
+	return cachedDefinition(aliasKey, async () => {
+		const rows = await sql<{
+			alias: string;
+			kind: PersonAlias["kind"];
+			email: string | null;
+			display_name: string | null;
+		}>(
+			`SELECT alias, kind, email, display_name FROM update_people_aliases
+			 ORDER BY kind, alias`,
+		);
+		return rows.map((row) => ({
+			alias: row.alias,
+			kind: row.kind,
+			email: row.email,
+			displayName: row.display_name,
 		}));
+	});
+}
+
+// GitHub names on updates that nobody has matched to a person yet.
+export async function unmatchedGithubNames(): Promise<string[]> {
+	const rows = await sql<{ login: string }>(
+		`SELECT DISTINCT author->>'github' AS login
+		 FROM updates, jsonb_array_elements(authors) AS author
+		 WHERE author->>'github' IS NOT NULL AND author->>'email' IS NULL
+		   AND NOT EXISTS (
+		     SELECT 1 FROM update_people_aliases a
+		     WHERE a.kind = 'github' AND lower(a.alias) = lower(author->>'github')
+		   )
+		 ORDER BY 1`,
+	);
+	return rows.map((row) => row.login);
+}
+
+export async function saveAlias(
+	policy: PolicyClass,
+	identity: Identity,
+	raw: Record<string, unknown>,
+): Promise<void> {
+	await assertModerates(policy, identity.email);
+	const kind = raw.kind === "principal" ? "principal" : "github";
+	const alias = String(raw.alias ?? "").trim();
+	if (!alias) {
+		throw new UpdateError(
+			kind === "github"
+				? "Say which GitHub name."
+				: "Say which service principal.",
+		);
+	}
+	const email =
+		String(raw.email ?? "")
+			.trim()
+			.toLowerCase() || null;
+	const displayName = String(raw.displayName ?? "").trim() || null;
+	if (kind === "github" && !email && !displayName) {
+		throw new UpdateError("Give the person's email or a name to show.");
+	}
+	if (kind === "principal" && !displayName) {
+		throw new UpdateError("Give it a name to show.");
+	}
+	await sql(
+		`INSERT INTO update_people_aliases (alias, kind, email, display_name, set_by)
+		 VALUES ($1, $2, $3, $4, $5)
+		 ON CONFLICT (alias) DO UPDATE SET
+		   kind = EXCLUDED.kind, email = EXCLUDED.email,
+		   display_name = EXCLUDED.display_name, set_by = EXCLUDED.set_by,
+		   set_on = now()`,
+		[alias, kind, email, displayName, identity.email],
+	);
+	await insertLog({
+		recordType: "update",
+		recordId: alias,
+		action: "save_update_alias",
+		changedBy: identity.email,
+		newValue: JSON.stringify({ kind, email, displayName }),
+	});
+	invalidateDefinitions(aliasKey);
+}
+
+export async function removeAlias(
+	policy: PolicyClass,
+	identity: Identity,
+	alias: string,
+): Promise<void> {
+	await assertModerates(policy, identity.email);
+	await sql(`DELETE FROM update_people_aliases WHERE alias = $1`, [alias]);
+	await insertLog({
+		recordType: "update",
+		recordId: alias,
+		action: "remove_update_alias",
+		changedBy: identity.email,
+	});
+	invalidateDefinitions(aliasKey);
+}
+
+// Authors and poster in words, for the screens.
+export async function withNames<T extends Update>(
+	updates: T[],
+): Promise<
+	(T & {
+		authorsShown: ReturnType<typeof resolveAuthors>;
+		poster: string;
+	})[]
+> {
+	const aliases = await listAliases();
+	return updates.map((update) => ({
+		...update,
+		authorsShown: resolveAuthors(update.authors, aliases),
+		poster: posterName(update.createdBy, aliases),
+	}));
 }
 
 // Drafts and retracted entries on top, for whoever may see them. A person's own and

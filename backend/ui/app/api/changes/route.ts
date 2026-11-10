@@ -5,7 +5,12 @@ import { insertLog } from "@/lib/activityLog";
 import { refusedUnless } from "@/lib/platform/capabilityGuard";
 import { can, getExplicitContext } from "@/lib/platform/access";
 import { collectDependents } from "@/lib/platform/dependents";
-import { sourcesOf, UpdateInputError, type Follow } from "@/lib/updates/model";
+import {
+	posterName,
+	sourcesOf,
+	UpdateInputError,
+	type Follow,
+} from "@/lib/updates/model";
 import {
 	allTypes,
 	changeUpdate,
@@ -18,6 +23,11 @@ import {
 	postUpdate,
 	noteOnUpdate,
 	readCounts,
+	listAliases,
+	removeAlias,
+	saveAlias,
+	unmatchedGithubNames,
+	withNames,
 	removeType,
 	retractUpdate,
 	saveTemplate,
@@ -35,6 +45,7 @@ import { listReports } from "@/lib/platform/reports";
 import { reachableSet } from "@/lib/platform/sources";
 import { listSources } from "@/lib/semantic/registry";
 import { caller, privateJson, readJson } from "../notifications/guard";
+import { displayNameFromEmail } from "@/lib/auth/names";
 
 // Updates. The page reads this, and any tool can post to it: a GitHub workflow or a
 // pipeline signs in as a service principal given the right to post. A reference makes a
@@ -85,7 +96,14 @@ async function updateChoices(policy: PolicyClass, identity: Identity) {
 		 ORDER BY sort_order`,
 		[reports.map((report) => report.reportId)],
 	);
+	const people = await sql<{ user_email: string }>(
+		`SELECT user_email FROM member_groups ORDER BY user_email`,
+	);
 	return {
+		people: people.map((row) => ({
+			email: row.user_email,
+			name: displayNameFromEmail(row.user_email),
+		})),
 		sources: listSources()
 			.filter((source) => !reachable || reachable.has(source.sourceKey))
 			.map((source) => ({
@@ -157,8 +175,14 @@ export async function GET(request: NextRequest) {
 					identity.email.toLowerCase() ||
 				(await moderates(policy, identity.email));
 			return privateJson({
-				update: shown,
-				history: await historyOf(updateId),
+				update: (await withNames([shown]))[0],
+				history: await historyOf(updateId).then(async (events) => {
+					const aliases = await listAliases();
+					return events.map((event) => ({
+						...event,
+						by_name: posterName(event.by_email, aliases),
+					}));
+				}),
 				affects: [...reports.values()],
 				acknowledgedBy: canSeeWho
 					? await whoAcknowledged(updateId)
@@ -166,6 +190,17 @@ export async function GET(request: NextRequest) {
 				readCount: canSeeWho
 					? ((await readCounts()).get(updateId)?.reads ?? 0)
 					: null,
+			});
+		}
+
+		// The names an administrator matched or gave, and the GitHub names still waiting for one.
+		if (params.get("aliases") !== null) {
+			if (!(await moderates(policy, identity.email))) {
+				return privateJson({ error: "Not found" }, 404);
+			}
+			return privateJson({
+				aliases: await listAliases(),
+				unmatched: await unmatchedGithubNames(),
 			});
 		}
 
@@ -216,7 +251,7 @@ export async function GET(request: NextRequest) {
 
 		const context = await getExplicitContext(policy, identity.email);
 		return privateJson({
-			updates: updates.map((update) => ({
+			updates: (await withNames(updates)).map((update) => ({
 				...update,
 				reads: counts.get(update.updateId)?.reads ?? 0,
 				acks: counts.get(update.updateId)?.acks ?? 0,
@@ -245,6 +280,10 @@ export async function GET(request: NextRequest) {
 // { action: "incident", updateId, state, note }
 // { action: "read", updateId, acknowledged? }
 // { action: "note", updateId, note }
+// { action: "saveAlias", kind: "github" | "principal", alias, email?, displayName? }
+// { action: "removeAlias", alias }
+// An update takes authors as emails, "github:name" or plain names, a past effectiveOn with
+// placement "history" to sit back at that date, and notify false to tell nobody.
 // { action: "follow", kind, value, mode, on }
 // { action: "saveType" | "removeType" | "saveTemplate", ... }
 export async function POST(request: NextRequest) {
@@ -350,6 +389,12 @@ async function act(
 			return { ok: true };
 		case "removeType":
 			await removeType(policy, identity, String(body.typeId ?? ""));
+			return { ok: true };
+		case "saveAlias":
+			await saveAlias(policy, identity, body);
+			return { ok: true };
+		case "removeAlias":
+			await removeAlias(policy, identity, String(body.alias ?? ""));
 			return { ok: true };
 		case "saveTemplate":
 			await saveTemplate(policy, identity, body);

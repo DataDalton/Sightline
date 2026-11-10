@@ -15,6 +15,10 @@ import {
 	reaches,
 	sourcesOf,
 	UpdateInputError,
+	parseAuthors,
+	posterName,
+	resolveAuthors,
+	timelineDate,
 	type AboutItem,
 } from "./model";
 
@@ -367,4 +371,94 @@ test("nothing is owed when the date has passed, is far off or was just announced
 		),
 		null,
 	);
+});
+
+test("authors come from emails, GitHub names and plain names, once each", () => {
+	assert.deepEqual(
+		parseAuthors([
+			"jane.doe@example.com",
+			"github:samlee",
+			"Pat Kim",
+			"JANE.DOE@example.com",
+			{ github: "SAMLEE" },
+			"",
+		]),
+		[
+			{ name: "Jane Doe", email: "jane.doe@example.com" },
+			{ name: "samlee", github: "samlee" },
+			{ name: "Pat Kim" },
+		],
+	);
+	assert.deepEqual(parseAuthors("not a list"), []);
+});
+
+test("a GitHub name matched later takes the person's name", () => {
+	const aliases = [
+		{
+			alias: "samlee",
+			kind: "github" as const,
+			email: "sam.lee@example.com",
+			displayName: null,
+		},
+	];
+	const [matched, unmatched] = resolveAuthors(
+		[
+			{ name: "samlee", github: "SamLee" },
+			{ name: "other", github: "other" },
+		],
+		aliases,
+	);
+	assert.equal(matched.name, "Sam Lee");
+	assert.equal(matched.email, "sam.lee@example.com");
+	assert.equal(matched.matched, true);
+	assert.equal(unmatched.matched, false);
+});
+
+test("an automation shows the name it was given", () => {
+	const aliases = [
+		{
+			alias: "509c-id",
+			kind: "principal" as const,
+			email: null,
+			displayName: "Changelog",
+		},
+	];
+	assert.equal(posterName("509c-id", aliases), "Changelog");
+	assert.equal(posterName("jane.doe@example.com", aliases), "Jane Doe");
+});
+
+test("not notifying takes away everything that interrupts", () => {
+	const input = cleanInput(
+		{ title: "Quiet", notify: false },
+		typeOf("incident"),
+	);
+	assert.equal(input.notify, false);
+	assert.equal(input.delivery.inbox, false);
+	assert.equal(input.delivery.push, false);
+	assert.equal(input.delivery.banner, false);
+	assert.equal(input.delivery.page, true);
+});
+
+test("an old release can sit back at its own date", () => {
+	const old = "2026-03-04T12:00:00.000Z";
+	const back = cleanInput(
+		{ title: "Old", effectiveOn: old, placement: "history" },
+		typeOf("releaseNotes"),
+	);
+	assert.equal(back.placement, "history");
+	assert.equal(back.delivery.home, false);
+	assert.equal(
+		timelineDate({ ...back, postedOn: "2026-11-10T12:00:00.000Z" }),
+		old,
+	);
+	// A future date cannot be history, so it stays at the top.
+	const ahead = cleanInput(
+		{
+			title: "Soon",
+			effectiveOn: "2999-01-01T00:00:00.000Z",
+			placement: "history",
+		},
+		typeOf("releaseNotes"),
+	);
+	assert.equal(ahead.placement, "top");
 });

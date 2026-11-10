@@ -4,6 +4,8 @@
 //
 // Pure, so the rules can be tested and every view agrees on them.
 
+import { displayNameFromEmail } from "../auth/names";
+
 export type Impact = "info" | "notable" | "breaking";
 export type UpdateStatus = "draft" | "published" | "retracted";
 export type IncidentState = "investigating" | "identified" | "resolved";
@@ -116,6 +118,18 @@ export const builtinTypes: UpdateTypeDefinition[] = [
 	},
 ];
 
+// Somebody credited with a change. An email names someone the app knows, a GitHub name is
+// matched to them through the names an administrator sets, and a name alone stands as written.
+export interface Author {
+	name: string;
+	email?: string;
+	github?: string;
+}
+
+// Where an update about something long done sits on the timeline. At the top as news, or back
+// at the date it happened.
+export type Placement = "top" | "history";
+
 export interface Update {
 	updateId: string;
 	type: string;
@@ -148,6 +162,11 @@ export interface Update {
 	reason: string | null;
 	createdBy: string;
 	correctedOn: string | null;
+	authors: Author[];
+	placement: Placement;
+	// Whether anybody is told when it is published. Off, it is listed and shown on its pages
+	// and nobody is sent anything.
+	notify: boolean;
 }
 
 export class UpdateInputError extends Error {}
@@ -188,6 +207,9 @@ export function deprecationReminderTitle(
 }
 
 const impacts: Impact[] = ["info", "notable", "breaking"];
+// Enough for any one change, and a cap on what an automation can fill a byline with.
+const maxAuthors = 20;
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const repeats: RepeatEvery[] = ["none", "daily", "weekly", "monthly"];
 const aboutKinds = ["source", "table", "field", "category", "report", "page"];
 const audienceKinds = [
@@ -226,6 +248,112 @@ export type UpdateInput = Omit<
 	| "status"
 > & { status: "draft" | "published" };
 
+// Authors as sent, each as an email, "github:name", a plain name, or the same as an object.
+// Duplicates are dropped, by whichever of email, GitHub name or name each carries.
+export function parseAuthors(raw: unknown): Author[] {
+	if (!Array.isArray(raw)) return [];
+	const seen = new Set<string>();
+	const out: Author[] = [];
+	for (const entry of raw) {
+		let author: Author | null = null;
+		if (typeof entry === "string") {
+			const value = entry.trim().slice(0, 200);
+			if (!value) continue;
+			if (/^github:/i.test(value)) {
+				const login = value.slice("github:".length).trim();
+				if (login) author = { name: login, github: login };
+			} else if (emailPattern.test(value)) {
+				const email = value.toLowerCase();
+				author = { name: displayNameFromEmail(email), email };
+			} else {
+				author = { name: value };
+			}
+		} else if (entry && typeof entry === "object") {
+			const held = entry as Record<string, unknown>;
+			const email = text(held.email, 200).toLowerCase();
+			const github = text(held.github, 100);
+			const name =
+				text(held.name, 200) ||
+				(email ? displayNameFromEmail(email) : github);
+			if (!name) continue;
+			author = {
+				name,
+				...(email && emailPattern.test(email) ? { email } : {}),
+				...(github ? { github } : {}),
+			};
+		}
+		if (!author) continue;
+		const key = (
+			author.email ??
+			(author.github ? `github:${author.github}` : author.name)
+		).toLowerCase();
+		if (seen.has(key)) continue;
+		seen.add(key);
+		out.push(author);
+		if (out.length === maxAuthors) break;
+	}
+	return out;
+}
+
+// A GitHub name or an automation's id, matched to a person or given a name an administrator set.
+export interface PersonAlias {
+	alias: string;
+	kind: "github" | "principal";
+	email: string | null;
+	displayName: string | null;
+}
+
+// Each author as readers see them. A GitHub name matched since the update was posted takes
+// that person's name and email, so a mapping set later reaches entries already made.
+export function resolveAuthors(
+	authors: Author[],
+	aliases: PersonAlias[],
+): (Author & { matched: boolean })[] {
+	const byLogin = new Map(
+		aliases
+			.filter((alias) => alias.kind === "github")
+			.map((alias) => [alias.alias.toLowerCase(), alias]),
+	);
+	return authors.map((author) => {
+		if (author.email) return { ...author, matched: true };
+		const alias = author.github
+			? byLogin.get(author.github.toLowerCase())
+			: undefined;
+		if (!alias) return { ...author, matched: !author.github };
+		const email = alias.email?.toLowerCase() ?? undefined;
+		return {
+			...author,
+			name:
+				alias.displayName ||
+				(email ? displayNameFromEmail(email) : author.name),
+			...(email ? { email } : {}),
+			matched: true,
+		};
+	});
+}
+
+// Who posted it, in words. An automation shows the name an administrator gave it.
+export function posterName(createdBy: string, aliases: PersonAlias[]): string {
+	const named = aliases.find(
+		(alias) =>
+			alias.kind === "principal" &&
+			alias.alias.toLowerCase() === createdBy.toLowerCase(),
+	);
+	if (named?.displayName) return named.displayName;
+	return createdBy.includes("@")
+		? displayNameFromEmail(createdBy)
+		: createdBy;
+}
+
+// The date an update is placed at on the timeline.
+export function timelineDate(
+	update: Pick<Update, "placement" | "effectiveOn" | "postedOn">,
+): string {
+	return update.placement === "history" && update.effectiveOn
+		? update.effectiveOn
+		: update.postedOn;
+}
+
 // What is kept of what somebody sent, whoever they are.
 export function cleanInput(
 	raw: Record<string, unknown>,
@@ -237,6 +365,15 @@ export function cleanInput(
 
 	const delivery = (raw.delivery ?? {}) as Partial<Delivery>;
 	const audience = (raw.audience ?? {}) as Partial<Audience>;
+	const effectiveOn = moment(raw.effectiveOn);
+	// Back at its own date only when it has one, and only when that date has passed.
+	const placement: Placement =
+		raw.placement === "history" &&
+		effectiveOn !== null &&
+		new Date(effectiveOn).getTime() <= Date.now()
+			? "history"
+			: "top";
+	const notify = raw.notify !== false;
 	const input: UpdateInput = {
 		type: type.typeId,
 		title,
@@ -283,7 +420,7 @@ export function cleanInput(
 				]
 			: [],
 		reference: nullable(raw.reference, 300),
-		effectiveOn: moment(raw.effectiveOn),
+		effectiveOn,
 		periodFrom: moment(raw.periodFrom),
 		periodTo: moment(raw.periodTo),
 		startsOn: moment(raw.startsOn),
@@ -306,14 +443,25 @@ export function cleanInput(
 				? { ids: audience.ids.map(String) }
 				: {}),
 		},
+		// Not telling anyone takes away everything that interrupts, and an entry placed back in
+		// history is no longer news for the home page or a banner.
 		delivery: {
-			banner: delivery.banner ?? type.delivery.banner,
-			popup: delivery.popup ?? type.delivery.popup,
-			home: delivery.home ?? type.delivery.home,
-			inbox: delivery.inbox ?? type.delivery.inbox,
-			push: delivery.push ?? type.delivery.push,
+			banner:
+				notify &&
+				placement === "top" &&
+				(delivery.banner ?? type.delivery.banner),
+			popup:
+				notify &&
+				placement === "top" &&
+				(delivery.popup ?? type.delivery.popup),
+			home: placement === "top" && (delivery.home ?? type.delivery.home),
+			inbox: notify && (delivery.inbox ?? type.delivery.inbox),
+			push: notify && (delivery.push ?? type.delivery.push),
 			page: delivery.page ?? type.delivery.page,
 		},
+		authors: parseAuthors(raw.authors),
+		placement,
+		notify,
 		showFrom: moment(raw.showFrom),
 		expiresOn: moment(raw.expiresOn),
 		requireAck: raw.requireAck === true,

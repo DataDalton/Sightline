@@ -1864,6 +1864,19 @@ const migrations: string[] = [
 		is_active BOOLEAN NOT NULL DEFAULT TRUE
 	)`,
 	`ALTER TABLE updates ADD COLUMN IF NOT EXISTS reminded_days INTEGER`,
+	// Who is credited with an update, where it sits on the timeline, and whether anyone is told.
+	`ALTER TABLE updates ADD COLUMN IF NOT EXISTS authors JSONB NOT NULL DEFAULT '[]'::jsonb`,
+	`ALTER TABLE updates ADD COLUMN IF NOT EXISTS placement TEXT NOT NULL DEFAULT 'top'`,
+	`ALTER TABLE updates ADD COLUMN IF NOT EXISTS notify BOOLEAN NOT NULL DEFAULT TRUE`,
+	// A GitHub name matched to a person, or a name for an automation that posts.
+	`CREATE TABLE IF NOT EXISTS update_people_aliases (
+		alias        TEXT PRIMARY KEY,
+		kind         TEXT NOT NULL CHECK (kind IN ('github', 'principal')),
+		email        TEXT,
+		display_name TEXT,
+		set_by       TEXT,
+		set_on       TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
 	`CREATE TABLE IF NOT EXISTS update_templates (
 		template_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 		name        TEXT NOT NULL,
