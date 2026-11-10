@@ -11,8 +11,16 @@ import { ConfirmDialog } from "../components/shared/ConfirmDialog";
 import { TextPanel } from "../visuals/TextPanel";
 import Link from "../components/AppLink";
 import {
+	aboutSections,
+	changeWord,
+	joinNames,
+	type AboutNames,
+	type AboutSection,
+} from "../../lib/updates/aboutDisplay";
+import {
 	currentWindow,
 	sourcesOf,
+	type AboutChange,
 	type AboutItem,
 	type Author,
 	type Delivery,
@@ -37,6 +45,15 @@ function byline(authors: { name: string }[]): string {
 	const names = authors.map((author) => author.name);
 	if (names.length <= 1) return names[0] ?? "";
 	return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+// Up to two initials for a name, for the mark beside a note.
+function initialsOf(name: string): string {
+	const words = name.split(/[\s.@_-]+/).filter(Boolean);
+	return words
+		.slice(0, 2)
+		.map((word) => word.charAt(0).toUpperCase())
+		.join("");
 }
 
 function isPast(iso: string | null | undefined): boolean {
@@ -273,71 +290,176 @@ function useUpdateChoices(): UpdateChoices | undefined {
 	return data;
 }
 
-// What an update is about, by the names people know. Fields sit under their dataset, so
-// a dataset named with some of its fields reads as one group. Anything the caller cannot
-// see by name, such as a table, falls back to its id.
-interface AboutGroup {
-	name: string;
-	fields: string[];
-}
-
-function aboutGroups(
-	about: AboutItem[],
-	choices: UpdateChoices | undefined,
-): AboutGroup[] {
+// Names for what an update is about, from the lists this caller can see. Anything not
+// listed, such as a dataset the caller cannot read, shows by its key.
+function aboutNames(choices: UpdateChoices | undefined): AboutNames {
 	const reports = choices?.reports ?? [];
-	const sourceName = (key: string) =>
-		choices?.sources.find((s) => s.key === key)?.title ?? key;
-	const groups = new Map<string, AboutGroup>();
-	const groupFor = (key: string, name: string) => {
-		const held = groups.get(key) ?? { name, fields: [] };
-		groups.set(key, held);
-		return held;
-	};
-	for (const item of about) {
-		if (item.kind === "source") {
-			groupFor(`source:${item.id}`, sourceName(item.id));
-		} else if (item.kind === "field" && item.sourceKey) {
-			const group = groupFor(
-				`source:${item.sourceKey}`,
-				sourceName(item.sourceKey),
-			);
-			if (!group.fields.includes(item.id)) group.fields.push(item.id);
-		} else if (item.kind === "category") {
-			groupFor(
-				`category:${item.id}`,
-				choices?.categories.find((c) => c.id === item.id)?.name ??
-					item.id,
-			);
-		} else if (item.kind === "report") {
-			groupFor(
-				`report:${item.id}`,
-				reports.find((r) => r.id === item.id)?.title ?? item.id,
-			);
-		} else if (item.kind === "page") {
-			let name = item.id;
+	return {
+		source: (key) =>
+			choices?.sources.find((s) => s.key === key)?.title ?? key,
+		category: (id) =>
+			choices?.categories.find((c) => c.id === id)?.name ?? id,
+		report: (id) => reports.find((r) => r.id === id)?.title ?? id,
+		page: (id) => {
 			for (const report of reports) {
-				const page = report.pages.find((p) => p.id === item.id);
-				if (page) name = `${report.title}, ${page.title}`;
+				const page = report.pages.find((p) => p.id === id);
+				if (page) return `${report.title}, ${page.title}`;
 			}
-			groupFor(`page:${item.id}`, name);
-		} else {
-			groupFor(`${item.kind}:${item.id}`, item.id);
-		}
-	}
-	return [...groups.values()];
+			return id;
+		},
+	};
 }
 
-// The line on a timeline card, naming every dataset with each of its fields, and every
-// report or category.
-function aboutLine(groups: AboutGroup[]): string {
-	return groups
-		.map((group) =>
-			group.fields.length > 0
-				? `${group.name}: ${group.fields.join(", ")}`
-				: group.name,
-		)
-		.join("; ");
+const sectionKindWords: Record<AboutSection["kind"], string | null> = {
+	dataset: null,
+	report: "Report",
+	page: "Page",
+	category: "Category",
+	table: "Table",
+};
+
+// The mark before a field: a plus for added, a minus for removed and a dot for changed.
+// A rename shows its old and new names with an arrow between them instead, and nothing
+// shows when what happened was not said.
+function ChangeMark({ change }: { change: AboutChange | null }) {
+	if (!change || change === "renamed") return null;
+	const path =
+		change === "added"
+			? "M12 5v14M5 12h14"
+			: change === "removed"
+				? "M5 12h14"
+				: "M12 12m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0";
+	return (
+		<svg
+			width="11"
+			height="11"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="3"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d={path} />
+		</svg>
+	);
+}
+
+function fieldKey(field: { name: string; from?: string }): string {
+	return `${field.from ?? ""}>${field.name}`;
+}
+
+// Every field an update names, under its dataset and grouped by what happened, for the
+// detail. Each field is a chip, so a long name never breaks across lines.
+function AboutChanges({ sections }: { sections: AboutSection[] }) {
+	return (
+		<div className={styles.aboutSections}>
+			{sections.map((section) => (
+				<div
+					key={`${section.kind}:${section.names.join("|")}`}
+					className={styles.aboutSection}
+				>
+					<div className={styles.aboutHead}>
+						{sectionKindWords[section.kind] && (
+							<span className={styles.aboutKind}>
+								{sectionKindWords[section.kind]}
+							</span>
+						)}
+						<strong>{joinNames(section.names)}</strong>
+						{section.change && (
+							<span
+								className={`${styles.changePill} ${styles[`tone${section.change}`]}`}
+							>
+								{changeWord(section.change)}
+							</span>
+						)}
+					</div>
+					{section.groups.map((group) => (
+						<div
+							key={group.change ?? "unsaid"}
+							className={styles.fieldGroup}
+						>
+							{group.change && (
+								<span
+									className={`${styles.fieldGroupLabel} ${styles[`text${group.change}`]}`}
+								>
+									{changeWord(group.change)}
+									<span className={styles.fieldCount}>
+										{group.fields.length}
+									</span>
+								</span>
+							)}
+							<div className={styles.fieldChips}>
+								{group.fields.map((field) => (
+									<span
+										key={fieldKey(field)}
+										className={`${styles.fieldChip} ${
+											group.change
+												? styles[`chip${group.change}`]
+												: ""
+										}`}
+									>
+										<ChangeMark change={group.change} />
+										{field.from ? (
+											<>
+												<span
+													className={styles.oldName}
+												>
+													{field.from}
+												</span>
+												<span aria-hidden="true">
+													→
+												</span>
+												<span>{field.name}</span>
+											</>
+										) : (
+											<span>{field.name}</span>
+										)}
+									</span>
+								))}
+							</div>
+						</div>
+					))}
+				</div>
+			))}
+		</div>
+	);
+}
+
+// The same on a timeline card, as text that wraps and names every field.
+function AboutSummary({ sections }: { sections: AboutSection[] }) {
+	return (
+		<span className={styles.cardAbout}>
+			{sections.map((section, index) => (
+				<span key={`${section.kind}:${section.names.join("|")}`}>
+					{index > 0 && "; "}
+					<span className={styles.cardAboutNames}>
+						{joinNames(section.names)}
+					</span>
+					{section.change &&
+						` (${changeWord(section.change).toLowerCase()})`}
+					{section.groups.map((group) => (
+						<span key={group.change ?? "unsaid"}>
+							{" · "}
+							{group.change && (
+								<span className={styles[`text${group.change}`]}>
+									{changeWord(group.change)}:{" "}
+								</span>
+							)}
+							{group.fields
+								.map((field) =>
+									field.from
+										? `${field.from} → ${field.name}`
+										: field.name,
+								)
+								.join(", ")}
+						</span>
+					))}
+				</span>
+			))}
+		</span>
+	);
 }
 
 function capitalised(word: string): string {
@@ -368,6 +490,18 @@ function AboutPicker({
 	const [kind, setKind] = useState<AboutItem["kind"]>("source");
 	const [sourceKey, setSourceKey] = useState("");
 	const [reportId, setReportId] = useState("");
+	// What happened to the next field or dataset added, and the names a removal or a
+	// rename needs typed because they are no longer in the list.
+	const [change, setChange] = useState<AboutChange | "">("");
+	const [typedName, setTypedName] = useState("");
+	const [oldName, setOldName] = useState("");
+	const changeOptions = [
+		{ value: "", label: "Change not said" },
+		{ value: "added", label: "Added" },
+		{ value: "changed", label: "Changed" },
+		{ value: "removed", label: "Removed" },
+		...(kind === "field" ? [{ value: "renamed", label: "Renamed" }] : []),
+	];
 	// Everything listed, for naming what is already attached.
 	const sources = choices?.sources ?? [];
 	const reports = choices?.reports ?? [];
@@ -395,13 +529,30 @@ function AboutPicker({
 	);
 
 	const add = (item: AboutItem) => {
+		const said: AboutItem =
+			(item.kind === "field" || item.kind === "source") && change
+				? {
+						...item,
+						change,
+						...(change === "renamed"
+							? { from: oldName.trim() }
+							: {}),
+					}
+				: item;
 		if (
 			!about.some(
-				(held) => held.kind === item.kind && held.id === item.id,
+				(held) =>
+					held.kind === said.kind &&
+					held.id === said.id &&
+					held.sourceKey === said.sourceKey &&
+					held.change === said.change &&
+					held.from === said.from,
 			)
 		) {
-			onChange([...about, item]);
+			onChange([...about, said]);
 		}
+		if (change === "renamed") setOldName("");
+		setTypedName("");
 	};
 	const labelOf = (item: AboutItem): string => {
 		if (item.kind === "source") {
@@ -422,6 +573,14 @@ function AboutPicker({
 				if (page) return `${report.title}, ${page.title}`;
 			}
 		}
+		if (item.kind === "field" && item.sourceKey) {
+			const dataset =
+				sources.find((s) => s.key === item.sourceKey)?.title ??
+				item.sourceKey;
+			return item.from
+				? `${dataset}: ${item.from} → ${item.id}`
+				: `${dataset}: ${item.id}`;
+		}
 		return item.id;
 	};
 	const sourceOptions = postableSources.map((source) => ({
@@ -440,7 +599,9 @@ function AboutPicker({
 							className={styles.chip}
 						>
 							<span className={styles.chipKind}>
-								{aboutKindWords[item.kind]}
+								{item.change
+									? `${aboutKindWords[item.kind]} ${changeWord(item.change).toLowerCase()}`
+									: aboutKindWords[item.kind]}
 							</span>{" "}
 							{labelOf(item)}{" "}
 							<button
@@ -463,9 +624,22 @@ function AboutPicker({
 				<Select
 					value={kind}
 					ariaLabel="What kind of thing"
-					onChange={(next) => setKind(next as AboutItem["kind"])}
+					onChange={(next) => {
+						setKind(next as AboutItem["kind"]);
+						if (next !== "field" && change === "renamed") {
+							setChange("");
+						}
+					}}
 					options={kindOptions}
 				/>
+				{(kind === "field" || kind === "source") && (
+					<Select
+						value={change}
+						ariaLabel="What happened to it"
+						onChange={(next) => setChange(next as AboutChange | "")}
+						options={changeOptions}
+					/>
+				)}
 				{kind === "source" && (
 					<Select
 						value=""
@@ -486,17 +660,72 @@ function AboutPicker({
 						options={sourceOptions}
 					/>
 				)}
-				{kind === "field" && (
+				{kind === "field" && change === "renamed" && (
+					<input
+						className={form.input}
+						value={oldName}
+						placeholder="Its old name"
+						aria-label="The field's old name"
+						disabled={!sourceKey}
+						onChange={(e) => setOldName(e.target.value)}
+					/>
+				)}
+				{kind === "field" && change === "removed" && (
+					<>
+						<input
+							className={form.input}
+							value={typedName}
+							placeholder={
+								sourceKey
+									? "The removed field's name, then Enter"
+									: "Choose a source first"
+							}
+							aria-label="The removed field's name"
+							disabled={!sourceKey}
+							onChange={(e) => setTypedName(e.target.value)}
+							onKeyDown={(e) => {
+								if (e.key === "Enter" && typedName.trim()) {
+									e.preventDefault();
+									add({
+										kind: "field",
+										id: typedName.trim(),
+										sourceKey,
+									});
+								}
+							}}
+						/>
+						<button
+							type="button"
+							className={styles.actionButton}
+							disabled={!sourceKey || !typedName.trim()}
+							onClick={() =>
+								add({
+									kind: "field",
+									id: typedName.trim(),
+									sourceKey,
+								})
+							}
+						>
+							Add
+						</button>
+					</>
+				)}
+				{kind === "field" && change !== "removed" && (
 					<Select
 						value=""
 						placeholder={
-							sourceKey
-								? "Choose columns to add"
-								: "Choose a source first"
+							!sourceKey
+								? "Choose a source first"
+								: change === "renamed"
+									? "Choose its new name"
+									: "Choose columns to add"
 						}
 						ariaLabel="Column"
 						searchable
-						disabled={!sourceKey}
+						disabled={
+							!sourceKey ||
+							(change === "renamed" && !oldName.trim())
+						}
 						onChange={(id) => add({ kind: "field", id, sourceKey })}
 						options={(
 							sources.find((s) => s.key === sourceKey)?.fields ??
@@ -1028,6 +1257,12 @@ function Composer({
 						onChange={(authors) => set({ authors })}
 					/>
 
+					{textField(
+						"whatToDo",
+						"What readers should do",
+						"Their next step, such as re-applying a saved filter. Leave empty when nothing is needed.",
+					)}
+
 					<div className={form.field}>
 						<span className={form.label}>Details</span>
 						<div className={styles.rich}>
@@ -1292,24 +1527,9 @@ function DetailDialog({
 	};
 
 	const acknowledged = (update as { acknowledged?: boolean }).acknowledged;
-	const about = aboutGroups(update.about, choices);
+	const sections = aboutSections(update.about, aboutNames(choices));
+	const saysChanges = update.about.some((item) => item.change);
 	const facts: [string, React.ReactNode][] = [
-		...(about.length > 0
-			? [
-					[
-						"About",
-						<span key="about" className={styles.aboutGroups}>
-							{about.map((group) => (
-								<span key={group.name}>
-									{group.fields.length > 0
-										? `${group.name}: ${group.fields.join(", ")}`
-										: group.name}
-								</span>
-							))}
-						</span>,
-					],
-				]
-			: []),
 		...(update.reason ? [["Why", update.reason]] : []),
 		...(update.effectiveOn
 			? [
@@ -1353,7 +1573,27 @@ function DetailDialog({
 					],
 				]
 			: []),
+		...(update.links.length > 0
+			? [
+					[
+						update.links.length === 1 ? "Link" : "Links",
+						<span key="links" className={styles.factLinks}>
+							{update.links.map((link) => (
+								<a
+									key={link.url}
+									href={link.url}
+									className={styles.factLink}
+								>
+									{link.label}
+								</a>
+							))}
+						</span>,
+					],
+				]
+			: []),
 	] as [string, React.ReactNode][];
+	const notes = data.history.filter((event) => event.kind === "note");
+	const events = data.history.filter((event) => event.kind !== "note");
 
 	return (
 		<Modal
@@ -1416,25 +1656,43 @@ function DetailDialog({
 			}
 		>
 			<div className={styles.detail}>
-				<div className={styles.metaRow}>
-					<TypeBadge type={update.type} types={types} />
-					<span className={styles[`impact${update.impact}`]}>
-						{capitalised(update.impact)}
-					</span>
-					{update.incidentState && (
-						<span className={styles.state}>
-							{capitalised(update.incidentState)}
+				<div className={styles.detailHead}>
+					<div className={styles.metaRow}>
+						<TypeBadge type={update.type} types={types} />
+						<span className={styles[`impact${update.impact}`]}>
+							{capitalised(update.impact)}
 						</span>
-					)}
+						{update.incidentState && (
+							<span className={styles.state}>
+								{capitalised(update.incidentState)}
+							</span>
+						)}
+					</div>
 					<span className={styles.meta}>
 						{(update.authorsShown ?? []).length > 0
-							? `By ${byline(update.authorsShown ?? [])}, posted ${when(update.postedOn)}`
-							: `Posted ${when(update.postedOn)} by ${update.poster ?? update.createdBy}`}
+							? `By ${byline(update.authorsShown ?? [])} · `
+							: ""}
+						{update.effectiveOn && isPast(update.effectiveOn)
+							? `Released ${when(update.effectiveOn)} · `
+							: ""}
+						{`Posted ${when(update.postedOn)}`}
+						{(update.authorsShown ?? []).length === 0
+							? ` by ${update.poster ?? update.createdBy}`
+							: ""}
 						{update.correctedOn
-							? `, corrected ${when(update.correctedOn)}`
+							? ` · Corrected ${when(update.correctedOn)}`
 							: ""}
 					</span>
 				</div>
+
+				{update.whatToDo && (
+					<div
+						className={`${styles.whatToDo} ${styles[`tone${update.impact}`]}`}
+					>
+						<span className={styles.whatToDoLabel}>What to do</span>
+						<p>{update.whatToDo}</p>
+					</div>
+				)}
 
 				{update.body && <TextPanel html={update.body} />}
 
@@ -1454,6 +1712,15 @@ function DetailDialog({
 					</div>
 				)}
 
+				{sections.length > 0 && (
+					<section className={styles.detailSection}>
+						<h3 className={styles.sectionTitle}>
+							{saysChanges ? "What changed" : "What it is about"}
+						</h3>
+						<AboutChanges sections={sections} />
+					</section>
+				)}
+
 				{facts.length > 0 && (
 					<dl className={styles.facts}>
 						{facts.map(([label, value]) => (
@@ -1464,24 +1731,55 @@ function DetailDialog({
 						))}
 					</dl>
 				)}
-				{update.links.map((link) => (
-					<a key={link.url} href={link.url} className={styles.link}>
-						{link.label}
-					</a>
-				))}
 
 				<section className={styles.activity}>
-					<div className={styles.activityHead}>
-						<strong>Activity</strong>
-					</div>
+					<h3 className={styles.sectionTitle}>Activity</h3>
+
+					{notes.length > 0 && (
+						<ol className={styles.notes}>
+							{notes.map((event, index) => (
+								<li key={index} className={styles.noteEntry}>
+									<span
+										className={styles.noteAvatar}
+										aria-hidden="true"
+									>
+										{initialsOf(
+											event.by_name ?? event.by_email,
+										)}
+									</span>
+									<div className={styles.noteBody}>
+										<div>
+											<strong>
+												{event.by_name ??
+													event.by_email}
+											</strong>{" "}
+											<span className={styles.meta}>
+												{when(event.at)}
+											</span>
+										</div>
+										{event.note && <p>{event.note}</p>}
+									</div>
+								</li>
+							))}
+						</ol>
+					)}
 
 					<div className={styles.noteRow}>
 						<input
 							className={form.input}
 							value={note}
-							placeholder="What you did about this, or what you checked"
+							placeholder={
+								notes.length > 0
+									? "Add to the discussion, such as what you checked"
+									: "What you did about this, or what you checked"
+							}
 							aria-label="Add a note to this update"
 							onChange={(e) => setNote(e.target.value)}
+							onKeyDown={(e) => {
+								if (e.key === "Enter" && note.trim()) {
+									void act({ action: "note", note });
+								}
+							}}
 						/>
 						<button
 							type="button"
@@ -1493,33 +1791,40 @@ function DetailDialog({
 						</button>
 					</div>
 
-					{data.history.map((event, index) => (
-						<div key={index} className={styles.timelineRow}>
-							<div>
-								<strong>
-									{historyWords[event.kind] ?? event.kind}
-								</strong>{" "}
-								<span className={styles.meta}>
-									{event.by_name ?? event.by_email},{" "}
-									{when(event.at)}
-								</span>
-							</div>
-							{event.note && <p>{event.note}</p>}
-							{event.snapshot?.title &&
-								event.snapshot.title !== update.title && (
-									<p className={styles.meta}>
-										It read &quot;{event.snapshot.title}
-										&quot;
-									</p>
-								)}
-						</div>
-					))}
-
 					{data.acknowledgedBy && data.acknowledgedBy.length > 0 && (
 						<p className={styles.meta}>
 							Acknowledged by {data.acknowledgedBy.join(", ")}
 						</p>
 					)}
+
+					<ol className={styles.events}>
+						{events.map((event, index) => (
+							<li key={index}>
+								<span>
+									{historyWords[event.kind] ?? event.kind}
+								</span>{" "}
+								<span className={styles.meta}>
+									{event.by_name ?? event.by_email},{" "}
+									{when(event.at)}
+								</span>
+								{event.note && (
+									<span className={styles.meta}>
+										{" "}
+										· {event.note}
+									</span>
+								)}
+								{event.snapshot?.title &&
+									event.snapshot.title !== update.title && (
+										<span className={styles.meta}>
+											{" "}
+											· It read &quot;
+											{event.snapshot.title}
+											&quot;
+										</span>
+									)}
+							</li>
+						))}
+					</ol>
 				</section>
 				{failure && <div className={form.failure}>{failure}</div>}
 			</div>
@@ -1627,6 +1932,7 @@ export default function UpdatesView() {
 			authors: [],
 			placement: "top",
 			notify: true,
+			whatToDo: "",
 		};
 	};
 
@@ -1640,8 +1946,11 @@ export default function UpdatesView() {
 				update.title,
 				update.body,
 				update.reference ?? "",
+				update.whatToDo ?? "",
 				...update.tags,
-				...update.about.map((item) => item.id),
+				...update.about.flatMap((item) =>
+					item.from ? [item.id, item.from] : [item.id],
+				),
 			]
 				.join(" ")
 				.toLowerCase()
@@ -1769,9 +2078,7 @@ export default function UpdatesView() {
 							<button
 								key={update.updateId}
 								type="button"
-								className={`${styles.item} ${
-									update.read ? "" : styles.itemUnread
-								}`}
+								className={`${styles.item} ${styles[`edge${update.impact}`]}`}
 								onClick={() => setOpen(update.updateId)}
 							>
 								<span className={styles.metaRow}>
@@ -1801,39 +2108,53 @@ export default function UpdatesView() {
 											Corrected
 										</span>
 									)}
-									<span className={styles.meta}>
-										{update.placement === "history" &&
-										update.effectiveOn
-											? `Released ${when(update.effectiveOn)}, posted ${when(update.postedOn)}`
-											: isPast(update.effectiveOn)
-												? `${when(update.postedOn)}, released ${when(update.effectiveOn)}`
-												: when(update.postedOn)}
+									<span
+										className={`${styles.meta} ${styles.itemWhen}`}
+									>
+										{update.effectiveOn &&
+										isPast(update.effectiveOn)
+											? `Released ${when(update.effectiveOn)} · posted ${when(update.postedOn)}`
+											: update.effectiveOn
+												? `Takes effect ${when(update.effectiveOn)} · posted ${when(update.postedOn)}`
+												: `Posted ${when(update.postedOn)}`}
 									</span>
 								</span>
 								<strong className={styles.itemTitle}>
+									{!update.read && (
+										<span
+											className={styles.unreadDot}
+											aria-label="Not read yet"
+										/>
+									)}
 									{update.title}
 								</strong>
-								{(update.authorsShown ?? []).length > 0 && (
-									<span className={styles.meta}>
-										By {byline(update.authorsShown ?? [])}
+								{update.whatToDo && (
+									<span className={styles.cardWhatToDo}>
+										What to do: {update.whatToDo}
 									</span>
 								)}
-								{(update.about.length > 0 ||
+								{update.about.length > 0 && (
+									<AboutSummary
+										sections={aboutSections(
+											update.about,
+											aboutNames(choices),
+										)}
+									/>
+								)}
+								{((update.authorsShown ?? []).length > 0 ||
 									update.acks !== null) && (
 									<span className={styles.meta}>
 										{[
-											aboutLine(
-												aboutGroups(
-													update.about,
-													choices,
-												),
-											),
+											(update.authorsShown ?? []).length >
+											0
+												? `By ${byline(update.authorsShown ?? [])}`
+												: "",
 											update.acks !== null
 												? `Acknowledged by ${update.acks}`
 												: "",
 										]
 											.filter(Boolean)
-											.join(". ")}
+											.join(" · ")}
 									</span>
 								)}
 							</button>

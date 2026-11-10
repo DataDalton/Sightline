@@ -48,6 +48,7 @@
 		"lib/platform/contradictionRules.test.ts",
 		"lib/updates/model.ts",
 		"lib/updates/model.test.ts",
+		"lib/updates/aboutDisplay.test.ts",
 		"lib/auth/names.test.ts",
 		"lib/auth/catalogRefusal.test.ts",
 		"lib/dataRules/rules.ts",

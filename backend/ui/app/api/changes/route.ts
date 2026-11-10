@@ -6,6 +6,7 @@ import { refusedUnless } from "@/lib/platform/capabilityGuard";
 import { can, getExplicitContext } from "@/lib/platform/access";
 import { collectDependents } from "@/lib/platform/dependents";
 import {
+	fieldNamesOf,
 	posterName,
 	sourcesOf,
 	UpdateInputError,
@@ -49,6 +50,7 @@ import { reachableSet } from "@/lib/platform/sources";
 import { listSources } from "@/lib/semantic/registry";
 import { caller, privateJson, readJson } from "../notifications/guard";
 import { displayNameFromEmail } from "@/lib/auth/names";
+import { aboutLine, aboutSections } from "@/lib/updates/aboutDisplay";
 
 // Updates. The page reads this, and any tool can post to it: a GitHub workflow or a
 // pipeline signs in as a service principal given the right to post. A reference makes a
@@ -183,9 +185,9 @@ export async function GET(request: NextRequest) {
 				);
 			if (!shown) return privateJson({ error: "Not found" }, 404);
 			const sources = sourcesOf(shown.about);
-			const fields = shown.about
-				.filter((item) => item.kind === "field")
-				.map((item) => item.id);
+			// Old names of renames and removed fields included, since those are what
+			// reports built before the change still use.
+			const fields = fieldNamesOf(shown.about);
 			const affected =
 				sources.length > 0
 					? await collectDependents(
@@ -248,8 +250,33 @@ export async function GET(request: NextRequest) {
 		if (params.get("format") === "csv") {
 			const refused = await refusedUnless(identity, "export.run");
 			if (refused) return refused;
+			// Datasets by title, everything else by its id, as plain text for a spreadsheet.
+			const titles = new Map(
+				listSources().map((source) => [source.sourceKey, source.title]),
+			);
+			const reportTitles = new Map(
+				(await curatedReports()).map((row) => [
+					row.report_id,
+					row.title,
+				]),
+			);
+			const aboutNames = {
+				source: (key: string) => titles.get(key) ?? key,
+				category: (id: string) => id,
+				report: (id: string) => reportTitles.get(id) ?? id,
+				page: (id: string) => id,
+			};
 			const rows = [
-				["Posted", "Type", "Impact", "Title", "Effective", "Reference"],
+				[
+					"Posted",
+					"Type",
+					"Impact",
+					"Title",
+					"Effective",
+					"Reference",
+					"What to do",
+					"About",
+				],
 				...updates.map((u) => [
 					u.postedOn,
 					u.type,
@@ -257,6 +284,8 @@ export async function GET(request: NextRequest) {
 					u.title,
 					u.effectiveOn,
 					u.reference,
+					u.whatToDo,
+					aboutLine(aboutSections(u.about, aboutNames)),
 				]),
 			];
 			await insertLog({
@@ -323,9 +352,12 @@ export async function GET(request: NextRequest) {
 // { action: "saveAlias", kind: "github" | "principal", alias, email?, displayName? }
 // { action: "removeAlias", alias }
 // An update takes authors as emails, "github:name" or plain names, a past effectiveOn with
-// placement "history" to sit back at that date, and notify false to tell nobody.
-// A field in about names its dataset as sourceKey. Every dataset and field named must
-// exist, or the post is refused with what was not found.
+// placement "history" to sit back at that date, notify false to tell nobody, and whatToDo for
+// what a reader should do.
+// A field in about names its dataset as sourceKey, and a field or dataset can say what
+// happened to it as change: added, changed, removed or renamed, a rename giving its old
+// name as from. Every dataset and field named must exist, except what was removed, or
+// the post is refused with what was not found.
 // { action: "follow", kind, value, mode, on }
 // { action: "saveType" | "removeType" | "saveTemplate", ... }
 export async function POST(request: NextRequest) {

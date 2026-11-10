@@ -16,6 +16,42 @@ export interface AboutItem {
 	id: string;
 	// The source a field belongs to.
 	sourceKey?: string;
+	// What happened to a field or dataset. Left out when none of these fits.
+	change?: AboutChange;
+	// A renamed field's old name. Its id is the new one.
+	from?: string;
+}
+
+export type AboutChange = "added" | "changed" | "removed" | "renamed";
+
+const fieldChanges: AboutChange[] = ["added", "changed", "removed", "renamed"];
+const sourceChanges: AboutChange[] = ["added", "changed", "removed"];
+
+// Whether an item names this field, under its current name or, for a rename, its old one.
+export function namesField(
+	item: AboutItem,
+	sourceKey: string | null,
+	fieldName: string,
+): boolean {
+	if (item.kind !== "field") return false;
+	if (sourceKey !== null && item.sourceKey !== sourceKey) return false;
+	return item.id === fieldName || item.from === fieldName;
+}
+
+// Every field name an update reaches, old names of renames included, so the reports
+// still using an old or removed name count as affected.
+export function fieldNamesOf(about: AboutItem[]): string[] {
+	return [
+		...new Set(
+			about.flatMap((item) =>
+				item.kind !== "field"
+					? []
+					: item.from
+						? [item.id, item.from]
+						: [item.id],
+			),
+		),
+	];
 }
 
 export interface Audience {
@@ -160,6 +196,10 @@ export interface Update {
 	requireAck: boolean;
 	automatic: boolean;
 	reason: string | null;
+	// What a reader should do about it, shown on its own above the details. Null when
+	// nothing is needed. Named apart from the API's own action, which says what to do
+	// with the request.
+	whatToDo: string | null;
 	createdBy: string;
 	correctedOn: string | null;
 	authors: Author[];
@@ -394,15 +434,7 @@ export function cleanInput(
 							`A field needs its dataset. Send "${id}" with its sourceKey.`,
 						);
 					}
-					return [
-						{
-							kind: held.kind as AboutItem["kind"],
-							id,
-							...(held.sourceKey
-								? { sourceKey: String(held.sourceKey) }
-								: {}),
-						},
-					];
+					return [aboutItem(held, id)];
 				})
 			: [],
 		before: nullable(raw.before),
@@ -472,6 +504,7 @@ export function cleanInput(
 		expiresOn: moment(raw.expiresOn),
 		requireAck: raw.requireAck === true,
 		reason: nullable(raw.reason),
+		whatToDo: nullable(raw.whatToDo, 1000),
 	};
 
 	for (const field of type.requires) {
@@ -485,6 +518,40 @@ export function cleanInput(
 		throw new UpdateInputError("It cannot end before it starts.");
 	}
 	return input;
+}
+
+// One item of what an update is about, with what happened to it where that was said.
+function aboutItem(held: Record<string, unknown>, id: string): AboutItem {
+	const kind = held.kind as AboutItem["kind"];
+	const sourceKey = text(held.sourceKey, 300);
+	const offered =
+		kind === "field"
+			? fieldChanges
+			: kind === "source"
+				? sourceChanges
+				: [];
+	const named = text(held.change, 20).toLowerCase();
+	if (named && !offered.includes(named as AboutChange)) {
+		throw new UpdateInputError(
+			offered.length > 0
+				? `"${named}" is not a change for a ${kind === "field" ? "field" : "dataset"}. Use ${offered.join(", ")}.`
+				: `A ${kind} cannot carry a change.`,
+		);
+	}
+	const change = named ? (named as AboutChange) : undefined;
+	const from = text(held.from, 300);
+	if (change === "renamed" && !from) {
+		throw new UpdateInputError(
+			`A renamed field needs its old name. Send "${id}" with from.`,
+		);
+	}
+	return {
+		kind,
+		id,
+		...(sourceKey ? { sourceKey } : {}),
+		...(change ? { change } : {}),
+		...(change === "renamed" ? { from } : {}),
+	};
 }
 
 function words(field: string): string {
@@ -650,9 +717,7 @@ export function followMatches(
 	if (follow.kind === "source") {
 		return sourcesOf(update.about).includes(follow.value);
 	}
-	return update.about.some(
-		(item) => item.kind === "field" && item.id === follow.value,
-	);
+	return update.about.some((item) => namesField(item, null, follow.value));
 }
 
 // Which category on a time axis an update's effective date lands in, so a chart can
@@ -706,7 +771,12 @@ export function automaticEntries(
 	day: string,
 ): AutomaticEntry[] {
 	const { sourceKey } = found;
-	const field = (id: string): AboutItem => ({ kind: "field", id, sourceKey });
+	const field = (id: string, change: AboutChange): AboutItem => ({
+		kind: "field",
+		id,
+		sourceKey,
+		change,
+	});
 	const renamed = new Set(found.renames.map((r) => r.from));
 	const arrived = new Set(found.renames.map((r) => r.to));
 	const out: AutomaticEntry[] = [];
@@ -718,7 +788,7 @@ export function automaticEntries(
 				title: `${name} was added to ${sourceTitle}`,
 				reference: `auto:added:${sourceKey}:${name}:${day}`,
 				impact: "info",
-				about: [field(name)],
+				about: [field(name, "added")],
 				before: null,
 				after: null,
 			});
@@ -732,7 +802,7 @@ export function automaticEntries(
 				title: `${name} was removed from ${sourceTitle}`,
 				reference: `auto:removed:${sourceKey}:${name}:${day}`,
 				impact: "breaking",
-				about: [field(name)],
+				about: [field(name, "removed")],
 				before: null,
 				after: null,
 			});
@@ -745,7 +815,7 @@ export function automaticEntries(
 				title: `${from} looks to have been renamed to ${to} on ${sourceTitle}`,
 				reference: `auto:renamed:${sourceKey}:${from}:${to}:${day}`,
 				impact: "notable",
-				about: [field(from), field(to)],
+				about: [{ ...field(to, "renamed"), from }],
 				before: from,
 				after: to,
 			});
@@ -758,7 +828,7 @@ export function automaticEntries(
 				title: `The definition of ${name} changed on ${sourceTitle}`,
 				reference: `auto:redefined:${sourceKey}:${name}:${day}`,
 				impact: "notable",
-				about: [field(name)],
+				about: [field(name, "changed")],
 				before,
 				after,
 			});
@@ -826,6 +896,9 @@ export function checkAboutNames(
 	);
 	return about.map((item) => {
 		if (item.kind !== "source" && item.kind !== "field") return item;
+		// Something removed is gone from the registry by definition, and a rename's old
+		// name with it, so only what still exists is checked.
+		if (item.change === "removed") return item;
 		const key = item.kind === "source" ? item.id : (item.sourceKey ?? "");
 		const dataset = byKey.get(key.toLowerCase());
 		if (!dataset) {

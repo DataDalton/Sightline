@@ -6,6 +6,7 @@ import { parseQuerySpec, QuerySpecError } from "@/lib/query/spec";
 import { getSource } from "@/lib/semantic/registry";
 import { resolvePolicyClass } from "@/lib/auth/policy";
 import { visibleUpdates } from "@/lib/updates/store";
+import { namesField } from "@/lib/updates/model";
 import { failingFor } from "@/lib/dataRules/store";
 import { caller, privateJson, readJson } from "../notifications/guard";
 
@@ -127,9 +128,7 @@ export async function POST(request: NextRequest) {
 			.filter((update) =>
 				update.about.some(
 					(item) =>
-						(item.kind === "field" &&
-							item.id === measure &&
-							item.sourceKey === source.sourceKey) ||
+						namesField(item, source.sourceKey, measure) ||
 						(item.kind === "source" &&
 							item.id === source.sourceKey),
 				),

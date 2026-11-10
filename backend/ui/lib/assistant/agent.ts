@@ -605,7 +605,10 @@ export async function runAgent(
 						[
 							update.title,
 							update.body,
-							...update.about.map((item) => item.id),
+							update.whatToDo ?? "",
+							...update.about.flatMap((item) =>
+								item.from ? [item.id, item.from] : [item.id],
+							),
 						]
 							.join(" ")
 							.toLowerCase()
@@ -623,6 +626,7 @@ export async function runAgent(
 					before: update.before,
 					after: update.after,
 					reason: update.reason,
+					whatToDo: update.whatToDo,
 					about: update.about,
 				})),
 			);

@@ -93,13 +93,14 @@ interface UpdateRow {
 	authors: Update["authors"];
 	placement: Update["placement"];
 	notify: boolean;
+	what_to_do: string | null;
 }
 
 const columns = `update_id::text AS update_id, type, title, body, impact, status, about,
 	before_value, after_value, links, tags, reference, posted_on, effective_on, period_from,
 	period_to, starts_on, ends_on, repeat_every, incident_state, audience, delivery,
 	show_from, expires_on, require_ack, automatic, reason, created_by, corrected_on,
-	authors, placement, notify`;
+	authors, placement, notify, what_to_do`;
 
 function toUpdate(row: UpdateRow): Update {
 	return {
@@ -135,6 +136,7 @@ function toUpdate(row: UpdateRow): Update {
 		authors: row.authors ?? [],
 		placement: row.placement === "history" ? "history" : "top",
 		notify: row.notify !== false,
+		whatToDo: row.what_to_do,
 	};
 }
 
@@ -509,10 +511,10 @@ export async function postUpdate(
 		   (type, title, body, impact, status, about, before_value, after_value, links,
 		    tags, reference, effective_on, period_from, period_to, starts_on, ends_on,
 		    repeat_every, incident_state, audience, delivery, show_from, expires_on,
-		    require_ack, reason, created_by, authors, placement, notify)
+		    require_ack, reason, created_by, authors, placement, notify, what_to_do)
 		 VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9::jsonb, $10, $11, $12, $13, $14,
 		         $15, $16, $17, $18, $19::jsonb, $20::jsonb, $21, $22, $23, $24, $25,
-		         $26::jsonb, $27, $28)
+		         $26::jsonb, $27, $28, $29)
 		 RETURNING ${columns}`,
 		[
 			...fieldValues(input),
@@ -520,6 +522,7 @@ export async function postUpdate(
 			JSON.stringify(input.authors),
 			input.placement,
 			input.notify,
+			input.whatToDo,
 		],
 	);
 	const update = toUpdate(rows[0]);
@@ -578,7 +581,7 @@ export async function changeUpdate(
 		   starts_on = $15, ends_on = $16, repeat_every = $17, incident_state = $18,
 		   audience = $19::jsonb, delivery = $20::jsonb, show_from = $21, expires_on = $22,
 		   require_ack = $23, reason = $24,
-		   authors = $27::jsonb, placement = $28, notify = $29,
+		   authors = $27::jsonb, placement = $28, notify = $29, what_to_do = $30,
 		   corrected_on = CASE WHEN $26 THEN corrected_on ELSE now() END,
 		   posted_on = CASE WHEN $26 THEN now() ELSE posted_on END
 		 WHERE update_id = $25
@@ -590,6 +593,7 @@ export async function changeUpdate(
 			JSON.stringify(input.authors),
 			input.placement,
 			input.notify,
+			input.whatToDo,
 		],
 	);
 	const update = toUpdate(rows[0]);

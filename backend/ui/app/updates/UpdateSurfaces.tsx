@@ -9,6 +9,7 @@ import {
 	aboutPage,
 	currentWindow,
 	isUnderway,
+	namesField,
 	sourcesOf,
 	type Update,
 } from "../../lib/updates/model";
@@ -313,9 +314,7 @@ export function FieldUpdates({
 	const shown = (data?.updates ?? []).filter((update) =>
 		update.about.some(
 			(item) =>
-				(item.kind === "field" &&
-					item.id === field &&
-					item.sourceKey === sourceKey) ||
+				namesField(item, sourceKey, field) ||
 				(item.kind === "source" && item.id === sourceKey),
 		),
 	);

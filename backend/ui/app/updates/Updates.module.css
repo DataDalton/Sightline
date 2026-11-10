@@ -96,8 +96,9 @@
 	display: flex;
 	flex-direction: column;
 	gap: var(--space-1);
-	padding: var(--space-3);
+	padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
 	border: 1px solid var(--border-subtle);
+	border-left-width: 3px;
 	border-radius: var(--radius-md);
 	background: var(--surface-raised);
 	color: inherit;
@@ -110,12 +111,54 @@
 	background: var(--state-hover);
 }
 
-.itemUnread {
-	border-left: 3px solid var(--brand);
+/* The left edge carries the impact, so what breaks things stands out down the list. */
+.edgeinfo {
+	border-left-color: var(--border-default);
+}
+
+.edgenotable {
+	border-left-color: var(--warning);
+}
+
+.edgebreaking {
+	border-left-color: var(--danger);
 }
 
 .itemTitle {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
 	font-size: var(--text-md, 15px);
+}
+
+.itemWhen {
+	margin-left: auto;
+	font-variant-numeric: tabular-nums;
+}
+
+.unreadDot {
+	flex: none;
+	width: 8px;
+	height: 8px;
+	border-radius: var(--radius-full);
+	background: var(--brand);
+}
+
+.cardWhatToDo {
+	color: var(--text-primary);
+	font-size: var(--text-sm);
+}
+
+.cardAbout {
+	color: var(--text-muted);
+	font-size: var(--text-sm);
+	line-height: 1.5;
+	overflow-wrap: anywhere;
+}
+
+.cardAboutNames {
+	color: var(--text-secondary);
+	font-weight: 600;
 }
 
 .metaRow {
@@ -244,19 +287,6 @@
 .link {
 	color: var(--brand);
 	font-size: var(--text-sm);
-}
-
-.timeline {
-	display: flex;
-	flex-direction: column;
-	gap: var(--space-2);
-	padding-left: var(--space-3);
-	border-left: 2px solid var(--border-subtle);
-	font-size: var(--text-sm);
-}
-
-.timelineRow {
-	display: block;
 }
 
 .calendar {
@@ -720,34 +750,257 @@
 	text-decoration: underline;
 }
 
-.detail .metaRow > .meta {
-	margin-left: auto;
-}
-
-.aboutGroups {
+.detailHead {
 	display: flex;
-	flex-direction: column;
-	gap: var(--space-1);
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-2);
 }
 
 .factLink {
 	color: var(--text-link);
 }
 
-.activity {
+.factLinks {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-3);
+}
+
+.detailSection {
 	display: flex;
 	flex-direction: column;
 	gap: var(--space-2);
+}
+
+.sectionTitle {
+	margin: 0;
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+
+/* What a reader should do, above everything else they read. */
+.whatToDo {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: var(--space-2) var(--space-3);
+	border-left: 3px solid currentcolor;
+	border-radius: var(--radius-md);
+}
+
+.whatToDo p {
+	margin: 0;
+	color: var(--text-primary);
+}
+
+.whatToDoLabel {
+	font-size: var(--text-xs);
+	font-weight: 700;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+
+.toneinfo {
+	background: var(--info-subtle);
+	color: var(--info);
+}
+
+.tonenotable {
+	background: var(--warning-subtle);
+	color: var(--warning);
+}
+
+.tonebreaking {
+	background: var(--danger-subtle);
+	color: var(--danger);
+}
+
+.toneadded {
+	background: var(--success-subtle);
+	color: var(--success);
+}
+
+.tonechanged,
+.tonerenamed {
+	background: var(--info-subtle);
+	color: var(--info);
+}
+
+.toneremoved {
+	background: var(--danger-subtle);
+	color: var(--danger);
+}
+
+.textadded {
+	color: var(--success);
+	font-weight: 600;
+}
+
+.textchanged,
+.textrenamed {
+	color: var(--info);
+	font-weight: 600;
+}
+
+.textremoved {
+	color: var(--danger);
+	font-weight: 600;
+}
+
+/* What an update covers: each dataset, then its fields grouped by what happened. */
+.aboutSections {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+}
+
+.aboutSection {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	padding: var(--space-3);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-md);
+	background: var(--surface-sunken);
+}
+
+.aboutHead {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-2);
+	font-size: var(--text-sm);
+}
+
+.aboutKind {
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+}
+
+.changePill {
+	padding: 1px var(--space-2);
+	border-radius: var(--radius-full);
+	font-size: var(--text-xs);
+	font-weight: 600;
+}
+
+.fieldGroup {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+}
+
+.fieldGroupLabel {
+	display: flex;
+	align-items: center;
+	gap: var(--space-1);
+	font-size: var(--text-xs);
+}
+
+.fieldCount {
+	padding: 0 6px;
+	border-radius: var(--radius-full);
+	background: var(--surface-raised);
+	color: var(--text-muted);
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.fieldChips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-1);
+}
+
+.fieldChip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 2px var(--space-2);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-sm);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font-size: var(--text-sm);
+	white-space: nowrap;
+}
+
+.fieldChip svg {
+	flex: none;
+}
+
+.chipadded svg {
+	color: var(--success);
+}
+
+.chipchanged svg,
+.chiprenamed svg {
+	color: var(--info);
+}
+
+.chipremoved {
+	color: var(--text-muted);
+}
+
+.chipremoved svg {
+	color: var(--danger);
+}
+
+.chipremoved > span:last-child {
+	text-decoration: line-through;
+}
+
+.oldName {
+	color: var(--text-muted);
+	text-decoration: line-through;
+}
+
+/* Activity reads as a discussion: the notes people added, then where to add one, then
+   the entry's own history in small type. */
+.activity {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
 	padding-top: var(--space-3);
 	border-top: 1px solid var(--border-subtle);
 	font-size: var(--text-sm);
 }
 
-.activityHead {
+.notes {
 	display: flex;
-	align-items: baseline;
-	justify-content: space-between;
+	flex-direction: column;
+	gap: var(--space-3);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.noteEntry {
+	display: flex;
 	gap: var(--space-2);
+}
+
+.noteAvatar {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	border-radius: var(--radius-full);
+	background: var(--brand-subtle);
+	color: var(--text-primary);
+	font-size: var(--text-xs);
+	font-weight: 700;
+}
+
+.noteBody p {
+	margin: 2px 0 0;
 }
 
 .noteRow {
@@ -760,6 +1013,13 @@
 	min-width: 0;
 }
 
-.timelineRow p {
-	margin: 2px 0 0;
+.events {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	margin: 0;
+	padding: 0;
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+	list-style: none;
 }

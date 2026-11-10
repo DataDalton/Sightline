@@ -1868,6 +1868,7 @@ const migrations: string[] = [
 	`ALTER TABLE updates ADD COLUMN IF NOT EXISTS authors JSONB NOT NULL DEFAULT '[]'::jsonb`,
 	`ALTER TABLE updates ADD COLUMN IF NOT EXISTS placement TEXT NOT NULL DEFAULT 'top'`,
 	`ALTER TABLE updates ADD COLUMN IF NOT EXISTS notify BOOLEAN NOT NULL DEFAULT TRUE`,
+	`ALTER TABLE updates ADD COLUMN IF NOT EXISTS what_to_do TEXT`,
 	// A GitHub name matched to a person, or a name for an automation that posts.
 	`CREATE TABLE IF NOT EXISTS update_people_aliases (
 		alias        TEXT PRIMARY KEY,

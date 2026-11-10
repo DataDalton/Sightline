@@ -22,6 +22,8 @@ import {
 	isServicePrincipal,
 	mayDelete,
 	checkAboutNames,
+	fieldNamesOf,
+	namesField,
 	referencesToDelete,
 	type AboutItem,
 } from "./model";
@@ -561,4 +563,243 @@ test("names are matched regardless of case and stored as the dataset spells them
 			{ kind: "report", id: "any-report" },
 		],
 	);
+});
+
+const dataChange = builtinTypes.find((type) => type.typeId === "dataChange");
+const posted = (about: unknown[], extra: Record<string, unknown> = {}) =>
+	cleanInput(
+		{ type: "dataChange", title: "Fields changed", about, ...extra },
+		dataChange,
+	);
+
+test("a field or dataset carries what happened to it", () => {
+	const input = posted([
+		{ kind: "field", id: "Region", sourceKey: "orders", change: "Added" },
+		{
+			kind: "field",
+			id: "Net Revenue",
+			sourceKey: "orders",
+			change: "renamed",
+			from: "Revenue",
+		},
+		{ kind: "source", id: "stock", change: "removed" },
+	]);
+	assert.deepEqual(input.about, [
+		{ kind: "field", id: "Region", sourceKey: "orders", change: "added" },
+		{
+			kind: "field",
+			id: "Net Revenue",
+			sourceKey: "orders",
+			change: "renamed",
+			from: "Revenue",
+		},
+		{ kind: "source", id: "stock", change: "removed" },
+	]);
+});
+
+test("a rename without its old name is refused", () => {
+	assert.throws(
+		() =>
+			posted([
+				{
+					kind: "field",
+					id: "Net Revenue",
+					sourceKey: "orders",
+					change: "renamed",
+				},
+			]),
+		/needs its old name/,
+	);
+});
+
+test("a change that does not fit the item is refused", () => {
+	assert.throws(
+		() =>
+			posted([
+				{
+					kind: "field",
+					id: "Region",
+					sourceKey: "orders",
+					change: "moved",
+				},
+			]),
+		/is not a change for a field/,
+	);
+	assert.throws(
+		() => posted([{ kind: "source", id: "orders", change: "renamed" }]),
+		/is not a change for a dataset/,
+	);
+	assert.throws(
+		() => posted([{ kind: "report", id: "r1", change: "added" }]),
+		/cannot carry a change/,
+	);
+});
+
+test("old names are dropped from anything that is not a rename", () => {
+	const input = posted([
+		{
+			kind: "field",
+			id: "Region",
+			sourceKey: "orders",
+			change: "added",
+			from: "Area",
+		},
+	]);
+	assert.equal(input.about[0].from, undefined);
+});
+
+test("what a reader should do is kept as written, or left empty", () => {
+	assert.equal(
+		posted([], { whatToDo: " Re-apply saved filters. " }).whatToDo,
+		"Re-apply saved filters.",
+	);
+	assert.equal(posted([]).whatToDo, null);
+});
+
+test("something removed is not checked against the datasets", () => {
+	assert.deepEqual(
+		checkAboutNames(
+			[
+				{
+					kind: "field",
+					id: "Margin",
+					sourceKey: "orders",
+					change: "removed",
+				},
+				{ kind: "source", id: "retired", change: "removed" },
+			],
+			datasets,
+		),
+		[
+			{
+				kind: "field",
+				id: "Margin",
+				sourceKey: "orders",
+				change: "removed",
+			},
+			{ kind: "source", id: "retired", change: "removed" },
+		],
+	);
+});
+
+test("a rename's new name is checked and its old name is not", () => {
+	assert.deepEqual(
+		checkAboutNames(
+			[
+				{
+					kind: "field",
+					id: "region",
+					sourceKey: "orders",
+					change: "renamed",
+					from: "Area",
+				},
+			],
+			datasets,
+		),
+		[
+			{
+				kind: "field",
+				id: "Region",
+				sourceKey: "orders",
+				change: "renamed",
+				from: "Area",
+			},
+		],
+	);
+	assert.throws(
+		() =>
+			checkAboutNames(
+				[
+					{
+						kind: "field",
+						id: "Area",
+						sourceKey: "orders",
+						change: "renamed",
+						from: "Region",
+					},
+				],
+				datasets,
+			),
+		/Orders has no field "Area"/,
+	);
+});
+
+test("a field is matched under its new name and its old one", () => {
+	const renamed = {
+		kind: "field" as const,
+		id: "Net Revenue",
+		sourceKey: "orders",
+		change: "renamed" as const,
+		from: "Revenue",
+	};
+	assert.equal(namesField(renamed, "orders", "Revenue"), true);
+	assert.equal(namesField(renamed, "orders", "Net Revenue"), true);
+	assert.equal(namesField(renamed, "returns", "Revenue"), false);
+	assert.equal(namesField(renamed, null, "Revenue"), true);
+	assert.deepEqual(
+		fieldNamesOf([renamed, { kind: "source", id: "orders" }]),
+		["Net Revenue", "Revenue"],
+	);
+});
+
+test("following a field hears about it being renamed away", () => {
+	assert.equal(
+		followMatches(
+			{ kind: "field", value: "Revenue", mode: "instant" },
+			{
+				type: "dataChange",
+				about: [
+					{
+						kind: "field",
+						id: "Net Revenue",
+						sourceKey: "orders",
+						change: "renamed",
+						from: "Revenue",
+					},
+				],
+			},
+		),
+		true,
+	);
+});
+
+test("a sync's entries say what happened to each field", () => {
+	const entries = automaticEntries(
+		{
+			sourceKey: "orders",
+			added: ["New", "Next name"],
+			newlyMissing: ["Old", "Prior name"],
+			renames: [{ from: "Prior name", to: "Next name" }],
+			redefined: [{ name: "Revenue", before: "SUM(a)", after: "SUM(b)" }],
+		},
+		"Orders",
+		every,
+		"2026-01-01",
+	);
+	const about = Object.fromEntries(
+		entries.map((entry) => [entry.kind, entry.about]),
+	);
+	assert.deepEqual(about.fieldAdded, [
+		{ kind: "field", id: "New", sourceKey: "orders", change: "added" },
+	]);
+	assert.deepEqual(about.fieldRemoved, [
+		{ kind: "field", id: "Old", sourceKey: "orders", change: "removed" },
+	]);
+	assert.deepEqual(about.fieldRenamed, [
+		{
+			kind: "field",
+			id: "Next name",
+			sourceKey: "orders",
+			change: "renamed",
+			from: "Prior name",
+		},
+	]);
+	assert.deepEqual(about.definitionChanged, [
+		{
+			kind: "field",
+			id: "Revenue",
+			sourceKey: "orders",
+			change: "changed",
+		},
+	]);
 });
