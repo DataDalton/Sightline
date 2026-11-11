@@ -9,6 +9,7 @@ import {
 	type ReactNode,
 } from "react";
 import useSWR from "swr";
+import { lastSeenKey } from "../../lib/query/requestKey";
 
 // Under a headline figure, how it has moved since this person last looked. Read in one small
 // batch when the page opens and saved as they leave. See app/api/last-seen.
@@ -34,7 +35,7 @@ export function SinceProvider({
 	const { data } = useSWR<{
 		figures: Record<string, number>;
 		seenOn: string | null;
-	}>(pageId ? `/api/last-seen?pageId=${encodeURIComponent(pageId)}` : null, {
+	}>(pageId ? lastSeenKey(pageId) : null, {
 		revalidateOnFocus: false,
 		revalidateIfStale: false,
 	});

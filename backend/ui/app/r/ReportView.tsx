@@ -981,7 +981,7 @@ export default function ReportView({
 				shared={sharedHere}
 				onShareableChange={setPageState}
 			>
-				<UpdateMarkersProvider>
+				<UpdateMarkersProvider sourceKeys={pageSourceKeys}>
 					<FilterGateProvider value={filterGate}>
 						<ScenarioProvider value={whatIfOpen ? scenarios : null}>
 							<SinceProvider pageId={page?.pageId ?? null}>

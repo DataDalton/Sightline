@@ -402,6 +402,37 @@ export function scoreForecasts(records: ForecastRecord[]): ForecastScore {
 	};
 }
 
+// What a forecast card has to save, against what is already kept. A period with a record
+// keeps its first forecast, so only periods without one are sent, and an actual is sent only
+// where a record exists and holds a different value. Empty lists mean nothing to save.
+export function forecastChanges(
+	records: ForecastRecord[],
+	forecasts: {
+		period: string;
+		predicted: number;
+		low: number;
+		high: number;
+	}[],
+	actuals: { period: string; value: number }[],
+): {
+	forecasts: {
+		period: string;
+		predicted: number;
+		low: number;
+		high: number;
+	}[];
+	actuals: { period: string; value: number }[];
+} {
+	const held = new Map(records.map((record) => [record.period, record]));
+	return {
+		forecasts: forecasts.filter((forecast) => !held.has(forecast.period)),
+		actuals: actuals.filter((actual) => {
+			const record = held.get(actual.period);
+			return record !== undefined && record.actual !== actual.value;
+		}),
+	};
+}
+
 export interface Pace {
 	expected: number;
 	target: number;

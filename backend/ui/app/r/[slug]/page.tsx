@@ -1,6 +1,12 @@
 import { headers } from "next/headers";
 import { answeredHere, type Ask } from "../../answeredHere";
 import { GET as authoringGet } from "../../api/authoring/route";
+import { GET as changesGet } from "../../api/changes/route";
+import { GET as dataRulesGet } from "../../api/data-rules/route";
+import { GET as goalsGet } from "../../api/goals/route";
+import { GET as lastSeenGet } from "../../api/last-seen/route";
+import { GET as decksGet } from "../../api/report/[slug]/decks/route";
+import { GET as suggestionsGet } from "../../api/report/[slug]/suggestions/route";
 import { GET as deliveriesGet } from "../../api/deliveries/route";
 import { GET as notesGet } from "../../api/notes/route";
 import { GET as pageAlertsGet } from "../../api/page-alerts/route";
@@ -10,7 +16,16 @@ import { settings } from "../../../lib/settings";
 import type { Identity } from "../../../lib/auth/identity";
 import { liveTtlSeconds } from "../../../lib/query/cache";
 import { heldFieldRange } from "../../../lib/query/range";
-import { lateKey, postKey } from "../../../lib/query/requestKey";
+import {
+	decksKey,
+	goalsKey,
+	lastSeenKey,
+	lateKey,
+	markersKey,
+	postKey,
+	qualityKey,
+	suggestionsKey,
+} from "../../../lib/query/requestKey";
 import { getSource } from "../../../lib/semantic/registry";
 import ReportView from "../ReportView";
 import { getIdentityFromHeaders } from "../../../lib/auth/identity";
@@ -41,6 +56,7 @@ import {
 // The opening page's other requests. See app/answeredHere.
 async function openingResponses(
 	incoming: Headers,
+	slug: string,
 	reportId: string,
 	pageId: string | undefined,
 	sourceKeys: string[],
@@ -48,11 +64,23 @@ async function openingResponses(
 	const asks: Ask[] = [
 		{ key: "/api/authoring", handler: authoringGet },
 		{ key: "/api/deliveries", handler: deliveriesGet },
+		{ key: decksKey(slug), handler: decksGet, params: { slug } },
+		{
+			key: suggestionsKey(slug),
+			handler: suggestionsGet,
+			params: { slug },
+		},
 	];
+	const markers = markersKey(sourceKeys);
+	if (markers) asks.push({ key: markers, handler: changesGet });
 	const late = lateKey(sourceKeys);
 	if (late) asks.push({ key: late, handler: lateGet });
+	const quality = qualityKey(sourceKeys);
+	if (quality) asks.push({ key: quality, handler: dataRulesGet });
 	if (pageId) {
 		asks.push(
+			{ key: goalsKey(pageId), handler: goalsGet },
+			{ key: lastSeenKey(pageId), handler: lastSeenGet },
 			{
 				key: `/api/notes?reportId=${encodeURIComponent(reportId)}&pageId=${encodeURIComponent(pageId)}`,
 				handler: notesGet,
@@ -165,6 +193,7 @@ async function definitionFor(slug: string) {
 			seedPageQueries(identity, report, null),
 			openingResponses(
 				new Headers(incoming),
+				slug,
 				report.reportId,
 				report.pages[0]?.pageId,
 				openingSources(opening),

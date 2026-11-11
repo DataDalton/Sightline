@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import useSWR from "swr";
+import { decksKey } from "../../lib/query/requestKey";
 import {
 	popoverPosition,
 	shouldOffer,
@@ -38,7 +39,7 @@ export interface DecksAnswer {
 }
 
 export function useDecks(slug: string) {
-	return useSWR<DecksAnswer>(`/api/report/${encodeURIComponent(slug)}/decks`);
+	return useSWR<DecksAnswer>(decksKey(slug));
 }
 
 function noteProgress(slug: string, deckId: string, stage: string): void {

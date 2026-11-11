@@ -29,6 +29,7 @@ import {
 } from "./content";
 import { seedArrivals } from "./arrivals";
 import { seedDataRules, seedGoals, seedUpdates } from "./reviewContent";
+import { seedScale } from "./scaleContent";
 import { sampleTables, sources } from "./datasets";
 
 // Everything the demonstration shows, written into the local Postgres on
@@ -680,6 +681,9 @@ export async function seedDemo(): Promise<void> {
 		});
 		await seedGoals(colleague).catch((error) => {
 			console.warn("Demo goals were not created:", error);
+		});
+		await seedScale().catch((error) => {
+			console.warn("Demo scale content was not created:", error);
 		});
 	});
 	await loadRegistry(true);

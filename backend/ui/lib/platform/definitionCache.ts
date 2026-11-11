@@ -24,10 +24,14 @@ const ttlMs = 60 * 60 * 1000;
 interface Entry {
 	value: unknown;
 	expiresAt: number;
+	// When it was last read, for choosing what to give up at the ceiling.
+	usedAt: number;
 }
 
-// Kept in order of last use, oldest first. A read moves its key to the end,
-// so the first key is always the one to give up when the ceiling is reached.
+// A read stamps its entry rather than moving its key to the end of the map.
+// Deleting and adding a key again on every read makes V8 rebuild a large map's
+// table far more often than once per read's worth of work, so each read cost
+// grew with the number of entries held.
 const entries = perProcess(
 	"platform/definitionCache:entries",
 	() => new Map<string, Entry>(),
@@ -53,8 +57,7 @@ function familiesOf(key: string): string[] {
 }
 
 function hold(key: string, entry: Entry): void {
-	if (entries.has(key)) entries.delete(key);
-	else {
+	if (!entries.has(key)) {
 		for (const family of familiesOf(key)) {
 			let members = families.get(family);
 			if (!members) families.set(family, (members = new Set()));
@@ -62,10 +65,27 @@ function hold(key: string, entry: Entry): void {
 		}
 	}
 	entries.set(key, entry);
-	if (entries.size > maxEntries) {
-		// The least recently read.
-		const oldest = entries.keys().next().value;
-		if (oldest !== undefined) release(oldest);
+	if (entries.size > maxEntries) giveUpLeastRead();
+}
+
+// Drops the least recently read share of entries at once, so reaching the
+// ceiling costs one pass over the map for many inserts after it rather than a
+// search on every insert.
+const shareGivenUp = 0.1;
+
+function giveUpLeastRead(): void {
+	const times = new Float64Array(entries.size);
+	let at = 0;
+	for (const held of entries.values()) times[at++] = held.usedAt;
+	times.sort();
+	const cutoff = times[Math.floor(times.length * shareGivenUp)];
+	let dropping = Math.ceil(times.length * shareGivenUp);
+	for (const [key, held] of entries) {
+		if (dropping <= 0) break;
+		if (held.usedAt <= cutoff) {
+			release(key);
+			dropping--;
+		}
 	}
 }
 
@@ -103,8 +123,8 @@ let sweptAt = 0;
 
 // How many entries are held at most. Per reader keys make the count follow
 // the number of people using the app rather than the number of reports, so
-// the ceiling is sized for people. Reaching it drops the entry read longest
-// ago, which costs that reader one recomputation.
+// the ceiling is sized for people. Reaching it drops the entries read longest
+// ago, which costs each of those readers one recomputation.
 const maxEntries = 1_000_000;
 
 function sweep(now: number): void {
@@ -126,8 +146,7 @@ export async function cachedDefinition<T>(
 
 	const held = entries.get(key);
 	if (held && held.expiresAt > now) {
-		entries.delete(key);
-		entries.set(key, held);
+		held.usedAt = now;
 		return held.value as T;
 	}
 
@@ -142,7 +161,8 @@ export async function cachedDefinition<T>(
 	pending.promise = (async () => {
 		const value = await load();
 		if (!pending.stale) {
-			hold(key, { value, expiresAt: Date.now() + lifetimeMs });
+			const at = Date.now();
+			hold(key, { value, expiresAt: at + lifetimeMs, usedAt: at });
 		}
 		return value;
 	})().finally(() => {
@@ -156,8 +176,10 @@ export async function cachedDefinition<T>(
 // The held value for a key, without loading it. For a caller that gathers the
 // keys it is missing and reads them all in one question.
 export function peekDefinition<T>(key: string): T | undefined {
+	const now = Date.now();
 	const held = entries.get(key);
-	if (!held || held.expiresAt <= Date.now()) return undefined;
+	if (!held || held.expiresAt <= now) return undefined;
+	held.usedAt = now;
 	return held.value as T;
 }
 

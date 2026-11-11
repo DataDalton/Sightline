@@ -19,6 +19,7 @@ import {
 	paceToTarget,
 	parseNarrative,
 	scoreForecasts,
+	forecastChanges,
 	type ForecastRecord,
 	type OddOne,
 	paceFromRows,
@@ -508,6 +509,59 @@ export function InsightsMenu({
 
 // --- Forecast report card -----------------------------------------------------------------
 
+// Every forecast card on a page reads its records as it mounts. Read together, so a page of
+// them costs one request, after a short window as value notes and queries are gathered.
+const recordWindowMs = 8;
+
+interface WaitingRecords {
+	visualId: string;
+	measure: string;
+	resolve: (answer: { records: ForecastRecord[] }) => void;
+	reject: (error: Error) => void;
+}
+
+let waitingRecords: WaitingRecords[] = [];
+
+function sendRecordLookups(): void {
+	const batch = waitingRecords;
+	waitingRecords = [];
+	fetch("/api/forecast-card", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({
+			action: "lookupMany",
+			cards: batch.map(({ visualId, measure }) => ({
+				visualId,
+				measure,
+			})),
+		}),
+	})
+		.then(async (response) => {
+			if (!response.ok) throw new Error("Could not load this");
+			const answer = (await response.json()) as {
+				results?: { records: ForecastRecord[] }[];
+			};
+			batch.forEach((waiting, index) =>
+				waiting.resolve(answer.results?.[index] ?? { records: [] }),
+			);
+		})
+		.catch((error: Error) =>
+			batch.forEach((waiting) => waiting.reject(error)),
+		);
+}
+
+function forecastRecords(
+	visualId: string,
+	measure: string,
+): Promise<{ records: ForecastRecord[] }> {
+	return new Promise((resolve, reject) => {
+		if (waitingRecords.length === 0) {
+			setTimeout(sendRecordLookups, recordWindowMs);
+		}
+		waitingRecords.push({ visualId, measure, resolve, reject });
+	});
+}
+
 // Saves this forecast the first time it is made, fills in what actually happened, and says
 // how past ones here have done. Kept per person, since row filters can make the same chart
 // show different figures to different people.
@@ -529,13 +583,19 @@ export function ForecastTrack({
 		visualId && measure
 			? `/api/forecast-card?visualId=${encodeURIComponent(visualId)}&measure=${encodeURIComponent(measure)}`
 			: null;
-	const { data, mutate } = useSWR<{ records: ForecastRecord[] }>(address);
+	const { data, mutate } = useSWR<{ records: ForecastRecord[] }>(
+		address,
+		() => forecastRecords(visualId as string, measure as string),
+	);
 
-	const signature = result
-		? JSON.stringify([result.periods, result.series[0]?.values])
-		: "";
+	// Sends only what is not kept yet, once the kept records are loaded, so a repeat view
+	// of the same forecast writes nothing.
+	const records = data?.records;
+	const lastSent = useRef("");
 	useEffect(() => {
-		if (!result || !visualId || !measure || !periodField) return;
+		if (!records || !result || !visualId || !measure || !periodField) {
+			return;
+		}
 		const series = result.series[0];
 		const actuals = rows.flatMap((row) => {
 			const period = periodKey(row[periodField]);
@@ -546,27 +606,46 @@ export function ForecastTrack({
 				? [{ period, value }]
 				: [];
 		});
+		const changes = forecastChanges(
+			records,
+			result.periods.map((period, index) => ({
+				period,
+				predicted: series.values[index],
+				low: series.lower[index],
+				high: series.upper[index],
+			})),
+			actuals,
+		);
+		if (changes.forecasts.length === 0 && changes.actuals.length === 0) {
+			return;
+		}
+		// The same changes are sent once, even when the card draws again before the
+		// kept records come back.
+		const body = JSON.stringify({
+			visualId,
+			sourceKey,
+			measure,
+			...changes,
+		});
+		if (body === lastSent.current) return;
+		lastSent.current = body;
 		void fetch("/api/forecast-card", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				visualId,
-				sourceKey,
-				measure,
-				forecasts: result.periods.map((period, index) => ({
-					period,
-					predicted: series.values[index],
-					low: series.lower[index],
-					high: series.upper[index],
-				})),
-				actuals,
-			}),
+			body,
 		})
 			.then(() => mutate())
 			.catch(() => {});
-		// Once for each forecast worked out.
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [signature, visualId]);
+	}, [
+		records,
+		result,
+		rows,
+		visualId,
+		sourceKey,
+		measure,
+		periodField,
+		mutate,
+	]);
 
 	const score = scoreForecasts(data?.records ?? []);
 	if (score.scored === 0) return null;

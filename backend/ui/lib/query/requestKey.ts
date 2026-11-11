@@ -38,3 +38,40 @@ export function lateKey(sourceKeys: string[]): string | null {
 		? `/api/query/late/?sources=${encodeURIComponent(keys.join(","))}`
 		: null;
 }
+
+// The answer every page's update banner, pop-up and notices read, which the shell hands
+// over with each document. See app/updates/UpdateSurfaces and app/layout.
+export const liveUpdatesKey = "/api/changes?live=1";
+
+// The key a page's chart markers ask under, for the sources the page reads, or null when it
+// reads none. See UpdateMarkersProvider in app/updates/UpdateSurfaces.
+export function markersKey(sourceKeys: string[]): string | null {
+	const keys = [...new Set(sourceKeys)].sort().join(",");
+	return keys ? `/api/changes?markers=${encodeURIComponent(keys)}` : null;
+}
+
+// The key a page's data rule notice asks under, for the sources the page reads. See
+// app/status/QualityNotice.
+export function qualityKey(sourceKeys: string[]): string | null {
+	const keys = [...new Set(sourceKeys)].sort();
+	return keys.length
+		? `/api/data-rules?sources=${encodeURIComponent(keys.join(","))}`
+		: null;
+}
+
+// The keys a report page's goals, figures last seen, decks and suggestions ask under.
+export function goalsKey(pageId: string): string {
+	return `/api/goals?pageId=${encodeURIComponent(pageId)}`;
+}
+
+export function lastSeenKey(pageId: string): string {
+	return `/api/last-seen?pageId=${encodeURIComponent(pageId)}`;
+}
+
+export function decksKey(slug: string): string {
+	return `/api/report/${encodeURIComponent(slug)}/decks`;
+}
+
+export function suggestionsKey(slug: string): string {
+	return `/api/report/${encodeURIComponent(slug)}/suggestions`;
+}

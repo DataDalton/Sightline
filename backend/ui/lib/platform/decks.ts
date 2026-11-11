@@ -6,8 +6,9 @@ import { sql } from "../data/lakebase";
 import { insertLog } from "../activityLog";
 import { notify } from "../notify/store";
 import { cleanDeckInput, type Deck } from "../visuals/deck";
-import { invalidateDefinitions } from "./definitionCache";
+import { cachedDefinition, invalidateDefinitions } from "./definitionCache";
 import { assertCanEdit } from "./editing";
+import { dropReaderReport, readerReport } from "./readerReport";
 
 // Walkthroughs and slides saved against a report, who has been through them, who is
 // presenting right now, and the record kept when a report is printed.
@@ -58,16 +59,34 @@ export interface DeckStats {
 	finished: number;
 }
 
+// A report's decks change only when an editor saves, removes or offers one again, so they
+// are read once and held until then. Most reports have none, which is then a held empty list.
+const deckKey = (reportId: string) => `decks:${reportId}`;
+// Who has been through a report's decks as totals for its editors. Each person's own
+// progress is read with the rest of what they have on the report. See
+// lib/platform/readerReport.
+const statsKey = (reportId: string) => `deck-stats:${reportId}`;
+
+function reportDecks(reportId: string): Promise<Deck[]> {
+	return cachedDefinition(deckKey(reportId), async () => {
+		const rows = await sql<DeckRow>(
+			`SELECT ${deckColumns} FROM report_decks
+			 WHERE report_id = $1 AND is_active = TRUE
+			 ORDER BY created_on`,
+			[reportId],
+		);
+		return rows.map(toDeck);
+	});
+}
+
 export async function getDeck(
 	reportId: string,
 	deckId: string,
 ): Promise<Deck | null> {
-	const rows = await sql<DeckRow>(
-		`SELECT ${deckColumns} FROM report_decks
-		 WHERE report_id = $1 AND deck_id::text = $2 AND is_active = TRUE`,
-		[reportId, deckId],
+	return (
+		(await reportDecks(reportId)).find((deck) => deck.deckId === deckId) ??
+		null
 	);
-	return rows[0] ? toDeck(rows[0]) : null;
 }
 
 export async function listDecks(
@@ -79,35 +98,29 @@ export async function listDecks(
 	seen: Record<string, number>;
 	stats: DeckStats[];
 }> {
-	const [decks, seen, stats] = await Promise.all([
-		sql<DeckRow>(
-			`SELECT ${deckColumns} FROM report_decks
-			 WHERE report_id = $1 AND is_active = TRUE
-			 ORDER BY created_on`,
-			[reportId],
-		),
-		sql<{ deck_id: string; epoch: number }>(
-			`SELECT p.deck_id::text AS deck_id, p.epoch
-			 FROM deck_progress p
-			 JOIN report_decks d ON d.deck_id = p.deck_id
-			 WHERE d.report_id = $1 AND lower(p.user_email) = lower($2)`,
-			[reportId, email],
-		),
+	const decks = await reportDecks(reportId);
+	// With no decks there is nothing anyone has seen or finished.
+	if (decks.length === 0) return { decks, seen: {}, stats: [] };
+	// Both change only as someone moves through a deck, so they are held until then.
+	const [seen, stats] = await Promise.all([
+		readerReport(email, reportId).then((held) => held.deckSeen),
 		withStats
-			? sql<{ deck_id: string; started: string; finished: string }>(
-					`SELECT p.deck_id::text AS deck_id,
-					        count(*) FILTER (WHERE p.started_on IS NOT NULL)::text AS started,
-					        count(*) FILTER (WHERE p.finished_on IS NOT NULL)::text AS finished
-					 FROM deck_progress p
-					 JOIN report_decks d ON d.deck_id = p.deck_id
-					 WHERE d.report_id = $1
-					 GROUP BY p.deck_id`,
-					[reportId],
+			? cachedDefinition(statsKey(reportId), () =>
+					sql<{ deck_id: string; started: string; finished: string }>(
+						`SELECT p.deck_id::text AS deck_id,
+						        count(*) FILTER (WHERE p.started_on IS NOT NULL)::text AS started,
+						        count(*) FILTER (WHERE p.finished_on IS NOT NULL)::text AS finished
+						 FROM deck_progress p
+						 JOIN report_decks d ON d.deck_id = p.deck_id
+						 WHERE d.report_id = $1
+						 GROUP BY p.deck_id`,
+						[reportId],
+					),
 				)
 			: Promise.resolve([]),
 	]);
 	return {
-		decks: decks.map(toDeck),
+		decks,
 		seen: Object.fromEntries(seen.map((row) => [row.deck_id, row.epoch])),
 		stats: stats.map((row) => ({
 			deckId: row.deck_id,
@@ -156,6 +169,7 @@ export async function saveDeck(
 				values,
 			);
 	if (!rows[0]) throw new DeckError("Not found", 404);
+	invalidateDefinitions(deckKey(reportId));
 	await insertLog({
 		recordType: "report",
 		recordId: reportId,
@@ -178,6 +192,7 @@ export async function removeDeck(
 		 WHERE deck_id = $1 AND report_id = $2`,
 		[deckId, reportId],
 	);
+	invalidateDefinitions(deckKey(reportId));
 	await insertLog({
 		recordType: "report",
 		recordId: reportId,
@@ -204,6 +219,7 @@ export async function offerAgain(
 		[deckId, report.reportId],
 	);
 	if (!rows[0]) throw new DeckError("Not found", 404);
+	invalidateDefinitions(deckKey(report.reportId));
 
 	const readers = await sql<{ user_email: string }>(
 		`SELECT DISTINCT user_email FROM usage_events
@@ -236,12 +252,8 @@ export async function noteProgress(
 	deckId: string,
 	stage: "started" | "finished" | "dismissed",
 ): Promise<void> {
-	const rows = await sql<{ epoch: number }>(
-		`SELECT epoch FROM report_decks
-		 WHERE deck_id = $1 AND report_id = $2 AND is_active = TRUE`,
-		[deckId, reportId],
-	);
-	if (!rows[0]) throw new DeckError("Not found", 404);
+	const deck = await getDeck(reportId, deckId);
+	if (!deck) throw new DeckError("Not found", 404);
 	await sql(
 		`INSERT INTO deck_progress
 		   (deck_id, user_email, epoch, started_on, finished_on)
@@ -252,8 +264,10 @@ export async function noteProgress(
 		 SET epoch = EXCLUDED.epoch,
 		     started_on = COALESCE(EXCLUDED.started_on, deck_progress.started_on),
 		     finished_on = COALESCE(EXCLUDED.finished_on, deck_progress.finished_on)`,
-		[deckId, email, rows[0].epoch, stage],
+		[deckId, email, deck.epoch, stage],
 	);
+	dropReaderReport(email, reportId);
+	invalidateDefinitions(statsKey(reportId));
 }
 
 // --- Following whoever is presenting -------------------------------------------

@@ -479,6 +479,7 @@ export async function deletePersonalPage(
 	invalidateDefinitions("report:");
 	invalidateDefinitions(`report-body:${reportId}`);
 	invalidateDefinitions(`report-subject:${reportId.toLowerCase()}`);
+	invalidateDefinitions("report-page-slug:");
 	invalidateDefinitions("search:");
 }
 

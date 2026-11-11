@@ -29,6 +29,48 @@ async function post(body: Record<string, unknown>) {
 	return detail;
 }
 
+// Every strip on a page asks for its notes as it mounts. Asked for together, so a page
+// of visuals costs one request rather than one each. Strips do not mount in one burst,
+// so lookups wait a short window before they are sent, as queries do in app/hooks/queryBatch.
+const lookupWindowMs = 8;
+
+interface WaitingLookup {
+	sourceKey: string;
+	shown: { field: string; value: string }[];
+	resolve: (answer: { notes: ValueNote[] }) => void;
+	reject: (error: Error) => void;
+}
+
+let waitingLookups: WaitingLookup[] = [];
+
+function sendLookups(): void {
+	const batch = waitingLookups;
+	waitingLookups = [];
+	post({
+		action: "lookupMany",
+		lookups: batch.map(({ sourceKey, shown }) => ({ sourceKey, shown })),
+	}).then(
+		(answer: { results?: { notes: ValueNote[] }[] }) => {
+			batch.forEach((waiting, index) =>
+				waiting.resolve(answer.results?.[index] ?? { notes: [] }),
+			);
+		},
+		(error: Error) => batch.forEach((waiting) => waiting.reject(error)),
+	);
+}
+
+function lookupNotes(
+	sourceKey: string,
+	shown: { field: string; value: string }[],
+): Promise<{ notes: ValueNote[] }> {
+	return new Promise((resolve, reject) => {
+		if (waitingLookups.length === 0) {
+			setTimeout(sendLookups, lookupWindowMs);
+		}
+		waitingLookups.push({ sourceKey, shown, resolve, reject });
+	});
+}
+
 // Each field and value shown, once.
 export function shownValues(
 	rows: Record<string, unknown>[],
@@ -176,7 +218,7 @@ export function ValueNotesStrip({
 			? ["value-notes", sourceKey, JSON.stringify(shown)]
 			: null;
 	const { data, mutate } = useSWR<{ notes: ValueNote[] }>(key, () =>
-		post({ action: "lookup", sourceKey, shown }),
+		lookupNotes(sourceKey as string, shown),
 	);
 	const notes = data?.notes ?? [];
 	if (notes.length === 0) return null;

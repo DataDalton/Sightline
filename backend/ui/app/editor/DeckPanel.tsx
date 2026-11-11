@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import useSWR from "swr";
+import { decksKey } from "../../lib/query/requestKey";
 import { filterWidgetsOf } from "../../lib/visuals/filterWidgets";
 import {
 	type Deck,
@@ -76,7 +77,7 @@ export function DeckPanel({
 	readOnly: boolean;
 	onClose: () => void;
 }) {
-	const address = `/api/report/${encodeURIComponent(slug)}/decks`;
+	const address = decksKey(slug);
 	const { data, mutate } = useSWR<DecksAnswer>(address);
 	const [draft, setDraft] = useState<
 		(Omit<Deck, "deckId" | "epoch"> & { deckId?: string }) | null

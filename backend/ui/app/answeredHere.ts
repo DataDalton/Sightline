@@ -25,23 +25,41 @@ export interface Ask {
 	params?: Record<string, string>;
 }
 
+// How long one ask may take before it is left out. Each ask has its own, so one that has
+// to reach the warehouse, such as a goal's figure, cannot use up the budget the whole page
+// renders under and cost every other answer with it.
+const askDeadlineMs = 150;
+
 export async function answeredHere(
 	incoming: Headers,
 	asks: Ask[],
 ): Promise<Record<string, unknown>> {
 	const answered = await Promise.all(
 		asks.map(async ({ key, handler, params }) => {
+			let timer: ReturnType<typeof setTimeout> | undefined;
 			try {
-				const response = await handler(
-					new NextRequest(new URL(key, "http://localhost"), {
-						headers: incoming,
+				const answer = (async () => {
+					const response = await handler(
+						new NextRequest(new URL(key, "http://localhost"), {
+							headers: incoming,
+						}),
+						{ params: Promise.resolve(params ?? {}) } as never,
+					);
+					if (!response.ok) return null;
+					return [key, await response.json()] as const;
+				})();
+				// A late answer is dropped here and the browser asks for it as before.
+				answer.catch(() => {});
+				return await Promise.race([
+					answer,
+					new Promise<null>((resolve) => {
+						timer = setTimeout(() => resolve(null), askDeadlineMs);
 					}),
-					{ params: Promise.resolve(params ?? {}) } as never,
-				);
-				if (!response.ok) return null;
-				return [key, await response.json()] as const;
+				]);
 			} catch {
 				return null;
+			} finally {
+				clearTimeout(timer);
 			}
 		}),
 	);

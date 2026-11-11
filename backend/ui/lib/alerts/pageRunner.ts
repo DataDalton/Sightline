@@ -14,6 +14,7 @@ import {
 	type ScopeGroup,
 	type Subscriber,
 } from "./pageRules";
+import { alertRowsChanged } from "./alertRows";
 import type { BatchReads } from "./reads";
 import { restrictableSources, restrictionsFor } from "./recorded";
 import {
@@ -342,6 +343,8 @@ async function runOne(
 	await Promise.all(workers);
 
 	await claim.finish(next);
+	// The page shows when each alert was last checked.
+	alertRowsChanged(row.report_id, row.page_id);
 }
 
 // The first question each alert asks as the app without a restriction, so

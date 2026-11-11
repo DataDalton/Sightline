@@ -26,6 +26,7 @@ import {
 	type MuteChoice,
 	type ScopeMode,
 } from "./pageRules";
+import { alertRowsChanged, alertRowsKey } from "./alertRows";
 import { ownersChanged } from "./owners";
 import { restrictableSources } from "./recorded";
 import {
@@ -381,12 +382,19 @@ export async function listPageAlerts(
 	const hasAlerts = (await pagesWithAlerts()).has(
 		opened.page.pageId.toLowerCase(),
 	);
+	const email = identity.email.toLowerCase();
+	// Held for each reader until something on the page changes, so a returning reader does
+	// not ask again on every open. See lib/alerts/alertRows.
 	const [rows, restrictable] = await Promise.all([
 		hasAlerts
-			? pageRows({
-					email: identity.email.toLowerCase(),
-					pageId: opened.page.pageId,
-				})
+			? cachedDefinition(
+					alertRowsKey(
+						opened.report.reportId,
+						opened.page.pageId,
+						email,
+					),
+					() => pageRows({ email, pageId: opened.page.pageId }),
+				)
 			: ([] as PageAlertRow[]),
 		restrictableSources(),
 	]);
@@ -507,6 +515,7 @@ export async function createPageAlert(
 		null,
 		definition,
 	);
+	alertRowsChanged(opened.report.reportId, opened.page.pageId);
 	const record = await loadOne(identity, id, true);
 	if (!record) throw new PageAlertError("The alert could not be saved.", 500);
 	planInputsChanged();
@@ -592,6 +601,7 @@ export async function updatePageAlert(
 		row.definition,
 		definition,
 	);
+	alertRowsChanged(opened.report.reportId, opened.page.pageId);
 	const record = await loadOne(identity, row.alert_id, true);
 	if (!record) throw new PageAlertError("Alert not found", 404);
 	planInputsChanged();
@@ -619,6 +629,7 @@ export async function deletePageAlert(
 		row.definition,
 		null,
 	);
+	alertRowsChanged(opened.report.reportId, opened.page.pageId);
 	planInputsChanged();
 }
 
@@ -653,7 +664,12 @@ async function pagesWithAlerts(): Promise<Set<string>> {
 // is only changed when one is given.
 async function upsertSubscriptions(
 	identity: Identity,
-	rows: { alertId: string; sourceKey: string }[],
+	rows: {
+		alertId: string;
+		sourceKey: string;
+		reportId: string;
+		pageId: string;
+	}[],
 	mute: MuteChoice | undefined,
 ): Promise<void> {
 	if (rows.length === 0) return;
@@ -679,6 +695,7 @@ async function upsertSubscriptions(
 			],
 		);
 	}
+	for (const { reportId, pageId } of rows) alertRowsChanged(reportId, pageId);
 	ownersChanged();
 }
 
@@ -699,10 +716,18 @@ export async function setSubscription(
 			 WHERE alert_id = $1::uuid AND email = $2`,
 			[row.alert_id, email],
 		);
+		alertRowsChanged(row.report_id, row.page_id);
 	} else {
 		await upsertSubscriptions(
 			identity,
-			[{ alertId: row.alert_id, sourceKey: row.source_key }],
+			[
+				{
+					alertId: row.alert_id,
+					sourceKey: row.source_key,
+					reportId: row.report_id,
+					pageId: row.page_id,
+				},
+			],
 			change.mute,
 		);
 	}
@@ -725,6 +750,8 @@ export async function subscribeAll(
 		missing.map((a) => ({
 			alertId: a.id,
 			sourceKey: a.definition.sourceKey,
+			reportId: a.reportId,
+			pageId: a.pageId,
 		})),
 		undefined,
 	);

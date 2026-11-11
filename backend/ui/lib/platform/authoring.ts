@@ -12,6 +12,7 @@ import {
 	hasError,
 	validateVisual,
 } from "../visuals/validate";
+import { alertRowsChanged } from "../alerts/alertRows";
 import { invalidateDefinitions } from "./definitionCache";
 import { invalidateReport, catalogueChanged } from "./curated";
 import { writeVersion } from "./versionWrite";
@@ -669,6 +670,8 @@ export async function removeReport(
 	invalidateDefinitions(`report:${rows[0].slug}`);
 	invalidateDefinitions(`report-body:${reportId}`);
 	invalidateDefinitions(`report-subject:${reportId.toLowerCase()}`);
+	invalidateDefinitions("report-page-slug:");
+	alertRowsChanged(reportId);
 }
 
 // --- A page added to a report that already exists ---------------------------

@@ -15,7 +15,13 @@ import {
 	type DataRule,
 	type RuleResult,
 } from "./rules";
-import { allActiveRules, lastRuns, recordRun, reportsReading } from "./store";
+import {
+	allActiveRules,
+	dropLatestResults,
+	lastRuns,
+	recordRun,
+	reportsReading,
+} from "./store";
 
 // Running data rules, with nobody signed in.
 //
@@ -217,4 +223,5 @@ export async function pruneRuleRuns(months: number): Promise<void> {
 		 WHERE run_on < now() - make_interval(months => $1::int)`,
 		[months],
 	);
+	dropLatestResults();
 }

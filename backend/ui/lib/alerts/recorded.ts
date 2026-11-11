@@ -22,6 +22,9 @@ const refreshAfter = "1 hour";
 
 let mapped: { at: number; fields: Map<string, string[]> } | null = null;
 const mappedTtlMs = 60 * 1000;
+// One read at a time. Every request that arrives while the held answer is being renewed
+// waits for that read, rather than each starting its own.
+let mapping: Promise<Map<string, string[]>> | null = null;
 
 // Row-filtered datasets whose filters the walk mapped onto fields, with those
 // fields. A dataset is left out while the walk is incomplete, when a column of
@@ -29,7 +32,13 @@ const mappedTtlMs = 60 * 1000;
 export async function restrictableSources(): Promise<Map<string, string[]>> {
 	if (!filterDiscoveryComplete()) return new Map();
 	if (mapped && Date.now() - mapped.at < mappedTtlMs) return mapped.fields;
+	mapping ??= readRestrictable().finally(() => {
+		mapping = null;
+	});
+	return mapping;
+}
 
+async function readRestrictable(): Promise<Map<string, string[]>> {
 	const rows = await sql<{ source_key: string; access_fields: string[] }>(
 		`SELECT source_key, access_fields FROM data_sources
 		 WHERE is_active AND has_row_filter

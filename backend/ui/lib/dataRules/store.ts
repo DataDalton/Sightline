@@ -3,6 +3,10 @@ import { insertLog } from "../activityLog";
 import type { Identity } from "../auth/identity";
 import type { PolicyClass } from "../auth/policy";
 import { sql } from "../data/lakebase";
+import {
+	cachedDefinition,
+	invalidateDefinitions,
+} from "../platform/definitionCache";
 import { can, canOnReport, getExplicitContext } from "../platform/access";
 import { getSource, listSources } from "../semantic/registry";
 import { reachableSet } from "../platform/sources";
@@ -337,6 +341,7 @@ export async function saveRule(
 			identity.email,
 		],
 	);
+	dropLatestResults();
 	await insertLog({
 		recordType: "data_rule",
 		recordId: ruleId,
@@ -362,6 +367,7 @@ export async function removeRule(
 	await sql(`UPDATE data_rules SET is_active = FALSE WHERE rule_id = $1`, [
 		ruleId,
 	]);
+	dropLatestResults();
 	await sql(
 		`UPDATE data_incidents SET status = 'resolved', resolved_on = now()
 		 WHERE rule_id = $1 AND status <> 'resolved'`,
@@ -376,6 +382,15 @@ export async function removeRule(
 }
 
 // --- Results ------------------------------------------------------------------
+
+// Where the latest result of each rule is held, by the sources asked about.
+const latestResultsKey = "data-rules:latest:";
+
+// Drops every held latest result, after anything that changes which rules exist or what
+// they last found.
+export function dropLatestResults(): void {
+	invalidateDefinitions(latestResultsKey);
+}
 
 export async function recordRun(
 	rule: DataRule,
@@ -401,6 +416,7 @@ export async function recordRun(
 			outcome.ms,
 		],
 	);
+	dropLatestResults();
 }
 
 export async function lastRuns(): Promise<
@@ -790,20 +806,28 @@ export async function rulesFailing(sourceKeys: string[]): Promise<
 		score: number | null;
 	}[]
 > {
-	const keys = sourceKeys.filter((key) => getSource(key));
+	const keys = [
+		...new Set(sourceKeys.filter((key) => getSource(key))),
+	].sort();
 	if (keys.length === 0) return [];
-	const rows = await sql<{
-		source_key: string;
-		name: string;
-		severity: Severity;
-		status: "pass" | "fail" | "error";
-	}>(
-		`SELECT DISTINCT ON (r.rule_id) r.source_key, r.name, r.severity, u.status
-		 FROM data_rules r
-		 JOIN data_rule_runs u ON u.rule_id = r.rule_id
-		 WHERE r.is_active = TRUE AND r.source_key = ANY($1::text[])
-		 ORDER BY r.rule_id, u.run_on DESC`,
-		[keys],
+	// Every report page reading these sources asks this, and the answer changes only when
+	// a rule runs, is saved or removed, so it is held until one of those.
+	const rows = await cachedDefinition(
+		`${latestResultsKey}${keys.join(",")}`,
+		() =>
+			sql<{
+				source_key: string;
+				name: string;
+				severity: Severity;
+				status: "pass" | "fail" | "error";
+			}>(
+				`SELECT DISTINCT ON (r.rule_id) r.source_key, r.name, r.severity, u.status
+				 FROM data_rules r
+				 JOIN data_rule_runs u ON u.rule_id = r.rule_id
+				 WHERE r.is_active = TRUE AND r.source_key = ANY($1::text[])
+				 ORDER BY r.rule_id, u.run_on DESC`,
+				[keys],
+			),
 	);
 	return keys.flatMap((sourceKey) => {
 		const own = rows.filter((row) => row.source_key === sourceKey);

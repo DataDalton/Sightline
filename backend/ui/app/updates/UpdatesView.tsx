@@ -5,6 +5,7 @@ import { EmptyState, emptyIcons } from "../components/shared/EmptyState";
 import { useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import useSWRInfinite from "swr/infinite";
+import { useLiveUpdates } from "./UpdateSurfaces";
 import { Modal } from "../components/shared/Modal";
 import { Select } from "../components/shared/Select";
 import { Toggle } from "../components/shared/Toggle";
@@ -70,7 +71,6 @@ type ListedUpdate = Update &
 	};
 
 interface Answer {
-	updates: ListedUpdate[];
 	types: UpdateTypeDefinition[];
 	follows: Follow[];
 	drafts: Update[];
@@ -280,7 +280,6 @@ type Draft = Record<string, unknown> & {
 // an audience use everything listed. Attaching an update offers only what may be posted.
 export interface UpdateChoices {
 	postsEverywhere?: boolean;
-	people?: { email: string; name: string }[];
 	sources: {
 		key: string;
 		title: string;
@@ -909,9 +908,11 @@ function AuthorsField({
 	authors: Author[];
 	onChange: (next: Author[]) => void;
 }) {
-	const choices = useUpdateChoices();
+	const { data: known } = useSWR<{
+		people: { email: string; name: string }[];
+	}>("/api/changes?people=1");
 	const [typed, setTyped] = useState("");
-	const people = choices?.people ?? [];
+	const people = known?.people ?? [];
 	const add = (raw: string) => {
 		const value = raw.trim();
 		if (!value) return;
@@ -1917,7 +1918,20 @@ function DetailDialog({
 	);
 }
 
-function Calendar({ updates }: { updates: Update[] }) {
+function Calendar({
+	updates,
+}: {
+	updates: Pick<
+		Update,
+		| "updateId"
+		| "type"
+		| "title"
+		| "about"
+		| "startsOn"
+		| "endsOn"
+		| "repeat"
+	>[];
+}) {
 	const now = Date.now();
 	const windows = updates
 		.filter((u) => u.type === "maintenance")
@@ -2070,8 +2084,11 @@ export default function UpdatesView() {
 		return () => watcher.disconnect();
 	}, [tab, hasMore]);
 
+	// The banner and the other surfaces read the same updates through their own request,
+	// so a read or an edit here refreshes them too.
+	const live = useLiveUpdates();
 	const refresh = async () => {
-		await Promise.all([mutate(), mutateTimeline()]);
+		await Promise.all([mutate(), mutateTimeline(), live.mutate()]);
 	};
 
 	const hasUnread = (firstPage?.unread ?? 0) > 0;
@@ -2313,7 +2330,9 @@ export default function UpdatesView() {
 				</>
 			)}
 
-			{tab === "calendar" && <Calendar updates={data?.updates ?? []} />}
+			{tab === "calendar" && (
+				<Calendar updates={live.data?.updates ?? []} />
+			)}
 
 			{tab === "following" && (
 				<FollowingPane

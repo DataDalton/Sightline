@@ -5,14 +5,9 @@ import useSWR from "swr";
 import Link from "../components/AppLink";
 import { Modal } from "../components/shared/Modal";
 import { TextPanel } from "../visuals/TextPanel";
-import {
-	aboutPage,
-	currentWindow,
-	isUnderway,
-	namesField,
-	sourcesOf,
-	type Update,
-} from "../../lib/updates/model";
+import { aboutPage, currentWindow, isUnderway } from "../../lib/updates/model";
+import type { LiveUpdate, UpdateMarker } from "../../lib/updates/live";
+import { liveUpdatesKey, markersKey } from "../../lib/query/requestKey";
 import form from "../authoring/Authoring.module.css";
 import styles from "./Updates.module.css";
 
@@ -20,11 +15,12 @@ import styles from "./Updates.module.css";
 // app, a card on Home, a line on affected pages, the field in the Dictionary, and markers
 // on charts at the date something took effect.
 
-type Listed = Update & { read: boolean; acknowledged: boolean };
-
+// The light answer every page asks for, without the timeline's own parts. See app/api/changes.
+// The shell hands it over with each document, so a page asks for it again only on its own
+// schedule.
 export function useLiveUpdates() {
-	return useSWR<{ updates: Listed[]; quietSources: string[] }>(
-		"/api/changes",
+	return useSWR<{ updates: LiveUpdate[]; quietSources: string[] }>(
+		liveUpdatesKey,
 		{
 			refreshInterval: 60_000,
 			dedupingInterval: 10_000,
@@ -256,9 +252,7 @@ export function PageUpdates({
 }
 
 // Marks at the dates things took effect, by source, read by a chart as it draws.
-export const UpdateMarkersContext = createContext<
-	{ sourceKeys: string[]; at: string; label: string }[]
->([]);
+export const UpdateMarkersContext = createContext<UpdateMarker[]>([]);
 
 export function useUpdateMarkers(sourceKey: string | null | undefined) {
 	const markers = useContext(UpdateMarkersContext);
@@ -273,28 +267,19 @@ export function useUpdateMarkers(sourceKey: string | null | undefined) {
 	);
 }
 
+// Asked for by the sources the page reads, so only their markers come back.
 export function UpdateMarkersProvider({
+	sourceKeys,
 	children,
 }: {
+	sourceKeys: string[];
 	children: React.ReactNode;
 }) {
-	const { data } = useLiveUpdates();
-	const markers = useMemo(
-		() => [
-			...(data?.updates ?? []).flatMap((update) =>
-				update.effectiveOn && sourcesOf(update.about).length > 0
-					? [
-							{
-								sourceKeys: sourcesOf(update.about),
-								at: update.effectiveOn,
-								label: update.title,
-							},
-						]
-					: [],
-			),
-		],
-		[data],
+	const { data } = useSWR<{ markers: UpdateMarker[] }>(
+		markersKey(sourceKeys),
+		{ refreshInterval: 5 * 60_000, dedupingInterval: 60_000 },
 	);
+	const markers = data?.markers ?? noMarkers;
 	return (
 		<UpdateMarkersContext.Provider value={markers}>
 			{children}
@@ -302,7 +287,9 @@ export function UpdateMarkersProvider({
 	);
 }
 
-// Changes to one field, for its entry in the Dictionary.
+const noMarkers: UpdateMarker[] = [];
+
+// Changes to one field, for its entry in the Dictionary, asked for that field alone.
 export function FieldUpdates({
 	sourceKey,
 	field,
@@ -310,19 +297,17 @@ export function FieldUpdates({
 	sourceKey: string;
 	field: string;
 }) {
-	const { data } = useLiveUpdates();
-	const shown = (data?.updates ?? []).filter((update) =>
-		update.about.some(
-			(item) =>
-				namesField(item, sourceKey, field) ||
-				(item.kind === "source" && item.id === sourceKey),
-		),
+	const { data } = useSWR<{
+		updates: { updateId: string; title: string; postedOn: string }[];
+	}>(
+		`/api/changes?fieldSource=${encodeURIComponent(sourceKey)}&field=${encodeURIComponent(field)}`,
 	);
+	const shown = data?.updates ?? [];
 	if (shown.length === 0) return null;
 	return (
 		<div>
 			<strong>Updates</strong>
-			{shown.slice(0, 8).map((update) => (
+			{shown.map((update) => (
 				<Link
 					key={update.updateId}
 					href={`/status?tab=updates&open=${update.updateId}`}

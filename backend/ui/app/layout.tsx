@@ -4,6 +4,9 @@ import "./globals.css";
 import { getIdentityFromHeaders } from "../lib/auth/identity";
 import { pushPublicKey } from "../lib/notify/push";
 import { inboxSummary } from "../lib/notify/store";
+import { resolvePolicyClass } from "../lib/auth/policy";
+import { liveUpdatesKey } from "../lib/query/requestKey";
+import { liveAnswer } from "../lib/updates/store";
 import { settings } from "../lib/settings";
 import {
 	shellPayload,
@@ -82,10 +85,15 @@ async function resolveShell(): Promise<Shell> {
 	if (!identity) return empty;
 
 	return withinSeedBudget<Shell>(async () => {
-		const [shell, inbox, pushKey] = await Promise.all([
+		const [shell, inbox, pushKey, live] = await Promise.all([
 			shellPayload(identity),
 			inboxSummary(identity.email).catch(() => null),
 			pushPublicKey().catch(() => null),
+			// What the update banner and the other surfaces read on every page, so no
+			// page asks for it as it opens.
+			resolvePolicyClass(identity)
+				.then((policy) => liveAnswer(policy, identity))
+				.catch(() => null),
 		]);
 		return {
 			user: shell.user,
@@ -93,6 +101,7 @@ async function resolveShell(): Promise<Shell> {
 				"/api/user": shell.user,
 				"/api/navigation": shell.navigation,
 				"/api/info": shell.info,
+				...(live ? { [liveUpdatesKey]: live } : {}),
 				// The same shape the summary route answers, so the badge draws
 				// from the document and asks again only on its own schedule.
 				...(inbox

@@ -18,6 +18,7 @@ import { curatedReports, reportSubject } from "../platform/curated";
 import { reachableSet } from "../platform/sources";
 import { listSources } from "../semantic/registry";
 import { settings } from "../settings";
+import { liveSlice, type LiveUpdate } from "./live";
 import {
 	deprecationReminderDays,
 	deprecationReminderDue,
@@ -144,6 +145,9 @@ const liveKey = "updates:live";
 
 // Everything not retracted or in draft, held until something is written, since every
 // page of every reader asks. Dropped across replicas by invalidateDefinitions.
+// In timeline order, newest first, put in order once as they are read rather than on every
+// request that lists them. As times, since the driver hands dates back as dates rather than
+// as text.
 async function publishedUpdates(): Promise<Update[]> {
 	return cachedDefinition(liveKey, async () => {
 		const rows = await sql<UpdateRow>(
@@ -151,7 +155,13 @@ async function publishedUpdates(): Promise<Update[]> {
 			 WHERE status = 'published'
 			 ORDER BY posted_on DESC`,
 		);
-		return rows.map(toUpdate);
+		return rows
+			.map((row) => {
+				const update = toUpdate(row);
+				return { update, at: new Date(timelineDate(update)).getTime() };
+			})
+			.sort((a, b) => b.at - a.at)
+			.map(({ update }) => update);
 	});
 }
 
@@ -162,7 +172,16 @@ export function dropHeld(): void {
 
 // --- Types and templates -----------------------------------------------------------
 
+// Types and templates change only when someone saves or removes one, and the timeline asks
+// for both on every load, so they are read once and held until then.
+const typesKey = "updates:types";
+const templatesKey = "updates:templates";
+
 export async function allTypes(): Promise<UpdateTypeDefinition[]> {
+	return cachedDefinition(typesKey, readTypes);
+}
+
+async function readTypes(): Promise<UpdateTypeDefinition[]> {
 	const custom = await sql<{
 		type_id: string;
 		label: string;
@@ -233,6 +252,7 @@ export async function saveType(
 			JSON.stringify(Array.isArray(raw.requires) ? raw.requires : []),
 		],
 	);
+	invalidateDefinitions(typesKey);
 }
 
 export async function removeType(
@@ -244,6 +264,7 @@ export async function removeType(
 	await sql(`UPDATE update_types SET is_active = FALSE WHERE type_id = $1`, [
 		typeId,
 	]);
+	invalidateDefinitions(typesKey);
 }
 
 export interface UpdateTemplate {
@@ -254,6 +275,10 @@ export interface UpdateTemplate {
 }
 
 export async function listTemplates(): Promise<UpdateTemplate[]> {
+	return cachedDefinition(templatesKey, readTemplates);
+}
+
+async function readTemplates(): Promise<UpdateTemplate[]> {
 	const rows = await sql<{
 		template_id: string;
 		name: string;
@@ -289,6 +314,7 @@ export async function saveTemplate(
 			identity.email,
 		],
 	);
+	invalidateDefinitions(templatesKey);
 }
 
 export async function removeTemplate(
@@ -305,6 +331,7 @@ export async function removeTemplate(
 		`UPDATE update_templates SET is_active = FALSE WHERE template_id = $1`,
 		[templateId],
 	);
+	invalidateDefinitions(templatesKey);
 }
 
 // --- Who may post ------------------------------------------------------------------
@@ -1076,53 +1103,84 @@ export interface UpdateView extends Update {
 	acknowledged: boolean;
 }
 
-async function marksFor(
+// What one person has read and acknowledged. Every page asks for it through the banner,
+// and it changes only when that person reads something, so it is held until then.
+const readsKey = (email: string) => `update-reads:${email.toLowerCase()}`;
+
+// Held as the lookup itself, so a request reads it without building it again.
+export async function readMarks(
 	email: string,
 ): Promise<Map<string, { read: boolean; acked: boolean }>> {
-	const rows = await sql<{
-		update_id: string;
-		acked_on: string | null;
-	}>(
-		`SELECT update_id::text AS update_id, acked_on FROM update_reads
-		 WHERE user_email = lower($1)`,
-		[email],
-	);
-	return new Map(
-		rows.map((row) => [
-			row.update_id,
-			{ read: true, acked: row.acked_on !== null },
-		]),
+	return cachedDefinition(readsKey(email), async () => {
+		const rows = await sql<{
+			update_id: string;
+			acked_on: string | null;
+		}>(
+			`SELECT update_id::text AS update_id, acked_on FROM update_reads
+			 WHERE user_email = lower($1)`,
+			[email],
+		);
+		return new Map(
+			rows.map((row) => [
+				row.update_id,
+				{ read: true, acked: row.acked_on !== null },
+			]),
+		);
+	});
+}
+
+// What this person can see, right now, in timeline order. The entries themselves, shared
+// with every other reader, for a caller that needs no read marks or reads them separately.
+export async function readableUpdates(
+	policy: PolicyClass,
+	identity: Identity,
+): Promise<Update[]> {
+	const [all, reader] = await Promise.all([
+		publishedUpdates(),
+		readerOf(policy, identity),
+	]);
+	const now = Date.now();
+	return all.filter(
+		(update) => isShowing(update, now) && reaches(update, reader),
 	);
 }
 
-// What this person can see, right now.
+// What the banner, pop-up, Home card, page notices, Data status and the maintenance
+// calendar read, which every page asks for. Answered by the route and handed over by the
+// shell with each document. See lib/updates/live.
+export async function liveAnswer(
+	policy: PolicyClass,
+	identity: Identity,
+): Promise<{ updates: LiveUpdate[]; quietSources: string[] }> {
+	const [updates, marks, quiet] = await Promise.all([
+		readableUpdates(policy, identity),
+		readMarks(identity.email),
+		sourcesInMaintenance(),
+	]);
+	return {
+		updates: liveSlice(
+			updates,
+			Date.now(),
+			(update) => marks.get(update.updateId)?.read ?? false,
+		),
+		quietSources: [...quiet],
+	};
+}
+
+// The same with this person's read marks on each.
 export async function visibleUpdates(
 	policy: PolicyClass,
 	identity: Identity,
 ): Promise<UpdateView[]> {
-	const [all, reader, marks] = await Promise.all([
-		publishedUpdates(),
-		readerOf(policy, identity),
-		marksFor(identity.email),
+	const [updates, marks] = await Promise.all([
+		readableUpdates(policy, identity),
+		readMarks(identity.email),
 	]);
-	const now = Date.now();
-	return (
-		all
-			.filter(
-				(update) => isShowing(update, now) && reaches(update, reader),
-			)
-			.map((update) => ({
-				...update,
-				read: marks.get(update.updateId)?.read ?? false,
-				acknowledged: marks.get(update.updateId)?.acked ?? false,
-			}))
-			// As times, since the driver hands dates back as dates rather than as text.
-			.sort(
-				(a, b) =>
-					new Date(timelineDate(b)).getTime() -
-					new Date(timelineDate(a)).getTime(),
-			)
-	);
+	return updates.map((update) => ({
+		...update,
+		read: marks.get(update.updateId)?.read ?? false,
+		acknowledged: marks.get(update.updateId)?.acked ?? false,
+	}));
 }
 
 // --- Names for authors and automations --------------------------------------------------
@@ -1276,6 +1334,7 @@ export async function noteRead(
 		 SET acked_on = COALESCE(update_reads.acked_on, EXCLUDED.acked_on)`,
 		[updateId, email, acknowledged],
 	);
+	invalidateDefinitions(readsKey(email));
 }
 
 // Marks every update this person can see as read, leaving acknowledgements as they are.
@@ -1294,14 +1353,22 @@ export async function markAllRead(
 		 ON CONFLICT (update_id, user_email) DO NOTHING`,
 		[unread, identity.email],
 	);
+	invalidateDefinitions(readsKey(identity.email));
 	return unread.length;
 }
 
-// How many people acknowledged each update that has acknowledgements.
-export async function ackCounts(): Promise<Map<string, number>> {
+// How many people acknowledged each of the named updates. Asked only for the ones a caller
+// may see counts on, so a reader with none costs no read.
+export async function ackCounts(
+	updateIds: string[],
+): Promise<Map<string, number>> {
+	if (updateIds.length === 0) return new Map();
 	const rows = await sql<{ update_id: string; acks: string }>(
 		`SELECT update_id::text AS update_id, count(*)::text AS acks
-		 FROM update_reads WHERE acked_on IS NOT NULL GROUP BY update_id`,
+		 FROM update_reads
+		 WHERE acked_on IS NOT NULL AND update_id = ANY($1::uuid[])
+		 GROUP BY update_id`,
+		[updateIds],
 	);
 	return new Map(rows.map((row) => [row.update_id, Number(row.acks)]));
 }

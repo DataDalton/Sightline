@@ -566,8 +566,14 @@ function words(field: string): string {
 }
 
 // The sources it touches, a field's included.
+// Worked out once for each list, since an entry held by the server is checked against every
+// reader and some name a great many tables.
+const sourcesHeld = new WeakMap<AboutItem[], string[]>();
+
 export function sourcesOf(about: AboutItem[]): string[] {
-	return [
+	const held = sourcesHeld.get(about);
+	if (held) return held;
+	const sources = [
 		...new Set(
 			about.flatMap((item) => {
 				if (item.kind === "source") return [item.id];
@@ -578,6 +584,8 @@ export function sourcesOf(about: AboutItem[]): string[] {
 			}),
 		),
 	];
+	sourcesHeld.set(about, sources);
+	return sources;
 }
 
 // A published update inside its display window.
@@ -657,11 +665,23 @@ export interface Reader {
 
 // Whether this update is meant for this person, without ever showing someone a source
 // they cannot read.
+// A reader's groups in lower case, made once for each reader rather than once for each entry
+// checked against them.
+const groupsHeld = new WeakMap<Reader, Set<string>>();
+
+function groupsOf(reader: Reader): Set<string> {
+	let held = groupsHeld.get(reader);
+	if (!held) {
+		held = new Set(reader.groups.map((g) => g.toLowerCase()));
+		groupsHeld.set(reader, held);
+	}
+	return held;
+}
+
 export function reaches(
 	update: Pick<Update, "audience" | "about">,
 	reader: Reader,
 ): boolean {
-	const sources = sourcesOf(update.about);
 	const canRead = (key: string) =>
 		!reader.readableSources || reader.readableSources.has(key);
 	const ids = update.audience.ids ?? [];
@@ -669,7 +689,7 @@ export function reaches(
 		case "everyone":
 			return true;
 		case "groups": {
-			const held = new Set(reader.groups.map((g) => g.toLowerCase()));
+			const held = groupsOf(reader);
 			return ids.some((id) => held.has(id.toLowerCase()));
 		}
 		case "category":
@@ -678,9 +698,11 @@ export function reaches(
 			return ids.some((id) => reader.reports.has(id));
 		case "source":
 			return ids.some(canRead);
-		default:
+		default: {
 			// With no source named, it is about the platform, which everyone uses.
+			const sources = sourcesOf(update.about);
 			return sources.length === 0 || sources.some(canRead);
+		}
 	}
 }
 

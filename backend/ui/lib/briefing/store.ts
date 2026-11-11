@@ -1,5 +1,6 @@
 import { batchedRead } from "../data/batch";
 import { sql } from "../data/lakebase";
+import { liveTtlSeconds } from "../query/cache";
 import type { Card } from "./card";
 
 // Cards kept between visits, in the platform store, so they survive a restart
@@ -7,7 +8,10 @@ import type { Card } from "./card";
 //
 // A card is fresh while three things hold: it was worked out for today, its
 // dataset has not changed since the answers it was built from were computed,
-// and it is inside the time the dataset's answers are kept for. A card that
+// and it is inside the time the dataset's answers are kept for. A live dataset
+// changes every few moments, so a card on one also counts as fresh for one
+// live interval after it was judged, as a live chart is asked again on that
+// interval rather than on every change. A card that
 // is not fresh is still handed out, marked as such, so the page shows the
 // last figures at once while new ones are worked out.
 //
@@ -53,14 +57,16 @@ const storedCards = batchedRead<
 					`SELECT DISTINCT ON (c.card_key) c.card_key, c.card,
 					        c.judged_on::text AS judged_on,
 					        (c.day = $2::date AND c.expires_on > now()
-					         AND c.computed_on >= coalesce(d.data_changed_on, '-infinity'))
+					         AND (c.computed_on >= coalesce(d.data_changed_on, '-infinity')
+					              OR (d.is_live AND c.judged_on >
+					                  now() - make_interval(secs => $3::double precision))))
 					          AS fresh
 					 FROM briefing_cards c
 					 LEFT JOIN data_sources d ON d.source_key = c.source_key
 					 WHERE c.card_key = ANY($1) AND c.day <= $2::date
 					   AND (c.scope <> 'unfiltered' OR NOT coalesce(d.has_row_filter, FALSE))
 					 ORDER BY c.card_key, c.day DESC`,
-					[keys, today],
+					[keys, today, liveTtlSeconds()],
 				);
 				for (const row of rows) {
 					found.set(cardId(row.card_key, today), {

@@ -11,6 +11,7 @@ import {
 	sourcesOf,
 	UpdateInputError,
 	type Follow,
+	type Update,
 } from "@/lib/updates/model";
 import {
 	allTypes,
@@ -26,6 +27,8 @@ import {
 	postUpdate,
 	postingRule,
 	noteOnUpdate,
+	liveAnswer,
+	readableUpdates,
 	ackCounts,
 	listAliases,
 	removeAlias,
@@ -44,10 +47,16 @@ import {
 	whoAcknowledged,
 	removeTemplate,
 } from "@/lib/updates/store";
+import { fieldSlice, markerSlice } from "@/lib/updates/live";
 import { defaultPageSize, timelinePage } from "@/lib/updates/timelinePage";
 import { sql } from "@/lib/data/lakebase";
 import { listReports } from "@/lib/platform/reports";
-import { curatedReports } from "@/lib/platform/curated";
+import {
+	activeCategories,
+	activeReportPages,
+	curatedReports,
+} from "@/lib/platform/curated";
+import { cachedDefinition } from "@/lib/platform/definitionCache";
 import { reachableSet } from "@/lib/platform/sources";
 import { listSources } from "@/lib/semantic/registry";
 import { caller, privateJson, readJson } from "../notifications/guard";
@@ -93,39 +102,24 @@ async function fromTemplate(
 // attaching an update names a dataset and reads none of its data.
 async function updateChoices(policy: PolicyClass, identity: Identity) {
 	const rule = await postingRule(policy, identity);
-	const [reachable, visibleReports, curated, categories] = await Promise.all([
-		rule.everywhere ? null : reachableSet(identity),
-		rule.everywhere ? null : listReports(policy, identity),
-		curatedReports(),
-		sql<{ id: string; name: string }>(
-			`SELECT category_id AS id, name FROM categories
-			 WHERE is_active = TRUE ORDER BY sort_order, name`,
-		),
-	]);
+	const [reachable, visibleReports, curated, categories, pages] =
+		await Promise.all([
+			rule.everywhere ? null : reachableSet(identity),
+			rule.everywhere ? null : listReports(policy, identity),
+			curatedReports(),
+			activeCategories(),
+			activeReportPages(),
+		]);
 	const visibleIds = visibleReports
 		? new Set(visibleReports.map((report) => report.reportId))
 		: null;
 	const reports = curated.filter(
 		(row) => !visibleIds || visibleIds.has(row.report_id),
 	);
-	const pages = await sql<{ id: string; title: string; report_id: string }>(
-		`SELECT page_id::text AS id, title, report_id::text AS report_id
-		 FROM report_pages
-		 WHERE is_active = TRUE AND report_id::text = ANY($1::text[])
-		 ORDER BY sort_order`,
-		[reports.map((report) => report.report_id)],
-	);
-	const people = await sql<{ user_email: string }>(
-		`SELECT user_email FROM member_groups ORDER BY user_email`,
-	);
 	const onScope = (scopeId: string) =>
 		rule.everywhere || rule.onScope(scopeId);
 	return {
 		postsEverywhere: rule.everywhere,
-		people: people.map((row) => ({
-			email: row.user_email,
-			name: displayNameFromEmail(row.user_email),
-		})),
 		sources: listSources()
 			.filter((source) => !reachable || reachable.has(source.sourceKey))
 			.map((source) => ({
@@ -161,9 +155,61 @@ async function updateChoices(policy: PolicyClass, identity: Identity) {
 	};
 }
 
+// Everyone who has signed in, for naming an update's authors. Grows with the
+// organisation, so it is asked for only by the form that names authors rather
+// than with the choices every reader of the timeline asks for. Held for a few
+// minutes for everyone, since someone signing in for the first time only adds a
+// name to suggest, and an author can always be typed in full.
+const peopleKey = "update-people";
+const peopleLifetimeMs = 5 * 60 * 1000;
+
+function knownPeople(): Promise<{ email: string; name: string }[]> {
+	return cachedDefinition(
+		peopleKey,
+		async () =>
+			(
+				await sql<{ user_email: string }>(
+					`SELECT user_email FROM member_groups ORDER BY user_email`,
+				)
+			).map((row) => ({
+				email: row.user_email,
+				name: displayNameFromEmail(row.user_email),
+			})),
+		peopleLifetimeMs,
+	);
+}
+
+// GET with no query answers the timeline's own parts, { types, follows, drafts, templates,
+// quietSources, canPost, canModerate }, and ?format=csv exports every entry the caller sees.
+// GET ?choices=1 answers what the screens offer to choose from, and ?people=1 answers
+// { people }, everyone who has signed in, for naming authors.
+// GET ?live=1 answers { updates, quietSources }, the entries the banner and the other
+// surfaces across the app can show today, cut down to what they read.
+// GET ?markers=a,b answers { markers } for charts reading those sources.
+// GET ?fieldSource=s&field=f answers { updates }, the latest changes naming that field.
 // GET ?list=1 answers one page of the timeline as { updates, next, total, unread }. It takes
 // q to search, type and impact to filter, limit for the page size, and after set to the
 // previous page's next to continue.
+// The acknowledgement count goes only to the poster and moderators, and only on an update
+// that asks for acknowledgement. Counted for those updates alone.
+async function withAcks<T extends Update>(
+	updates: T[],
+	canModerate: boolean,
+	email: string,
+): Promise<(T & { acks: number | null })[]> {
+	const caller = email.toLowerCase();
+	const counted = (update: T) =>
+		update.requireAck &&
+		(canModerate || update.createdBy.toLowerCase() === caller);
+	const acks = await ackCounts(
+		updates.filter(counted).map((update) => update.updateId),
+	);
+	return updates.map((update) => ({
+		...update,
+		acks: counted(update) ? (acks.get(update.updateId) ?? 0) : null,
+	}));
+}
+
 export async function GET(request: NextRequest) {
 	const identity = await caller(request);
 	if (identity instanceof NextResponse) return identity;
@@ -175,6 +221,9 @@ export async function GET(request: NextRequest) {
 
 		if (params.get("choices") !== null) {
 			return privateJson(await updateChoices(policy, identity));
+		}
+		if (params.get("people") !== null) {
+			return privateJson({ people: await knownPeople() });
 		}
 		// Named so an automation can see what it may post from.
 		if (params.get("templates") !== null) {
@@ -244,9 +293,8 @@ export async function GET(request: NextRequest) {
 		// One page of the timeline, searched and filtered over everything the caller can
 		// see, with how many match and how many are unread across every page.
 		if (params.get("list") !== null) {
-			const [visible, acks, canModerate] = await Promise.all([
+			const [visible, canModerate] = await Promise.all([
 				visibleUpdates(policy, identity),
-				ackCounts(),
 				moderates(policy, identity.email),
 			]);
 			const page = timelinePage(visible, {
@@ -256,39 +304,50 @@ export async function GET(request: NextRequest) {
 				after: params.get("after"),
 				limit: Number(params.get("limit") ?? defaultPageSize),
 			});
-			const caller = identity.email.toLowerCase();
 			return privateJson({
-				// The acknowledgement count goes only to the poster and moderators, and
-				// only on an update that asks for acknowledgement.
-				updates: (await withNames(page.items)).map((update) => ({
-					...update,
-					acks:
-						update.requireAck &&
-						(canModerate ||
-							update.createdBy.toLowerCase() === caller)
-							? (acks.get(update.updateId) ?? 0)
-							: null,
-				})),
+				updates: await withAcks(
+					await withNames(page.items),
+					canModerate,
+					identity.email,
+				),
 				next: page.next,
 				total: page.total,
 				unread: visible.filter((update) => !update.read).length,
 			});
 		}
 
-		const [updates, types, follows, drafts, acks, templates, quiet] =
-			await Promise.all([
-				visibleUpdates(policy, identity),
-				allTypes(),
-				listFollows(identity.email),
-				ownDrafts(policy, identity),
-				ackCounts(),
-				listTemplates(),
-				sourcesInMaintenance(),
-			]);
+		// What the banner, pop-up, Home card, page notices, Data status and the maintenance
+		// calendar need, which every page asks for. Only the entries one of them can show
+		// today, cut down to what they read. See lib/updates/live.
+		if (params.get("live") !== null) {
+			return privateJson(await liveAnswer(policy, identity));
+		}
+		// Chart markers for the sources a page reads.
+		const markersFor = params.get("markers");
+		if (markersFor !== null) {
+			return privateJson({
+				markers: markerSlice(
+					await readableUpdates(policy, identity),
+					markersFor.split(",").filter(Boolean),
+				),
+			});
+		}
+		// The latest changes to one field, for its Dictionary entry.
+		const fieldSource = params.get("fieldSource");
+		if (fieldSource !== null) {
+			return privateJson({
+				updates: fieldSlice(
+					await readableUpdates(policy, identity),
+					fieldSource,
+					params.get("field") ?? "",
+				),
+			});
+		}
 
 		if (params.get("format") === "csv") {
 			const refused = await refusedUnless(identity, "export.run");
 			if (refused) return refused;
+			const updates = await visibleUpdates(policy, identity);
 			// Datasets by title, everything else by its id, as plain text for a spreadsheet.
 			const titles = new Map(
 				listSources().map((source) => [source.sourceKey, source.title]),
@@ -347,20 +406,18 @@ export async function GET(request: NextRequest) {
 			);
 		}
 
-		const context = await getExplicitContext(policy, identity.email);
-		const canModerate = await moderates(policy, identity.email);
-		const caller = identity.email.toLowerCase();
+		// The timeline's own parts. Its entries come a page at a time from ?list=1.
+		const [types, follows, drafts, templates, quiet, context, canModerate] =
+			await Promise.all([
+				allTypes(),
+				listFollows(identity.email),
+				ownDrafts(policy, identity),
+				listTemplates(),
+				sourcesInMaintenance(),
+				getExplicitContext(policy, identity.email),
+				moderates(policy, identity.email),
+			]);
 		return privateJson({
-			// The acknowledgement count goes only to the poster and moderators, and only
-			// on an update that asks for acknowledgement.
-			updates: (await withNames(updates)).map((update) => ({
-				...update,
-				acks:
-					update.requireAck &&
-					(canModerate || update.createdBy.toLowerCase() === caller)
-						? (acks.get(update.updateId) ?? 0)
-						: null,
-			})),
 			types,
 			follows,
 			drafts,

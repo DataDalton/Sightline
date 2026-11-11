@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import useSWR from "swr";
+import { goalsKey } from "../../lib/query/requestKey";
 import { Modal } from "../components/shared/Modal";
 import { Select } from "../components/shared/Select";
 import { Sparkline } from "../visuals/Sparkline";
@@ -54,8 +55,7 @@ const stateWords = {
 	late: "Past due",
 };
 
-const goalsAddress = (pageId: string) =>
-	`/api/goals?pageId=${encodeURIComponent(pageId)}`;
+const goalsAddress = goalsKey;
 
 export function useGoals(pageId: string | null) {
 	return useSWR<GoalsAnswer>(pageId ? goalsAddress(pageId) : null, {

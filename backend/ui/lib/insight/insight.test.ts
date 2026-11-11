@@ -13,6 +13,7 @@ import {
 	paceToTarget,
 	parseNarrative,
 	scoreForecasts,
+	forecastChanges,
 	wouldHaveToBe,
 } from "./insight";
 
@@ -304,5 +305,40 @@ test("assumptions add up, each to what it names", () => {
 				{ region: "West" },
 			) - 2.2,
 		) < 0.0001,
+	);
+});
+
+test("a forecast card saves only new periods and actuals that changed", () => {
+	const records = [
+		{ period: "2026-01", predicted: 10, low: 8, high: 12, actual: 11 },
+		{ period: "2026-02", predicted: 10, low: 8, high: 12, actual: null },
+	];
+	const forecast = (period: string) => ({
+		period,
+		predicted: 9,
+		low: 7,
+		high: 11,
+	});
+	const changes = forecastChanges(
+		records,
+		[forecast("2026-02"), forecast("2026-03")],
+		[
+			{ period: "2026-01", value: 11 },
+			{ period: "2026-02", value: 9.5 },
+			{ period: "2025-12", value: 4 },
+		],
+	);
+	assert.deepEqual(
+		changes.forecasts.map((f) => f.period),
+		["2026-03"],
+	);
+	assert.deepEqual(changes.actuals, [{ period: "2026-02", value: 9.5 }]);
+	assert.deepEqual(
+		forecastChanges(
+			records,
+			[forecast("2026-01")],
+			[{ period: "2026-01", value: 11 }],
+		),
+		{ forecasts: [], actuals: [] },
 	);
 });

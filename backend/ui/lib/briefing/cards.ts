@@ -5,7 +5,7 @@ import { resolvePolicyClass } from "../auth/policy";
 import { intervalFor, requestCheck } from "../freshness/checker";
 import { loadEvidence } from "../freshness/loads";
 import { overdue } from "../freshness/marks";
-import { answerTtlSeconds, isShareable } from "../query/cache";
+import { answerTtlSeconds, isShareable, liveTtlSeconds } from "../query/cache";
 import { assertCanReadSource, QueryAccessError } from "../query/execute";
 import { QuerySpecError } from "../query/spec";
 import { isAdditiveMeasure } from "../semantic/aggregation";
@@ -51,6 +51,28 @@ const parallel = 6;
 
 // Work under way on this replica, by card and day.
 const working = new Map<string, Promise<ComputedCard>>();
+
+// Cards this replica finished working out, by card and day, answered to later readers for
+// one live interval without working them out again. A reader whose stored cards could not
+// be read, as when the platform store is busy, would otherwise work out every card on their
+// page, and under load that work keeps the store busy. A card that failed is not kept.
+const settled = new Map<string, { computed: ComputedCard; at: number }>();
+
+function settledCard(key: string, today: string): ComputedCard | null {
+	const recent = settled.get(`${key}|${today}`);
+	return recent && Date.now() - recent.at < liveTtlSeconds() * 1000
+		? recent.computed
+		: null;
+}
+
+function keepSettled(flight: string, computed: ComputedCard): void {
+	const at = Date.now();
+	settled.set(flight, { computed, at });
+	const timer = setTimeout(() => {
+		if (settled.get(flight)?.at === at) settled.delete(flight);
+	}, liveTtlSeconds() * 1000);
+	timer.unref?.();
+}
 
 // Cards worked out at once on this replica across every reader, so a burst of
 // briefings opening together queues here rather than at the warehouse.
@@ -143,6 +165,8 @@ function workOut(
 	const flight = `${due.key}|${today}`;
 	const existing = working.get(flight);
 	if (existing) return existing;
+	const recent = settledCard(due.key, today);
+	if (recent) return Promise.resolve(recent);
 	const run = gated(() => computeCard(identity, due.item, today, context))
 		.then((computed) => {
 			void writeCard({
@@ -171,6 +195,7 @@ function workOut(
 						context.timeZone,
 					),
 				});
+			keepSettled(flight, computed);
 			return computed;
 		})
 		.finally(() => working.delete(flight));
@@ -241,6 +266,18 @@ export async function briefingCards(
 	const due: Due[] = [];
 	const now = Date.now();
 	for (const entry of checked) {
+		// One this replica worked out moments ago answers without the stored
+		// card, so a reader whose stored cards could not be read does not set
+		// off the reads that working cards out needs.
+		const recent = settledCard(entry.key, today);
+		if (recent) {
+			emit({
+				id: entry.item.id,
+				card: withId(recent.card, entry.item.id),
+				updating: false,
+			});
+			continue;
+		}
 		const held = stored.get(entry.key);
 		// A card judged while its period was young, or while a load was
 		// still to come, is judged again once that has passed, although its

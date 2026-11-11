@@ -53,16 +53,48 @@ export function onChange(kind: string, apply: Handler, clearAll: ClearAll) {
 	listen();
 }
 
+// Changes waiting to be announced. Requests change things in bursts, such as a page
+// leave writing figures and reads together, so changes made close together go out as
+// one notification rather than one statement each.
+let waiting: [string, string][] = [];
+const announceWindowMs = 20;
+
 // Tells every other instance about a change already applied here. Not waited
 // for, and a failed announcement only means the other instances drop the
 // entry when it expires instead.
 export function announce(kind: string, key: string): void {
-	const payload = JSON.stringify({
-		o: shared.origin,
-		k: kind,
-		p: key.slice(0, maxPayload),
-	});
-	void sql(`SELECT pg_notify($1, $2)`, [channel, payload]).catch(() => {});
+	if (waiting.length === 0) {
+		setTimeout(sendWaiting, announceWindowMs).unref?.();
+	}
+	waiting.push([kind, key.slice(0, maxPayload)]);
+}
+
+// Sends what is waiting as few notifications as fit. Over the listening connection when it
+// is open, so announcing never waits for a connection from the shared pool.
+function sendWaiting(): void {
+	const changes = waiting;
+	waiting = [];
+	const batches: [string, string][][] = [[]];
+	let length = 0;
+	for (const change of changes) {
+		const size = change[0].length + change[1].length + 8;
+		if (length + size > maxPayload && batches[batches.length - 1].length) {
+			batches.push([]);
+			length = 0;
+		}
+		batches[batches.length - 1].push(change);
+		length += size;
+	}
+	for (const batch of batches) {
+		const payload = JSON.stringify({ o: shared.origin, c: batch });
+		const send = shared.client
+			? shared.client.query(`SELECT pg_notify($1, $2)`, [
+					channel,
+					payload,
+				])
+			: sql(`SELECT pg_notify($1, $2)`, [channel, payload]);
+		void send.catch(() => {});
+	}
 }
 
 function clearEverything(): void {
@@ -104,11 +136,12 @@ function listen(): void {
 				try {
 					const change = JSON.parse(message.payload) as {
 						o: string;
-						k: string;
-						p: string;
+						c: [string, string][];
 					};
 					if (change.o === shared.origin) return;
-					shared.handlers.get(change.k)?.(change.p);
+					for (const [kind, key] of change.c) {
+						shared.handlers.get(kind)?.(key);
+					}
 				} catch {
 					// A payload that is not a change is ignored.
 				}

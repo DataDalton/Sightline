@@ -515,7 +515,11 @@ export const sampleTables: SampleTable[] = [
 	{ schema: "marketing", table: "campaign_days", statements: campaignsTable },
 	{ schema: "finance", table: "ledger", statements: ledgerTable },
 	{ schema: "operations", table: "shipments", statements: shipmentsTable },
-	{ schema: "people", table: "headcount_monthly", statements: headcountTable },
+	{
+		schema: "people",
+		table: "headcount_monthly",
+		statements: headcountTable,
+	},
 	{ schema: "web", table: "sessions_daily", statements: sessionsTable },
 ];
 
@@ -580,24 +584,46 @@ export const sources: SourceSeed[] = [
 		object: "orders",
 		timeField: "Order Date",
 		fields: [
-			dimension("Order Date", "order_date", "The day the order was placed.", "date"),
-			dimension("Region", "region", "The sales region the customer is in."),
+			dimension(
+				"Order Date",
+				"order_date",
+				"The day the order was placed.",
+				"date",
+			),
+			dimension(
+				"Region",
+				"region",
+				"The sales region the customer is in.",
+			),
 			dimension("Country", "country", "The country the order ships to."),
 			dimension(
 				"Channel",
 				"channel",
 				"Where the order was taken: the online store, a retail partner or a wholesale account.",
 			),
-			dimension("Product Category", "product_category", "The product family."),
+			dimension(
+				"Product Category",
+				"product_category",
+				"The product family.",
+			),
 			dimension("Product", "product", "The product ordered."),
-			dimension("Sales Rep", "sales_rep", "The account manager for the region."),
+			dimension(
+				"Sales Rep",
+				"sales_rep",
+				"The account manager for the region.",
+			),
 			dimension(
 				"Customer Segment",
 				"customer_segment",
 				"Consumer, small business or enterprise, from the customer record.",
 			),
 			dimension("Order ID", "order_id", "The order number."),
-			measure("Revenue", "SUM(revenue)", "currency", "What customers paid, after discounts."),
+			measure(
+				"Revenue",
+				"SUM(revenue)",
+				"currency",
+				"What customers paid, after discounts.",
+			),
 			measure(
 				"Gross Margin",
 				"SUM(revenue - cost)",
@@ -610,8 +636,18 @@ export const sources: SourceSeed[] = [
 				"percent",
 				"Gross margin as a share of revenue.",
 			),
-			measure("Orders", "COUNT(DISTINCT order_id)", "integer", "How many orders were placed."),
-			measure("Units", "SUM(quantity)", "integer", "How many items were sold."),
+			measure(
+				"Orders",
+				"COUNT(DISTINCT order_id)",
+				"integer",
+				"How many orders were placed.",
+			),
+			measure(
+				"Units",
+				"SUM(quantity)",
+				"integer",
+				"How many items were sold.",
+			),
 			measure(
 				"Average Order Value",
 				"SUM(revenue) / NULLIF(COUNT(DISTINCT order_id), 0)",
@@ -635,12 +671,26 @@ export const sources: SourceSeed[] = [
 		object: "tickets",
 		timeField: "Opened Date",
 		fields: [
-			dimension("Opened Date", "opened_on", "The day the ticket was opened.", "date"),
+			dimension(
+				"Opened Date",
+				"opened_on",
+				"The day the ticket was opened.",
+				"date",
+			),
 			dimension("Team", "team", "The team the ticket was routed to."),
-			dimension("Priority", "priority", "Low, medium, high or urgent, set on intake."),
+			dimension(
+				"Priority",
+				"priority",
+				"Low, medium, high or urgent, set on intake.",
+			),
 			dimension("Channel", "channel", "How the customer got in touch."),
 			dimension("Status", "status", "Open, or resolved."),
-			measure("Tickets", "COUNT(*)", "integer", "How many tickets were opened."),
+			measure(
+				"Tickets",
+				"COUNT(*)",
+				"integer",
+				"How many tickets were opened.",
+			),
 			measure(
 				"Avg First Response Minutes",
 				"AVG(first_response_minutes)",
@@ -691,14 +741,24 @@ export const sources: SourceSeed[] = [
 			),
 			dimension("Region", "region", "The region the campaign ran in."),
 			dimension("Audience", "audience", "Who the campaign was aimed at."),
-			measure("Spend", "SUM(spend)", "currency", "What the campaign cost."),
+			measure(
+				"Spend",
+				"SUM(spend)",
+				"currency",
+				"What the campaign cost.",
+			),
 			measure(
 				"Impressions",
 				"SUM(impressions)",
 				"integer",
 				"How many times an ad was shown.",
 			),
-			measure("Clicks", "SUM(clicks)", "integer", "How many times an ad was clicked."),
+			measure(
+				"Clicks",
+				"SUM(clicks)",
+				"integer",
+				"How many times an ad was clicked.",
+			),
 			measure(
 				"Conversions",
 				"SUM(conversions)",
@@ -746,15 +806,33 @@ export const sources: SourceSeed[] = [
 		object: "ledger",
 		timeField: "Month",
 		fields: [
-			dimension("Month", "month", "The month the spend was booked in.", "date"),
-			dimension("Department", "department", "The department that spent it."),
+			dimension(
+				"Month",
+				"month",
+				"The month the spend was booked in.",
+				"date",
+			),
+			dimension(
+				"Department",
+				"department",
+				"The department that spent it.",
+			),
 			dimension(
 				"Account Group",
 				"account_group",
 				"What it was spent on, such as salaries, software or travel.",
 			),
-			dimension("Cost Center", "cost_center", "The regional cost centre."),
-			measure("Actual Spend", "SUM(actual)", "currency", "What was spent."),
+			dimension(
+				"Cost Center",
+				"cost_center",
+				"The regional cost centre.",
+			),
+			measure(
+				"Actual Spend",
+				"SUM(actual)",
+				"currency",
+				"What was spent.",
+			),
 			measure("Budget", "SUM(budget)", "currency", "What was planned."),
 			measure(
 				"Forecast",
@@ -791,8 +869,17 @@ export const sources: SourceSeed[] = [
 		object: "shipments",
 		timeField: "Ship Date",
 		fields: [
-			dimension("Ship Date", "ship_date", "The day it left the warehouse.", "date"),
-			dimension("Warehouse", "warehouse", "The warehouse it shipped from."),
+			dimension(
+				"Ship Date",
+				"ship_date",
+				"The day it left the warehouse.",
+				"date",
+			),
+			dimension(
+				"Warehouse",
+				"warehouse",
+				"The warehouse it shipped from.",
+			),
 			dimension("Carrier", "carrier", "The carrier that delivered it."),
 			dimension(
 				"Destination Region",
@@ -805,7 +892,12 @@ export const sources: SourceSeed[] = [
 				"Standard, express or freight.",
 			),
 			dimension("Shipment ID", "shipment_id", "The shipment number."),
-			measure("Shipments", "COUNT(*)", "integer", "How many shipments went out."),
+			measure(
+				"Shipments",
+				"COUNT(*)",
+				"integer",
+				"How many shipments went out.",
+			),
 			measure(
 				"On Time Pct",
 				"100.0 * AVG(CASE WHEN on_time THEN 1 ELSE 0 END)",
@@ -824,14 +916,24 @@ export const sources: SourceSeed[] = [
 				"decimal",
 				"Days from shipping to delivery, on average.",
 			),
-			measure("Freight Cost", "SUM(freight_cost)", "currency", "What the carriers charged."),
+			measure(
+				"Freight Cost",
+				"SUM(freight_cost)",
+				"currency",
+				"What the carriers charged.",
+			),
 			measure(
 				"Cost per Shipment",
 				"SUM(freight_cost) / NULLIF(COUNT(*), 0)",
 				"currency",
 				"Freight cost divided by shipments.",
 			),
-			measure("Weight Kg", "SUM(weight_kg)", "decimal", "Total weight shipped."),
+			measure(
+				"Weight Kg",
+				"SUM(weight_kg)",
+				"decimal",
+				"Total weight shipped.",
+			),
 			measure(
 				"Damage Pct",
 				"100.0 * AVG(CASE WHEN damaged THEN 1 ELSE 0 END)",
@@ -849,7 +951,12 @@ export const sources: SourceSeed[] = [
 		object: "headcount_monthly",
 		timeField: "Month",
 		fields: [
-			dimension("Month", "month", "The month the figures are for.", "date"),
+			dimension(
+				"Month",
+				"month",
+				"The month the figures are for.",
+				"date",
+			),
 			dimension("Department", "department", "The department."),
 			dimension("Location", "location", "The office, or remote."),
 			dimension(
@@ -883,7 +990,12 @@ export const sources: SourceSeed[] = [
 				"decimal",
 				"The average survey score out of five, weighted by headcount.",
 			),
-			measure("Salary Cost", "SUM(salary_cost)", "currency", "What salaries cost."),
+			measure(
+				"Salary Cost",
+				"SUM(salary_cost)",
+				"currency",
+				"What salaries cost.",
+			),
 		],
 	},
 	{
@@ -903,9 +1015,18 @@ export const sources: SourceSeed[] = [
 				"Where the visitor came from.",
 			),
 			dimension("Device", "device", "Desktop, mobile or tablet."),
-			dimension("Landing Page", "landing_page", "The first page they saw."),
+			dimension(
+				"Landing Page",
+				"landing_page",
+				"The first page they saw.",
+			),
 			dimension("Country", "country", "Where the visitor was."),
-			measure("Sessions", "SUM(sessions)", "integer", "How many visits there were."),
+			measure(
+				"Sessions",
+				"SUM(sessions)",
+				"integer",
+				"How many visits there were.",
+			),
 			measure(
 				"Bounce Pct",
 				"100.0 * SUM(bounces) / NULLIF(SUM(sessions), 0)",
@@ -918,14 +1039,24 @@ export const sources: SourceSeed[] = [
 				"integer",
 				"Visits where something was added to the cart.",
 			),
-			measure("Web Orders", "SUM(orders)", "integer", "Orders placed online."),
+			measure(
+				"Web Orders",
+				"SUM(orders)",
+				"integer",
+				"Orders placed online.",
+			),
 			measure(
 				"Conversion Pct",
 				"100.0 * SUM(orders) / NULLIF(SUM(sessions), 0)",
 				"percent",
 				"The share of visits that ended in an order.",
 			),
-			measure("Web Revenue", "SUM(revenue)", "currency", "Revenue from online orders."),
+			measure(
+				"Web Revenue",
+				"SUM(revenue)",
+				"currency",
+				"Revenue from online orders.",
+			),
 			measure(
 				"Revenue per Session",
 				"SUM(revenue) / NULLIF(SUM(sessions), 0)",

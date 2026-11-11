@@ -3,6 +3,15 @@ import type { Identity } from "@/lib/auth/identity";
 import { resolvePolicyClass } from "@/lib/auth/policy";
 import { insertLog } from "@/lib/activityLog";
 import { sql } from "@/lib/data/lakebase";
+import {
+	cachedDefinition,
+	invalidateDefinitions,
+} from "@/lib/platform/definitionCache";
+import { readerReport, updateReaderReport } from "@/lib/platform/readerReport";
+import {
+	withGoalValues,
+	type GoalProgressRow,
+} from "@/lib/platform/readerRows";
 import { getReport } from "@/lib/platform/reports";
 import { executeQuery } from "@/lib/query/execute";
 import { parseQuerySpec } from "@/lib/query/spec";
@@ -30,13 +39,33 @@ interface GoalRow {
 	created_on: string;
 }
 
+// A report's goals change only when someone saves or removes one, so they are read once and
+// held until then.
+const goalKey = (reportId: string) => `goals:${reportId}`;
+
+function reportGoals(reportId: string): Promise<GoalRow[]> {
+	return cachedDefinition(goalKey(reportId), () =>
+		sql<GoalRow>(
+			`SELECT goal_id::text AS goal_id, title, source_key, measure, filters,
+			        target, created_by, due_on, created_on
+			 FROM goals
+			 WHERE is_active AND report_id = $1::uuid
+			 ORDER BY due_on NULLS LAST, title`,
+			[reportId],
+		),
+	);
+}
+
 // The report a page sits in as this person may see it, with what they may do on that page.
 async function placeOf(identity: Identity, pageId: string) {
-	const [found] = await sql<{ slug: string }>(
-		`SELECT r.slug FROM report_pages p
-		 JOIN reports r ON r.report_id = p.report_id
-		 WHERE p.page_id::text = $1 AND p.is_active AND r.is_active`,
-		[pageId],
+	// Held until a report is saved or removed. See invalidateReport.
+	const [found] = await cachedDefinition(`report-page-slug:${pageId}`, () =>
+		sql<{ slug: string }>(
+			`SELECT r.slug FROM report_pages p
+			 JOIN reports r ON r.report_id = p.report_id
+			 WHERE p.page_id::text = $1 AND p.is_active AND r.is_active`,
+			[pageId],
+		),
 	);
 	if (!found) return null;
 	const policy = await resolvePolicyClass(identity);
@@ -78,14 +107,7 @@ export async function GET(request: NextRequest) {
 				canManage: false,
 			});
 		}
-		const rows = await sql<GoalRow>(
-			`SELECT goal_id::text AS goal_id, title, source_key, measure, filters,
-			        target, created_by, due_on, created_on
-			 FROM goals
-			 WHERE is_active AND report_id = $1::uuid
-			 ORDER BY due_on NULLS LAST, title`,
-			[place.report.reportId],
-		);
+		const rows = await reportGoals(place.report.reportId);
 		const here = rows.filter((goal) =>
 			goalBelongsOnPage(goal, place.onPage),
 		);
@@ -108,7 +130,8 @@ export async function GET(request: NextRequest) {
 			};
 		};
 
-		const goals = await Promise.all(
+		// Every goal's figure for this person, read in parallel.
+		const currents = await Promise.all(
 			here.map(async (goal) => {
 				const answer = await executeQuery(
 					identity,
@@ -122,40 +145,93 @@ export async function GET(request: NextRequest) {
 				const raw = answer?.rows[0]?.[goal.measure];
 				const current =
 					raw === undefined || raw === null ? null : Number(raw);
-				if (current !== null && Number.isFinite(current)) {
-					await sql(
-						`INSERT INTO goal_progress (goal_id, user_email, day, value)
-						 VALUES ($1, lower($2), CURRENT_DATE, $3)
-						 ON CONFLICT (goal_id, user_email, day)
-						 DO UPDATE SET value = EXCLUDED.value`,
-						[goal.goal_id, identity.email, current],
-					);
-				}
-				const history = await sql<{ day: string; value: number }>(
-					`SELECT day::text AS day, value FROM goal_progress
-					 WHERE goal_id = $1 AND user_email = lower($2)
-					 ORDER BY day`,
-					[goal.goal_id, identity.email],
-				);
-				return {
-					...describe(goal),
-					current,
-					history,
-					status:
-						current === null
-							? null
-							: goalStatus({
-									start: history[0]?.value ?? current,
-									current,
-									target: goal.target,
-									startedOn:
-										history[0]?.day ?? goal.created_on,
-									dueOn: goal.due_on,
-									now: Date.now(),
-								}),
-				};
+				return current !== null && Number.isFinite(current)
+					? current
+					: null;
 			}),
 		);
+
+		// The day a figure is recorded under, decided here in UTC rather than by the
+		// database, so a held history and a new write always agree on which day is today.
+		const today = new Date().toISOString().slice(0, 10);
+		const reportId = place.report.reportId;
+
+		// This person's history of every goal here, read with the rest of what they have on
+		// the report. See lib/platform/readerReport.
+		const kept =
+			here.length > 0
+				? (await readerReport(identity.email, reportId)).goalProgress
+				: [];
+
+		// Today's value is written only when it is new or has changed, so looking again at
+		// the same figure writes nothing. All of them go in one statement.
+		const changed = here.flatMap((goal, index) => {
+			const current = currents[index];
+			if (current === null) return [];
+			const held = kept.find(
+				(row) => row.goal_id === goal.goal_id && row.day === today,
+			);
+			return held && Number(held.value) === current
+				? []
+				: [{ goalId: goal.goal_id, value: current }];
+		});
+		const written =
+			changed.length > 0
+				? await sql<GoalProgressRow>(
+						`INSERT INTO goal_progress (goal_id, user_email, day, value)
+						 SELECT g."goalId"::uuid, lower($2), $3::date, g.value
+						 FROM jsonb_to_recordset($1::jsonb)
+						   AS g("goalId" text, value double precision)
+						 ON CONFLICT (goal_id, user_email, day)
+						 DO UPDATE SET value = EXCLUDED.value
+						 RETURNING goal_id::text AS goal_id, day::text AS day, value`,
+						[JSON.stringify(changed), identity.email, today],
+					)
+				: [];
+		if (written.length > 0) {
+			await updateReaderReport(identity.email, reportId, (held) =>
+				withGoalValues(
+					held,
+					written.map((row) => ({
+						...row,
+						value: Number(row.value),
+					})),
+				),
+			);
+		}
+
+		const goals = here.map((goal, index) => {
+			const current = currents[index];
+			const fresh = written.find((row) => row.goal_id === goal.goal_id);
+			const history = kept
+				.filter(
+					(row) =>
+						row.goal_id === goal.goal_id &&
+						!(fresh && row.day === today),
+				)
+				.map((row) => ({ day: row.day, value: Number(row.value) }))
+				.concat(
+					fresh
+						? [{ day: fresh.day, value: Number(fresh.value) }]
+						: [],
+				);
+			return {
+				...describe(goal),
+				current,
+				history,
+				status:
+					current === null
+						? null
+						: goalStatus({
+								start: history[0]?.value ?? current,
+								current,
+								target: goal.target,
+								startedOn: history[0]?.day ?? goal.created_on,
+								dueOn: goal.due_on,
+								now: Date.now(),
+							}),
+			};
+		});
 
 		return privateJson({
 			goals,
@@ -198,18 +274,17 @@ export async function POST(request: NextRequest) {
 		const reportId = place.report.reportId;
 
 		if (goalId) {
-			const held = await sql<{ goal_id: string }>(
-				`SELECT goal_id FROM goals
-				 WHERE goal_id = $1 AND report_id = $2::uuid AND is_active`,
-				[goalId, reportId],
+			const held = (await reportGoals(reportId)).some(
+				(goal) => goal.goal_id === goalId,
 			);
-			if (!held[0]) return privateJson({ error: "Not found" }, 404);
+			if (!held) return privateJson({ error: "Not found" }, 404);
 		}
 
 		if (body.action === "remove" && goalId) {
 			await sql(`UPDATE goals SET is_active = FALSE WHERE goal_id = $1`, [
 				goalId,
 			]);
+			invalidateDefinitions(goalKey(reportId));
 			await insertLog({
 				recordType: "goal",
 				recordId: goalId,
@@ -296,6 +371,7 @@ export async function POST(request: NextRequest) {
 						reportId,
 					],
 				);
+		invalidateDefinitions(goalKey(reportId));
 		await insertLog({
 			recordType: "goal",
 			recordId: rows[0].goal_id,

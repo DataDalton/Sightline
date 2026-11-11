@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import useSWR from "swr";
+import { decksKey } from "../../lib/query/requestKey";
 import { Modal } from "../components/shared/Modal";
 import { Select } from "../components/shared/Select";
 import form from "../authoring/Authoring.module.css";
@@ -37,9 +38,7 @@ export function PowerPointDialog({
 	const [record, setRecord] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [failure, setFailure] = useState<string | null>(null);
-	const { data } = useSWR<{ decks: DeckChoice[] }>(
-		`/api/report/${encodeURIComponent(slug)}/decks`,
-	);
+	const { data } = useSWR<{ decks: DeckChoice[] }>(decksKey(slug));
 	const decks = (data?.decks ?? []).filter((deck) => deck.kind === "slides");
 	const deck = decks.find((held) => held.deckId === choice);
 	const { data: values } = useSWR<{ values: string[] }>(

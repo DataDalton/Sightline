@@ -2,6 +2,7 @@ import { diffVersions, type VersionDiff } from "./versionDetail";
 import type { Snapshot, SnapshotPage, SnapshotVisual } from "./versionDiff";
 import { applyToSnapshot } from "./suggestionPreview";
 import { sql } from "../data/lakebase";
+import { cachedDefinition, invalidateDefinitions } from "./definitionCache";
 import type { Identity } from "../auth/identity";
 import type { PolicyClass } from "../auth/policy";
 import { insertLog } from "../activityLog";
@@ -230,6 +231,7 @@ export async function createSuggestion(
 			JSON.stringify(summary),
 		],
 	);
+	dropOpenSuggestions(reportId);
 	await insertLog({
 		recordType: "report",
 		recordId: reportId,
@@ -329,19 +331,35 @@ async function decidesThroughPages(
 }
 
 // The open suggestions this person can decide on one report.
+// A report's open suggestions. Every visit to the report asks, and they change only when one
+// is made or decided, or the report itself changes, so they are held until then.
+const openKey = (reportId: string) => `report-suggestions:${reportId}`;
+
+export function dropOpenSuggestions(reportId: string): void {
+	invalidateDefinitions(openKey(reportId));
+}
+
+function openSuggestions(
+	reportId: string,
+): Promise<(SuggestionRow & { operations: EditOperation[] })[]> {
+	return cachedDefinition(openKey(reportId), () =>
+		sql<SuggestionRow & { operations: EditOperation[] }>(
+			`SELECT ${suggestionColumns}, s.operations
+			 FROM report_suggestions s
+			 JOIN reports r ON r.report_id = s.report_id
+			 WHERE s.report_id = $1 AND s.status = 'open'
+			 ORDER BY s.created_on`,
+			[reportId],
+		),
+	);
+}
+
 export async function suggestionsToDecide(
 	policy: PolicyClass,
 	identity: Identity,
 	report: { reportId: string; canReview: boolean },
 ): Promise<Suggestion[]> {
-	const rows = await sql<SuggestionRow & { operations: EditOperation[] }>(
-		`SELECT ${suggestionColumns}, s.operations
-		 FROM report_suggestions s
-		 JOIN reports r ON r.report_id = s.report_id
-		 WHERE s.report_id = $1 AND s.status = 'open'
-		 ORDER BY s.created_on`,
-		[report.reportId],
-	);
+	const rows = await openSuggestions(report.reportId);
 	if (report.canReview) return rows.map(toSuggestion);
 	const context = await getExplicitContext(policy, identity.email);
 	const out: Suggestion[] = [];
@@ -427,6 +445,7 @@ export async function decideSuggestion(
 	if (claimed.length === 0) {
 		throw new RequestError("Somebody has already dealt with this.", 409);
 	}
+	dropOpenSuggestions(row.report_id);
 
 	if (decision === "approve") {
 		try {
@@ -448,6 +467,7 @@ export async function decideSuggestion(
 				 WHERE suggestion_id = $1`,
 				[suggestionId],
 			);
+			dropOpenSuggestions(row.report_id);
 			if (
 				error instanceof EditRejectedError ||
 				error instanceof EditForbiddenError

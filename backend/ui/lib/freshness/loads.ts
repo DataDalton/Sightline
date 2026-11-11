@@ -88,6 +88,10 @@ const storedEvidence = batchedRead<string, LoadEvidence | null>(
 	null,
 );
 
+// The last load history read for each dataset, for when it cannot be read again. One entry
+// per dataset, so it stays as small as the catalogue.
+const lastRead = new Map<string, LoadEvidence | null>();
+
 export async function loadEvidence(
 	sourceKeys: string[],
 ): Promise<Map<string, LoadEvidence>> {
@@ -99,11 +103,15 @@ export async function loadEvidence(
 					`freshness:loads:${key}`,
 					() => storedEvidence(key),
 				);
+				lastRead.set(key, evidence);
 				if (evidence) out.set(key, evidence);
 			} catch (error) {
-				// Without load history every period is judged by the settling
-				// rules alone, never left unjudged.
-				console.warn("Load history could not be read:", error);
+				// The last history read stands in, since a load seldom lands in the moments
+				// the store is too busy to answer. Without any, every period is judged by the
+				// settling rules alone, never left unjudged.
+				const last = lastRead.get(key);
+				if (last) out.set(key, last);
+				else console.warn("Load history could not be read:", error);
 			}
 		}),
 	);

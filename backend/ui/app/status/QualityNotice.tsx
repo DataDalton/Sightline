@@ -2,6 +2,7 @@
 
 import Link from "../components/AppLink";
 import useSWR from "swr";
+import { qualityKey } from "../../lib/query/requestKey";
 import styles from "./Quality.module.css";
 
 // Said above a report page when data it reads is failing a rule, the same way a late
@@ -18,11 +19,10 @@ interface PageQuality {
 }
 
 function usePageQuality(sourceKeys: string[]) {
-	const keys = [...new Set(sourceKeys)].sort().join(",");
-	return useSWR<PageQuality>(
-		keys ? `/api/data-rules?sources=${encodeURIComponent(keys)}` : null,
-		{ refreshInterval: 5 * 60 * 1000, dedupingInterval: 60_000 },
-	).data;
+	return useSWR<PageQuality>(qualityKey(sourceKeys), {
+		refreshInterval: 5 * 60 * 1000,
+		dedupingInterval: 60_000,
+	}).data;
 }
 
 export function QualityNotice({ sourceKeys }: { sourceKeys: string[] }) {

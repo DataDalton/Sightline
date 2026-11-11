@@ -1,4 +1,5 @@
 import { sql } from "../data/lakebase";
+import { alertRowsChanged } from "../alerts/alertRows";
 import { cachedDefinition, invalidateDefinitions } from "./definitionCache";
 
 // Every active curated report, held once for the whole replica.
@@ -52,6 +53,38 @@ export async function curatedReports(): Promise<CuratedReportRow[]> {
 	);
 }
 
+// The active categories, under the navigation prefix so a category created,
+// renamed or removed drops them.
+const categoriesKey = "navigation:category-names";
+
+export function activeCategories(): Promise<{ id: string; name: string }[]> {
+	return cachedDefinition(categoriesKey, () =>
+		sql<{ id: string; name: string }>(
+			`SELECT category_id AS id, name FROM categories
+			 WHERE is_active = TRUE ORDER BY sort_order, name`,
+		),
+	);
+}
+
+// Every active page of the reports in the curated list, in page order, for
+// lists that name pages. Dropped with the curated list on any save to a report.
+const reportPagesKey = "navigation:report-pages";
+
+export function activeReportPages(): Promise<
+	{ id: string; title: string; report_id: string }[]
+> {
+	return cachedDefinition(reportPagesKey, () =>
+		sql<{ id: string; title: string; report_id: string }>(
+			`SELECT p.page_id::text AS id, p.title, p.report_id::text AS report_id
+			 FROM report_pages p
+			 JOIN reports r ON r.report_id = p.report_id
+			 WHERE p.is_active = TRUE AND r.is_active = TRUE
+			   AND r.is_personal = FALSE
+			 ORDER BY p.sort_order`,
+		),
+	);
+}
+
 // Drops what this replica holds about one report after a save to it: the
 // header under its slug, its pages and visuals, the lookup from its id to its
 // slug, and the shared curated list, which carries its title, version and
@@ -71,7 +104,15 @@ export function invalidateReport(
 	invalidateDefinitions(`report-slug:${reportId.toLowerCase()}`);
 	invalidateDefinitions(`report-subject:${reportId.toLowerCase()}`);
 	invalidateDefinitions(curatedKey);
+	invalidateDefinitions(reportPagesKey);
 	invalidateDefinitions("report-links:");
+	// Which report each page sits in, as goals look it up. Saves are rare, so every page's
+	// entry goes rather than working out which pages moved.
+	invalidateDefinitions("report-page-slug:");
+	// Open suggestions carry the report's title and address.
+	invalidateDefinitions(`report-suggestions:${reportId}`);
+	// Page alerts carry the report's and its pages' titles.
+	alertRowsChanged(reportId);
 }
 
 // Drops everything built from the catalogue as a whole: the navigation, the

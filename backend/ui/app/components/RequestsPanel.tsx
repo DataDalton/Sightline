@@ -5,6 +5,7 @@ import type { SourceMeta } from "../visuals/types";
 import { useState } from "react";
 import Link from "./AppLink";
 import useSWR from "swr";
+import { suggestionsKey } from "../../lib/query/requestKey";
 import { Modal } from "./shared/Modal";
 import { Select } from "./shared/Select";
 import form from "../authoring/Authoring.module.css";
@@ -335,7 +336,7 @@ export function ReportSuggestions({
 }) {
 	const [previewing, setPreviewing] = useState<string | null>(null);
 	const { data, mutate } = useSWR<{ suggestions: Suggestion[] }>(
-		`/api/report/${encodeURIComponent(slug)}/suggestions`,
+		suggestionsKey(slug),
 	);
 	const [open, setOpen] = useState(startOpen);
 	const suggestions = data?.suggestions ?? [];

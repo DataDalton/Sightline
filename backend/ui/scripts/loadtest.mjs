@@ -14,6 +14,13 @@
 // raised in stages, and each stage reports response times, failures, and the
 // processing time and memory of the app and its Postgres.
 //
+// Each stage has two windows. In the first, the stage's new people arrive,
+// each signing in for the first time somewhere within one pause. In the
+// second, everyone already arrived keeps coming back, as people do over a
+// working day. Both are reported, and the breaking point is judged on the
+// second, since arrivals over a real morning are spread far thinner than a
+// stage packs them.
+//
 // Results are written to the system's temporary folder and compared with the
 // previous run, so the figures that matter are the changes between runs on
 // the same machine rather than the figures themselves.
@@ -69,6 +76,10 @@ const stageSeconds = Number(option("stage-seconds", "120"));
 // better than it is, since the same person would be back before anything
 // changed.
 const [thinkLow, thinkHigh] = option("think", "30-120").split("-").map(Number);
+// How long a stage's new people are given to arrive before its returning
+// window is measured. Arrivals are spread over one pause, so one pause by
+// default.
+const arriveSeconds = Number(option("arrive-seconds", String(thinkHigh)));
 // A stage counts as past the breaking point once the slowest twentieth of
 // responses take longer than this, or this share of requests fail.
 const slowMs = Number(option("slow-ms", "3000"));
@@ -216,6 +227,15 @@ async function recordJourneys() {
 					},
 				]
 			: []),
+		// The changelog, scrolled to its end once, so its second page loads as well.
+		{
+			name: "updates",
+			weight: 5,
+			path: "/updates/",
+			wait: 6000,
+			then: `(() => { window.scrollTo(0, document.body.scrollHeight); document.querySelector("main")?.scrollTo?.(0, 1e7); return true; })()`,
+			thenWait: 4000,
+		},
 	];
 
 	const debugPort = 9470;
@@ -519,9 +539,16 @@ function sendOnce(request, headers) {
 				timeout: requestTimeoutMs,
 			},
 			(response) => {
-				// Read to the end, so a streamed answer is timed to its last line.
-				response.on("data", () => {});
-				response.on("end", () => resolve(response.statusCode ?? 0));
+				// Read to the end, so a streamed answer is timed to its last
+				// line, and note when its first line came, which is when a
+				// reader sees the cards already held.
+				let firstAt = null;
+				response.on("data", () => {
+					firstAt ??= performance.now();
+				});
+				response.on("end", () =>
+					resolve({ status: response.statusCode ?? 0, firstAt }),
+				);
 				response.on("error", reject);
 			},
 		);
@@ -547,11 +574,12 @@ async function send(person, request) {
 	const started = performance.now();
 	const kind = kindOf(request.method, request.path);
 	try {
-		const status = await sendOnce(request, headers);
+		const { status, firstAt } = await sendOnce(request, headers);
 		samples.push({
 			at: Date.now(),
 			kind,
 			ms: performance.now() - started,
+			firstMs: firstAt === null ? null : firstAt - started,
 			ok: status < 500 && status !== 429,
 			status: String(status),
 		});
@@ -622,7 +650,7 @@ function summarise(people, from, to, readings, before, after) {
 	const byKind = new Map();
 	for (const s of window) {
 		const list = byKind.get(s.kind) ?? [];
-		list.push(s.ms);
+		list.push(s);
 		byKind.set(s.kind, list);
 	}
 	const failures = new Map();
@@ -654,7 +682,22 @@ function summarise(people, from, to, readings, before, after) {
 			.map(([kind, list]) => ({
 				kind,
 				count: list.length,
-				p95: Math.round(percentile(list, 0.95)),
+				p95: Math.round(
+					percentile(
+						list.map((s) => s.ms),
+						0.95,
+					),
+				),
+				// When the first part of the answer arrived, for the slowest
+				// twentieth. Differs from the whole only for a streamed answer.
+				firstP95: Math.round(
+					percentile(
+						list.flatMap((s) =>
+							typeof s.firstMs === "number" ? [s.firstMs] : [],
+						),
+						0.95,
+					),
+				),
 			}))
 			.sort((a, b) => b.p95 - a.p95)
 			.slice(0, 6),
@@ -894,32 +937,54 @@ async function personLoop(index) {
 let reason = "every stage held up";
 try {
 	for (const count of stages) {
+		const arriving = count - active;
 		while (active < count) running.push(personLoop(active++));
+		console.log(
+			`\nStage of ${count} people, ${arriving} arriving over ${arriveSeconds}s, then ${stageSeconds}s of return visits...`,
+		);
+		let short = false;
+		const waitFor = async (seconds) => {
+			const started = Date.now();
+			while (Date.now() - started < seconds * 1000) {
+				await sleep(1000);
+				if (freemem() / 1048576 < minFreeMb) {
+					short = true;
+					return;
+				}
+			}
+		};
+		const arriveBefore = await databaseTotals();
+		const arriveFrom = Date.now();
+		await waitFor(arriveSeconds);
+		const arriveTo = Date.now();
+		const arriveAfter = await databaseTotals();
+		const arrival = summarise(
+			count,
+			arriveFrom,
+			arriveTo,
+			watcher.readings,
+			arriveBefore,
+			arriveAfter,
+		);
+		console.log(
+			`  arriving: ${arrival.requests} requests, ${arrival.perSecond}/s` +
+				` | typical ${arrival.p50}ms | slowest 5% ${arrival.p95}ms` +
+				` | failed ${(arrival.failedShare * 100).toFixed(1)}%` +
+				` | ${arrival.dbTransactionsPerSecond} transactions/s`,
+		);
 		const before = await databaseTotals();
 		const from = Date.now();
-		console.log(`\nStage of ${count} people for ${stageSeconds}s...`);
-		let short = false;
-		while (Date.now() - from < stageSeconds * 1000) {
-			await sleep(1000);
-			if (freemem() / 1048576 < minFreeMb) {
-				short = true;
-				break;
-			}
-		}
+		if (!short) await waitFor(stageSeconds);
 		const to = Date.now();
 		const after = await databaseTotals();
-		const summary = summarise(
-			count,
-			from,
-			to,
-			watcher.readings,
-			before,
-			after,
-		);
+		const summary = {
+			...summarise(count, from, to, watcher.readings, before, after),
+			arrival,
+		};
 		results.push(summary);
 		const was = earlier?.stages?.find((s) => s.people === count);
 		console.log(
-			`  ${summary.requests} requests, ${summary.perSecond}/s${change(summary.perSecond, was?.perSecond)}` +
+			`  returning: ${summary.requests} requests, ${summary.perSecond}/s${change(summary.perSecond, was?.perSecond)}` +
 				` | typical ${summary.p50}ms${change(summary.p50, was?.p50)}` +
 				` | slowest 5% ${summary.p95}ms${change(summary.p95, was?.p95)}` +
 				` | failed ${(summary.failedShare * 100).toFixed(1)}%`,
@@ -930,7 +995,9 @@ try {
 				` ${summary.dbTransactionsPerSecond} transactions/s, ${summary.dbConnections} connections`,
 		);
 		for (const s of summary.slowest)
-			console.log(`    ${s.p95}ms  ${s.kind}  (${s.count})`);
+			console.log(
+				`    ${s.p95}ms, first part ${s.firstP95}ms  ${s.kind}  (${s.count})`,
+			);
 		for (const f of summary.failures)
 			console.log(`    failed ${f.count}x  ${f.what}`);
 		if (short) {
@@ -957,7 +1024,15 @@ const held = results.filter(
 );
 const run = {
 	finishedOn: new Date().toISOString(),
-	settings: { stages, stageSeconds, thinkLow, thinkHigh, slowMs, failShare },
+	settings: {
+		stages,
+		stageSeconds,
+		arriveSeconds,
+		thinkLow,
+		thinkHigh,
+		slowMs,
+		failShare,
+	},
 	warehouseDelayMs: Number(process.env.DEMO_WAREHOUSE_DELAY_MS) || null,
 	journeys: journeys.map((j) => ({
 		name: j.name,
