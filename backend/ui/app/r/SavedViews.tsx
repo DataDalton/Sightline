@@ -56,6 +56,9 @@ interface SavedViewsProps {
 	// own default view is put on it. A link says what it wants, and that wins.
 	mayOpenOnDefault?: boolean;
 	onApply: (view: SavedView | null) => void;
+	// A word before the view's name, such as "Viewing". Given, the trigger is drawn as
+	// a quiet switcher with a chevron rather than as a button.
+	prefix?: string;
 }
 
 export function SavedViews({
@@ -66,6 +69,7 @@ export function SavedViews({
 	requestedViewId,
 	mayOpenOnDefault = false,
 	onApply: applyToPage,
+	prefix,
 }: SavedViewsProps) {
 	const { applySelection } = usePageFilters();
 
@@ -236,7 +240,11 @@ export function SavedViews({
 		<div className={styles.wrapper} ref={wrapperRef}>
 			<button
 				type="button"
-				className={styles.trigger}
+				className={
+					prefix
+						? `${styles.trigger} ${styles.triggerQuiet}`
+						: styles.trigger
+				}
 				onClick={() => setOpen((v) => !v)}
 				aria-expanded={open}
 				aria-haspopup="true"
@@ -253,7 +261,29 @@ export function SavedViews({
 				>
 					<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
 				</svg>
-				{activeName}
+				{prefix ? (
+					<>
+						<span>
+							{prefix}: {activeName}
+						</span>
+						<svg
+							className={styles.triggerChevron}
+							width="13"
+							height="13"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2.4"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+							aria-hidden="true"
+						>
+							<path d="m6 9 6 6 6-6" />
+						</svg>
+					</>
+				) : (
+					activeName
+				)}
 			</button>
 
 			{open && (

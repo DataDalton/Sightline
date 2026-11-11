@@ -358,16 +358,228 @@
 	min-width: 200px;
 }
 
-.pageNotice {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: var(--space-2);
+/* Updates about what a page or Data status shows, as one line that opens a list. */
+.notices {
 	margin-bottom: var(--space-3);
-	padding: var(--space-2) var(--space-3);
 	border: 1px solid var(--border-default);
+	border-left-width: 3px;
 	border-radius: var(--radius-md);
+	background: var(--surface-raised);
 	font-size: var(--text-sm);
+	overflow: hidden;
+}
+
+.noticesbreaking {
+	border-left-color: var(--danger);
+}
+
+.noticesnotable {
+	border-left-color: var(--warning);
+}
+
+.noticesinfo {
+	border-left-color: var(--brand);
+}
+
+.noticeBar {
+	display: flex;
+	align-items: stretch;
+}
+
+/* The line itself, a link for one entry and a toggle for several. */
+.noticeSummary {
+	display: flex;
+	flex: 1;
+	align-items: center;
+	gap: var(--space-3);
+	min-width: 0;
+	padding: var(--space-2) var(--space-3);
+	border: 0;
+	background: none;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	text-decoration: none;
+	cursor: pointer;
+}
+
+.noticeSummary:hover,
+.noticeItem:hover {
+	background: var(--surface-hover, var(--surface-active));
+}
+
+.noticeSummary:focus-visible,
+.noticeItem:focus-visible,
+.noticeDismiss:focus-visible,
+.noticeAll:focus-visible {
+	outline: 2px solid var(--brand);
+	outline-offset: -2px;
+}
+
+.noticeIcon {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	border-radius: var(--radius-sm);
+}
+
+.noticeIconbreaking {
+	background: var(--danger-subtle);
+	color: var(--danger);
+}
+
+.noticeIconnotable {
+	background: var(--warning-subtle);
+	color: var(--warning);
+}
+
+.noticeIconinfo {
+	background: var(--info-subtle);
+	color: var(--brand);
+}
+
+.noticeText {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.noticeTitle {
+	overflow: hidden;
+	color: var(--text-primary);
+	font-weight: 600;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.noticeMeta {
+	display: flex;
+	align-items: baseline;
+	gap: var(--space-1);
+	min-width: 0;
+	color: var(--text-secondary);
+	font-size: var(--text-xs);
+	white-space: nowrap;
+}
+
+.noticeDot {
+	color: var(--text-muted);
+}
+
+.noticeWhat {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.noticeArrow,
+.chevron,
+.chevronOpen {
+	flex: none;
+	color: var(--text-muted);
+	transition: transform 150ms ease;
+}
+
+.chevronOpen {
+	transform: rotate(180deg);
+}
+
+.noticeSummary:hover .noticeArrow,
+.noticeItem:hover .noticeArrow {
+	color: var(--text-primary);
+	transform: translateX(2px);
+}
+
+.noticeDismiss {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 40px;
+	border: 0;
+	border-left: 1px solid var(--border-subtle);
+	background: none;
+	color: var(--text-muted);
+	cursor: pointer;
+}
+
+.noticeDismiss:hover {
+	background: var(--surface-hover, var(--surface-active));
+	color: var(--text-primary);
+}
+
+.noticeList {
+	display: flex;
+	flex-direction: column;
+	border-top: 1px solid var(--border-subtle);
+	background: var(--surface-base, var(--surface-raised));
+}
+
+.noticeItem {
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
+	color: inherit;
+	text-decoration: none;
+}
+
+.noticeItem + .noticeItem {
+	border-top: 1px solid var(--border-subtle);
+}
+
+/* A dot in the colour of each entry's impact, in place of a second icon. */
+.noticeMark {
+	flex: none;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+}
+
+.noticeMarkbreaking {
+	background: var(--danger);
+}
+
+.noticeMarknotable {
+	background: var(--warning);
+}
+
+.noticeMarkinfo {
+	background: var(--brand);
+}
+
+.noticeItemTitle {
+	overflow: hidden;
+	color: var(--text-primary);
+	font-weight: 500;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.noticeAll {
+	padding: var(--space-2) var(--space-4);
+	border-top: 1px solid var(--border-subtle);
+	color: var(--text-link);
+	font-size: var(--text-xs);
+	font-weight: 500;
+	text-decoration: none;
+}
+
+.noticeAll:hover {
+	text-decoration: underline;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.noticeArrow,
+	.chevron,
+	.chevronOpen {
+		transition: none;
+	}
 }
 
 .homeCard {

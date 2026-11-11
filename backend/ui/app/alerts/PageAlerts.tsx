@@ -202,8 +202,9 @@ export function PageAlertItem({
 	);
 }
 
-// The bell in a report page's header, with how many alerts the page has.
-// Nothing is drawn for a page without any, or while alerts are turned off.
+// The bell in a report page's header, with how many alerts the page has. Drawn on every
+// page while alerts are turned on, so a page without any says so and its editors can set
+// one up from the same place.
 export function PageAlertsButton({
 	pageId,
 	pageTitle,
@@ -224,7 +225,7 @@ export function PageAlertsButton({
 		{ keepPreviousData: false },
 	);
 	const count = data?.alerts.length ?? 0;
-	if (!alertsEnabled || count === 0) return null;
+	if (!alertsEnabled) return null;
 	const following = data?.alerts.filter((a) => a.subscribed).length ?? 0;
 
 	return (
@@ -235,19 +236,23 @@ export function PageAlertsButton({
 				onClick={() => setOpen(true)}
 				aria-haspopup="dialog"
 				title={
-					following > 0
-						? `You follow ${following} of this page's alerts`
-						: "Alerts on this page you can follow"
+					count === 0
+						? "No alerts on this page yet"
+						: following > 0
+							? `You follow ${following} of this page's alerts`
+							: "Alerts on this page you can follow"
 				}
 			>
 				<BellIcon />
 				Alerts
-				<span
-					className={styles.count}
-					aria-label={`${count} ${count === 1 ? "alert" : "alerts"}`}
-				>
-					{count}
-				</span>
+				{count > 0 && (
+					<span
+						className={styles.count}
+						aria-label={`${count} ${count === 1 ? "alert" : "alerts"}`}
+					>
+						{count}
+					</span>
+				)}
 			</button>
 			{open && data && (
 				<PageAlertsDialog
@@ -291,6 +296,7 @@ function PageAlertsDialog({
 }) {
 	const notify = useNotify();
 	const [copying, setCopying] = useState<PageAlertRecord | null>(null);
+	const [adding, setAdding] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const [failure, setFailure] = useState<string | null>(null);
 	const [copied, setCopied] = useState(false);
@@ -322,7 +328,7 @@ function PageAlertsDialog({
 	return (
 		<>
 			<Modal
-				isOpen={copying === null}
+				isOpen={copying === null && !adding}
 				onClose={onClose}
 				title={`Alerts on ${pageTitle}`}
 				width="560px"
@@ -340,27 +346,46 @@ function PageAlertsDialog({
 						>
 							Close
 						</button>
-						<button
-							type="button"
-							className={styles.primary}
-							onClick={() => void subscribeAll()}
-							disabled={busy || missing === 0}
-						>
-							{missing === 0
-								? "Following all"
-								: busy
-									? "Subscribing"
-									: "Subscribe to all"}
-						</button>
+						{list.canEdit && (
+							<button
+								type="button"
+								className={styles.secondary}
+								onClick={() => setAdding(true)}
+							>
+								Set up an alert
+							</button>
+						)}
+						{list.alerts.length > 0 && (
+							<button
+								type="button"
+								className={styles.primary}
+								onClick={() => void subscribeAll()}
+								disabled={busy || missing === 0}
+							>
+								{missing === 0
+									? "Following all"
+									: busy
+										? "Subscribing"
+										: "Subscribe to all"}
+							</button>
+						)}
 					</>
 				}
 			>
-				<p className={styles.hint}>
-					Set up by the people who look after this report. Follow the
-					ones you want in your inbox, each worked out from the rows
-					you can see.
-					{copied && " Your copy is under Inbox, Alerts."}
-				</p>
+				{list.alerts.length === 0 ? (
+					<p className={styles.hint}>
+						{list.canEdit
+							? "No alerts on this page yet. Set one up and anyone who reads the page can follow it."
+							: "No alerts on this page yet. The people who look after this report can set them up."}
+					</p>
+				) : (
+					<p className={styles.hint}>
+						Set up by the people who look after this report. Follow
+						the ones you want in your inbox, each worked out from
+						the rows you can see.
+						{copied && " Your copy is under Inbox, Alerts."}
+					</p>
+				)}
 				<ul className={styles.list}>
 					{list.alerts.map((alert) => (
 						<PageAlertItem
@@ -372,6 +397,17 @@ function PageAlertsDialog({
 					))}
 				</ul>
 			</Modal>
+			{adding && (
+				<AlertDialog
+					sources={sources}
+					page={{ pageId, pageTitle }}
+					onClose={() => setAdding(false)}
+					onSavedPage={() => {
+						setAdding(false);
+						onRefresh();
+					}}
+				/>
+			)}
 			{copying && (
 				<AlertDialog
 					sources={sources}

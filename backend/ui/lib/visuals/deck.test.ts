@@ -6,6 +6,7 @@ import {
 	slideSlots,
 	cleanDeckInput,
 	popoverPosition,
+	withPageSteps,
 	shouldOffer,
 	slideLayout,
 	stepIndex,
@@ -142,4 +143,40 @@ test("a layout says how many places it has, and a title slide has none", () => {
 test("a stored layout must be a real one", () => {
 	assert.equal(cleanStep({ layout: "two" }, () => "x").layout, "two");
 	assert.equal(cleanStep({ layout: "bad" }, () => "x").layout, null);
+});
+
+test("a tour moving to another page gets a step on that page's tab first", () => {
+	const step = (id: string, pageId: string) => ({
+		id,
+		title: id,
+		text: "",
+		pageId,
+		visualId: id,
+		filters: { Region: ["Europe"] },
+		mark: null,
+		visualIds: [],
+	});
+	const pages = [
+		{ pageId: "p1", title: "Overview" },
+		{ pageId: "p2", title: "Order activity" },
+	];
+	const shown = withPageSteps(
+		[step("a", "p1"), step("b", "p1"), step("c", "p2"), step("d", "p2")],
+		pages,
+	);
+	assert.deepEqual(
+		shown.map((s) => s.id),
+		["a", "b", "page:c", "c", "d"],
+	);
+	const added = shown[2];
+	assert.equal(added.pageStep, true);
+	assert.equal(added.pageId, "p2");
+	assert.equal(added.visualId, null);
+	assert.equal(added.title, "Order activity");
+	assert.deepEqual(added.filters, { Region: ["Europe"] });
+	// The first step opens its own page, with nothing to announce.
+	assert.deepEqual(
+		withPageSteps([step("c", "p2")], pages).map((s) => s.id),
+		["c"],
+	);
 });

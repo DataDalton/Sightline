@@ -901,7 +901,7 @@ function VisualBody({
 						<NotesAction
 							count={notes.length}
 							onOpen={() => {
-								setShowingNotes(true);
+								setShowingNotes((open) => !open);
 								noteAction("notes");
 							}}
 							available={Boolean(reportId && pageId)}
@@ -966,7 +966,7 @@ function VisualBody({
 						<NotesAction
 							count={notes.length}
 							onOpen={() => {
-								setShowingNotes(true);
+								setShowingNotes((open) => !open);
 								noteAction("notes");
 							}}
 							available={Boolean(reportId && pageId)}
@@ -1059,7 +1059,7 @@ function VisualBody({
 						<NotesAction
 							count={notes.length}
 							onOpen={() => {
-								setShowingNotes(true);
+								setShowingNotes((open) => !open);
 								noteAction("notes");
 							}}
 							available={Boolean(reportId && pageId)}
@@ -1280,7 +1280,7 @@ function VisualBody({
 						<NotesAction
 							count={notes.length}
 							onOpen={() => {
-								setShowingNotes(true);
+								setShowingNotes((open) => !open);
 								noteAction("notes");
 							}}
 							available={Boolean(reportId && pageId)}

@@ -1,20 +1,19 @@
 "use client";
 
-import Link from "../components/AppLink";
 import useSWR from "swr";
 import { describePattern } from "../../lib/freshness/arrivals";
 import { lateKey } from "../../lib/query/requestKey";
 import type { StoredPattern } from "../../lib/freshness/lateness";
-import styles from "./LateData.module.css";
 
-// Said above a page when data it reads has not arrived when it usually does,
-// so its figures are read as possibly behind rather than as today's.
+// Which datasets a page reads have not arrived when they usually do, so its figures are
+// read as possibly behind rather than as today's. Told in the page's data status. See
+// app/r/DataHealth.
 //
 // Asked of the server for the sources the page reads. Asking is also what
 // settles a source that is past due but has not been looked at since, so the
 // notice can appear a moment after the page opens rather than with it.
 
-interface LateSource {
+export interface LateSource {
 	sourceKey: string;
 	title: string;
 	state: string;
@@ -46,48 +45,19 @@ function when(iso: string): string {
 	});
 }
 
-export function LateDataNotice({ sourceKeys }: { sourceKeys: string[] }) {
+export function useLateSources(sourceKeys: string[]): LateSource[] {
 	const { data } = useSWR<{ sources: LateSource[] }>(lateKey(sourceKeys), {
 		refreshInterval: refreshMs,
 	});
+	return (data?.sources ?? []).filter((s) => s.state === "late");
+}
 
-	const late = (data?.sources ?? []).filter((s) => s.state === "late");
-	if (late.length === 0) return null;
-
-	return (
-		<div className={styles.notice} role="status">
-			<svg
-				className={styles.icon}
-				width="16"
-				height="16"
-				viewBox="0 0 24 24"
-				fill="none"
-				stroke="currentColor"
-				strokeWidth="2"
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				aria-hidden="true"
-			>
-				<circle cx="12" cy="12" r="9" />
-				<path d="M12 7v5l3 2" />
-			</svg>
-			<div className={styles.text}>
-				{late.map((source) => (
-					<p key={source.sourceKey}>
-						<strong>{source.title}</strong> has not updated
-						{source.lastArrival
-							? ` since ${when(source.lastArrival)}`
-							: ""}
-						, so figures from it may be behind.
-						{source.pattern
-							? ` ${describePattern(source.pattern, browserZone())}`
-							: ""}
-					</p>
-				))}
-				<Link href="/status" className={styles.link}>
-					See data status or get told when it is late
-				</Link>
-			</div>
-		</div>
-	);
+// Since when a late source has not updated, and when it usually does.
+export function lateDetail(source: LateSource): string {
+	const since = source.lastArrival
+		? `Not updated since ${when(source.lastArrival)}, so figures from it may be behind.`
+		: "Not updated when expected, so figures from it may be behind.";
+	return source.pattern
+		? `${since} ${describePattern(source.pattern, browserZone())}`
+		: since;
 }

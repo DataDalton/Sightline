@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { decksKey } from "../../lib/query/requestKey";
 import {
@@ -12,6 +12,7 @@ import {
 	type DeckStep,
 	placeSlide,
 	slideLayouts,
+	withPageSteps,
 } from "../../lib/visuals/deck";
 import { FilterGateProvider, PageFilterProvider } from "../visuals/PageFilters";
 import { VisualRenderer } from "../visuals/VisualRenderer";
@@ -76,61 +77,108 @@ function useStepKeys(
 
 // --- Walkthroughs ----------------------------------------------------------------
 
-function useTargetRect(visualId: string | null, stepKey: string) {
+function sameRect(a: DOMRect | null, b: DOMRect): boolean {
+	return (
+		a !== null &&
+		a.top === b.top &&
+		a.left === b.left &&
+		a.width === b.width &&
+		a.height === b.height
+	);
+}
+
+// Frames a newly found visual must hold still before the spotlight moves to it.
+const settleFrames = 4;
+// How long to wait for a visual to hold still before moving to it regardless.
+const settleLimitMs = 1500;
+// How long to keep looking for a visual that has not appeared.
+const findLimitMs = 4000;
+
+// Where the step's target is on screen, the visual it spotlights or, on a step that
+// moves to another page, that page's tab.
+//
+// Keeps the previous step's place until the new visual has been found and has
+// stopped moving. A step on another page first switches the page, and while it
+// does the visual is missing, then laid out from the grid's corner into its
+// cell. Following it through that made the spotlight vanish and then grow out
+// of the top left. Holding the old place instead lets the spotlight glide from
+// one visual to the next, the same as a step on the same page.
+function useTargetRect(selector: string | null, stepKey: string) {
 	const [rect, setRect] = useState<DOMRect | null>(null);
 	useEffect(() => {
-		setRect(null);
-		if (!visualId) return;
+		if (!selector) {
+			setRect(null);
+			return;
+		}
 		let frame = 0;
-		let scrolled = false;
+		let settled = false;
+		let steady = 0;
+		let lastSeen: DOMRect | null = null;
 		const startedAt = Date.now();
 		const look = () => {
-			const element = document.querySelector<HTMLElement>(
-				`[data-visual-id="${CSS.escape(visualId)}"]`,
-			);
+			const element = document.querySelector<HTMLElement>(selector);
 			if (element) {
-				if (!scrolled) {
-					element.scrollIntoView({ block: "center" });
-					scrolled = true;
-				}
 				const next = element.getBoundingClientRect();
-				setRect((held) =>
-					held &&
-					held.top === next.top &&
-					held.left === next.left &&
-					held.width === next.width &&
-					held.height === next.height
-						? held
-						: next,
-				);
+				if (!settled) {
+					steady =
+						next.width > 0 && sameRect(lastSeen, next)
+							? steady + 1
+							: 0;
+					lastSeen = next;
+					if (
+						steady >= settleFrames ||
+						Date.now() - startedAt > settleLimitMs
+					) {
+						settled = true;
+						element.scrollIntoView({ block: "center" });
+					}
+				} else {
+					setRect((held) => (sameRect(held, next) ? held : next));
+				}
 			}
-			// Keeps looking, since the page may still be switching and a chart may
-			// still be growing into its place.
-			if (element || Date.now() - startedAt < 4000) {
+			// Keeps watching once found, since a chart may still be growing into
+			// its place and the page may scroll.
+			if (element || Date.now() - startedAt < findLimitMs) {
 				frame = requestAnimationFrame(look);
 			}
 		};
 		frame = requestAnimationFrame(look);
 		return () => cancelAnimationFrame(frame);
-	}, [visualId, stepKey]);
+	}, [selector, stepKey]);
 	return rect;
 }
+
+// The gap under a visual marked with an arrow. It holds the arrow's height and room
+// either side of it, so the explanation sits below the arrow rather than over it.
+const arrowClearance = 40;
 
 export function TourOverlay({
 	slug,
 	deck,
+	pages,
 	onStep,
 	onExit,
 }: {
 	slug: string;
 	deck: Deck;
+	// The report's pages, for naming the page a step moves to.
+	pages: { pageId: string; title: string }[];
 	// Puts the page in the state a step asks for.
 	onStep: (pageId: string | null, search: string) => void;
 	onExit: () => void;
 }) {
 	const [index, setIndex] = useState(0);
-	const step = deck.steps[index] as DeckStep | undefined;
-	const rect = useTargetRect(step?.visualId ?? null, step?.id ?? "");
+	const steps = useMemo(
+		() => withPageSteps(deck.steps, pages),
+		[deck.steps, pages],
+	);
+	const step = steps[index] as DeckStep | undefined;
+	const target = step?.pageStep
+		? `[data-page-tab="${CSS.escape(step.pageId ?? "")}"]`
+		: step?.visualId
+			? `[data-visual-id="${CSS.escape(step.visualId)}"]`
+			: null;
+	const rect = useTargetRect(target, step?.id ?? "");
 	const box = useRef<HTMLDivElement>(null);
 	const [boxSize, setBoxSize] = useState({ width: 360, height: 180 });
 
@@ -154,7 +202,7 @@ export function TourOverlay({
 		});
 	}, [index, rect]);
 
-	const last = index >= deck.steps.length - 1;
+	const last = index >= steps.length - 1;
 	const finish = useCallback(() => {
 		noteProgress(slug, deck.deckId, "finished");
 		onExit();
@@ -164,8 +212,8 @@ export function TourOverlay({
 		else setIndex((held) => held + 1);
 	}, [last, finish]);
 	const back = useCallback(
-		() => setIndex((held) => stepIndex(held - 1, deck.steps.length)),
-		[deck.steps.length],
+		() => setIndex((held) => stepIndex(held - 1, steps.length)),
+		[steps.length],
 	);
 	useStepKeys(next, back, onExit);
 
@@ -182,6 +230,8 @@ export function TourOverlay({
 			: null,
 		boxSize,
 		{ width: window.innerWidth, height: window.innerHeight },
+		// Clear of the arrow, which sits in the gap under the visual.
+		step.mark === "arrow" ? arrowClearance : undefined,
 	);
 
 	return (
@@ -232,7 +282,7 @@ export function TourOverlay({
 				{step.text && <p className={styles.tourText}>{step.text}</p>}
 				<div className={styles.tourActions}>
 					<span className={styles.barCount}>
-						{index + 1} of {deck.steps.length}
+						{index + 1} of {steps.length}
 					</span>
 					<button
 						type="button"

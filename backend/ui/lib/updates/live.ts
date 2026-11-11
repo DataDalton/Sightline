@@ -1,6 +1,6 @@
 import {
 	currentWindow,
-	isUnderway,
+	onPagesNow,
 	namesField,
 	sourcesOf,
 	type AboutItem,
@@ -15,8 +15,9 @@ import {
 type Read = Update & { read?: boolean };
 
 // One entry as the banner, pop-up, Home card, page notices, Data status and the
-// maintenance calendar read it. The body is kept only where a pop-up shows it, and the
-// about list keeps what a page notice or the calendar matches on, which leaves out tables.
+// maintenance calendar read it. The body is kept only where a pop-up shows it, what to do
+// only where a page notice can show it, and the about list keeps what a page notice or the
+// calendar matches on, which leaves out tables.
 export interface LiveUpdate extends Pick<
 	Update,
 	| "updateId"
@@ -32,6 +33,7 @@ export interface LiveUpdate extends Pick<
 	| "repeat"
 	| "requireAck"
 	| "about"
+	| "whatToDo"
 > {
 	read: boolean;
 	body: string | null;
@@ -69,11 +71,7 @@ function shownSomewhere(
 	if (update.type === "maintenance" && currentWindow(update, now) !== null) {
 		return true;
 	}
-	return (
-		update.delivery.page &&
-		(update.impact === "breaking" ||
-			(update.type === "maintenance" && isUnderway(update, now)))
-	);
+	return onPagesNow(update, now);
 }
 
 // The live slice, in the order the updates came in. Whether the reader has read each entry
@@ -115,6 +113,7 @@ export function liveSlice(
 				requireAck: update.requireAck,
 				read,
 				body: update.delivery.popup && !read ? update.body : null,
+				whatToDo: update.delivery.page ? update.whatToDo : null,
 				about: compactAbout(update.about),
 			};
 		});

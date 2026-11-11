@@ -58,7 +58,9 @@ export function Sparkline({
 	const max = domain ? domain.max : Math.max(...points);
 	const span = max - min;
 
-	// Inset by the stroke so the extremes are not clipped by the viewbox.
+	// Inset by the stroke so the extremes are not clipped by the viewbox. Strokes
+	// do not scale with a stretched box, so the line keeps its width on a wide panel
+	// rather than thickening with the horizontal stretch.
 	const pad = 1.5;
 	const usableW = width - pad * 2;
 	const usableH = height - pad * 2;
@@ -85,41 +87,68 @@ export function Sparkline({
 	const [lastX, lastY] = coords[coords.length - 1];
 
 	const stroke = color ?? "currentColor";
+	const dotSize = 4;
 
 	return (
-		<svg
-			width={stretch ? undefined : width}
-			height={height}
-			viewBox={`0 0 ${width} ${height}`}
-			preserveAspectRatio={stretch ? "none" : undefined}
-			role={label ? "img" : "presentation"}
-			aria-label={label}
-			aria-hidden={label ? undefined : true}
+		<span
 			style={{
+				position: "relative",
 				display: "block",
-				overflow: "visible",
-				...(stretch ? { width: "100%" } : {}),
+				width: stretch ? "100%" : width,
+				height,
 			}}
 		>
-			{fill && (
-				<polygon
-					points={`${firstX},${height - pad} ${path} ${lastX},${height - pad}`}
-					fill={stroke}
-					opacity="0.14"
+			<svg
+				width={stretch ? undefined : width}
+				height={height}
+				viewBox={`0 0 ${width} ${height}`}
+				preserveAspectRatio={stretch ? "none" : undefined}
+				role={label ? "img" : "presentation"}
+				aria-label={label}
+				aria-hidden={label ? undefined : true}
+				style={{
+					display: "block",
+					overflow: "visible",
+					...(stretch ? { width: "100%" } : {}),
+				}}
+			>
+				{fill && (
+					<polygon
+						points={`${firstX},${height - pad} ${path} ${lastX},${height - pad}`}
+						fill={stroke}
+						opacity="0.14"
+					/>
+				)}
+				<polyline
+					points={path}
+					fill="none"
+					stroke={stroke}
+					strokeWidth="1.5"
+					strokeLinejoin="round"
+					strokeLinecap="round"
+					opacity="0.75"
+					vectorEffect="non-scaling-stroke"
 				/>
-			)}
-			<polyline
-				points={path}
-				fill="none"
-				stroke={stroke}
-				strokeWidth="1.5"
-				strokeLinejoin="round"
-				strokeLinecap="round"
-				opacity="0.75"
-			/>
+			</svg>
 			{/* The latest point, marked. Where a series has got to is the part
-			    of it a reader is actually looking for. */}
-			<circle cx={lastX} cy={lastY} r="2" fill={stroke} />
-		</svg>
+			    of it a reader is actually looking for. Placed over the drawing by
+			    percentage rather than drawn inside it, so a stretched sparkline
+			    keeps a round dot of the same size instead of an oval. */}
+			<span
+				aria-hidden="true"
+				style={{
+					position: "absolute",
+					left: `${(lastX / width) * 100}%`,
+					top: `${(lastY / height) * 100}%`,
+					width: dotSize,
+					height: dotSize,
+					marginLeft: -dotSize / 2,
+					marginTop: -dotSize / 2,
+					borderRadius: "50%",
+					background: stroke,
+					pointerEvents: "none",
+				}}
+			/>
+		</span>
 	);
 }

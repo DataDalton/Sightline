@@ -2,7 +2,6 @@
 
 import { formatValue } from "../../lib/format";
 import { usePostResource } from "../hooks/usePostResource";
-import styles from "./Filters.module.css";
 
 // How current the data on a page is.
 //
@@ -15,20 +14,29 @@ import styles from "./Filters.module.css";
 // "when this was true": an order date, a paid date, a load timestamp. The
 // source's own time field is the fallback so a page shows something sensible
 // before anyone configures it.
+//
+// Drawn in the page's data status, which carries the page's notices as well.
+// See app/r/DataHealth.
 
-interface DataFreshnessProps {
-	sourceKey: string;
-	field: string;
-	label?: string | null;
-	dataType?: string | null;
+export interface FreshnessStamp {
+	label: string;
+	// The newest value, written for reading, or null while it is asked for.
+	value: string | null;
+	// Why the stamp says what it does, for its tooltip.
+	explanation: string;
 }
 
-export function DataFreshness({
+export function useFreshness({
 	sourceKey,
 	field,
 	label,
 	dataType,
-}: DataFreshnessProps) {
+}: {
+	sourceKey: string | null;
+	field: string | null;
+	label?: string | null;
+	dataType?: string | null;
+}): FreshnessStamp | null {
 	// Every page on a report carries this, and they mostly ask about the same
 	// source, so one request answers all of them.
 	// A live source says how soon to ask again, so the stamp keeps up with
@@ -38,10 +46,11 @@ export function DataFreshness({
 		refreshAfterMs?: number | null;
 	}>(
 		"/api/query/freshness",
-		{ sourceKey, field },
+		sourceKey && field ? { sourceKey, field } : null,
 		(latest) => latest?.refreshAfterMs ?? 0,
 	);
 
+	if (!sourceKey || !field) return null;
 	const value = data?.value ?? null;
 
 	// A stamp that cannot be read is worse than none: it invites a reader to
@@ -53,34 +62,13 @@ export function DataFreshness({
 		(dataType ?? "").startsWith("timestamp") ||
 		/date|day|month|year/i.test(field);
 
-	return (
-		<div
-			className={styles.freshness}
-			title={`The latest ${field} in this data. Not affected by the filters on this page.`}
-		>
-			<svg
-				width="12"
-				height="12"
-				viewBox="0 0 24 24"
-				fill="none"
-				stroke="currentColor"
-				strokeWidth="2"
-				strokeLinecap="round"
-				aria-hidden="true"
-			>
-				<circle cx="12" cy="12" r="9" />
-				<path d="M12 7v5l3 2" />
-			</svg>
-			<span className={styles.freshnessLabel}>
-				{label ?? "Data through"}
-			</span>
-			<span className={styles.freshnessValue}>
-				{isLoading
-					? "…"
-					: looksLikeDate
-						? formatValue(value, "date")
-						: String(value)}
-			</span>
-		</div>
-	);
+	return {
+		label: label ?? "Data through",
+		value: isLoading
+			? null
+			: looksLikeDate
+				? formatValue(value, "date")
+				: String(value),
+		explanation: `The latest ${field} in this data. Not affected by the filters on this page.`,
+	};
 }

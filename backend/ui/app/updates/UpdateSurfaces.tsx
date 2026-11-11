@@ -5,7 +5,12 @@ import useSWR from "swr";
 import Link from "../components/AppLink";
 import { Modal } from "../components/shared/Modal";
 import { TextPanel } from "../visuals/TextPanel";
-import { aboutPage, currentWindow, isUnderway } from "../../lib/updates/model";
+import {
+	aboutPage,
+	currentWindow,
+	isUnderway,
+	onPagesNow,
+} from "../../lib/updates/model";
 import type { LiveUpdate, UpdateMarker } from "../../lib/updates/live";
 import { liveUpdatesKey, markersKey } from "../../lib/query/requestKey";
 import form from "../authoring/Authoring.module.css";
@@ -201,54 +206,419 @@ export function UpdatesHomeCard() {
 	);
 }
 
-// What a report page is told about what it reads.
-export function PageUpdates({
-	sourceKeys,
-	reportId,
-	categoryId,
-	pageId,
+function shortDate(at: string | number): string {
+	return new Date(at).toLocaleDateString(undefined, {
+		day: "numeric",
+		month: "short",
+		year: "numeric",
+	});
+}
+
+// When the entry applies, in the reader's words.
+export function whenOf(update: LiveUpdate, now: number): string {
+	if (update.type === "maintenance") {
+		const window = currentWindow(update, now);
+		if (!window) return "Finished";
+		return window.start > now
+			? `Starts in ${countdown(window.start, now)}`
+			: `Under way, ends in ${countdown(window.end, now)}`;
+	}
+	if (update.type === "incident") {
+		return update.incidentState === "identified"
+			? "Cause found, being fixed"
+			: "Being looked into";
+	}
+	if (update.effectiveOn) {
+		const at = new Date(update.effectiveOn).getTime();
+		return at > now
+			? `Takes effect ${shortDate(at)}`
+			: `Took effect ${shortDate(at)}`;
+	}
+	return `Posted ${shortDate(update.postedOn)}`;
+}
+
+const impactRank = { info: 0, notable: 1, breaking: 2 } as const;
+
+export function NoticeIcon({ type }: { type: LiveUpdate["type"] }) {
+	const paths =
+		type === "maintenance" ? (
+			<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9z" />
+		) : type === "incident" ? (
+			<>
+				<circle cx="12" cy="12" r="10" />
+				<path d="M12 8v4M12 16h.01" />
+			</>
+		) : (
+			<>
+				<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
+				<path d="M12 9v4M12 17h.01" />
+			</>
+		);
+	return (
+		<svg
+			width="16"
+			height="16"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			{paths}
+		</svg>
+	);
+}
+
+function Chevron({ open }: { open: boolean }) {
+	return (
+		<svg
+			className={open ? styles.chevronOpen : styles.chevron}
+			width="16"
+			height="16"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="m6 9 6 6 6-6" />
+		</svg>
+	);
+}
+
+function Arrow() {
+	return (
+		<svg
+			className={styles.noticeArrow}
+			width="16"
+			height="16"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="M5 12h14M13 6l6 6-6 6" />
+		</svg>
+	);
+}
+
+function Cross() {
+	return (
+		<svg
+			width="16"
+			height="16"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="M18 6 6 18M6 6l12 12" />
+		</svg>
+	);
+}
+
+// When an entry applies and what to do about it, as one line.
+function MetaLine({
+	update,
+	now,
+	extra,
 }: {
+	update: LiveUpdate;
+	now: number;
+	extra: string | null;
+}) {
+	return (
+		<span className={styles.noticeMeta}>
+			{whenOf(update, now)}
+			{extra && (
+				<>
+					<span className={styles.noticeDot} aria-hidden="true">
+						·
+					</span>
+					<span className={styles.noticeWhat}>{extra}</span>
+				</>
+			)}
+		</span>
+	);
+}
+
+// Entries about what a screen shows, as one line however many there are. One entry is that
+// line and opens its details. Several are counted on the line, which opens a list of them.
+// Dismissing marks them read for this person, which takes them off every page.
+function UpdateNotices({
+	updates,
+	subject,
+	note,
+	onDismiss,
+}: {
+	updates: LiveUpdate[];
+	// What the entries are about, as in "2 recent changes to {subject}".
+	subject: string;
+	// A line of its own under one entry, such as what a maintenance window means here.
+	note?: (update: LiveUpdate) => string | null;
+	onDismiss: (updateIds: string[]) => void;
+}) {
+	const [open, setOpen] = useState(false);
+	const now = Date.now();
+	const worst = updates.reduce<LiveUpdate["impact"]>(
+		(held, update) =>
+			impactRank[update.impact] > impactRank[held] ? update.impact : held,
+		"info",
+	);
+	const extraOf = (update: LiveUpdate) => note?.(update) ?? update.whatToDo;
+	const linkOf = (update: LiveUpdate) =>
+		`/status?tab=updates&open=${update.updateId}`;
+	const single = updates.length === 1 ? updates[0] : null;
+	const newest = updates[0];
+	const icon = (
+		<span
+			className={`${styles.noticeIcon} ${styles[`noticeIcon${worst}`]}`}
+		>
+			<NoticeIcon type={newest.type} />
+		</span>
+	);
+
+	return (
+		<section
+			className={`${styles.notices} ${styles[`notices${worst}`]}`}
+			role="status"
+		>
+			<div className={styles.noticeBar}>
+				{single ? (
+					<Link
+						href={linkOf(single)}
+						className={styles.noticeSummary}
+					>
+						{icon}
+						<span className={styles.noticeText}>
+							<strong className={styles.noticeTitle}>
+								{single.title}
+							</strong>
+							<MetaLine
+								update={single}
+								now={now}
+								extra={extraOf(single)}
+							/>
+						</span>
+						<Arrow />
+					</Link>
+				) : (
+					<button
+						type="button"
+						className={styles.noticeSummary}
+						onClick={() => setOpen((was) => !was)}
+						aria-expanded={open}
+					>
+						{icon}
+						<span className={styles.noticeText}>
+							<strong className={styles.noticeTitle}>
+								{updates.length} recent changes to {subject}
+							</strong>
+							<span className={styles.noticeMeta}>
+								<span className={styles.noticeWhat}>
+									Newest: {newest.title}
+								</span>
+							</span>
+						</span>
+						<Chevron open={open} />
+					</button>
+				)}
+				<button
+					type="button"
+					className={styles.noticeDismiss}
+					onClick={() =>
+						onDismiss(updates.map((update) => update.updateId))
+					}
+					aria-label={
+						single ? "Dismiss this notice" : "Dismiss these notices"
+					}
+					title="Dismiss"
+				>
+					<Cross />
+				</button>
+			</div>
+			{!single && open && (
+				<div className={styles.noticeList}>
+					{updates.map((update) => (
+						<Link
+							key={update.updateId}
+							href={linkOf(update)}
+							className={styles.noticeItem}
+						>
+							<span
+								className={`${styles.noticeMark} ${styles[`noticeMark${update.impact}`]}`}
+								aria-hidden="true"
+							/>
+							<span className={styles.noticeText}>
+								<span className={styles.noticeItemTitle}>
+									{update.title}
+								</span>
+								<MetaLine
+									update={update}
+									now={now}
+									extra={extraOf(update)}
+								/>
+							</span>
+							<Arrow />
+						</Link>
+					))}
+					<Link
+						href="/status?tab=updates"
+						className={styles.noticeAll}
+					>
+						Open the changelog
+					</Link>
+				</div>
+			)}
+		</section>
+	);
+}
+
+// Marks the entries read for this person and takes them off the screen at once.
+function useDismissUpdates() {
+	const { mutate } = useLiveUpdates();
+	return (updateIds: string[]) => {
+		for (const updateId of updateIds) postRead(updateId);
+		const gone = new Set(updateIds);
+		void mutate(
+			(current) =>
+				current && {
+					...current,
+					updates: current.updates.map((update) =>
+						gone.has(update.updateId)
+							? { ...update, read: true }
+							: update,
+					),
+				},
+			{ revalidate: false },
+		);
+	};
+}
+
+export interface PageScope {
 	sourceKeys: string[];
 	reportId: string;
 	categoryId: string | null;
 	pageId: string | null;
-}) {
+}
+
+// What a report page is told about what it reads, for a while after it changes, and the
+// way to set each aside. Shown in the page's data status rather than above the report. See
+// onPagesNow in lib/updates/model and app/r/DataHealth.
+export function usePageChanges(scope: PageScope): {
+	changes: LiveUpdate[];
+	dismiss: (updateIds: string[]) => void;
+} {
 	const { data } = useLiveUpdates();
+	const dismiss = useDismissUpdates();
 	const now = Date.now();
-	const shown = (data?.updates ?? []).filter(
+	const changes = (data?.updates ?? []).filter(
 		(update) =>
-			update.delivery.page &&
-			aboutPage(update, { sourceKeys, reportId, categoryId, pageId }) &&
-			(update.type === "incident"
-				? update.incidentState !== "resolved"
-				: update.type === "maintenance"
-					? isUnderway(update, now)
-					: update.impact === "breaking"),
+			!update.read && onPagesNow(update, now) && aboutPage(update, scope),
 	);
-	if (shown.length === 0) return null;
+	return { changes, dismiss };
+}
+
+// The changes naming a field each visual on a page reads, by visual, so a visual a change
+// affects can say so in its own header.
+const VisualChangesContext = createContext<Map<string, LiveUpdate[]>>(
+	new Map(),
+);
+
+export function VisualChangesProvider({
+	visuals,
+	changes,
+	children,
+}: {
+	visuals: { visualId: string; sourceKey: string | null; fields: string[] }[];
+	changes: LiveUpdate[];
+	children: React.ReactNode;
+}) {
+	const byVisual = useMemo(() => {
+		const found = new Map<string, LiveUpdate[]>();
+		for (const visual of visuals) {
+			const sourceKey = visual.sourceKey;
+			if (!sourceKey || visual.fields.length === 0) continue;
+			const wanted = new Set(visual.fields);
+			const touching = changes.filter((update) =>
+				update.about.some(
+					(item) =>
+						item.kind === "field" &&
+						item.sourceKey === sourceKey &&
+						wanted.has(item.id),
+				),
+			);
+			if (touching.length > 0) found.set(visual.visualId, touching);
+		}
+		return found;
+	}, [visuals, changes]);
 	return (
-		<>
-			{shown.map((update) => (
-				<div
-					key={update.updateId}
-					className={styles.pageNotice}
-					role="status"
-				>
-					<span>
-						<strong>{update.title}</strong>
-						{update.type === "maintenance"
-							? ". Figures may be behind until this finishes."
-							: "."}{" "}
-						<Link
-							href={`/status?tab=updates&open=${update.updateId}`}
-						>
-							Details
-						</Link>
-					</span>
-				</div>
-			))}
-		</>
+		<VisualChangesContext.Provider value={byVisual}>
+			{children}
+		</VisualChangesContext.Provider>
 	);
+}
+
+function fieldName(entry: unknown): string | null {
+	if (typeof entry === "string") return entry;
+	const name = (entry as { name?: unknown } | null)?.name;
+	return typeof name === "string" ? name : null;
+}
+
+// The changes on a report page, handed to each visual whose fields they name. A visual with
+// no source of its own reads the page's.
+export function PageVisualChanges({
+	scope,
+	pageSourceKey,
+	visuals,
+	children,
+}: {
+	scope: PageScope;
+	pageSourceKey: string | null;
+	visuals: {
+		visualId: string;
+		sourceKey: string | null;
+		config: { dimensions?: unknown; measures?: unknown };
+	}[];
+	children: React.ReactNode;
+}) {
+	const { changes } = usePageChanges(scope);
+	const read = useMemo(
+		() =>
+			visuals.map((visual) => ({
+				visualId: visual.visualId,
+				sourceKey: visual.sourceKey ?? pageSourceKey,
+				fields: [visual.config.dimensions, visual.config.measures]
+					.flatMap((list) => (Array.isArray(list) ? list : []))
+					.map(fieldName)
+					.filter((name): name is string => name !== null),
+			})),
+		[visuals, pageSourceKey],
+	);
+	return (
+		<VisualChangesProvider visuals={read} changes={changes}>
+			{children}
+		</VisualChangesProvider>
+	);
+}
+
+const noChanges: LiveUpdate[] = [];
+
+export function useVisualChanges(
+	visualId: string | null | undefined,
+): LiveUpdate[] {
+	const byVisual = useContext(VisualChangesContext);
+	return (visualId && byVisual.get(visualId)) || noChanges;
 }
 
 // Marks at the dates things took effect, by source, read by a chart as it draws.
@@ -324,36 +694,27 @@ export function FieldUpdates({
 // Maintenance and incidents beside freshness and rules on Data status.
 export function StatusUpdates() {
 	const { data } = useLiveUpdates();
+	const dismiss = useDismissUpdates();
 	const now = Date.now();
-	const shown = (data?.updates ?? []).filter((update) =>
-		update.type === "incident"
-			? update.incidentState !== "resolved"
-			: update.type === "maintenance" &&
-				currentWindow(update, now) !== null,
+	const shown = (data?.updates ?? []).filter(
+		(update) =>
+			!update.read &&
+			(update.type === "incident"
+				? update.incidentState !== "resolved"
+				: update.type === "maintenance" &&
+					currentWindow(update, now) !== null),
 	);
 	if (shown.length === 0) return null;
 	return (
-		<>
-			{shown.map((update) => (
-				<div
-					key={update.updateId}
-					className={styles.pageNotice}
-					role="status"
-				>
-					<span>
-						<strong>{update.title}</strong>
-						{update.type === "maintenance" &&
-						isUnderway(update, now)
-							? " is under way, so late data and failing rules on it are expected."
-							: "."}{" "}
-						<Link
-							href={`/status?tab=updates&open=${update.updateId}`}
-						>
-							Details
-						</Link>
-					</span>
-				</div>
-			))}
-		</>
+		<UpdateNotices
+			updates={shown}
+			subject="these datasets"
+			onDismiss={dismiss}
+			note={(update) =>
+				update.type === "maintenance" && isUnderway(update, now)
+					? "Late data and failing rules on it are expected."
+					: null
+			}
+		/>
 	);
 }

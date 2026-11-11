@@ -10,8 +10,8 @@ import { primeBatchCache } from "../hooks/queryBatch";
 import { SkeletonReport } from "../components/shared/Skeleton";
 import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { titleSeparator, usePageTitle } from "../hooks/usePageTitle";
-import { DataFreshness } from "../visuals/DataFreshness";
-import { LateDataNotice } from "../visuals/LateDataNotice";
+import { DataHealth } from "./DataHealth";
+import { FrameControlsContext } from "../visuals/VisualFrame";
 import { VisualRenderer, type VisualSpec } from "../visuals/VisualRenderer";
 import {
 	FilterGateProvider,
@@ -29,8 +29,10 @@ import {
 	UnusualProvider,
 } from "../visuals/InsightParts";
 import type { Scenario } from "../../lib/insight/insight";
-import { QualityNotice } from "../status/QualityNotice";
-import { PageUpdates, UpdateMarkersProvider } from "../updates/UpdateSurfaces";
+import {
+	PageVisualChanges,
+	UpdateMarkersProvider,
+} from "../updates/UpdateSurfaces";
 import { printReport, setPrintGate } from "../visuals/LazyVisual";
 import { PageMarksContext } from "./ReportGrid";
 import { SlideShow, TourOffer, TourOverlay, useDecks } from "./DeckPlayer";
@@ -66,12 +68,7 @@ import { SavedViews, type SavedView } from "./SavedViews";
 import { FavouriteButton } from "./FavouriteButton";
 import { ShareLinkButton } from "./ShareLinkButton";
 import { ReportGrid } from "./ReportGrid";
-import {
-	ScaledArea,
-	ViewScaleProvider,
-	ZoomControl,
-	type VisualSize,
-} from "./ViewScale";
+import { ViewScaleProvider, type VisualSize } from "./ViewScale";
 import {
 	CategoryContacts,
 	type CategoryContact,
@@ -281,6 +278,18 @@ export default function ReportView({
 	const showSkeleton = useDeferredLoading(isLoading && !data);
 	const [editing, setEditing] = useState(false);
 	const [showingUsage, setShowingUsage] = useState(false);
+	// Whether the report bar is pinned at the top, which is when the sentinel above it
+	// has scrolled out of view.
+	const [barSentinel, setBarSentinel] = useState<HTMLDivElement | null>(null);
+	const [barPinned, setBarPinned] = useState(false);
+	useEffect(() => {
+		if (!barSentinel) return;
+		const watch = new IntersectionObserver(([entry]) =>
+			setBarPinned(!entry.isIntersecting),
+		);
+		watch.observe(barSentinel);
+		return () => watch.disconnect();
+	}, [barSentinel]);
 
 	// Opened straight into the editor when the URL asks for it. A report just
 	// created is one somebody came here to build, and landing on the read-only
@@ -824,6 +833,28 @@ export default function ReportView({
 	const currentMeasures =
 		custom?.measures ?? tableVisual?.config.measures ?? [];
 
+	// The columns control, drawn in the header of the table it changes rather than with
+	// the page's own controls. See FrameControlsContext in app/visuals/VisualFrame.
+	const frameControls = new Map<string, React.ReactNode>(
+		tableVisual
+			? [
+					[
+						tableVisual.visualId,
+						<FieldPicker
+							source={pickerSource}
+							selectedDimensions={currentDimensions}
+							selectedMeasures={currentMeasures}
+							onChange={(dimensions, measures) => {
+								setCustom({ dimensions, measures });
+								// The arrangement no longer matches the saved view it started from.
+								setActiveViewId(null);
+							}}
+						/>,
+					],
+				]
+			: [],
+	);
+
 	// A report authored before the canvas existed has no stored layout, so one
 	// is derived from reading order. Opening the editor is then the first time
 	// a position is written, which is why it is derived rather than defaulted
@@ -955,6 +986,7 @@ export default function ReportView({
 				<TourOverlay
 					slug={report.slug}
 					deck={activeDeck}
+					pages={report.pages}
 					onStep={(pageId, search) => goToState(search, pageId)}
 					onExit={exitDeck}
 				/>
@@ -982,94 +1014,117 @@ export default function ReportView({
 				onShareableChange={setPageState}
 			>
 				<UpdateMarkersProvider sourceKeys={pageSourceKeys}>
-					<FilterGateProvider value={filterGate}>
-						<ScenarioProvider value={whatIfOpen ? scenarios : null}>
-							<SinceProvider pageId={page?.pageId ?? null}>
-								<UnusualProvider>
-									<PageMarksContext.Provider
-										value={pageMarks}
+					{/* Columns sits in the header of the table it changes. */}
+					<FrameControlsContext.Provider value={frameControls}>
+						<PageVisualChanges
+							scope={{
+								sourceKeys: pageSourceKeys,
+								reportId: report.reportId,
+								categoryId: report.categoryId,
+								pageId: page?.pageId ?? null,
+							}}
+							pageSourceKey={
+								page?.sourceKey ?? report.sourceKey ?? null
+							}
+							visuals={visuals}
+						>
+							<FilterGateProvider value={filterGate}>
+								<ScenarioProvider
+									value={whatIfOpen ? scenarios : null}
+								>
+									<SinceProvider
+										pageId={page?.pageId ?? null}
 									>
-										<GridStatesProvider
-											states={gridStates}
-											update={updateGridState}
-										>
-											<ShortcutsHelp
-												isOpen={showingShortcuts}
-												mode="reading"
-												onClose={() =>
-													setShowingShortcuts(false)
-												}
-											/>
-											<BoardOriginContext.Provider
-												value={boardOrigin}
+										<UnusualProvider>
+											<PageMarksContext.Provider
+												value={pageMarks}
 											>
-												<ViewScaleProvider
-													sizes={visualSizes}
-													onSizesChange={
-														onSizesChange
-													}
+												<GridStatesProvider
+													states={gridStates}
+													update={updateGridState}
 												>
-													<div
-														className={styles.page}
+													<ShortcutsHelp
+														isOpen={
+															showingShortcuts
+														}
+														mode="reading"
+														onClose={() =>
+															setShowingShortcuts(
+																false,
+															)
+														}
+													/>
+													<BoardOriginContext.Provider
+														value={boardOrigin}
 													>
-														<div
-															data-report-header
-															className={
-																styles.header
+														<ViewScaleProvider
+															sizes={visualSizes}
+															onSizesChange={
+																onSizesChange
 															}
 														>
 															<div
 																className={
-																	styles.headerMain
+																	styles.page
 																}
 															>
+																{/* Zero height, directly above the report bar. Once it leaves the
+																    viewport the bar is pinned, and gains a shadow. */}
 																<div
+																	ref={
+																		setBarSentinel
+																	}
+																	aria-hidden="true"
+																/>
+																<div
+																	data-report-header
 																	className={
-																		styles.breadcrumb
+																		barPinned
+																			? `${styles.reportBar} ${styles.reportBarPinned}`
+																			: styles.reportBar
 																	}
 																>
-																	<Link href="/">
-																		Home
-																	</Link>
-																	<span aria-hidden="true">
-																		/
-																	</span>
-																	{report.categoryId && (
-																		<>
-																			<Link
-																				href={`/c/${report.categoryId}`}
-																			>
-																				{data
-																					?.category
-																					?.name ??
-																					report.categoryId}
-																			</Link>
-																			<span aria-hidden="true">
-																				/
-																			</span>
-																		</>
-																	)}
-																	<span>
-																		{
-																			report.title
-																		}
-																	</span>
-																</div>
-																<div
-																	className={
-																		styles.titleRow
-																	}
-																>
-																	<h1
+																	<div
 																		className={
-																			styles.title
+																			styles.headerMain
 																		}
 																	>
-																		{
-																			report.title
-																		}
-																	</h1>
-																	{/* Beside the name rather than in the row of view
+																		<div
+																			className={
+																				styles.breadcrumb
+																			}
+																		>
+																			{report.categoryId && (
+																				<>
+																					<Link
+																						href={`/c/${report.categoryId}`}
+																					>
+																						{data
+																							?.category
+																							?.name ??
+																							report.categoryId}
+																					</Link>
+																					<span aria-hidden="true">
+																						/
+																					</span>
+																				</>
+																			)}
+																		</div>
+																		<div
+																			className={
+																				styles.titleRow
+																			}
+																		>
+																			<h1
+																				className={
+																					styles.title
+																				}
+																			>
+																				{
+																					report.title
+																				}
+																			</h1>
+																			{/* Beside the name rather than in the row of view
 								    controls to the right. Those are things you do
 								    to what is on screen; this is a mark on the
 								    report itself, and it reads as one where a
@@ -1078,710 +1133,722 @@ export default function ReportView({
 								    Personal pages are already under My pages, so
 								    marking one would list it twice in the same
 								    rail. */}
-																	{!report.isPersonal && (
-																		<FavouriteButton
-																			reportId={
-																				report.reportId
-																			}
-																			initial={
-																				isFavourite
-																			}
-																		/>
-																	)}
-																	{/* Beside the star, because both are things a
+																			{!report.isPersonal && (
+																				<FavouriteButton
+																					reportId={
+																						report.reportId
+																					}
+																					initial={
+																						isFavourite
+																					}
+																				/>
+																			)}
+																			{/* Beside the star, because both are things a
 								    reader does with the report rather than to
 								    it. */}
-																	<ShareLinkButton />
-																	{/* Who maintains it, as a way of asking them.
+																			<ShareLinkButton />
+																			{(
+																				decksAnswer?.decks ??
+																				[]
+																			)
+																				.filter(
+																					(
+																						d,
+																					) =>
+																						d.kind ===
+																							"walkthrough" &&
+																						d
+																							.steps
+																							.length >
+																							0,
+																				)
+																				.map(
+																					(
+																						deck,
+																					) => (
+																						<button
+																							key={
+																								deck.deckId
+																							}
+																							type="button"
+																							className={
+																								styles.tourButton
+																							}
+																							title={`Take the tour: ${deck.title}`}
+																							aria-label={`Take the tour: ${deck.title}`}
+																							onClick={() =>
+																								setActiveDeck(
+																									deck,
+																								)
+																							}
+																						>
+																							<svg
+																								width="16"
+																								height="16"
+																								viewBox="0 0 24 24"
+																								fill="none"
+																								stroke="currentColor"
+																								strokeWidth="2"
+																								strokeLinejoin="round"
+																								aria-hidden="true"
+																							>
+																								<circle
+																									cx="12"
+																									cy="12"
+																									r="9"
+																								/>
+																								<path d="m15.5 8.5-2 5-5 2 2-5z" />
+																							</svg>
+																						</button>
+																					),
+																				)}
+																			{/* Who maintains it, as a way of asking them.
 								    In the title row because it is about the
 								    report, and small because the report is what
 								    the page is for. */}
-																	{data?.category && (
-																		<CategoryContacts
-																			contacts={
-																				data
-																					.category
-																					.contacts
-																			}
-																			context={{
-																				reportSlug:
-																					report.slug,
-																				about: report.title,
-																			}}
-																		/>
-																	)}
-																</div>
-																{report.description && (
-																	<p
+																			{data?.category && (
+																				<CategoryContacts
+																					contacts={
+																						data
+																							.category
+																							.contacts
+																					}
+																					context={{
+																						reportSlug:
+																							report.slug,
+																						about: report.title,
+																					}}
+																				/>
+																			)}
+																		</div>
+																	</div>
+
+																	<div
 																		className={
-																			styles.description
+																			styles.actions
 																		}
 																	>
-																		{
-																			report.description
-																		}
-																	</p>
-																)}
-															</div>
-
-															<div
-																className={
-																	styles.actions
-																}
-															>
-																{(
-																	decksAnswer?.decks ??
-																	[]
-																)
-																	.filter(
-																		(d) =>
-																			d.kind ===
-																				"walkthrough" &&
-																			d
-																				.steps
-																				.length >
-																				0,
-																	)
-																	.map(
-																		(
-																			deck,
-																		) => (
-																			<button
-																				key={
-																					deck.deckId
-																				}
-																				type="button"
-																				className={
-																					styles.button
-																				}
-																				onClick={() =>
-																					setActiveDeck(
-																						deck,
+																		{/* How current the data is, and anything to know about
+																    it: changes, failing rules and late loads, in one
+																    chip rather than above the report. */}
+																		<DataHealth
+																			sourceKeys={
+																				pageSourceKeys
+																			}
+																			reportId={
+																				report.reportId
+																			}
+																			categoryId={
+																				report.categoryId
+																			}
+																			pageId={
+																				page?.pageId ??
+																				null
+																			}
+																			freshness={{
+																				sourceKey:
+																					freshnessSourceKey,
+																				field: freshnessField,
+																				label: configuredFreshness?.label,
+																				dataType:
+																					freshnessSource?.dimensions.find(
+																						(
+																							f,
+																						) =>
+																							f.name ===
+																							freshnessField,
 																					)
-																				}
-																			>
-																				{`Take the tour: ${deck.title}`}
-																			</button>
-																		),
-																	)}
-																<InsightsMenu
-																	className={
-																		styles.button
-																	}
-																	whatIf={{
-																		available:
-																			pageMeasures.length >
-																			0,
-																		open: whatIfOpen,
-																		onToggle:
-																			() =>
-																				setWhatIfOpen(
-																					(
-																						held,
-																					) =>
-																						!held,
-																				),
-																	}}
-																/>
-																{user?.capabilities?.includes(
-																	"export.run",
-																) && (
-																	<ExportMenu
-																		slug={
-																			report.slug
-																		}
-																		pageId={
-																			page?.pageId ??
-																			null
-																		}
-																		pageTitle={
-																			page?.title ??
-																			""
-																		}
-																		pageCount={
-																			report
-																				.pages
-																				.length
-																		}
-																		filters={Object.values(
-																			pageState.filters ??
-																				{},
-																		).flat()}
-																		onPdf={() =>
-																			void printReport()
-																		}
-																		className={
-																			styles.button
-																		}
-																	/>
-																)}
-																<ZoomControl />
-
-																{freshnessSourceKey &&
-																	freshnessField && (
-																		<DataFreshness
-																			sourceKey={
-																				freshnessSourceKey
-																			}
-																			field={
-																				freshnessField
-																			}
-																			label={
-																				configuredFreshness?.label
-																			}
-																			dataType={
-																				freshnessSource?.dimensions.find(
-																					(
-																						f,
-																					) =>
-																						f.name ===
-																						freshnessField,
-																				)
-																					?.dataType
-																			}
+																						?.dataType,
+																			}}
 																		/>
-																	)}
-
-																{/* Renders nothing for a curated report. On a page
-					    somebody built for themselves its owner can name who
-					    else sees it, and an editor can put it in a category. */}
-																<PageActions
-																	reportId={
-																		report.reportId
-																	}
-																	title={
-																		report.title
-																	}
-																	isPersonal={
-																		report.isPersonal
-																	}
-																	ownerEmail={
-																		report.ownerEmail
-																	}
-																	onChanged={() =>
-																		void mutate()
-																	}
-																/>
-
-																{/* Anyone who can read the page can have it sent to
-							    them, not only its maintainers. */}
-																{page && (
-																	<ScheduleButton
-																		reportSlug={
-																			report.slug
-																		}
-																		pageId={
-																			page.pageId
-																		}
-																		pageTitle={
-																			page.title
-																		}
-																		className={
-																			styles.button
-																		}
-																	/>
-																)}
-
-																{/* The alerts this page's editors set up, for a
-							    reader to follow. Absent on a page without any. */}
-																{page && (
-																	<PageAlertsButton
-																		pageId={
-																			page.pageId
-																		}
-																		pageTitle={
-																			page.title
-																		}
-																		sources={Object.values(
-																			sources,
-																		)}
-																		className={
-																			styles.button
-																		}
-																	/>
-																)}
-
-																{/* How the report is read. Shown to whoever may edit
-							    it, because it names the people who open it. */}
-																{report.editMode ===
-																	"edit" ||
-																	(report.canReview && (
-																		<button
-																			type="button"
+																		<span
+																			className={
+																				styles.barDivider
+																			}
+																			aria-hidden="true"
+																		/>
+																		<InsightsMenu
 																			className={
 																				styles.button
 																			}
-																			onClick={() =>
-																				setShowingUsage(
-																					true,
-																				)
-																			}
-																		>
-																			<svg
-																				width="13"
-																				height="13"
-																				viewBox="0 0 24 24"
-																				fill="none"
-																				stroke="currentColor"
-																				strokeWidth="2"
-																				strokeLinecap="round"
-																				strokeLinejoin="round"
-																				aria-hidden="true"
-																			>
-																				<path d="M18 20V10M12 20V4M6 20v-6" />
-																			</svg>
-																			Usage
-																		</button>
-																	))}
-																{showingUsage && (
-																	<ReportUsage
-																		slug={
-																			report.slug
-																		}
-																		title={
-																			report.title
-																		}
-																		onClose={() =>
-																			setShowingUsage(
-																				false,
-																			)
-																		}
-																	/>
-																)}
-
-																{(report.canReview ||
-																	report.reviewsPages) && (
-																	<ReportSuggestions
-																		slug={
-																			report.slug
-																		}
-																		reportId={
-																			report.reportId
-																		}
-																		sources={
-																			sources
-																		}
-																		buttonClass={
-																			styles.button
-																		}
-																		startOpen={
-																			typeof window !==
-																				"undefined" &&
-																			new URLSearchParams(
-																				window
-																					.location
-																					.search,
-																			).get(
-																				"suggestions",
-																			) ===
-																				"1"
-																		}
-																	/>
-																)}
-
-																{/* Offered to whoever can change it or suggest a change. */}
-																{modeHere && (
-																	<button
-																		type="button"
-																		className={
-																			styles.button
-																		}
-																		onClick={() =>
-																			setEditing(
-																				true,
-																			)
-																		}
-																	>
-																		<svg
-																			width="13"
-																			height="13"
-																			viewBox="0 0 24 24"
-																			fill="none"
-																			stroke="currentColor"
-																			strokeWidth="2"
-																			strokeLinecap="round"
-																			strokeLinejoin="round"
-																		>
-																			<path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z" />
-																		</svg>
-																		{modeHere ===
-																		"suggest"
-																			? "Suggest changes"
-																			: "Edit"}
-																	</button>
-																)}
-																{tableVisual && (
-																	<FieldPicker
-																		source={
-																			pickerSource
-																		}
-																		selectedDimensions={
-																			currentDimensions
-																		}
-																		selectedMeasures={
-																			currentMeasures
-																		}
-																		onChange={(
-																			dimensions,
-																			measures,
-																		) => {
-																			setCustom(
-																				{
-																					dimensions,
-																					measures,
-																				},
-																			);
-																			// The arrangement no longer matches the saved
-																			// view it started from.
-																			setActiveViewId(
-																				null,
-																			);
-																		}}
-																	/>
-																)}
-																{page && (
-																	<SavedViews
-																		reportId={
-																			report.reportId
-																		}
-																		pageId={
-																			page.pageId
-																		}
-																		requestedViewId={
-																			sharedHere?.view ??
-																			null
-																		}
-																		mayOpenOnDefault={
-																			arrivedWith !==
-																				null &&
-																			![
-																				...arrivedWith.keys(),
-																			].some(
-																				(
-																					key,
-																				) =>
-																					key !==
-																						"edit" &&
-																					key !==
-																						"page",
-																			)
-																		}
-																		current={{
-																			dimensions:
-																				currentDimensions,
-																			measures:
-																				currentMeasures,
-																			columnOrder:
-																				columnLayout.columnOrder,
-																			pinnedColumns:
-																				columnLayout.pinnedColumns,
-																			columnWidths:
-																				columnLayout.columnWidths,
-																			visualSizes,
-																			pageFilters:
-																				pageState.filters as
-																					| Record<
-																							string,
-																							FilterClause[]
-																					  >
-																					| undefined,
-																			dimension:
-																				pageState.dimension,
-																			grain: pageState.grain,
-																			gridStates,
-																		}}
-																		activeViewId={
-																			activeViewId
-																		}
-																		onApply={(
-																			view: SavedView | null,
-																		) => {
-																			if (
-																				!view
-																			) {
-																				setCustom(
-																					null,
-																				);
-																				setColumnLayout(
-																					{
-																						columnOrder:
-																							[],
-																						pinnedColumns:
-																							[],
-																						columnWidths:
-																							{},
-																					},
-																				);
-																				setVisualSizes(
-																					{},
-																				);
-																				setGridEdits(
-																					{},
-																				);
-																				setActiveViewId(
-																					null,
-																				);
-																				return;
-																			}
-																			setCustom(
-																				{
-																					dimensions:
-																						view
-																							.config
-																							.dimensions ??
-																						[],
-																					measures:
-																						view
-																							.config
-																							.measures ??
-																						[],
-																				},
-																			);
-																			setColumnLayout(
-																				{
-																					columnOrder:
-																						view
-																							.config
-																							.columnOrder ??
-																						[],
-																					pinnedColumns:
-																						view
-																							.config
-																							.pinnedColumns ??
-																						[],
-																					columnWidths:
-																						view
-																							.config
-																							.columnWidths ??
+																			whatIf={{
+																				available:
+																					pageMeasures.length >
+																					0,
+																				open: whatIfOpen,
+																				onToggle:
+																					() =>
+																						setWhatIfOpen(
+																							(
+																								held,
+																							) =>
+																								!held,
+																						),
+																			}}
+																		/>
+																		{user?.capabilities?.includes(
+																			"export.run",
+																		) && (
+																			<ExportMenu
+																				slug={
+																					report.slug
+																				}
+																				pageId={
+																					page?.pageId ??
+																					null
+																				}
+																				pageTitle={
+																					page?.title ??
+																					""
+																				}
+																				pageCount={
+																					report
+																						.pages
+																						.length
+																				}
+																				filters={Object.values(
+																					pageState.filters ??
 																						{},
-																				},
-																			);
-																			setVisualSizes(
-																				view
-																					.config
-																					.visualSizes ??
-																					{},
-																			);
-																			setGridEdits(
-																				view
-																					.config
-																					.gridStates ??
-																					{},
-																			);
-																			setActiveViewId(
-																				view.viewId,
-																			);
-																		}}
-																	/>
-																)}
-															</div>
-														</div>
+																				).flat()}
+																				onPdf={() =>
+																					void printReport()
+																				}
+																				className={
+																					styles.button
+																				}
+																			/>
+																		)}
 
-														<ScaledArea>
-															{report.pages
-																.length > 1 && (
-																<div
-																	className={
-																		styles.tabs
-																	}
-																	role="tablist"
-																>
-																	{report.pages.map(
-																		(p) => (
+																		{/* Renders nothing for a curated report. On a page
+					    somebody built for themselves its owner can name who
+					    else sees it, and an editor can put it in a category. */}
+																		<PageActions
+																			reportId={
+																				report.reportId
+																			}
+																			title={
+																				report.title
+																			}
+																			isPersonal={
+																				report.isPersonal
+																			}
+																			ownerEmail={
+																				report.ownerEmail
+																			}
+																			onChanged={() =>
+																				void mutate()
+																			}
+																		/>
+
+																		{/* Anyone who can read the page can have it sent to
+							    them, not only its maintainers. */}
+																		{page && (
+																			<ScheduleButton
+																				reportSlug={
+																					report.slug
+																				}
+																				pageId={
+																					page.pageId
+																				}
+																				pageTitle={
+																					page.title
+																				}
+																				className={
+																					styles.button
+																				}
+																			/>
+																		)}
+
+																		{/* The alerts this page's editors set up, for a
+							    reader to follow. Absent on a page without any. */}
+																		{page && (
+																			<PageAlertsButton
+																				pageId={
+																					page.pageId
+																				}
+																				pageTitle={
+																					page.title
+																				}
+																				sources={Object.values(
+																					sources,
+																				)}
+																				className={
+																					styles.button
+																				}
+																			/>
+																		)}
+
+																		{/* How the report is read. Shown to whoever may edit
+							    it, because it names the people who open it. */}
+																		{report.editMode ===
+																			"edit" ||
+																			(report.canReview && (
+																				<button
+																					type="button"
+																					className={
+																						styles.button
+																					}
+																					onClick={() =>
+																						setShowingUsage(
+																							true,
+																						)
+																					}
+																				>
+																					<svg
+																						width="13"
+																						height="13"
+																						viewBox="0 0 24 24"
+																						fill="none"
+																						stroke="currentColor"
+																						strokeWidth="2"
+																						strokeLinecap="round"
+																						strokeLinejoin="round"
+																						aria-hidden="true"
+																					>
+																						<path d="M18 20V10M12 20V4M6 20v-6" />
+																					</svg>
+																					Usage
+																				</button>
+																			))}
+																		{showingUsage && (
+																			<ReportUsage
+																				slug={
+																					report.slug
+																				}
+																				title={
+																					report.title
+																				}
+																				onClose={() =>
+																					setShowingUsage(
+																						false,
+																					)
+																				}
+																			/>
+																		)}
+
+																		{(report.canReview ||
+																			report.reviewsPages) && (
+																			<ReportSuggestions
+																				slug={
+																					report.slug
+																				}
+																				reportId={
+																					report.reportId
+																				}
+																				sources={
+																					sources
+																				}
+																				buttonClass={
+																					styles.button
+																				}
+																				startOpen={
+																					typeof window !==
+																						"undefined" &&
+																					new URLSearchParams(
+																						window
+																							.location
+																							.search,
+																					).get(
+																						"suggestions",
+																					) ===
+																						"1"
+																				}
+																			/>
+																		)}
+
+																		<span
+																			className={
+																				styles.barDivider
+																			}
+																			aria-hidden="true"
+																		/>
+																		{/* Offered to whoever can change it or suggest a change. */}
+																		{modeHere && (
 																			<button
-																				key={
-																					p.pageId
-																				}
 																				type="button"
-																				role="tab"
-																				aria-selected={
-																					page?.pageId ===
-																					p.pageId
-																				}
-																				className={`${styles.tab} ${
-																					page?.pageId ===
-																					p.pageId
-																						? styles.tabActive
-																						: ""
-																				}`}
+																				className={`${styles.button} ${styles.buttonPrimary}`}
 																				onClick={() =>
-																					openPage(
-																						p.pageId,
+																					setEditing(
+																						true,
 																					)
 																				}
 																			>
-																				{
-																					p.title
-																				}
+																				<svg
+																					width="13"
+																					height="13"
+																					viewBox="0 0 24 24"
+																					fill="none"
+																					stroke="currentColor"
+																					strokeWidth="2"
+																					strokeLinecap="round"
+																					strokeLinejoin="round"
+																				>
+																					<path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z" />
+																				</svg>
+																				{modeHere ===
+																				"suggest"
+																					? "Suggest changes"
+																					: "Edit"}
 																			</button>
-																		),
-																	)}
+																		)}
+																	</div>
 																</div>
-															)}
-
-															<LateDataNotice
-																sourceKeys={
-																	pageSourceKeys
-																}
-															/>
-															<QualityNotice
-																sourceKeys={
-																	pageSourceKeys
-																}
-															/>
-															<PageGoals
-																pageId={
-																	page?.pageId ??
-																	null
-																}
-															/>
-															<PageUpdates
-																sourceKeys={
-																	pageSourceKeys
-																}
-																reportId={
-																	report.reportId
-																}
-																categoryId={
-																	report.categoryId
-																}
-																pageId={
-																	page?.pageId ??
-																	null
-																}
-															/>
-
-															{(filterWidgets.length >
-																0 ||
-																visuals.length >
-																	0) && (
-																<div
-																	className={`${styles.filterStrip} ${
-																		page
-																			?.config
-																			?.stickyFilters
-																			? styles.filterStripSticky
-																			: ""
-																	}`}
-																>
-																	<FilterBar>
-																		{filterWidgets.map(
-																			(
-																				visual,
-																			) => (
-																				<VisualRenderer
-																					key={
-																						visual.visualId
-																					}
-																					visual={
-																						visual
-																					}
-																					sources={
-																						sources
-																					}
+																{/* What the report is for, and at the right end of the
+																	    same line which saved view of the page is showing. */}
+																{(report.description ||
+																	page) && (
+																	<div
+																		className={
+																			styles.descriptionRow
+																		}
+																	>
+																		{report.description && (
+																			<p
+																				className={
+																					styles.description
+																				}
+																			>
+																				{
+																					report.description
+																				}
+																			</p>
+																		)}
+																		{page && (
+																			<div
+																				className={
+																					styles.viewing
+																				}
+																			>
+																				<SavedViews
+																					prefix="Viewing"
 																					reportId={
 																						report.reportId
 																					}
 																					pageId={
-																						page?.pageId
+																						page.pageId
 																					}
+																					requestedViewId={
+																						sharedHere?.view ??
+																						null
+																					}
+																					mayOpenOnDefault={
+																						arrivedWith !==
+																							null &&
+																						![
+																							...arrivedWith.keys(),
+																						].some(
+																							(
+																								key,
+																							) =>
+																								key !==
+																									"edit" &&
+																								key !==
+																									"page",
+																						)
+																					}
+																					current={{
+																						dimensions:
+																							currentDimensions,
+																						measures:
+																							currentMeasures,
+																						columnOrder:
+																							columnLayout.columnOrder,
+																						pinnedColumns:
+																							columnLayout.pinnedColumns,
+																						columnWidths:
+																							columnLayout.columnWidths,
+																						visualSizes,
+																						pageFilters:
+																							pageState.filters as
+																								| Record<
+																										string,
+																										FilterClause[]
+																								  >
+																								| undefined,
+																						dimension:
+																							pageState.dimension,
+																						grain: pageState.grain,
+																						gridStates,
+																					}}
+																					activeViewId={
+																						activeViewId
+																					}
+																					onApply={(
+																						view: SavedView | null,
+																					) => {
+																						if (
+																							!view
+																						) {
+																							setCustom(
+																								null,
+																							);
+																							setColumnLayout(
+																								{
+																									columnOrder:
+																										[],
+																									pinnedColumns:
+																										[],
+																									columnWidths:
+																										{},
+																								},
+																							);
+																							setVisualSizes(
+																								{},
+																							);
+																							setGridEdits(
+																								{},
+																							);
+																							setActiveViewId(
+																								null,
+																							);
+																							return;
+																						}
+																						setCustom(
+																							{
+																								dimensions:
+																									view
+																										.config
+																										.dimensions ??
+																									[],
+																								measures:
+																									view
+																										.config
+																										.measures ??
+																									[],
+																							},
+																						);
+																						setColumnLayout(
+																							{
+																								columnOrder:
+																									view
+																										.config
+																										.columnOrder ??
+																									[],
+																								pinnedColumns:
+																									view
+																										.config
+																										.pinnedColumns ??
+																									[],
+																								columnWidths:
+																									view
+																										.config
+																										.columnWidths ??
+																									{},
+																							},
+																						);
+																						setVisualSizes(
+																							view
+																								.config
+																								.visualSizes ??
+																								{},
+																						);
+																						setGridEdits(
+																							view
+																								.config
+																								.gridStates ??
+																								{},
+																						);
+																						setActiveViewId(
+																							view.viewId,
+																						);
+																					}}
 																				/>
+																			</div>
+																		)}
+																	</div>
+																)}
+
+																{report.pages
+																	.length >
+																	1 && (
+																	<div
+																		className={
+																			styles.tabs
+																		}
+																		role="tablist"
+																	>
+																		{report.pages.map(
+																			(
+																				p,
+																			) => (
+																				<button
+																					key={
+																						p.pageId
+																					}
+																					type="button"
+																					role="tab"
+																					data-page-tab={
+																						p.pageId
+																					}
+																					aria-selected={
+																						page?.pageId ===
+																						p.pageId
+																					}
+																					className={`${styles.tab} ${
+																						page?.pageId ===
+																						p.pageId
+																							? styles.tabActive
+																							: ""
+																					}`}
+																					onClick={() =>
+																						openPage(
+																							p.pageId,
+																						)
+																					}
+																				>
+																					{
+																						p.title
+																					}
+																				</button>
 																			),
 																		)}
-																	</FilterBar>
-																</div>
-															)}
+																	</div>
+																)}
 
-															{visuals.length ===
-															0 ? (
+																{/* The page filters, above the report area. Sticky when
+																    the page asks for it. */}
+																{page && (
+																	<div
+																		className={`${styles.filterStrip} ${
+																			page
+																				?.config
+																				?.stickyFilters
+																				? styles.filterStripSticky
+																				: ""
+																		}`}
+																	>
+																		<FilterBar>
+																			{filterWidgets.map(
+																				(
+																					visual,
+																				) => (
+																					<VisualRenderer
+																						key={
+																							visual.visualId
+																						}
+																						visual={
+																							visual
+																						}
+																						sources={
+																							sources
+																						}
+																						reportId={
+																							report.reportId
+																						}
+																						pageId={
+																							page?.pageId
+																						}
+																					/>
+																				),
+																			)}
+																		</FilterBar>
+																	</div>
+																)}
+
 																<div
 																	className={
-																		styles.state
+																		styles.scaled
 																	}
 																>
-																	{/* What an author wrote for the case where the
+																	<PageGoals
+																		pageId={
+																			page?.pageId ??
+																			null
+																		}
+																	/>
+
+																	{visuals.length ===
+																	0 ? (
+																		<div
+																			className={
+																				styles.state
+																			}
+																		>
+																			{/* What an author wrote for the case where the
 								    page is empty on purpose, otherwise the
 								    default, which is about configuration and
 								    is addressed to them rather than to a
 								    reader. */}
-																	{typeof page
-																		?.config
-																		?.emptyText ===
-																		"string" &&
-																	page.config.emptyText.trim() !==
-																		""
-																		? page
-																				.config
-																				.emptyText
-																		: "This page has no visuals configured yet."}
+																			{typeof page
+																				?.config
+																				?.emptyText ===
+																				"string" &&
+																			page.config.emptyText.trim() !==
+																				""
+																				? page
+																						.config
+																						.emptyText
+																				: "This page has no visuals configured yet."}
+																		</div>
+																	) : (
+																		<ReportGrid
+																			visuals={
+																				visuals
+																			}
+																			sources={
+																				sources
+																			}
+																			reportId={
+																				report.reportId
+																			}
+																			pageId={
+																				page?.pageId
+																			}
+																			columnOrder={
+																				columnLayout.columnOrder
+																			}
+																			pinnedColumns={
+																				columnLayout.pinnedColumns
+																			}
+																			columnWidths={
+																				columnLayout.columnWidths
+																			}
+																			onColumnLayout={
+																				onColumnLayout
+																			}
+																		/>
+																	)}
 																</div>
-															) : (
-																<ReportGrid
-																	visuals={
-																		visuals
+															</div>
+															{whatIfOpen && (
+																<ScenarioBar
+																	sourceKey={
+																		page?.sourceKey ??
+																		report.sourceKey ??
+																		null
 																	}
-																	sources={
-																		sources
+																	measures={
+																		pageMeasures
 																	}
-																	reportId={
-																		report.reportId
+																	dimensions={
+																		pageDimensions
 																	}
-																	pageId={
-																		page?.pageId
+																	scenarios={
+																		scenarios
 																	}
-																	columnOrder={
-																		columnLayout.columnOrder
+																	onChange={
+																		setScenarios
 																	}
-																	pinnedColumns={
-																		columnLayout.pinnedColumns
-																	}
-																	columnWidths={
-																		columnLayout.columnWidths
-																	}
-																	onColumnLayout={
-																		onColumnLayout
-																	}
+																	onClose={() => {
+																		setWhatIfOpen(
+																			false,
+																		);
+																		setScenarios(
+																			[],
+																		);
+																	}}
 																/>
 															)}
-														</ScaledArea>
-													</div>
-													{whatIfOpen && (
-														<ScenarioBar
-															sourceKey={
-																page?.sourceKey ??
-																report.sourceKey ??
-																null
-															}
-															measures={
-																pageMeasures
-															}
-															dimensions={
-																pageDimensions
-															}
-															scenarios={
-																scenarios
-															}
-															onChange={
-																setScenarios
-															}
-															onClose={() => {
-																setWhatIfOpen(
-																	false,
-																);
-																setScenarios(
-																	[],
-																);
-															}}
-														/>
-													)}
-												</ViewScaleProvider>
-											</BoardOriginContext.Provider>
-										</GridStatesProvider>
-									</PageMarksContext.Provider>
-								</UnusualProvider>
-							</SinceProvider>
-						</ScenarioProvider>
-					</FilterGateProvider>
+														</ViewScaleProvider>
+													</BoardOriginContext.Provider>
+												</GridStatesProvider>
+											</PageMarksContext.Provider>
+										</UnusualProvider>
+									</SinceProvider>
+								</ScenarioProvider>
+							</FilterGateProvider>
+						</PageVisualChanges>
+					</FrameControlsContext.Provider>
 				</UpdateMarkersProvider>
 			</PageFilterProvider>
 		</>

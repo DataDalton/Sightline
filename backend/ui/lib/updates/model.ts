@@ -637,6 +637,37 @@ export function isUnderway(
 	return window !== null && window.start <= now && now < window.end;
 }
 
+// How long after it takes effect a breaking change stays on the pages it is about. From
+// then on the timeline, the Dictionary and chart markers carry it.
+export const pageNoticeDays = 30;
+
+// Whether a report page shows this entry as a notice now. An open incident and maintenance
+// under way show while they last. A breaking change shows from when it is posted until
+// pageNoticeDays after it takes effect, counted from when it was posted when it names no
+// date.
+export function onPagesNow(
+	update: Pick<
+		Update,
+		| "type"
+		| "impact"
+		| "incidentState"
+		| "delivery"
+		| "startsOn"
+		| "endsOn"
+		| "repeat"
+		| "effectiveOn"
+		| "postedOn"
+	>,
+	now: number,
+): boolean {
+	if (!update.delivery.page) return false;
+	if (update.type === "incident") return update.incidentState !== "resolved";
+	if (update.type === "maintenance") return isUnderway(update, now);
+	if (update.impact !== "breaking") return false;
+	const from = new Date(update.effectiveOn ?? update.postedOn).getTime();
+	return now < from + pageNoticeDays * 24 * 60 * 60 * 1000;
+}
+
 // Sources whose late data, rule failures and alerts are expected right now.
 export function quietSources(
 	updates: Pick<

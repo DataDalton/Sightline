@@ -208,10 +208,8 @@ export function VisualNotes({
 	);
 }
 
-// The control that opens the panel, with the count on it.
-//
-// The count is the point: a visual carrying commentary should say so without
-// being opened, or nobody finds the note that was left for them.
+// The control that opens and closes the panel, with the count on it. Shown on hover like
+// the visual's other controls, coloured and counted when the visual carries notes.
 export function NotesAction({
 	count,
 	available,

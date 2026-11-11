@@ -34,6 +34,40 @@ export interface DeckStep {
 	visualIds: string[];
 	// How a slide is arranged. Absent on a slide made before layouts, which arranges itself.
 	layout?: string | null;
+	// Set on a step a walkthrough adds itself where the tour moves to another page.
+	// It spotlights that page's tab rather than a visual. Never saved.
+	pageStep?: boolean;
+}
+
+// A walkthrough's steps with one added wherever the tour moves to another page, so
+// the reader sees which page they are going to before the tour lands on a visual
+// there. The added step carries the next step's filters, so the page it opens is
+// already in the state that step asks for.
+export function withPageSteps(
+	steps: DeckStep[],
+	pages: { pageId: string; title: string }[],
+): DeckStep[] {
+	const titles = new Map(pages.map((page) => [page.pageId, page.title]));
+	const out: DeckStep[] = [];
+	steps.forEach((step, index) => {
+		const before = index > 0 ? steps[index - 1].pageId : null;
+		const title = step.pageId ? titles.get(step.pageId) : undefined;
+		if (index > 0 && step.pageId && step.pageId !== before && title) {
+			out.push({
+				id: `page:${step.id}`,
+				title,
+				text: `Next, the ${title} page.`,
+				pageId: step.pageId,
+				visualId: null,
+				filters: step.filters,
+				mark: null,
+				visualIds: [],
+				pageStep: true,
+			});
+		}
+		out.push(step);
+	});
+	return out;
 }
 
 export interface Deck {

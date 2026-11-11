@@ -8,6 +8,8 @@ import { useNearScreen, VisibilityProvider } from "./LazyVisual";
 import { useUser } from "../context/UserContext";
 import { Skeleton } from "../components/shared/Skeleton";
 import { describeFilters, missingFieldIn } from "../../lib/visuals/emptyState";
+import Link from "../components/AppLink";
+import { useVisualChanges } from "../updates/UpdateSurfaces";
 import styles from "./Visual.module.css";
 
 // Shared chrome for every visual: title, freshness, and the loading, empty and
@@ -69,6 +71,12 @@ interface VisualScope {
 
 const VisualScopeContext = createContext<VisualScope | null>(null);
 
+// Controls a page hands to one of its visuals by id, drawn in that visual's header, such
+// as the columns of the table they change.
+export const FrameControlsContext = createContext<Map<string, ReactNode>>(
+	new Map(),
+);
+
 export const VisualScopeProvider = VisualScopeContext.Provider;
 
 export function useVisualScope(): VisualScope | null {
@@ -116,6 +124,11 @@ export function VisualFrame({
 	// name. The editor canvas and the version comparison draw frames too, and
 	// neither has anywhere to expand into.
 	const canExpand = Boolean(expand && visualId);
+	// Changes to fields this visual reads, said beside its title rather than above the
+	// report. See PageVisualChanges in app/updates/UpdateSurfaces.
+	const changes = useVisualChanges(visualId);
+	const controlsByVisual = useContext(FrameControlsContext);
+	const pageControls = visualId ? controlsByVisual.get(visualId) : undefined;
 	const isExpanded = canExpand && expand?.expandedId === visualId;
 
 	return (
@@ -128,6 +141,8 @@ export function VisualFrame({
 			data-visual-title={typeof title === "string" ? title : undefined}
 		>
 			{(title ||
+				changes.length > 0 ||
+				pageControls ||
 				meta ||
 				showDrill ||
 				onZoomOut ||
@@ -135,6 +150,33 @@ export function VisualFrame({
 				canExpand) && (
 				<div className={styles.header}>
 					{title && <span className={styles.title}>{title}</span>}
+					{changes.length > 0 && (
+						<Link
+							href={`/status?tab=updates&open=${changes[0].updateId}`}
+							className={styles.changeMark}
+							title={`Changed recently: ${changes
+								.map((update) => update.title)
+								.join(". ")}`}
+							aria-label={`This visual reads data that changed recently: ${changes
+								.map((update) => update.title)
+								.join(". ")}`}
+						>
+							<svg
+								width="14"
+								height="14"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								strokeWidth="2"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								aria-hidden="true"
+							>
+								<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
+								<path d="M12 9v4M12 17h.01" />
+							</svg>
+						</Link>
+					)}
 
 					{showDrill && (
 						// A breadcrumb rather than a back button: a reader
@@ -209,6 +251,7 @@ export function VisualFrame({
 					    on every visual whether or not it has a breadcrumb. */}
 					<span className={styles.headerSpacer} aria-hidden="true" />
 
+					{pageControls}
 					{actions}
 
 					{canExpand && (

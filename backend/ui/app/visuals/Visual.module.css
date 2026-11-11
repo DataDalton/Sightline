@@ -16,6 +16,28 @@
 	border-bottom: 1px solid var(--border-subtle);
 }
 
+/* Beside a visual's title when a change touches a field it reads. */
+.changeMark {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	border-radius: var(--radius-sm);
+	background: var(--danger-subtle);
+	color: var(--danger);
+}
+
+.changeMark:hover {
+	background: color-mix(in srgb, var(--danger) 22%, transparent);
+}
+
+.changeMark:focus-visible {
+	outline: 2px solid var(--brand);
+	outline-offset: 2px;
+}
+
 /* Takes the room between whatever the header says on the left and the controls
    on the right, so the actions land in the same place on every visual whether or
    not it carries a breadcrumb. */
@@ -939,8 +961,9 @@
 
 /* A note count on the frame control, so a visual carrying commentary says so
    without being opened. Otherwise the note somebody left is one nobody finds. */
+/* A visual carrying notes colours its notes control, which shows on hover like the
+   others. */
 .frameActionMarked {
-	opacity: 1;
 	color: var(--brand);
 }
 

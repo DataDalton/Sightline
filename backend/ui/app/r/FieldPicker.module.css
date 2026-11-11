@@ -19,6 +19,25 @@
 	border-color: var(--border-strong);
 }
 
+/* A switcher that sits in a line of text, lighter than a button. */
+.triggerQuiet {
+	height: 32px;
+	padding: 0 var(--space-3);
+	border-color: var(--border-subtle);
+	background: transparent;
+	color: var(--text-secondary);
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.triggerQuiet:hover {
+	color: var(--text-primary);
+}
+
+.triggerChevron {
+	color: var(--text-muted);
+}
+
 .count {
 	padding: 0 var(--space-2);
 	border-radius: var(--radius-full);

@@ -9,6 +9,9 @@ import {
 	deprecationReminderDue,
 	followMatches,
 	isShowing,
+	onPagesNow,
+	pageNoticeDays,
+	type IncidentState,
 	isUnderway,
 	markerCategory,
 	quietSources,
@@ -802,4 +805,63 @@ test("a sync's entries say what happened to each field", () => {
 			change: "changed",
 		},
 	]);
+});
+
+test("a breaking change shows on pages until a set time after it takes effect", () => {
+	const day = 24 * 60 * 60 * 1000;
+	const now = new Date("2026-06-01T00:00:00Z").getTime();
+	const at = (offset: number) => new Date(now + offset * day).toISOString();
+	const change = {
+		type: "change" as string,
+		impact: "breaking" as const,
+		incidentState: null as IncidentState | null,
+		delivery: {
+			banner: false,
+			popup: false,
+			home: false,
+			inbox: false,
+			push: false,
+			page: true,
+		},
+		startsOn: null,
+		endsOn: null,
+		repeat: "none" as const,
+		effectiveOn: null as string | null,
+		postedOn: at(-5),
+	};
+	// Announced ahead of the change, it shows from when it is posted.
+	assert.equal(onPagesNow({ ...change, effectiveOn: at(10) }, now), true);
+	assert.equal(
+		onPagesNow({ ...change, effectiveOn: at(-(pageNoticeDays - 1)) }, now),
+		true,
+	);
+	assert.equal(
+		onPagesNow({ ...change, effectiveOn: at(-(pageNoticeDays + 1)) }, now),
+		false,
+	);
+	// With no date of its own, counted from when it was posted.
+	assert.equal(
+		onPagesNow({ ...change, postedOn: at(-(pageNoticeDays + 1)) }, now),
+		false,
+	);
+	assert.equal(onPagesNow({ ...change, impact: "notable" }, now), false);
+	assert.equal(
+		onPagesNow(
+			{ ...change, delivery: { ...change.delivery, page: false } },
+			now,
+		),
+		false,
+	);
+	assert.equal(
+		onPagesNow(
+			{
+				...change,
+				type: "incident",
+				incidentState: "investigating",
+				postedOn: at(-400),
+			},
+			now,
+		),
+		true,
+	);
 });

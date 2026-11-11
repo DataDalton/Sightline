@@ -2,6 +2,7 @@
    wide table or a matrix needs, and those are the visuals that most often run
    out of room. */
 .page {
+	--bar-height: 66px;
 	width: 100%;
 	padding: var(--space-5);
 }
@@ -12,17 +13,50 @@
 	}
 }
 
-.header {
+/*
+ * The report bar. The category and name on the left, then how current the data is,
+ * what can be done with the report, and Edit, in groups set apart by rules. It runs
+ * the full width of the report and stays pinned at the top while the page scrolls.
+ */
+.reportBar {
+	position: sticky;
+	top: 0;
+	z-index: 6;
 	display: flex;
-	align-items: flex-start;
-	gap: var(--space-4);
-	margin-bottom: var(--space-5);
-	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-3);
+	min-height: var(--bar-height);
+	margin: calc(var(--space-5) * -1) calc(var(--space-5) * -1) 0;
+	padding: var(--space-3) var(--space-5);
+	border-bottom: 1px solid var(--border-default);
+	background: var(--surface-raised);
+	transition: box-shadow var(--transition-fast);
+}
+
+.reportBarPinned {
+	box-shadow: 0 4px 16px rgb(0 0 0 / 0.22);
+}
+
+.barDivider {
+	align-self: stretch;
+	width: 1px;
+	margin: 6px var(--space-1);
+	background: var(--border-default);
 }
 
 @media (max-width: 720px) {
-	.header {
-		gap: var(--space-3);
+	/* On a phone the bar wraps onto as many rows as it needs and scrolls away with
+	   the page rather than covering a third of the screen. */
+	.filterStripSticky {
+		top: 0;
+	}
+
+	.reportBar {
+		position: static;
+		flex-wrap: wrap;
+		gap: var(--space-2);
+		margin: calc(var(--space-3) * -1) calc(var(--space-3) * -1) 0;
+		padding: var(--space-3);
 	}
 
 	/* The controls wrap onto as many rows as they need rather than running
@@ -44,29 +78,29 @@
 	}
 }
 
-/* A touch screen zooms with two fingers, which does the same job as the zoom
-   control and needs no room in the toolbar. */
-@media (pointer: coarse) and (max-width: 720px) {
-	.zoom {
-		display: none;
-	}
-}
-
 /* Keeps room for the title before sharing a line with the controls. Once the
    two no longer fit side by side the controls wrap below it, rather than the
    title being squeezed into a column a word wide. */
 .headerMain {
+	display: flex;
 	flex: 1 1 360px;
+	align-items: center;
+	gap: var(--space-2);
 	min-width: 0;
 }
 
 .breadcrumb {
 	display: flex;
+	flex-shrink: 0;
 	align-items: center;
 	gap: var(--space-2);
-	margin-bottom: var(--space-2);
-	font-size: var(--text-sm);
+	font-size: var(--text-md);
 	color: var(--text-muted);
+	white-space: nowrap;
+}
+
+.breadcrumb:empty {
+	display: none;
 }
 
 .breadcrumb a:hover {
@@ -83,13 +117,36 @@
 
 .title {
 	min-width: 0;
-	font-size: var(--text-2xl);
-	font-weight: 600;
-	letter-spacing: -0.02em;
+	overflow: hidden;
+	font-size: var(--text-xl);
+	font-weight: 700;
+	letter-spacing: -0.01em;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* The description, with the saved view at the right end of the same line. */
+.descriptionRow {
+	display: flex;
+	align-items: center;
+	gap: var(--space-4);
+	margin: var(--space-4) 0 var(--space-2);
+}
+
+.descriptionRow > .description {
+	flex: 1 1 auto;
+}
+
+.viewing {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	margin-left: auto;
+	flex-shrink: 0;
 }
 
 .description {
-	margin-top: var(--space-1);
+	min-width: 0;
 	font-size: var(--text-md);
 	color: var(--text-secondary);
 }
@@ -245,7 +302,7 @@
  */
 .filterStripSticky {
 	position: sticky;
-	top: 0;
+	top: var(--bar-height, 66px);
 	z-index: 3;
 	background: var(--surface-base);
 	padding-top: var(--space-3);
@@ -258,60 +315,6 @@
 	color: var(--text-muted);
 	border: 1px dashed var(--border-default);
 	border-radius: var(--radius-lg);
-}
-
-/* Reader zoom. */
-.zoom {
-	display: inline-flex;
-	align-items: center;
-	gap: 2px;
-	padding: 2px;
-	border: 1px solid var(--border-subtle);
-	border-radius: var(--radius-md);
-	background: var(--surface-sunken);
-}
-
-.zoomButton {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 24px;
-	height: 24px;
-	padding: 0;
-	border: none;
-	border-radius: var(--radius-sm);
-	background: none;
-	color: var(--text-secondary);
-	cursor: pointer;
-}
-
-.zoomButton:hover:not(:disabled) {
-	background: var(--surface-active);
-	color: var(--text-primary);
-}
-
-.zoomButton:disabled {
-	opacity: 0.4;
-	cursor: not-allowed;
-}
-
-.zoomValue {
-	min-width: 44px;
-	padding: 0 var(--space-1);
-	border: none;
-	background: none;
-	color: var(--text-secondary);
-	font-size: var(--text-xs);
-	font-variant-numeric: tabular-nums;
-	cursor: pointer;
-}
-
-.zoomValue:disabled {
-	cursor: not-allowed;
-}
-
-.zoomValue:hover:not(:disabled) {
-	color: var(--text-primary);
 }
 
 .scaled {
@@ -572,4 +575,30 @@
 .button[data-on] {
 	border-color: var(--warning);
 	color: var(--warning);
+}
+
+/* The tour, beside the title. The one-time offer to first visitors says what it is. */
+/* Drawn like the star and the link beside it, an icon with no frame until hovered. */
+.tourButton {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	flex-shrink: 0;
+	border: none;
+	border-radius: var(--radius-md);
+	background: none;
+	color: var(--text-muted);
+	cursor: pointer;
+}
+
+.tourButton:hover {
+	background: var(--state-hover);
+	color: var(--text-secondary);
+}
+
+.tourButton:focus-visible {
+	outline: 2px solid var(--brand);
+	outline-offset: 2px;
 }
