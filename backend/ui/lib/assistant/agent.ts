@@ -1,7 +1,9 @@
 import type { Identity } from "../auth/identity";
 import { visibleUpdates } from "../updates/store";
 import { resolvePolicyClass } from "../auth/policy";
+import { canDo } from "../platform/access";
 import { executeQuery, QueryAccessError } from "../query/execute";
+import { isFeedbackKind, recordFeedback } from "../feedback/store";
 import {
 	canonicalizeSpec,
 	parseQuerySpec,
@@ -77,6 +79,10 @@ export interface PageContext {
 	// Every visual on the report by id, described with the fields and
 	// conditions it queries, so one the person points at can be named exactly.
 	visuals: Record<string, string>;
+	// The report itself, for feedback on its visuals and for asking the people
+	// who look after it.
+	report?: { reportId: string; slug: string; title: string };
+	visualTitles?: Record<string, string>;
 }
 
 const filterSchema = {
@@ -112,6 +118,112 @@ const filterSchema = {
 		},
 	},
 	required: ["field", "op"],
+};
+
+// Feedback on a visual and asking its maintainers. Offered only from a report,
+// where there is a visual and somebody looking after it.
+const recordFeedbackTool: ToolDefinition = {
+	type: "function",
+	function: {
+		name: "record_feedback",
+		description:
+			"Note what the person said about a visual on this report for its maintainers. Call it whenever they comment on a visual, whether or not you could answer: if you answered, set answered to true, since many people confused by the same thing is a reason to improve the visual. Never call it for an ordinary data question that is not about how a visual shows something.",
+		parameters: {
+			type: "object",
+			properties: {
+				visualId: {
+					type: "string",
+					description:
+						"The id of the visual, from what they pointed at or the page.",
+				},
+				kind: {
+					type: "string",
+					enum: [
+						"hardToRead",
+						"wrongChart",
+						"missing",
+						"numbersOff",
+						"notNeeded",
+						"wantInstead",
+						"question",
+						"other",
+					],
+				},
+				understood: {
+					type: "string",
+					description:
+						"One sentence on what they want or found confusing, in plain words, with no figures.",
+				},
+				answered: {
+					type: "boolean",
+					description: "True when your answer resolved it.",
+				},
+			},
+			required: ["visualId", "kind", "understood", "answered"],
+		},
+	},
+};
+
+const offerMaintainersTool: ToolDefinition = {
+	type: "function",
+	function: {
+		name: "offer_maintainers",
+		description:
+			"Offer to start a conversation with the people who look after this report. Use it when figures look wrong and nothing you checked explains them, or when the person asks for a change only the maintainers can decide. The person sees a card and decides whether to send it and whether to share this conversation. Never use it for something you answered.",
+		parameters: {
+			type: "object",
+			properties: {
+				visualId: {
+					type: "string",
+					description: "The visual it is about, when there is one.",
+				},
+				subject: {
+					type: "string",
+					description:
+						"A short subject, such as 'Revenue by region looks low for March'.",
+				},
+				message: {
+					type: "string",
+					description:
+						"The first message, written as the person would say it to the maintainers, in one to three sentences.",
+				},
+				checked: {
+					type: "string",
+					description:
+						"What you already checked and found, in a few sentences, so the maintainers do not start from nothing.",
+				},
+			},
+			required: ["subject", "message", "checked"],
+		},
+	},
+};
+
+const offerWorkRequestTool: ToolDefinition = {
+	type: "function",
+	function: {
+		name: "offer_work_request",
+		description:
+			"Offer to send the data engineers a request for work, such as a dataset, field or fix that does not exist yet. Use it only when the data cannot answer the question and the person wants it to. The person sees a card, can change it, and decides whether to send it.",
+		parameters: {
+			type: "object",
+			properties: {
+				title: {
+					type: "string",
+					description: "A short line saying what is needed.",
+				},
+				description: {
+					type: "string",
+					description:
+						"What is needed and why, in the person's voice, with what you already checked and found missing.",
+				},
+				sourceKey: {
+					type: "string",
+					description: "The dataset it is about, when there is one.",
+				},
+			},
+			required: ["title", "description"],
+		},
+	},
 };
 
 const rememberTool: ToolDefinition = {
@@ -246,6 +358,7 @@ function instructions(
 	context: PageContext | null,
 	profile: Profile | null,
 	surface: Surface | null,
+	mayRequestWork = false,
 ): string {
 	const today = new Date().toISOString().slice(0, 10);
 	// Their own words, and what they asked to be remembered. Placed after the
@@ -292,6 +405,21 @@ function instructions(
 		"- Describe what the data shows in neutral terms. Report differences and changes as facts with their figures; do not call them problems, failures or concerns unless the person asked about problems.",
 		"- Plain markdown. No preamble, no restating the question.",
 		"",
+		...(context?.report
+			? [
+					"When the person comments on a visual on this report, such as finding it hard to read, wanting something different, or the numbers looking off:",
+					"- Try to resolve it first. Read the visual's definition and the dataset's field definitions, check list_updates for changes to what it measures, and query to see whether the figures follow from the definition and the filters on screen. Often the measure means something other than they assumed, and saying so clearly is the answer.",
+					"- Then always call record_feedback, with answered set to whether you resolved it.",
+					"- If the figures look wrong and nothing you checked explains them, or they want a change only the maintainers can decide, call offer_maintainers. They decide whether to send it.",
+					"",
+				]
+			: []),
+		...(mayRequestWork
+			? [
+					"When the data cannot answer what the person needs, such as a missing dataset, field or level of detail, say so plainly, then call offer_work_request so they can ask the data engineers for it. They decide whether to send it.",
+					"",
+				]
+			: []),
 		"Visuals available for show:",
 		visualMenu(),
 		// The screen's own rules come after the general ones, since they say
@@ -381,6 +509,8 @@ function describeQuery(p: Proposal, title: string): string {
 }
 
 export interface AgentRequest {
+	// The conversation this answer belongs to, linked to feedback it records.
+	conversationId?: string | null;
 	question: string;
 	history: HistoryTurn[];
 	available: SemanticSource[];
@@ -418,6 +548,9 @@ export async function runAgent(
 	const mayRemember = asksToRemember(question);
 	const bySource = new Map(available.map((s) => [s.sourceKey, s]));
 	const policy = await resolvePolicyClass(identity);
+	const mayRequestWork = await canDo(policy, identity, "work.request").catch(
+		() => false,
+	);
 	let charts = 0;
 	// Queries that already failed in this answer, by their cache key, with the
 	// reason. Asking the same thing again costs the same wait for the same
@@ -425,7 +558,10 @@ export async function runAgent(
 	const failed = new Map<string, string>();
 
 	let messages: ChatMessage[] = [
-		{ role: "system", content: instructions(context, profile, surface) },
+		{
+			role: "system",
+			content: instructions(context, profile, surface, mayRequestWork),
+		},
 		...history.map(
 			(turn): ChatMessage =>
 				turn.role === "user"
@@ -451,7 +587,10 @@ export async function runAgent(
 		name === "list_sources" ||
 		name === "describe_source" ||
 		name === "list_updates" ||
-		name === "run_query"
+		name === "run_query" ||
+		name === "record_feedback" ||
+		name === "offer_maintainers" ||
+		name === "offer_work_request"
 			? name
 			: "unknown";
 
@@ -576,6 +715,99 @@ export async function runAgent(
 				done(false, "Could not be saved");
 				return "Error: it could not be saved.";
 			}
+		}
+
+		if (kind === "record_feedback") {
+			const visualId = String(args.visualId ?? "");
+			const title = context?.visualTitles?.[visualId] ?? "this visual";
+			emit({
+				type: "step",
+				id,
+				kind,
+				label: `Noting this about ${title} for the people who look after it`,
+			});
+			const feedbackKind = String(args.kind ?? "other");
+			if (!context?.report || !isFeedbackKind(feedbackKind)) {
+				done(false, "Not noted");
+				return "Error: there is no report here to note it against.";
+			}
+			try {
+				await recordFeedback(policy, identity, {
+					reportId: context.report.reportId,
+					visualId,
+					kind: feedbackKind,
+					body: question,
+					interpretation: String(args.understood ?? ""),
+					answered: args.answered === true,
+					conversationId: request.conversationId ?? null,
+				});
+				done(true, "Noted for the report's maintainers");
+				return "Noted.";
+			} catch (error) {
+				done(false, "Not noted");
+				return `Error: ${error instanceof Error ? error.message : "it could not be noted"}.`;
+			}
+		}
+
+		if (kind === "offer_maintainers") {
+			emit({
+				type: "step",
+				id,
+				kind,
+				label: "Offering to ask the people who look after this report",
+			});
+			if (!context?.report) {
+				done(false, "No report here");
+				return "Error: there is no report here whose maintainers could be asked.";
+			}
+			const visualId =
+				typeof args.visualId === "string" &&
+				context.visualTitles?.[args.visualId]
+					? args.visualId
+					: null;
+			emit({
+				type: "offer",
+				offer: {
+					reportSlug: context.report.slug,
+					reportTitle: context.report.title,
+					visualId,
+					visualTitle: visualId
+						? (context.visualTitles?.[visualId] ?? null)
+						: null,
+					subject: String(args.subject ?? "").slice(0, 200),
+					message: String(args.message ?? "").slice(0, 2000),
+					checked: String(args.checked ?? "").slice(0, 2000),
+				},
+			});
+			done(true, "They can choose whether to send it");
+			return "The person has been shown the offer and decides whether to send it. Tell them briefly that they can.";
+		}
+
+		if (kind === "offer_work_request") {
+			emit({
+				type: "step",
+				id,
+				kind,
+				label: "Offering to ask the data engineers for it",
+			});
+			const sourceKey =
+				typeof args.sourceKey === "string" &&
+				bySource.has(args.sourceKey)
+					? args.sourceKey
+					: null;
+			emit({
+				type: "workOffer",
+				offer: {
+					title: String(args.title ?? "").slice(0, 200),
+					description: String(args.description ?? "").slice(0, 4000),
+					sourceKey,
+					sourceTitle: sourceKey
+						? (bySource.get(sourceKey)?.title ?? sourceKey)
+						: null,
+				},
+			});
+			done(true, "They can choose whether to send it");
+			return "The person has been shown the request and decides whether to send it. Tell them briefly that they can.";
 		}
 
 		if (kind === "list_sources") {
@@ -840,6 +1072,10 @@ export async function runAgent(
 						...(surface?.tools ?? []),
 						createBoardTool,
 						...(mayRemember ? [rememberTool] : []),
+						...(context?.report
+							? [recordFeedbackTool, offerMaintainersTool]
+							: []),
+						...(mayRequestWork ? [offerWorkRequestTool] : []),
 					],
 			{ onText: (delta) => emit({ type: "text", delta }), signal },
 		);

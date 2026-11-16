@@ -2,12 +2,13 @@
 
 import { TabStrip } from "../components/shared/TabStrip";
 import { EmptyState, emptyIcons } from "../components/shared/EmptyState";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import useSWRInfinite from "swr/infinite";
 import { useLiveUpdates } from "./UpdateSurfaces";
 import { Modal } from "../components/shared/Modal";
 import { Select } from "../components/shared/Select";
+import { displayNameFromEmail } from "../../lib/auth/names";
 import { Toggle } from "../components/shared/Toggle";
 import { ConfirmDialog } from "../components/shared/ConfirmDialog";
 import { TextPanel } from "../visuals/TextPanel";
@@ -108,6 +109,26 @@ interface Detail {
 	}[];
 	affects: { slug: string; title: string }[];
 	acknowledgedBy: string[] | null;
+	// Changes made because of it, by the assistant or by people. A report this
+	// reader cannot open is not listed. See lib/updates/links.
+	changesMade: {
+		kind: "reportVersion" | "report" | "item";
+		title: string;
+		message: string;
+		actor: string;
+		createdOn: string;
+		version: number | null;
+		href: string | null;
+	}[];
+	watching: boolean;
+	// Work queue requests linked to it that this reader can see. One that it
+	// resolves moves to Done once the update is out.
+	requests?: {
+		key: string;
+		title: string;
+		status: string;
+		resolves: boolean;
+	}[];
 }
 
 // How many reports are named before the rest wait behind a click.
@@ -1571,6 +1592,9 @@ function DetailDialog({
 	const [note, setNote] = useState("");
 	const [failure, setFailure] = useState<string | null>(null);
 	const [retracting, setRetracting] = useState(false);
+	const [linking, setLinking] = useState(false);
+	const [linkReport, setLinkReport] = useState("");
+	const [linkMessage, setLinkMessage] = useState("");
 
 	useEffect(() => {
 		void post({ action: "read", updateId }).then(onChanged, () => {});
@@ -1668,6 +1692,21 @@ function DetailDialog({
 			width="760px"
 			footer={
 				<>
+					<button
+						type="button"
+						className={styles.actionButton}
+						aria-pressed={data.watching}
+						title={
+							data.watching
+								? "You are told about new notes and changes linked to this update"
+								: "Be told about new notes and changes linked to this update"
+						}
+						onClick={() =>
+							void act({ action: "watch", on: !data.watching })
+						}
+					>
+						{data.watching ? "Watching" : "Watch"}
+					</button>
 					{update.requireAck && !acknowledged && (
 						<button
 							type="button"
@@ -1803,6 +1842,152 @@ function DetailDialog({
 						))}
 					</dl>
 				)}
+
+				{(data.requests ?? []).length > 0 && (
+					<section className={styles.detailSection}>
+						<h3 className={styles.sectionTitle}>Requests</h3>
+						<ol className={styles.changesMade}>
+							{(data.requests ?? []).map((request) => (
+								<li
+									key={request.key}
+									className={styles.changeMade}
+								>
+									<div className={styles.changeMadeHead}>
+										<a
+											href={`/work/${request.key}`}
+											className={styles.changeMadeTitle}
+										>
+											{request.key} {request.title}
+										</a>
+										<span className={styles.meta}>
+											{request.resolves
+												? "Resolved by this"
+												: "Related"}
+										</span>
+									</div>
+								</li>
+							))}
+						</ol>
+					</section>
+				)}
+
+				<section className={styles.detailSection}>
+					<div className={styles.changesHead}>
+						<h3 className={styles.sectionTitle}>Changes made</h3>
+						{!linking && (
+							<button
+								type="button"
+								className={styles.actionButton}
+								onClick={() => setLinking(true)}
+							>
+								Link a change
+							</button>
+						)}
+					</div>
+					{data.changesMade.length === 0 && !linking && (
+						<p className={styles.meta}>
+							Nothing has been changed because of this update.
+						</p>
+					)}
+					{data.changesMade.length > 0 && (
+						<ol className={styles.changesMade}>
+							{data.changesMade.map((change, index) => (
+								<li key={index} className={styles.changeMade}>
+									<div className={styles.changeMadeHead}>
+										{change.href ? (
+											<a
+												href={change.href}
+												className={
+													styles.changeMadeTitle
+												}
+											>
+												{change.title}
+											</a>
+										) : (
+											<span
+												className={
+													styles.changeMadeTitle
+												}
+											>
+												{change.title}
+											</span>
+										)}
+										<span className={styles.meta}>
+											{change.kind === "report"
+												? "New report"
+												: change.version !== null
+													? `Version ${change.version}`
+													: null}
+										</span>
+									</div>
+									{change.message && (
+										<p className={styles.changeMadeMessage}>
+											{change.message}
+										</p>
+									)}
+									<span className={styles.meta}>
+										{displayNameFromEmail(change.actor)},{" "}
+										{when(change.createdOn)}
+									</span>
+								</li>
+							))}
+						</ol>
+					)}
+					{linking && (
+						<div className={styles.linkForm}>
+							<Select
+								value={linkReport}
+								placeholder="Choose the report you changed"
+								ariaLabel="Report"
+								searchable
+								onChange={setLinkReport}
+								options={(choices?.reports ?? []).map(
+									(report) => ({
+										value: report.id,
+										label: report.title,
+									}),
+								)}
+							/>
+							<input
+								className={form.input}
+								value={linkMessage}
+								placeholder="What you changed, such as which visuals you fixed"
+								aria-label="What you changed"
+								onChange={(e) => setLinkMessage(e.target.value)}
+							/>
+							<div className={styles.linkActions}>
+								<button
+									type="button"
+									className={styles.actionButton}
+									onClick={() => {
+										setLinking(false);
+										setLinkReport("");
+										setLinkMessage("");
+									}}
+								>
+									Cancel
+								</button>
+								<button
+									type="button"
+									className={form.primary}
+									disabled={!linkReport}
+									onClick={async () => {
+										await act({
+											action: "link",
+											reportId: linkReport,
+											message: linkMessage,
+										});
+										setLinking(false);
+										setLinkReport("");
+										setLinkMessage("");
+									}}
+								>
+									Link its latest version
+								</button>
+							</div>
+						</div>
+					)}
+				</section>
 
 				<section className={styles.activity}>
 					<h3 className={styles.sectionTitle}>Activity</h3>
@@ -2388,11 +2573,15 @@ function FollowingPane({
 	) => Promise<void>;
 }) {
 	const choices = useUpdateChoices();
-	const [kind, setKind] = useState<"source" | "field">("source");
+	const [kind, setKind] = useState<
+		"source" | "field" | "changesSource" | "changesCategory"
+	>("source");
 	const [sourceKey, setSourceKey] = useState("");
 	const sources = choices?.sources ?? [];
 	const titleOf = (key: string) =>
 		sources.find((source) => source.key === key)?.title ?? key;
+	const categoryName = (id: string) =>
+		choices?.categories.find((category) => category.id === id)?.name ?? id;
 	const rows = [
 		{
 			kind: "all" as const,
@@ -2418,6 +2607,34 @@ function FollowingPane({
 						: "Anything about this field.",
 			})),
 	];
+	// What the assistant changes on its own, followed apart from updates, since
+	// most updates change nothing.
+	const changeRows = [
+		{
+			kind: "changes" as const,
+			value: "",
+			label: "Everything it changes",
+			hint: "Whenever it changes a report because of a change to its data.",
+		},
+		{
+			kind: "changes" as const,
+			value: "mine",
+			label: "My reports",
+			hint: "Reports you own or have starred. Owners and maintainers are always told.",
+		},
+		...follows
+			.filter((f) => f.kind === "changes" && f.value.includes(":"))
+			.map((f) => ({
+				kind: "changes" as const,
+				value: f.value,
+				label: f.value.startsWith("category:")
+					? categoryName(f.value.slice(9))
+					: titleOf(f.value.slice(7)),
+				hint: f.value.startsWith("category:")
+					? "Changes to reports in this category."
+					: "Changes to reports built on this source.",
+			})),
+	];
 	const modes: { id: "off" | Follow["mode"]; label: string }[] = [
 		{ id: "off", label: "Off" },
 		{ id: "instant", label: "As it happens" },
@@ -2436,67 +2653,122 @@ function FollowingPane({
 				</p>
 			</div>
 			<div className={styles.followList}>
-				{rows.map((row) => {
+				{[...rows, ...changeRows].map((row, index) => {
 					const held = follows.find(
 						(f) => f.kind === row.kind && f.value === row.value,
 					);
 					const current = held ? held.mode : "off";
 					return (
-						<div
-							key={`${row.kind}:${row.value}`}
-							className={styles.followRow}
-						>
-							<span className={styles.followWords}>
-								<span className={styles.followLabel}>
-									{row.label}
+						<Fragment key={`${row.kind}:${row.value}`}>
+							{index === rows.length && (
+								<strong className={styles.followHeading}>
+									Changes the assistant makes
+								</strong>
+							)}
+							<div className={styles.followRow}>
+								<span className={styles.followWords}>
+									<span className={styles.followLabel}>
+										{row.label}
+									</span>
+									<span className={styles.meta}>
+										{row.hint}
+									</span>
 								</span>
-								<span className={styles.meta}>{row.hint}</span>
-							</span>
-							<span
-								className={styles.segments}
-								role="group"
-								aria-label={`How to hear about ${row.label}`}
-							>
-								{modes.map((mode) => (
-									<button
-										key={mode.id}
-										type="button"
-										aria-pressed={current === mode.id}
-										className={`${styles.segment} ${current === mode.id ? styles.segmentOn : ""}`}
-										onClick={() =>
-											void onFollow(
-												row.kind,
-												row.value,
-												mode.id === "digest"
-													? "digest"
-													: "instant",
-												mode.id !== "off",
-											)
-										}
-									>
-										{mode.label}
-									</button>
-								))}
-							</span>
-						</div>
+								<span
+									className={styles.segments}
+									role="group"
+									aria-label={`How to hear about ${row.label}`}
+								>
+									{modes.map((mode) => (
+										<button
+											key={mode.id}
+											type="button"
+											aria-pressed={current === mode.id}
+											className={`${styles.segment} ${current === mode.id ? styles.segmentOn : ""}`}
+											onClick={() =>
+												void onFollow(
+													row.kind,
+													row.value,
+													mode.id === "digest"
+														? "digest"
+														: "instant",
+													mode.id !== "off",
+												)
+											}
+										>
+											{mode.label}
+										</button>
+									))}
+								</span>
+							</div>
+						</Fragment>
 					);
 				})}
 			</div>
 			<div className={styles.followAdd}>
 				<strong className={styles.followLabel}>
-					Follow one source or field
+					Follow one source or field, or what the assistant changes in
+					one
 				</strong>
 				<div className={form.row}>
 					<Select
 						value={kind}
 						ariaLabel="Follow a source or a field"
-						onChange={(next) => setKind(next as "source" | "field")}
+						onChange={(next) => setKind(next as typeof kind)}
 						options={[
 							{ value: "source", label: "A source" },
 							{ value: "field", label: "A field" },
+							{
+								value: "changesSource",
+								label: "Assistant changes on a source",
+							},
+							{
+								value: "changesCategory",
+								label: "Assistant changes in a category",
+							},
 						]}
 					/>
-					{kind === "source" ? (
+					{kind === "changesCategory" ? (
+						<Select
+							value=""
+							placeholder="Choose a category"
+							ariaLabel="Category"
+							searchable
+							onChange={(id) =>
+								void onFollow(
+									"changes",
+									`category:${id}`,
+									"instant",
+									true,
+								)
+							}
+							options={(choices?.categories ?? []).map(
+								(category) => ({
+									value: category.id,
+									label: category.name,
+								}),
+							)}
+						/>
+					) : kind === "changesSource" ? (
+						<Select
+							value=""
+							placeholder="Choose a source"
+							ariaLabel="Source"
+							searchable
+							onChange={(key) =>
+								void onFollow(
+									"changes",
+									`source:${key}`,
+									"instant",
+									true,
+								)
+							}
+							options={sources.map((source) => ({
+								value: source.key,
+								label: source.title,
+							}))}
+						/>
+					) : kind === "source" ? (
 						<Select
 							value=""
 							placeholder="Choose a source"

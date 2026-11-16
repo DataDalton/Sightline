@@ -135,6 +135,8 @@ interface ReportDetail {
 	slug: string;
 	title: string;
 	description: string | null;
+	// What the assistant does with a fix readers agree on.
+	feedbackChanges?: "automatic" | "suggest";
 	sourceKey: string | null;
 	permission: "view" | "edit" | "admin";
 	editMode: "edit" | "suggest" | null;
@@ -299,9 +301,17 @@ export default function ReportView({
 	// the server too, where there is no location to read, and seeding from one
 	// only on the client is a hydration mismatch. Runs once, so leaving the
 	// editor does not immediately re-enter it.
+	// A link to one version of the report's history, from the changes listed
+	// on an update, opens the editor with that version compared.
+	const [historyVersion, setHistoryVersion] = useState<number | null>(null);
 	useEffect(() => {
-		if (new URLSearchParams(window.location.search).get("edit") === "1") {
+		const asked = new URLSearchParams(window.location.search);
+		if (asked.get("edit") === "1") {
 			setEditing(true);
+			const version = Number(asked.get("history"));
+			if (Number.isInteger(version) && version > 0) {
+				setHistoryVersion(version);
+			}
 		}
 	}, []);
 
@@ -891,6 +901,7 @@ export default function ReportView({
 					slug={report.slug}
 					pageId={page.pageId}
 					version={report.version}
+					openHistoryVersion={historyVersion}
 					visuals={editableVisuals}
 					sources={sources}
 					pageSourceKey={freshnessSourceKey}
@@ -899,6 +910,7 @@ export default function ReportView({
 					reportTitle={report.title}
 					reportDescription={report.description}
 					reportTheme={report.theme}
+					reportFeedbackChanges={report.feedbackChanges}
 					editMode={modeHere}
 					categoryId={report.categoryId}
 					isPersonal={report.isPersonal}

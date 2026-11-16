@@ -118,8 +118,19 @@ export const capabilities = [
 	"schedule.create",
 	"note.write",
 	"note.moderate",
+	// The work queue: asking the data engineers for work, working the queue,
+	// and the security sign-off and deploying that DevSecOps owns. See lib/work.
+	"work.request",
+	"work.engineer",
+	"work.devsecops",
 	// Deciding who edits inside a scope, without administering the platform.
 	"access.delegate",
+	// Asking to read conversations that are not one's own: those between people,
+	// and those somebody had with the assistant. Neither is standing access. A
+	// request names what, why and for how long, and an administrator decides it.
+	// See lib/review.
+	"review.groupChats",
+	"review.assistant",
 	// Administering the platform itself.
 	"access.grant",
 	"semantic.sync",
@@ -194,6 +205,7 @@ export const readerCapabilities: Capability[] = [
 	"alert.create",
 	"schedule.create",
 	"note.write",
+	"work.request",
 ];
 
 const contributorCapabilities: Capability[] = [
@@ -273,6 +285,38 @@ export const builtinRoles: RoleDefinition[] = [
 			"Posts to Updates about any dataset or report, such as release notes from an automation. Added on top of any other role.",
 		permission: "view",
 		capabilities: ["update.post"],
+	},
+	{
+		roleId: "dataEngineer",
+		name: "Data Engineer",
+		description:
+			"Works the request queue: triages, assigns, moves, merges and declines requests, and looks after releases.",
+		permission: "view",
+		capabilities: ["work.engineer"],
+	},
+	{
+		roleId: "devSecOps",
+		name: "DevSecOps",
+		description:
+			"Works the request queue like a Data Engineer, signs off security reviews, and deploys when the queue's rules keep deploying to DevSecOps.",
+		permission: "view",
+		capabilities: ["work.engineer", "work.devsecops"],
+	},
+	{
+		roleId: "groupChatReviewer",
+		name: "Group Chat Reviewer",
+		description:
+			"Can ask to read conversations between people, such as questions to a report's maintainers. Every request needs a reason and an administrator's approval, and every reading is logged.",
+		permission: "view",
+		capabilities: ["review.groupChats"],
+	},
+	{
+		roleId: "assistantReviewer",
+		name: "Assistant Conversation Reviewer",
+		description:
+			"Can ask to read conversations people had with the assistant. Every request needs a reason and an administrator's approval, every reading is logged, and stored result rows are never shown.",
+		permission: "view",
+		capabilities: ["review.assistant"],
 	},
 ];
 

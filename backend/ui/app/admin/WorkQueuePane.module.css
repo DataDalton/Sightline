@@ -1,0 +1,186 @@
+/* Rows and grids for the work queue settings. Group headings, inputs, switches
+   and the save bar come from Admin.module.css. */
+
+.list {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+
+/* One entry with any extra fields under its name. */
+.listItem {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	padding: var(--space-3);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-md);
+	background: var(--surface-sunken);
+}
+
+.row {
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+}
+
+.row > input {
+	flex: 1;
+	min-width: 0;
+}
+
+.rowButtons {
+	display: flex;
+	gap: var(--space-1);
+	flex-shrink: 0;
+}
+
+.iconButton {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	padding: 0;
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-sm);
+	background: var(--surface-raised);
+	color: var(--text-secondary);
+	cursor: pointer;
+}
+
+.iconButton:hover:not(:disabled) {
+	color: var(--text-primary);
+	border-color: var(--border-strong);
+}
+
+.iconButton:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+.removeButton:hover:not(:disabled) {
+	color: var(--danger);
+	border-color: var(--danger);
+}
+
+/* Holds the place of a remove button on a row that cannot be removed, so the
+   move buttons line up down the list. */
+.iconSpacer {
+	width: 28px;
+	height: 28px;
+}
+
+.addRow {
+	display: flex;
+	gap: var(--space-2);
+}
+
+.addRow > input {
+	flex: 1;
+	min-width: 0;
+}
+
+.addButton {
+	flex-shrink: 0;
+	padding: var(--space-2) var(--space-4);
+	border: 1px solid var(--brand);
+	border-radius: var(--radius-sm);
+	background: var(--brand);
+	color: var(--brand-contrast);
+	font-size: var(--text-sm);
+	font-family: inherit;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.addButton:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.textarea {
+	resize: vertical;
+	line-height: 1.5;
+}
+
+.prefixField {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	width: 200px;
+	max-width: 100%;
+}
+
+.problem {
+	font-size: var(--text-xs);
+	color: var(--danger);
+}
+
+/* Hint, least hours and most hours, wrapping to one per line on narrow
+   screens. */
+.effortRow {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+	gap: var(--space-2);
+}
+
+.checks {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2) var(--space-4);
+}
+
+.check {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+	font-size: var(--text-sm);
+	color: var(--text-primary);
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.ownerGrid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+	gap: var(--space-3);
+}
+
+.ownerRow {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	min-width: 0;
+}
+
+/* Column name on the left, its required fields on the right. */
+.columnTable {
+	display: flex;
+	flex-direction: column;
+}
+
+.columnTableRow {
+	display: grid;
+	grid-template-columns: minmax(140px, 200px) 1fr;
+	gap: var(--space-3);
+	align-items: start;
+	padding: var(--space-2) 0;
+	border-bottom: 1px solid var(--border-subtle);
+}
+
+.columnTableRow:last-child {
+	border-bottom: none;
+}
+
+@media (max-width: 640px) {
+	.columnTableRow {
+		grid-template-columns: 1fr;
+	}
+}
+
+.ageingGrid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+	gap: var(--space-3);
+}

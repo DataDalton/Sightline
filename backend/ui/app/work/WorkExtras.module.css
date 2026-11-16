@@ -1,0 +1,418 @@
+/* Shared by the work queue's numbers and calendar. */
+
+.metrics,
+.calendar {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-4);
+	width: 100%;
+	min-width: 0;
+}
+
+.toolbar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	flex-wrap: wrap;
+	gap: var(--space-3);
+}
+
+.range {
+	display: block;
+	width: 180px;
+}
+
+.heading {
+	margin: 0;
+	font-size: var(--text-lg);
+	font-weight: 600;
+	color: var(--text-primary);
+}
+
+.empty {
+	margin: 0;
+	font-size: var(--text-sm);
+	color: var(--text-muted);
+}
+
+/* Buttons and fields */
+
+.button,
+.iconButton {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: var(--space-1);
+	min-height: 32px;
+	padding: 0 var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font: inherit;
+	font-size: var(--text-sm);
+	cursor: pointer;
+}
+
+.iconButton {
+	width: 32px;
+	padding: 0;
+}
+
+.button:hover,
+.iconButton:hover {
+	background: var(--surface-sunken);
+}
+
+.button:disabled {
+	opacity: 0.6;
+	cursor: default;
+}
+
+/* Cards and tables */
+
+.metricGrid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+	gap: var(--space-4);
+}
+
+.card {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+	min-width: 0;
+	padding: var(--space-4);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-lg);
+	background: var(--surface-raised);
+}
+
+.wide {
+	grid-column: 1 / -1;
+}
+
+.cardTitle {
+	margin: 0;
+	font-size: var(--text-md);
+	font-weight: 600;
+	color: var(--text-primary);
+}
+
+.cardNote {
+	margin: 0;
+	font-size: var(--text-sm);
+	color: var(--text-secondary);
+}
+
+.bigFigure {
+	display: flex;
+	align-items: baseline;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+	margin: 0;
+	font-size: var(--text-2xl);
+	font-weight: 600;
+	color: var(--text-primary);
+}
+
+.bigFigureNote {
+	font-size: var(--text-sm);
+	font-weight: 400;
+	color: var(--text-muted);
+}
+
+.subTable {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+
+.subTitle {
+	margin: 0;
+	font-size: var(--text-sm);
+	font-weight: 600;
+	color: var(--text-secondary);
+}
+
+.tableWrap {
+	overflow-x: auto;
+}
+
+.table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: var(--text-sm);
+	color: var(--text-primary);
+}
+
+.table th {
+	padding: var(--space-1) var(--space-2);
+	border-bottom: 1px solid var(--border-default);
+	font-size: var(--text-xs);
+	font-weight: 600;
+	color: var(--text-secondary);
+	text-align: left;
+	white-space: nowrap;
+}
+
+.table td {
+	padding: var(--space-2);
+	border-bottom: 1px solid var(--border-subtle);
+	vertical-align: top;
+}
+
+.table tr:last-child td {
+	border-bottom: none;
+}
+
+.table .number {
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+
+.blockedCount {
+	color: var(--danger);
+	font-weight: 600;
+}
+
+.runsLong {
+	display: block;
+	margin-top: 2px;
+	font-size: var(--text-xs);
+	color: var(--warning);
+}
+
+/* Throughput chart */
+
+.chart {
+	display: block;
+	width: 100%;
+	height: auto;
+	max-height: 220px;
+}
+
+.chartBar {
+	fill: var(--chart-1, var(--brand));
+}
+
+.chartAxis {
+	stroke: var(--border-default);
+	stroke-width: 1;
+}
+
+.chartGrid {
+	stroke: var(--border-subtle);
+	stroke-width: 1;
+	stroke-dasharray: 3 3;
+}
+
+.chartLabel {
+	fill: var(--text-muted);
+	font-size: 11px;
+}
+
+/* Calendar */
+
+.calendarNav {
+	display: flex;
+	align-items: center;
+	gap: var(--space-1);
+}
+
+.legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-3);
+	font-size: var(--text-xs);
+	color: var(--text-secondary);
+}
+
+.legendItem {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1);
+}
+
+.legendSwatch {
+	width: 10px;
+	height: 10px;
+	padding: 0;
+	border-radius: 2px;
+	border-left-width: 0;
+	background: var(--chip-tone);
+}
+
+.monthGrid {
+	display: grid;
+	grid-template-columns: repeat(7, minmax(0, 1fr));
+	border-top: 1px solid var(--border-subtle);
+	border-left: 1px solid var(--border-subtle);
+	border-radius: var(--radius-md);
+	overflow: hidden;
+}
+
+.weekday {
+	padding: var(--space-1) var(--space-2);
+	border-right: 1px solid var(--border-subtle);
+	border-bottom: 1px solid var(--border-subtle);
+	background: var(--surface-sunken);
+	font-size: var(--text-xs);
+	font-weight: 600;
+	color: var(--text-secondary);
+}
+
+.dayCell {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	min-width: 0;
+	min-height: 110px;
+	padding: var(--space-1);
+	border-right: 1px solid var(--border-subtle);
+	border-bottom: 1px solid var(--border-subtle);
+	background: var(--surface-raised);
+}
+
+.dayOutside {
+	background: var(--surface-base);
+}
+
+.dayOutside .dayNumber {
+	color: var(--text-muted);
+}
+
+.dayNumber {
+	font-size: var(--text-xs);
+	font-weight: 600;
+	color: var(--text-secondary);
+}
+
+.dayWeekday {
+	display: none;
+}
+
+.dayToday .dayNumber {
+	align-self: flex-start;
+	padding: 0 var(--space-1);
+	border-radius: var(--radius-sm);
+	background: var(--brand);
+	color: var(--brand-contrast);
+}
+
+.dayItems {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.chip {
+	--chip-tone: var(--text-muted);
+	display: flex;
+	align-items: center;
+	gap: var(--space-1);
+	width: 100%;
+	min-width: 0;
+	padding: 2px var(--space-1);
+	border: 1px solid var(--border-subtle);
+	border-left: 3px solid var(--chip-tone);
+	border-radius: var(--radius-sm);
+	background: var(--surface-base);
+	color: var(--text-primary);
+	font: inherit;
+	font-size: var(--text-xs);
+	text-align: left;
+	cursor: pointer;
+}
+
+.chip:hover {
+	background: var(--surface-sunken);
+}
+
+.chipUrgent {
+	--chip-tone: var(--danger);
+}
+
+.chipHigh {
+	--chip-tone: var(--warning);
+}
+
+.chipMedium {
+	--chip-tone: var(--brand);
+}
+
+.chipLow,
+.chipNone {
+	--chip-tone: var(--text-muted);
+}
+
+.chipNone {
+	border-left-style: dashed;
+}
+
+.chipBlocked {
+	background: var(--warning-subtle);
+}
+
+.chipIcon {
+	flex: none;
+	color: var(--danger);
+}
+
+.chipKey {
+	flex: none;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.chipTitle {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--text-secondary);
+}
+
+.undated {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+
+.undatedList {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+	gap: var(--space-1);
+}
+
+@media (max-width: 720px) {
+	.metricGrid {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	/* The month grid becomes a list of the days that have something due. */
+	.monthGrid {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.weekday,
+	.dayEmpty,
+	.dayOutside {
+		display: none;
+	}
+
+	.dayCell {
+		min-height: 0;
+		padding: var(--space-2);
+	}
+
+	.dayWeekday {
+		display: inline;
+	}
+
+	.chip {
+		padding: var(--space-1) var(--space-2);
+		font-size: var(--text-sm);
+	}
+}

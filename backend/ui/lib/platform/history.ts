@@ -35,6 +35,9 @@ export interface HistoryEntry {
 	changes: Change[];
 	// True for the version the report is currently on.
 	isCurrent: boolean;
+	// The update this version was made because of. The route clears it for a
+	// reader who cannot see that update.
+	becauseOf: { updateId: string; title: string } | null;
 }
 
 interface VersionRow {
@@ -43,6 +46,8 @@ interface VersionRow {
 	changes: Change[] | null;
 	created_by: string | null;
 	created_on: string;
+	update_id?: string | null;
+	update_title?: string | null;
 }
 
 // The change summary of each version is stored when the version is written.
@@ -108,10 +113,13 @@ export async function listHistory(
 	// stored. The snapshots themselves are read only for those rows.
 	const [rows, current] = await Promise.all([
 		sql<VersionRow>(
-			`SELECT version, label, changes, created_by, created_on::text
-			 FROM report_versions
-			 WHERE report_id = $1
-			 ORDER BY version DESC
+			`SELECT v.version, v.label, v.changes, v.created_by,
+			        v.created_on::text, v.update_id::text AS update_id,
+			        u.title AS update_title
+			 FROM report_versions v
+			 LEFT JOIN updates u ON u.update_id = v.update_id
+			 WHERE v.report_id = $1
+			 ORDER BY v.version DESC
 			 LIMIT $2`,
 			[reportId, limit + 1],
 		),
@@ -131,6 +139,10 @@ export async function listHistory(
 		label: row.label,
 		changes: row.changes ?? [],
 		isCurrent: Number(row.version) === currentVersion,
+		becauseOf:
+			row.update_id && row.update_title
+				? { updateId: row.update_id, title: row.update_title }
+				: null,
 	}));
 }
 

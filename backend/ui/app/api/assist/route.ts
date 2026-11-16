@@ -70,8 +70,14 @@ export async function POST(request: NextRequest) {
 	let title = "";
 	let attachments: Attachment[] = [];
 	let rawSurface: unknown = null;
+	let conversationId: string | null = null;
 	try {
 		const body = await request.json();
+		conversationId =
+			typeof body?.conversationId === "string" &&
+			/^[0-9a-f-]{36}$/i.test(body.conversationId)
+				? body.conversationId
+				: null;
 		question = String(body?.question ?? "").trim();
 		asked = body?.sourceKey ? String(body.sourceKey) : null;
 		path = typeof body?.path === "string" ? body.path.slice(0, 500) : "";
@@ -217,6 +223,7 @@ export async function POST(request: NextRequest) {
 						profile,
 						pointedAt,
 						surface,
+						conversationId,
 					},
 					emit,
 					abort.signal,

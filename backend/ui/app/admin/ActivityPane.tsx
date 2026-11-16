@@ -38,6 +38,13 @@ interface Response {
 // a phrase here rather than at the point of writing, because the log is also
 // read by things that are not this screen.
 const actionLabels: Record<string, string> = {
+	review_requested: "Asked to read conversations",
+	review_self_granted: "Granted themselves access to read conversations",
+	review_approved: "Approved a request to read conversations",
+	review_declined: "Declined a request to read conversations",
+	review_revoked: "Revoked access to read conversations",
+	review_opened: "Read a conversation under review",
+	remove_field: "Removed a field everywhere it was used",
 	administer_personal_page: "Opened a personal page as an administrator",
 	create_report: "Created a report",
 	move_report: "Moved a report",

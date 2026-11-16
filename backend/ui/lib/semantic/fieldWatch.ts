@@ -12,6 +12,7 @@ import { demoMode } from "../runtime";
 import { syncSourceFields, type FieldSyncResult } from "./fieldSync";
 import { getSource, reloadRegistryEverywhere } from "./registry";
 import { postAutomatic } from "../updates/store";
+import { enqueueSyncFindings } from "../upkeep/runner";
 
 // Noticing that a field went away, and telling the people it affects.
 //
@@ -439,6 +440,20 @@ async function syncDueSources(warehouseUp: boolean): Promise<void> {
 					getSource(result.sourceKey)?.title ?? result.sourceKey,
 				).catch((error) => {
 					console.warn("Automatic updates were not posted:", error);
+				});
+				// What the assistant should do about it, queued whether or not
+				// an entry was posted. See lib/upkeep.
+				await enqueueSyncFindings({
+					sourceKey: result.sourceKey,
+					added: result.added,
+					renames: result.renames.map((r) => ({
+						from: r.from,
+						to: r.to,
+						confidence: r.confidence,
+					})),
+					redefined: (result.redefined ?? []).map((r) => ({
+						name: r.name,
+					})),
 				});
 			}
 		}

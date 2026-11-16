@@ -756,7 +756,10 @@ export function aboutPage(
 }
 
 export interface Follow {
-	kind: "all" | "type" | "source" | "field";
+	// "changes" follows what the assistant changes rather than updates, with the
+	// value "" for everything, "mine" for reports owned or starred, or
+	// "category:<id>" or "source:<key>". See lib/upkeep/tell.
+	kind: "all" | "type" | "source" | "field" | "changes";
 	value: string;
 	mode: "instant" | "digest";
 }
@@ -765,6 +768,7 @@ export function followMatches(
 	follow: Follow,
 	update: Pick<Update, "type" | "about">,
 ): boolean {
+	if (follow.kind === "changes") return false;
 	if (follow.kind === "all") return true;
 	if (follow.kind === "type") return follow.value === update.type;
 	if (follow.kind === "source") {

@@ -79,6 +79,8 @@ function tell(
 ): void {
 	const everyone = new Set(people.map((person) => person.toLowerCase()));
 	everyone.delete(except.toLowerCase());
+	// The assistant files suggestions but is not somebody to tell.
+	everyone.delete("assistant");
 	for (const person of everyone) {
 		void notify(person, { kind: "system", ...message }).catch((error) => {
 			console.warn("A request notification was not delivered:", error);
@@ -191,6 +193,48 @@ export async function createSuggestion(
 		);
 	}
 
+	return storeSuggestion(identity.email, reportId, ref, facts, input);
+}
+
+// A suggestion the assistant makes, from reader feedback or a conversation with
+// maintainers. It holds no permission of its own and changes nothing: it waits,
+// like anybody's suggestion, for a Maintainer to approve it.
+export async function createAssistantSuggestion(
+	actor: string,
+	reportId: string,
+	input: { operations: EditOperation[]; note?: unknown },
+): Promise<string> {
+	const subject = await reportSubject(reportId);
+	if (!subject) throw new RequestError("Not found", 404);
+	if (input.operations.length === 0) {
+		throw new RequestError("There is nothing to suggest yet.");
+	}
+	const ref = {
+		reportId,
+		categoryId: subject.category_id,
+		isPersonal: subject.is_personal,
+		ownerEmail: subject.owner_email,
+		tags: subject.tags,
+		editPolicy: subject.edit_policy,
+	};
+	const version = await sql<{ version: string }>(
+		`SELECT version FROM reports WHERE report_id = $1`,
+		[reportId],
+	);
+	return storeSuggestion(actor, reportId, ref, await editingFacts(), {
+		baseVersion: Number(version[0]?.version ?? 0),
+		operations: input.operations,
+		note: input.note,
+	});
+}
+
+async function storeSuggestion(
+	author: string,
+	reportId: string,
+	ref: Parameters<typeof maintainersOf>[1],
+	facts: Awaited<ReturnType<typeof editingFacts>>,
+	input: { baseVersion: number; operations: EditOperation[]; note?: unknown },
+): Promise<string> {
 	// Refused now, not when a Maintainer goes to approve it.
 	await checkOperations(reportId, input.operations);
 
@@ -224,7 +268,7 @@ export async function createSuggestion(
 		 RETURNING suggestion_id::text AS suggestion_id`,
 		[
 			reportId,
-			identity.email,
+			author,
 			cleanNote(input.note),
 			input.baseVersion,
 			JSON.stringify(input.operations),
@@ -236,7 +280,7 @@ export async function createSuggestion(
 		recordType: "report",
 		recordId: reportId,
 		action: "suggest_change",
-		changedBy: identity.email,
+		changedBy: author,
 		newValue: JSON.stringify(summary),
 	});
 
@@ -247,9 +291,9 @@ export async function createSuggestion(
 		maintainers.length > 0
 			? maintainers
 			: await usersHolding("report.review"),
-		identity.email,
+		author,
 		{
-			title: `${identity.email} suggested a change to ${report[0]?.title ?? "a report"}`,
+			title: `${author} suggested a change to ${report[0]?.title ?? "a report"}`,
 			body: summary.slice(0, 3).join(". "),
 			link: `/r/${report[0]?.slug}?suggestions=1`,
 		},

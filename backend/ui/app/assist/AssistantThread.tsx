@@ -17,6 +17,8 @@ import {
 	type Step,
 } from "./AssistantContext";
 import { Markdown } from "./Markdown";
+import { MaintainerOfferCard } from "./MaintainerOffer";
+import { WorkRequestOfferCard } from "./WorkRequestOffer";
 import styles from "./Assist.module.css";
 
 // The conversation, drawn as it arrives.
@@ -335,6 +337,12 @@ const AnswerBlock = memo(function AnswerBlock({
 			{message.status === "stopped" && (
 				<p className={styles.stopped}>Stopped.</p>
 			)}
+			{(message.offers ?? []).map((offer, index) => (
+				<MaintainerOfferCard key={index} offer={offer} />
+			))}
+			{(message.workOffers ?? []).map((offer, index) => (
+				<WorkRequestOfferCard key={index} offer={offer} />
+			))}
 			{(message.created ?? []).map((made) => (
 				<a key={made.href} href={made.href} className={styles.created}>
 					<span className={styles.createdKind}>New board</span>

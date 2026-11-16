@@ -5,6 +5,7 @@ import useSWR from "swr";
 import type { Change } from "../../lib/platform/versionDiff";
 import type { SourceMeta } from "../visuals/types";
 import { Modal } from "../components/shared/Modal";
+import { Select } from "../components/shared/Select";
 import { SkeletonText } from "../components/shared/Skeleton";
 import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { CompareVersions } from "./CompareVersions";
@@ -43,6 +44,8 @@ interface HistoryEntry {
 	label: string | null;
 	changes: Change[];
 	isCurrent: boolean;
+	// The update this version was made because of, linking back to it.
+	becauseOf: { updateId: string; title: string } | null;
 }
 
 interface HistoryPanelProps {
@@ -55,6 +58,9 @@ interface HistoryPanelProps {
 	// without the author having to close and reopen it.
 	refreshKey: number;
 	onRestored: () => void;
+	// A version to open the comparison of straight away, from a link such as
+	// the changes listed on an update.
+	openVersion?: number | null;
 }
 
 function when(iso: string): string {
@@ -186,6 +192,7 @@ export function HistoryPanel({
 	sources,
 	refreshKey,
 	onRestored,
+	openVersion = null,
 }: HistoryPanelProps) {
 	const { data, isLoading, mutate } = useSWR<{
 		entries: HistoryEntry[];
@@ -197,7 +204,40 @@ export function HistoryPanel({
 
 	const [restoring, setRestoring] = useState<number | null>(null);
 	const [confirming, setConfirming] = useState<number | null>(null);
-	const [comparing, setComparing] = useState<number | null>(null);
+	const [comparing, setComparing] = useState<number | null>(openVersion);
+	// The version being linked to an update, and the update chosen for it.
+	const [linking, setLinking] = useState<number | null>(null);
+	const [linkTo, setLinkTo] = useState("");
+	const [linkMessage, setLinkMessage] = useState("");
+	const { data: recent } = useSWR<{
+		updates: { updateId: string; title: string }[];
+	}>(linking !== null ? "/api/changes?list=1&limit=50" : null);
+
+	const linkVersion = async (version: number) => {
+		setFailure(null);
+		const response = await fetch("/api/changes", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				action: "link",
+				updateId: linkTo,
+				reportId,
+				version,
+				message: linkMessage,
+			}),
+		});
+		if (!response.ok) {
+			const body = (await response.json().catch(() => null)) as {
+				error?: string;
+			} | null;
+			setFailure(body?.error ?? "The version could not be linked.");
+			return;
+		}
+		setLinking(null);
+		setLinkTo("");
+		setLinkMessage("");
+		await mutate();
+	};
 	const [failure, setFailure] = useState<string | null>(null);
 
 	const restore = async (version: number) => {
@@ -285,6 +325,17 @@ export function HistoryPanel({
 							</div>
 						)}
 
+						{entry.becauseOf && (
+							<div className={styles.historyBecause}>
+								Because of{" "}
+								<a
+									href={`/status?tab=updates&open=${entry.becauseOf.updateId}`}
+								>
+									{entry.becauseOf.title}
+								</a>
+							</div>
+						)}
+
 						<ul className={styles.changeList}>
 							{entry.changes.map((change, i) => (
 								<li key={i} className={styles.change}>
@@ -318,6 +369,22 @@ export function HistoryPanel({
 							>
 								Compare
 							</button>
+							{data?.canRestore && !entry.becauseOf && (
+								<button
+									type="button"
+									className={styles.toolButton}
+									onClick={() => {
+										setFailure(null);
+										setLinking(
+											linking === entry.version
+												? null
+												: entry.version,
+										);
+									}}
+								>
+									Link to an update
+								</button>
+							)}
 							{data?.canRestore && !entry.isCurrent && (
 								<button
 									type="button"
@@ -331,6 +398,43 @@ export function HistoryPanel({
 								</button>
 							)}
 						</div>
+
+						{linking === entry.version && (
+							<div className={styles.historyLink}>
+								<Select
+									value={linkTo}
+									placeholder="Choose the update this was because of"
+									ariaLabel="Update"
+									searchable
+									onChange={setLinkTo}
+									options={(recent?.updates ?? []).map(
+										(update) => ({
+											value: update.updateId,
+											label: update.title,
+										}),
+									)}
+								/>
+								<input
+									className={styles.input}
+									value={linkMessage}
+									placeholder="What this version changed because of it"
+									aria-label="What this version changed"
+									onChange={(e) =>
+										setLinkMessage(e.target.value)
+									}
+								/>
+								<button
+									type="button"
+									className={styles.toolButton}
+									disabled={!linkTo}
+									onClick={() =>
+										void linkVersion(entry.version)
+									}
+								>
+									Link
+								</button>
+							</div>
+						)}
 					</li>
 				))}
 			</ol>

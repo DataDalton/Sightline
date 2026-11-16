@@ -1244,3 +1244,56 @@
 	color: var(--text-muted);
 	font-size: var(--text-xs);
 }
+
+/* Feedback on one visual, anchored the same way as its notes. */
+.feedbackPanel {
+	composes: notesPanel;
+}
+
+.feedbackReasons {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-1);
+}
+
+.feedbackReason {
+	padding: 4px var(--space-2);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-full);
+	background: var(--surface-base);
+	color: var(--text-secondary);
+	font-size: var(--text-xs);
+	cursor: pointer;
+}
+
+.feedbackReason:hover {
+	border-color: var(--border-strong);
+	color: var(--text-primary);
+}
+
+.feedbackReasonOn {
+	border-color: var(--brand);
+	background: var(--state-selected);
+	color: var(--text-primary);
+}
+
+.feedbackAsk {
+	margin-right: auto;
+	border: none;
+	background: none;
+	color: var(--text-link);
+	font-size: var(--text-xs);
+	cursor: pointer;
+	padding: 0;
+}
+
+.feedbackAsk:hover {
+	text-decoration: underline;
+}
+
+.feedbackSent {
+	margin: 0;
+	font-size: var(--text-sm);
+	color: var(--text-secondary);
+	line-height: 1.5;
+}

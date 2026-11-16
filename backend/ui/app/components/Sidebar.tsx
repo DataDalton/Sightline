@@ -93,6 +93,11 @@ function CategoryReports({
 export default memo(function Sidebar() {
 	const pathname = usePathname();
 	const { user } = useUser();
+	// Either reviewer role, or an administrator, which holds both.
+	const reviews = Boolean(
+		user?.capabilities?.includes("review.groupChats") ||
+		user?.capabilities?.includes("review.assistant"),
+	);
 	const { unread } = useNotify();
 	const { navOpen } = useShell();
 
@@ -206,6 +211,18 @@ export default memo(function Sidebar() {
 						<NavIcon name="status" />
 						<span className={styles.label}>Data status</span>
 					</Link>
+					{(user?.capabilities?.includes("work.request") ||
+						user?.capabilities?.includes("work.engineer")) && (
+						<Link
+							href="/work"
+							className={`${styles.navItem} ${
+								isActive("/work") ? styles.active : ""
+							}`}
+						>
+							<NavIcon name="work" />
+							<span className={styles.label}>Requests</span>
+						</Link>
+					)}
 					{/* Absent unless this deployment names a model endpoint.
 					    An assistant nobody configured is not a disabled
 					    feature, it is one that was never built. */}
@@ -350,19 +367,36 @@ export default memo(function Sidebar() {
 				)}
 			</div>
 
-			{user?.canAdminister && (
+			{(user?.canAdminister || reviews) && (
 				<div className={styles.section}>
 					<div className={styles.sectionTitle}>Manage</div>
 					<nav className={styles.nav}>
-						<Link
-							href="/admin"
-							className={`${styles.navItem} ${
-								isActive("/admin") ? styles.active : ""
-							}`}
-						>
-							<NavIcon name="admin" />
-							<span className={styles.label}>Administration</span>
-						</Link>
+						{user?.canAdminister && (
+							<Link
+								href="/admin"
+								className={`${styles.navItem} ${
+									isActive("/admin") ? styles.active : ""
+								}`}
+							>
+								<NavIcon name="admin" />
+								<span className={styles.label}>
+									Administration
+								</span>
+							</Link>
+						)}
+						{reviews && (
+							<Link
+								href="/review"
+								className={`${styles.navItem} ${
+									isActive("/review") ? styles.active : ""
+								}`}
+							>
+								<NavIcon name="review" />
+								<span className={styles.label}>
+									Conversation review
+								</span>
+							</Link>
+						)}
 					</nav>
 				</div>
 			)}

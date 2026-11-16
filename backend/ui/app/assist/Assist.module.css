@@ -1368,3 +1368,94 @@
 		justify-content: flex-start;
 	}
 }
+
+/* The offer to ask a report's maintainers, which the person accepts or not. */
+.offer {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	margin-top: var(--space-3);
+	padding: var(--space-3) var(--space-4);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+}
+
+.offerLead {
+	margin: 0;
+	font-size: var(--text-sm);
+	color: var(--text-secondary);
+	line-height: 1.5;
+}
+
+.offerField {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+}
+
+.offerInput {
+	padding: var(--space-2);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-sm);
+	background: var(--surface-base);
+	color: var(--text-primary);
+	font: inherit;
+	font-size: var(--text-sm);
+	resize: vertical;
+}
+
+.offerShare {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--space-2);
+	font-size: var(--text-xs);
+	color: var(--text-secondary);
+	line-height: 1.5;
+}
+
+.offerShare input {
+	margin-top: 2px;
+}
+
+.offerActions {
+	display: flex;
+	justify-content: flex-end;
+	gap: var(--space-2);
+}
+
+.offerSecondary,
+.offerPrimary {
+	padding: var(--space-1) var(--space-3);
+	border-radius: var(--radius-sm);
+	font: inherit;
+	font-size: var(--text-sm);
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.offerSecondary {
+	text-decoration: none;
+	border: 1px solid var(--border-default);
+	background: var(--surface-base);
+	color: var(--text-primary);
+}
+
+.offerPrimary {
+	border: 1px solid var(--brand);
+	background: var(--brand);
+	color: var(--brand-contrast);
+}
+
+.offerPrimary:disabled {
+	opacity: 0.6;
+	cursor: default;
+}
+
+.offerNote {
+	margin: var(--space-3) 0 0;
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+}

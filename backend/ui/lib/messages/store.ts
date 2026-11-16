@@ -49,6 +49,13 @@ export interface ThreadSummary {
 	preview: string;
 	unread: boolean;
 	members: ThreadMember[];
+	// The assistant takes part, reading the conversation and offering answers
+	// and changes. See lib/feedback/threadAssistant.
+	withAssistant: boolean;
+	// The assistant conversation the person who asked chose to share.
+	sharedConversationId: string | null;
+	// The visual it is about, when it started from one.
+	visualId: string | null;
 }
 
 export interface ThreadMessage {
@@ -58,7 +65,14 @@ export interface ThreadMessage {
 	body: string;
 	createdOn: string;
 	mine: boolean;
+	// "text", or "proposal" for a change the assistant offers with Apply and
+	// Suggest, whose details are in payload.
+	kind: string;
+	payload: unknown;
 }
+
+// The name the assistant posts under. Matches lib/upkeep/actor.
+export const assistantAuthor = "Assistant";
 
 function memberName(m: Member): string {
 	return m.type === "user" ? displayNameFromEmail(m.id) : m.id;
@@ -167,6 +181,11 @@ export async function startThread(input: {
 	subject: string;
 	body: string;
 	recipients: Member[];
+	// With the assistant taking part, the conversation the person shared with
+	// their consent, and the visual it is about.
+	withAssistant?: boolean;
+	sharedConversationId?: string | null;
+	visualId?: string | null;
 }): Promise<string> {
 	const author = input.author.toLowerCase();
 	const others = input.recipients.filter(
@@ -210,9 +229,19 @@ export async function startThread(input: {
 
 	const { threadId, written } = await transaction(async (client) => {
 		const created = await client.query<{ thread_id: string }>(
-			`INSERT INTO threads (subject, category_id, report_slug, created_by)
-			 VALUES ($1, $2, $3, $4) RETURNING thread_id::text`,
-			[input.subject, input.categoryId, input.reportSlug, author],
+			`INSERT INTO threads
+			   (subject, category_id, report_slug, created_by, with_assistant,
+			    shared_conversation_id, visual_id)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING thread_id::text`,
+			[
+				input.subject,
+				input.categoryId,
+				input.reportSlug,
+				author,
+				input.withAssistant === true,
+				input.sharedConversationId ?? null,
+				input.visualId ?? null,
+			],
 		);
 		const id = created.rows[0].thread_id;
 		for (const m of members) {
@@ -261,9 +290,14 @@ export async function listThreads(
 		last_author: string | null;
 		preview: string | null;
 		read_on: string | null;
+		with_assistant: boolean;
+		shared_conversation_id: string | null;
+		visual_id: string | null;
 	}>(
 		`SELECT t.thread_id::text, t.subject, t.category_id,
 		        c.name AS category_name, t.report_slug, t.created_by,
+		        t.with_assistant, t.shared_conversation_id::text,
+		        t.visual_id::text,
 		        t.last_message_on::text, last.author_email AS last_author,
 		        left(last.body, 200) AS preview, r.read_on::text
 		 FROM threads t
@@ -308,6 +342,9 @@ export async function listThreads(
 			...m,
 			name: memberName(m),
 		})),
+		withAssistant: row.with_assistant,
+		sharedConversationId: row.shared_conversation_id,
+		visualId: row.visual_id,
 	}));
 }
 
@@ -334,16 +371,7 @@ export async function openThread(
 	);
 	if (!thread) return null;
 
-	const rows = await sql<{
-		message_id: string;
-		author_email: string;
-		body: string;
-		created_on: string;
-	}>(
-		`SELECT message_id::text, author_email, body, created_on::text
-		 FROM thread_messages WHERE thread_id = $1 ORDER BY created_on`,
-		[threadId],
-	);
+	const rows = await messagesOf(threadId);
 
 	await sql(
 		`INSERT INTO thread_reads (thread_id, user_email) VALUES ($1, $2)
@@ -360,15 +388,152 @@ export async function openThread(
 
 	return {
 		thread: { ...thread, unread: false },
-		messages: rows.map((row) => ({
-			id: row.message_id,
-			authorEmail: row.author_email,
-			authorName: displayNameFromEmail(row.author_email),
-			body: row.body,
-			createdOn: row.created_on,
-			mine: row.author_email === me,
-		})),
+		messages: rows.map((row) => toMessage(row, me)),
 	};
+}
+
+interface MessageRow {
+	message_id: string;
+	author_email: string;
+	body: string;
+	created_on: string;
+	kind: string;
+	payload: unknown;
+}
+
+async function messagesOf(threadId: string): Promise<MessageRow[]> {
+	return sql<MessageRow>(
+		`SELECT message_id::text, author_email, body, created_on::text, kind,
+		        payload
+		 FROM thread_messages WHERE thread_id = $1 ORDER BY created_on`,
+		[threadId],
+	);
+}
+
+function toMessage(row: MessageRow, me: string): ThreadMessage {
+	return {
+		id: row.message_id,
+		authorEmail: row.author_email,
+		authorName:
+			row.author_email.toLowerCase() === assistantAuthor.toLowerCase()
+				? assistantAuthor
+				: displayNameFromEmail(row.author_email),
+		body: row.body,
+		createdOn: row.created_on,
+		mine: row.author_email === me,
+		kind: row.kind,
+		payload: row.payload,
+	};
+}
+
+// A conversation read by somebody granted review of it. Nothing is marked read
+// and no notification changes, so the members see no sign of it. The grant and
+// the reading are recorded by lib/review instead.
+export async function readThreadForReview(threadId: string): Promise<{
+	thread: {
+		id: string;
+		subject: string;
+		reportSlug: string | null;
+		createdBy: string;
+		createdOn: string;
+		members: ThreadMember[];
+	};
+	messages: ThreadMessage[];
+} | null> {
+	const rows = await sql<{
+		thread_id: string;
+		subject: string;
+		report_slug: string | null;
+		created_by: string;
+		created_on: string;
+	}>(
+		`SELECT thread_id::text, subject, report_slug, created_by,
+		        created_on::text
+		 FROM threads WHERE thread_id::text = $1`,
+		[threadId],
+	);
+	const row = rows[0];
+	if (!row) return null;
+	const members = (await membersOf([threadId])).get(threadId) ?? [];
+	return {
+		thread: {
+			id: row.thread_id,
+			subject: row.subject,
+			reportSlug: row.report_slug,
+			createdBy: row.created_by,
+			createdOn: row.created_on,
+			members: members.map((m) => ({ ...m, name: memberName(m) })),
+		},
+		messages: (await messagesOf(threadId)).map((m) => toMessage(m, "")),
+	};
+}
+
+// The members of a conversation, for telling them about it.
+export async function threadMembers(threadId: string): Promise<Member[]> {
+	return (await membersOf([threadId])).get(threadId) ?? [];
+}
+
+// A message the assistant posts in a conversation it takes part in: an answer,
+// or a proposed change. Everybody in the conversation is told, as with any
+// reply.
+export async function postAssistantMessage(
+	threadId: string,
+	body: string,
+	kind: "text" | "proposal" = "text",
+	payload: unknown = null,
+): Promise<string> {
+	const members = (await membersOf([threadId])).get(threadId) ?? [];
+	const people = await peopleFor(members, assistantAuthor);
+	const { messageId, written } = await transaction(async (client) => {
+		const inserted = await client.query<{ message_id: string }>(
+			`INSERT INTO thread_messages (thread_id, author_email, body, kind, payload)
+			 VALUES ($1, $2, $3, $4, $5::jsonb) RETURNING message_id::text`,
+			[threadId, assistantAuthor, body, kind, JSON.stringify(payload)],
+		);
+		const updated = await client.query<{ subject: string }>(
+			`UPDATE threads SET last_message_on = now()
+			 WHERE thread_id = $1 RETURNING subject`,
+			[threadId],
+		);
+		return {
+			messageId: inserted.rows[0].message_id,
+			written: await writeNotices(
+				client,
+				people,
+				threadId,
+				`${assistantAuthor} in: ${updated.rows[0]?.subject ?? ""}`,
+				body,
+			),
+		};
+	});
+	pushAll(written);
+	return messageId;
+}
+
+// Records what happened to a proposal card, such as who applied it.
+export async function updateProposal(
+	threadId: string,
+	messageId: string,
+	change: Record<string, unknown>,
+): Promise<void> {
+	await sql(
+		`UPDATE thread_messages
+		 SET payload = coalesce(payload, '{}'::jsonb) || $3::jsonb
+		 WHERE thread_id::text = $1 AND message_id::text = $2 AND kind = 'proposal'`,
+		[threadId, messageId, JSON.stringify(change)],
+	);
+}
+
+export async function proposalOf(
+	threadId: string,
+	messageId: string,
+): Promise<Record<string, unknown> | null> {
+	const rows = await sql<{ payload: Record<string, unknown> | null }>(
+		`SELECT payload FROM thread_messages
+		 WHERE thread_id::text = $1 AND message_id::text = $2 AND kind = 'proposal'`,
+		[threadId, messageId],
+	);
+	return rows[0]?.payload ?? null;
 }
 
 export async function reply(
@@ -410,4 +575,21 @@ export async function reply(
 	});
 
 	pushAll(written);
+
+	// A conversation the assistant takes part in gets its reading of the new
+	// message. Not waited for, so the reply is never held up by the model.
+	const flags = await sql<{ with_assistant: boolean }>(
+		`SELECT with_assistant FROM threads WHERE thread_id = $1`,
+		[threadId],
+	);
+	if (flags[0]?.with_assistant) {
+		void import("../feedback/threadAssistant")
+			.then(({ respondInThread }) => respondInThread(threadId))
+			.catch((error) => {
+				console.warn(
+					"The assistant did not answer in a conversation:",
+					error,
+				);
+			});
+	}
 }

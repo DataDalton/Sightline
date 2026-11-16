@@ -62,6 +62,16 @@ import { listSources } from "@/lib/semantic/registry";
 import { caller, privateJson, readJson } from "../notifications/guard";
 import { displayNameFromEmail } from "@/lib/auth/names";
 import { aboutLine, aboutSections } from "@/lib/updates/aboutDisplay";
+import { linkUpdateToRequests, requestsForUpdate } from "@/lib/work/releases";
+import { actorOf } from "@/lib/work/access";
+import {
+	autoWatch,
+	isWatching,
+	linkChange,
+	linksFor,
+	setWatching,
+	tellWatchers,
+} from "@/lib/updates/links";
 
 // Updates. The page reads this, and any tool can post to it: a GitHub workflow or a
 // pipeline signs in as a service principal given the right to post. A reference makes a
@@ -249,9 +259,14 @@ export async function GET(request: NextRequest) {
 							fields.length > 0 ? fields : null,
 						).catch(() => [])
 					: [];
+			// Only reports this reader can open are named, since even a title is
+			// not theirs to read otherwise.
+			const readable = new Set(
+				(await listReports(policy, identity)).map((r) => r.reportId),
+			);
 			const reports = new Map<string, { slug: string; title: string }>();
 			for (const item of affected) {
-				if (item.report) {
+				if (item.report && readable.has(item.report.reportId)) {
 					reports.set(item.report.reportId, {
 						slug: item.report.slug,
 						title: item.report.title,
@@ -272,6 +287,16 @@ export async function GET(request: NextRequest) {
 					}));
 				}),
 				affects: [...reports.values()],
+				// Changes made because of it, each with where this reader may
+				// follow it. See lib/updates/links.
+				changesMade: await linksFor(updateId, policy, identity),
+				// Work queue requests it resolves or relates to, that this
+				// reader can see.
+				requests: await requestsForUpdate(
+					await actorOf(policy, identity),
+					updateId,
+				),
+				watching: await isWatching(updateId, identity.email),
 				// Who acknowledged it is for the poster and moderators, not other readers.
 				acknowledgedBy: canSeeWho
 					? await whoAcknowledged(updateId)
@@ -479,6 +504,79 @@ export async function POST(request: NextRequest) {
 	}
 }
 
+async function assertVisible(
+	policy: PolicyClass,
+	identity: Identity,
+	updateId: string,
+): Promise<void> {
+	const visible = await visibleUpdates(policy, identity);
+	if (!visible.some((update) => update.updateId === updateId)) {
+		throw new UpdateError("Not found", 404);
+	}
+}
+
+// A person linking their own change to an update, such as a fix made by hand
+// after a breaking change. Only somebody who can edit the report may, and the
+// version is the latest unless one is named. The version records the update in
+// the report's history too.
+async function linkByHand(
+	policy: PolicyClass,
+	identity: Identity,
+	updateId: string,
+	body: Record<string, unknown>,
+) {
+	await assertVisible(policy, identity, updateId);
+	const reportId = String(body.reportId ?? "");
+	const report = (await listReports(policy, identity)).find(
+		(r) => r.reportId === reportId,
+	);
+	if (
+		!report ||
+		(report.permission !== "edit" && report.permission !== "admin")
+	) {
+		throw new UpdateError(
+			"Only somebody who can edit the report can link a change on it.",
+			403,
+		);
+	}
+	const asked = Number(body.version);
+	const versions = await sql<{ version: string }>(
+		Number.isFinite(asked) && asked > 0
+			? `SELECT version::text FROM report_versions WHERE report_id = $1 AND version = $2`
+			: `SELECT version::text FROM report_versions WHERE report_id = $1
+			   ORDER BY version DESC LIMIT 1`,
+		Number.isFinite(asked) && asked > 0 ? [reportId, asked] : [reportId],
+	);
+	const version = versions[0] ? Number(versions[0].version) : null;
+	if (version !== null) {
+		await sql(
+			`UPDATE report_versions SET update_id = $3
+			 WHERE report_id = $1 AND version = $2 AND update_id IS NULL`,
+			[reportId, version, updateId],
+		);
+	}
+	const message =
+		typeof body.message === "string"
+			? body.message.trim().slice(0, 2000)
+			: "";
+	await linkChange({
+		updateId,
+		kind: version === null ? "report" : "reportVersion",
+		reportId,
+		version,
+		title: report.title,
+		message,
+		actor: identity.email,
+	});
+	await tellWatchers(
+		updateId,
+		identity.email,
+		`${identity.name} linked a change`,
+		message || "A report was changed because of this update.",
+	);
+	return { ok: true };
+}
+
 async function act(
 	action: string,
 	policy: PolicyClass,
@@ -487,8 +585,33 @@ async function act(
 	body: Record<string, unknown>,
 ): Promise<unknown> {
 	switch (action) {
-		case "post":
-			return postUpdate(policy, identity, await fromTemplate(body));
+		case "post": {
+			const posted = await postUpdate(
+				policy,
+				identity,
+				await fromTemplate(body),
+			);
+			// Requests it resolves or relates to, by key, such as
+			// resolves: ["WR-142"]. A resolving update moves them to Done once it
+			// is out. See lib/work.
+			const keys = (value: unknown) =>
+				Array.isArray(value)
+					? value.filter((k): k is string => typeof k === "string")
+					: [];
+			const resolved = await linkUpdateToRequests(
+				posted.update.updateId,
+				keys(body.resolves),
+				identity.email,
+				true,
+			);
+			const related = await linkUpdateToRequests(
+				posted.update.updateId,
+				keys(body.relates),
+				identity.email,
+				false,
+			);
+			return { ...posted, resolved, related };
+		}
 		case "bulk": {
 			const items = Array.isArray(body.updates) ? body.updates : [];
 			const results = [];
@@ -533,9 +656,26 @@ async function act(
 			await moveIncident(policy, identity, updateId, state, body.note);
 			return { ok: true };
 		}
-		case "note":
+		case "note": {
 			await noteOnUpdate(policy, identity, updateId, body.note);
+			// Writing in the discussion means wanting to hear the replies.
+			await autoWatch(updateId, identity.email);
+			const update = await updateById(updateId);
+			await tellWatchers(
+				updateId,
+				identity.email,
+				`${identity.name} wrote on ${update?.title ?? "an update"}`,
+				typeof body.note === "string" ? body.note : "",
+			);
 			return { ok: true };
+		}
+		case "watch": {
+			await assertVisible(policy, identity, updateId);
+			await setWatching(updateId, identity.email, body.on !== false);
+			return { watching: body.on !== false };
+		}
+		case "link":
+			return linkByHand(policy, identity, updateId, body);
 		case "read":
 			if (!(await updateById(updateId))) {
 				throw new UpdateError("Not found", 404);

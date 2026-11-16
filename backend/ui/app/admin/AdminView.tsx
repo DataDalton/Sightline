@@ -31,6 +31,7 @@ import RolesPane from "./RolesPane";
 import ProfilesPane from "./ProfilesPane";
 import ThemesPane from "./ThemesPane";
 import UpdateTypesPane from "./UpdateTypesPane";
+import { WorkQueuePane } from "./WorkQueuePane";
 import { AdminRail } from "./AdminRail";
 import { DailyActivity } from "./DailyActivity";
 import { ago, clock } from "./when";
@@ -230,6 +231,8 @@ export default function AdminView() {
 				return <ThemesPane />;
 			case "updateTypes":
 				return <UpdateTypesPane />;
+			case "workQueue":
+				return <WorkQueuePane />;
 			case "grants":
 				return <AccessGrants />;
 			case "review":
@@ -921,6 +924,13 @@ interface ConfigValues {
 	autoUpdateFieldRemoved: boolean;
 	autoUpdateFieldRenamed: boolean;
 	autoUpdateDefinitionChanged: boolean;
+	upkeepRenames: boolean;
+	upkeepRemovals: boolean;
+	upkeepNewFields: boolean;
+	upkeepDefinitions: boolean;
+	upkeepNewSources: boolean;
+	upkeepPageDescriptions: boolean;
+	upkeepWatchedSchemas: string[];
 }
 
 // What an admin can change without a redeploy.
@@ -1582,6 +1592,69 @@ function ConfigurationSection({ group }: { group: PaneId }) {
 								set({ autoUpdateDefinitionChanged: v })
 							}
 						/>
+					</SettingGroup>
+				)}
+
+				{group === "editingRules" && (
+					<SettingGroup
+						title="What the assistant does on its own"
+						blurb="When a change reaches a source, from the daily field sync or an update posted about it. Every report it changes gets a new version under its name with the reason, and it writes in the update's notes what it did. Protected reports and pages are left alone and their owners told."
+					>
+						<SwitchSetting
+							label="Follow renamed fields"
+							hint="Points everything that used the old name at the new one: visuals, filters, saved views, alerts, goals, sheets, tours and the rest."
+							checked={values.upkeepRenames}
+							onChange={(v) => set({ upkeepRenames: v })}
+						/>
+						<SwitchSetting
+							label="Clear removed fields"
+							hint="Takes a removed field out of everything that used it. A visual left with nothing to show is replaced with the closest equivalent, or turned off."
+							checked={values.upkeepRemovals}
+							onChange={(v) => set({ upkeepRemovals: v })}
+						/>
+						<SwitchSetting
+							label="Put new fields to use"
+							hint="Looks at a new field and adds it where it belongs, such as tables, filters and the reports on that source."
+							checked={values.upkeepNewFields}
+							onChange={(v) => set({ upkeepNewFields: v })}
+						/>
+						<SwitchSetting
+							label="Explain changed definitions"
+							hint="Notes the change on every visual using the measure, with a marker at the date it took effect."
+							checked={values.upkeepDefinitions}
+							onChange={(v) => set({ upkeepDefinitions: v })}
+						/>
+						<SwitchSetting
+							label="Build reports for new sources"
+							hint="Registers new tables and views in the watched schemas and builds a report for each."
+							checked={values.upkeepNewSources}
+							onChange={(v) => set({ upkeepNewSources: v })}
+						/>
+						<SwitchSetting
+							label="Keep report descriptions current"
+							hint="Rewrites a report's description when a page is added to it."
+							checked={values.upkeepPageDescriptions}
+							onChange={(v) => set({ upkeepPageDescriptions: v })}
+						/>
+						<Field
+							label="Watched schemas"
+							hint="New tables and views here become sources on their own. One per line, as catalog.schema."
+						>
+							<textarea
+								className={styles.input}
+								rows={3}
+								value={values.upkeepWatchedSchemas.join("\n")}
+								placeholder="main.reporting_views"
+								onChange={(e) =>
+									set({
+										upkeepWatchedSchemas: e.target.value
+											.split(/[\n,]/)
+											.map((line) => line.trim())
+											.filter((line) => line.length > 0),
+									})
+								}
+							/>
+						</Field>
 					</SettingGroup>
 				)}
 

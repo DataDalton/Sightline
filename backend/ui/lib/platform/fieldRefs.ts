@@ -1,4 +1,19 @@
-import { visualCatalog } from "../visuals/catalog";
+import {
+	fieldListOptionKeys,
+	fieldOptionKeys,
+	namesIn,
+	overlayListKeys,
+	renaming,
+	scanFormula,
+	walkAlert,
+	walkExplore,
+	walkList,
+	walkPage,
+	walkSavedView,
+	walkSheet,
+	walkVisual,
+	type Walked,
+} from "./fieldWalk";
 
 // Which fields a stored configuration names, and the same configuration with
 // one name swapped for another.
@@ -8,13 +23,9 @@ import { visualCatalog } from "../visuals/catalog";
 // a measure. Renaming one broke items that could not be enumerated first, and
 // the only way to find them was to open each one.
 //
-// Each kind of item names fields in its own places and they are not the same
-// shape. A visual has dimensions and measures as name lists, filters and sort
-// as objects with the name under a key, and settings such as the measure a top
-// ten is ranked by. A walk that reads only the first two misses every field a
-// page filters by, which is the reference most easily forgotten and the one
-// most likely to break quietly. A chart missing a filtered field does not
-// fail, it silently widens.
+// Every reading and renaming here goes through the walks in fieldWalk, which
+// know each place an item can name a field. The roles below are a summary for
+// display, kept to the places that decide what a query asks.
 //
 // Kept free of database and network imports so it can be tested on its own.
 
@@ -30,19 +41,6 @@ const roleOrder: FieldRole[] = [
 	"sort",
 	"option",
 ];
-
-// Visual settings whose value is one field name, read from the catalogue so a
-// setting added there is covered here without a second list to keep in step.
-const fieldOptionKeys = new Set(
-	visualCatalog.flatMap((definition) =>
-		(definition.options ?? [])
-			.filter((option) => option.kind === "field")
-			.map((option) => option.key),
-	),
-);
-
-// Visual settings whose value is a list of field names.
-const fieldListOptionKeys = new Set(["drillFields"]);
 
 type Json = Record<string, unknown>;
 
@@ -93,10 +91,6 @@ function optionFields(value: unknown): string[] {
 	return found;
 }
 
-function unique(values: string[]): string[] {
-	return [...new Set(values)];
-}
-
 // --- Visuals ---------------------------------------------------------------
 
 export function referencedFields(config: unknown): Record<FieldRole, string[]> {
@@ -111,253 +105,105 @@ export function referencedFields(config: unknown): Record<FieldRole, string[]> {
 }
 
 // The role a given field plays, or null where the configuration does not name
-// it at all.
+// it at all. A field named only by styling, a transform or a target counts as
+// a setting.
 export function roleOf(config: unknown, field: string): FieldRole | null {
 	const refs = referencedFields(config);
 	for (const role of roleOrder) {
 		if (refs[role].includes(field)) return role;
 	}
-	return null;
+	return allReferenced(config).includes(field) ? "option" : null;
 }
 
 // Every distinct field a visual's configuration names. Also the reading for a
-// saved view and a saved exploration, which store the same shape.
+// saved exploration, which stores the same shape.
 export function allReferenced(config: unknown): string[] {
-	const refs = referencedFields(config);
-	return unique(roleOrder.flatMap((role) => refs[role]));
+	return namesIn((visit) => walkVisual(config, visit));
 }
 
 // --- Other items -----------------------------------------------------------
 
-// Lists a saved view's overlay keeps beside the visual shape. See
-// lib/platform/overlay.
-const overlayListKeys = [
-	"hiddenDimensions",
-	"hiddenMeasures",
-	"addedDimensions",
-	"addedMeasures",
-	"dimensionOrder",
-	"measureOrder",
-];
-
 // Every field a saved view names, whether it stores the visual shape or the
-// overlay of differences against the page.
+// overlay of differences against the page, with the state it keeps per visual.
 export function savedViewFields(config: unknown): string[] {
-	const held = asObject(config);
-	return unique([
-		...allReferenced(config),
-		...overlayListKeys.flatMap((key) => names(held[key])),
-	]);
+	return namesIn((visit) => walkSavedView(config, visit));
 }
 
-// The field a page's data-through stamp reads.
+// The fields a page's settings name: its data-through stamp and the filters
+// every visual on it waits for.
 export function pageFields(config: unknown): string[] {
-	const field = asObject(asObject(config).freshness).field;
-	return typeof field === "string" && field ? [field] : [];
+	return namesIn((visit) => walkPage(config, visit));
 }
 
 // Columns and conditions of an Explore question, as a saved Explore view
 // stores it.
 export function exploreFields(state: unknown): string[] {
-	const held = asObject(state);
-	return unique([...names(held.columns), ...fieldProps(held.conditions)]);
+	return namesIn((visit) => walkExplore(state, visit));
 }
 
 // The measure an alert watches, what it splits by, what narrows it and the
 // date its history is read across. A page alert stores the same definition.
 export function alertFields(definition: unknown): string[] {
-	const held = asObject(definition);
-	const found: string[] = [];
-	if (typeof held.measure === "string" && held.measure) {
-		found.push(held.measure);
-	}
-	if (typeof held.groupBy === "string" && held.groupBy) {
-		found.push(held.groupBy);
-	}
-	found.push(...fieldProps(held.conditions));
-	const timeField = asObject(held.anomaly).timeField;
-	if (typeof timeField === "string" && timeField) found.push(timeField);
-	return unique(found);
+	return namesIn((visit) => walkAlert(definition, visit));
 }
-
-const fieldKeyPrefix = "field:";
 
 // Every column a sheet formula reads by name, skipping text inside quotes so a
 // literal "[Region]" is not taken for a reference.
 export function formulaReferences(formula: string): string[] {
-	const found: string[] = [];
+	const found = new Set<string>();
 	scanFormula(formula, (name) => {
-		found.push(name);
+		found.add(name);
 		return null;
 	});
-	return unique(found);
-}
-
-// Walks a formula's references in order. The callback may return a new name
-// for a reference, and the formula is returned rebuilt with it.
-function scanFormula(
-	formula: string,
-	visit: (name: string) => string | null,
-): string {
-	let out = "";
-	let i = 0;
-	while (i < formula.length) {
-		const c = formula[i];
-		if (c === '"') {
-			// Two quotes in a row are one quote inside the text.
-			let j = i + 1;
-			while (j < formula.length) {
-				if (formula[j] === '"') {
-					if (formula[j + 1] === '"') {
-						j += 2;
-						continue;
-					}
-					break;
-				}
-				j++;
-			}
-			out += formula.slice(i, j + 1);
-			i = j + 1;
-			continue;
-		}
-		if (c === "[") {
-			const close = formula.indexOf("]", i + 1);
-			if (close < 0) {
-				out += formula.slice(i);
-				break;
-			}
-			const inner = formula.slice(i + 1, close);
-			const replaced = visit(inner.trim());
-			out +=
-				replaced === null
-					? formula.slice(i, close + 1)
-					: `[${replaced}]`;
-			i = close + 1;
-			continue;
-		}
-		out += c;
-		i++;
-	}
-	return out;
+	return [...found];
 }
 
 // Every field a sheet names: its columns, its conditions, its pivot, the keys
 // its layout is stored under, its sort and what its formulas read.
 export function sheetFields(definition: unknown): string[] {
-	const held = asObject(definition);
-	const pivot = asObject(held.pivot);
-	const found: string[] = [
-		...names(held.columns),
-		...fieldProps(held.conditions),
-		...names(pivot.rows),
-		...names(pivot.values),
-	];
-	if (typeof pivot.columns === "string" && pivot.columns) {
-		found.push(pivot.columns);
-	}
-	for (const key of [
-		...names(held.order),
-		...Object.keys(asObject(held.settings)),
-	]) {
-		if (key.startsWith(fieldKeyPrefix)) {
-			found.push(key.slice(fieldKeyPrefix.length));
-		}
-	}
-	const sort = asObject(held.sort);
-	if (typeof sort.column === "string" && sort.column) found.push(sort.column);
-	for (const formula of Array.isArray(held.formulas) ? held.formulas : []) {
-		const text = asObject(formula).formula;
-		if (typeof text === "string") found.push(...formulaReferences(text));
-	}
-	return unique(found);
+	return namesIn((visit) => walkSheet(definition, visit));
 }
 
 // --- Renaming --------------------------------------------------------------
 
-export interface Renamed<T> {
-	value: T;
-	changed: boolean;
-}
-
-function clone<T>(value: T): T {
-	return JSON.parse(JSON.stringify(value ?? null)) as T;
-}
-
-// A name list with one name swapped. A list that already held the new name
-// keeps it once, in its first place.
-function renameList(value: unknown, from: string, to: string): unknown {
-	if (!Array.isArray(value)) return value;
-	const out: unknown[] = [];
-	for (const item of value) {
-		const next = item === from ? to : item;
-		if (typeof next === "string" && out.includes(next)) continue;
-		out.push(next);
-	}
-	return out;
-}
-
-function renameFieldProps(value: unknown, from: string, to: string): void {
-	if (Array.isArray(value)) {
-		value.forEach((item) => renameFieldProps(item, from, to));
-		return;
-	}
-	if (!value || typeof value !== "object") return;
-	const held = value as Json;
-	if (held.field === from) held.field = to;
-	for (const [key, inner] of Object.entries(held)) {
-		if (key !== "field" && inner && typeof inner === "object") {
-			renameFieldProps(inner, from, to);
-		}
-	}
-}
+export type Renamed<T> = Walked<T>;
 
 // A plain list of field names with one renamed, such as the fields an access
-// recording or a source's access mapping holds.
+// recording or a source's access mapping holds. A list that already held the
+// new name keeps it once, in its first place.
 export function renameInNames(
 	value: string[],
 	from: string,
 	to: string,
 ): Renamed<string[]> {
-	const next = renameList(value, from, to) as string[];
-	return result(value, next);
-}
-
-function result<T>(before: unknown, after: T): Renamed<T> {
+	const next = walkList(value, renaming(from, to)) as string[];
 	return {
-		value: after,
-		changed: JSON.stringify(before) !== JSON.stringify(after),
+		value: next,
+		changed: JSON.stringify(value) !== JSON.stringify(next),
 	};
 }
 
-// A visual, a saved view or a saved exploration with one field renamed.
+// A visual, a saved view or a saved exploration with one field renamed. A saved
+// view's per-visual state is renamed too.
 export function renameInVisual<T>(
 	config: T,
 	from: string,
 	to: string,
 ): Renamed<T> {
-	const next = clone(config);
-	if (!next || typeof next !== "object" || Array.isArray(next)) {
-		return { value: config, changed: false };
-	}
-	const held = next as Json;
-	// A saved view's overlay names fields in its own lists as well.
-	for (const key of ["dimensions", "measures", ...overlayListKeys]) {
-		if (key in held) held[key] = renameList(held[key], from, to);
-	}
-	renameFieldProps(held.filters, from, to);
-	renameFieldProps(held.sort, from, to);
-	const options = held.options;
-	if (options && typeof options === "object" && !Array.isArray(options)) {
-		const settings = options as Json;
-		for (const [key, setting] of Object.entries(settings)) {
-			if (fieldOptionKeys.has(key) && setting === from)
-				settings[key] = to;
-			else if (fieldListOptionKeys.has(key)) {
-				settings[key] = renameList(setting, from, to);
-			}
-		}
-	}
-	return result(config, next as T);
+	const held = asObject(config);
+	const isSavedView =
+		overlayListKeys.some((key) => key in held) ||
+		[
+			"columnOrder",
+			"pinnedColumns",
+			"columnWidths",
+			"pageFilters",
+			"gridStates",
+			"dimension",
+		].some((key) => key in held);
+	return isSavedView
+		? walkSavedView(config, renaming(from, to))
+		: walkVisual(config, renaming(from, to));
 }
 
 export function renameInPage<T>(
@@ -365,10 +211,7 @@ export function renameInPage<T>(
 	from: string,
 	to: string,
 ): Renamed<T> {
-	const next = clone(config);
-	const freshness = asObject(asObject(next).freshness);
-	if (freshness.field === from) freshness.field = to;
-	return result(config, next as T);
+	return walkPage(config, renaming(from, to));
 }
 
 export function renameInExplore<T>(
@@ -376,14 +219,7 @@ export function renameInExplore<T>(
 	from: string,
 	to: string,
 ): Renamed<T> {
-	const next = clone(state);
-	if (!next || typeof next !== "object" || Array.isArray(next)) {
-		return { value: state, changed: false };
-	}
-	const held = next as Json;
-	held.columns = renameList(held.columns, from, to);
-	renameFieldProps(held.conditions, from, to);
-	return result(state, next as T);
+	return walkExplore(state, renaming(from, to));
 }
 
 export function renameInAlert<T>(
@@ -391,17 +227,8 @@ export function renameInAlert<T>(
 	from: string,
 	to: string,
 ): Renamed<T> {
-	const next = clone(definition);
-	if (!next || typeof next !== "object" || Array.isArray(next)) {
-		return { value: definition, changed: false };
-	}
-	const held = next as Json;
-	if (held.measure === from) held.measure = to;
-	if (held.groupBy === from) held.groupBy = to;
-	renameFieldProps(held.conditions, from, to);
-	const anomaly = asObject(held.anomaly);
-	if (anomaly.timeField === from) anomaly.timeField = to;
-	return result(definition, next as T);
+	const { value, changed } = walkAlert(definition, renaming(from, to));
+	return { value, changed };
 }
 
 // A formula with every reference to one column renamed, and nothing inside
@@ -419,47 +246,5 @@ export function renameInSheet<T>(
 	from: string,
 	to: string,
 ): Renamed<T> {
-	const next = clone(definition);
-	if (!next || typeof next !== "object" || Array.isArray(next)) {
-		return { value: definition, changed: false };
-	}
-	const held = next as Json;
-	held.columns = renameList(held.columns, from, to);
-	renameFieldProps(held.conditions, from, to);
-
-	const pivot = held.pivot;
-	if (pivot && typeof pivot === "object" && !Array.isArray(pivot)) {
-		const layout = pivot as Json;
-		layout.rows = renameList(layout.rows, from, to);
-		layout.values = renameList(layout.values, from, to);
-		if (layout.columns === from) layout.columns = to;
-	}
-
-	const oldKey = fieldKeyPrefix + from;
-	const newKey = fieldKeyPrefix + to;
-	held.order = renameList(held.order, oldKey, newKey);
-	const settings = held.settings;
-	if (settings && typeof settings === "object" && !Array.isArray(settings)) {
-		const byKey = settings as Json;
-		if (oldKey in byKey) {
-			if (!(newKey in byKey)) byKey[newKey] = byKey[oldKey];
-			delete byKey[oldKey];
-		}
-	}
-
-	const sort = held.sort;
-	if (sort && typeof sort === "object" && !Array.isArray(sort)) {
-		const order = sort as Json;
-		if (order.column === from) order.column = to;
-	}
-
-	if (Array.isArray(held.formulas)) {
-		for (const formula of held.formulas) {
-			const item = asObject(formula);
-			if (typeof item.formula === "string") {
-				item.formula = renameInFormula(item.formula, from, to);
-			}
-		}
-	}
-	return result(definition, next as T);
+	return walkSheet(definition, renaming(from, to));
 }

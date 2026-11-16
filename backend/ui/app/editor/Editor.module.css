@@ -3074,3 +3074,24 @@ textarea.input {
 .blockSave button {
 	flex: none;
 }
+
+/* The update a version was made because of, under its label. */
+.historyBecause {
+	font-size: var(--text-xs);
+	color: var(--text-secondary);
+}
+
+.historyBecause a {
+	color: var(--text-link);
+}
+
+.historyBecause a:hover {
+	text-decoration: underline;
+}
+
+.historyLink {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	margin-top: var(--space-2);
+}

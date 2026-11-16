@@ -39,6 +39,20 @@ export const capabilityInfo: Record<string, { label: string; area: string }> = {
 	},
 	"category.create": { label: "Create categories", area: "Administration" },
 	"category.manage": { label: "Manage categories", area: "Administration" },
+	"work.request": { label: "Ask for work", area: "Every reader" },
+	"work.engineer": { label: "Work the request queue", area: "Looking after" },
+	"work.devsecops": {
+		label: "Security reviews and deploying",
+		area: "Looking after",
+	},
+	"review.groupChats": {
+		label: "Ask to read group conversations",
+		area: "Administration",
+	},
+	"review.assistant": {
+		label: "Ask to read assistant conversations",
+		area: "Administration",
+	},
 	"access.grant": { label: "Roles and access", area: "Administration" },
 	"semantic.sync": { label: "Sources", area: "Administration" },
 	"settings.manage": { label: "Platform settings", area: "Administration" },

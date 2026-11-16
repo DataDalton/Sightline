@@ -5,6 +5,7 @@ import { ensureReadyOrDegrade } from "@/lib/platform/bootstrap";
 import { EditForbiddenError } from "@/lib/platform/editing";
 import { listHistory, restoreVersion } from "@/lib/platform/history";
 import { getReport } from "@/lib/platform/reports";
+import { visibleUpdates } from "@/lib/updates/store";
 
 // The edit history of a report, and putting a version back.
 //
@@ -34,8 +35,21 @@ export async function GET(
 			return NextResponse.json({ error: "Not found" }, { status: 404 });
 		}
 
+		const entries = await listHistory(report.reportId);
+		// The update a version was made because of is named only to somebody
+		// who can read that update.
+		if (entries.some((entry) => entry.becauseOf)) {
+			const visible = new Set(
+				(await visibleUpdates(policy, identity)).map((u) => u.updateId),
+			);
+			for (const entry of entries) {
+				if (entry.becauseOf && !visible.has(entry.becauseOf.updateId)) {
+					entry.becauseOf = null;
+				}
+			}
+		}
 		return NextResponse.json({
-			entries: await listHistory(report.reportId),
+			entries,
 			// Restoring is an edit, so the client only offers it to someone
 			// who would be allowed to make one.
 			canRestore: report.editMode === "edit",

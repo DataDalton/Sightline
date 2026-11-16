@@ -57,7 +57,39 @@ export type StepKind =
 	| "draft"
 	// Making a new board and saving it.
 	| "create_board"
+	// Noting what somebody said about a visual for its maintainers.
+	| "record_feedback"
+	// Offering to put somebody in touch with a report's maintainers.
+	| "offer_maintainers"
+	// Offering to ask the data engineers for work.
+	| "offer_work_request"
 	| "unknown";
+
+// An offer to start a conversation with a report's maintainers, shown as a card
+// the person has to accept. Nothing is sent, and no conversation is shared,
+// without that.
+export interface MaintainerOffer {
+	reportSlug: string;
+	reportTitle: string;
+	visualId: string | null;
+	visualTitle: string | null;
+	// What the conversation would be about, and the first message, in the
+	// person's own voice.
+	subject: string;
+	message: string;
+	// What the assistant already checked, which it posts in the conversation
+	// so the maintainers do not start from nothing.
+	checked: string;
+}
+
+// An offer to send the data engineers a request, shown as a card the person can
+// change and has to send themselves.
+export interface WorkOffer {
+	title: string;
+	description: string;
+	sourceKey: string | null;
+	sourceTitle: string | null;
+}
 
 export type AssistantEvent =
 	// A piece of text the model is writing. Text written before a step is its
@@ -80,6 +112,8 @@ export type AssistantEvent =
 	// Something the assistant made and saved, such as a new board, with where
 	// to open it.
 	| { type: "created"; kind: "board"; title: string; href: string }
+	| { type: "offer"; offer: MaintainerOffer }
+	| { type: "workOffer"; offer: WorkOffer }
 	| { type: "done"; ranAs: "caller" | "app" }
 	| { type: "error"; message: string };
 

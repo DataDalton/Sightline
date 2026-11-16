@@ -4,6 +4,8 @@ import type {
 	Preview,
 	QueryOut,
 	StepKind,
+	MaintainerOffer,
+	WorkOffer,
 } from "./events";
 
 // A conversation as the reader sees it, built up one streamed event at a time.
@@ -58,6 +60,10 @@ export type Message =
 			heldDrafts?: { kind: string; draft: unknown }[];
 			// What the answer made and saved, with where to open it.
 			created?: { kind: "board"; title: string; href: string }[];
+			// Offers to start a conversation with a report's maintainers.
+			offers?: MaintainerOffer[];
+			// Offers to send the data engineers a request.
+			workOffers?: WorkOffer[];
 			startedAt: number;
 			finishedAt?: number;
 	  };
@@ -116,6 +122,16 @@ export function applyEvent(
 		// says what it was.
 		case "draft":
 			return message;
+		case "offer":
+			return {
+				...message,
+				offers: [...(message.offers ?? []), event.offer],
+			};
+		case "workOffer":
+			return {
+				...message,
+				workOffers: [...(message.workOffers ?? []), event.offer],
+			};
 		case "created":
 			return {
 				...message,

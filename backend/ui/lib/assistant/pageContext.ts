@@ -89,8 +89,10 @@ export async function describePage(
 	// the assistant knows exactly what it shows rather than guessing from the
 	// text on screen.
 	const visuals: Record<string, string> = {};
+	const visualTitles: Record<string, string> = {};
 	for (const p of report.pages) {
 		for (const v of p.visuals) {
+			visualTitles[v.visualId] = v.title ?? v.visualType;
 			const source = v.sourceKey ?? p.sourceKey ?? report.sourceKey;
 			const measures = v.config.measures ?? [];
 			const dimensions = v.config.dimensions ?? [];
@@ -126,5 +128,11 @@ export async function describePage(
 		description: lines.join("\n"),
 		preferredSources: [...sourceKeys],
 		visuals,
+		report: {
+			reportId: report.reportId,
+			slug: report.slug,
+			title: report.title,
+		},
+		visualTitles,
 	};
 }

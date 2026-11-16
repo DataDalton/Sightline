@@ -28,6 +28,7 @@ import { QualityTile } from "../status/QualityNotice";
 import { LazyBoundary } from "./LazyVisual";
 import { ChartActions } from "./ChartActions";
 import { NotesAction, VisualNotes, usePageNotes } from "./VisualNotes";
+import { FeedbackAction, VisualFeedback } from "./VisualFeedback";
 import { BehindAction } from "./BehindAction";
 import { ForecastRanking, LiveText, PaceTile } from "./InsightParts";
 import type { FormatHint } from "../../lib/format";
@@ -271,6 +272,7 @@ function VisualBody({
 	// controls for both sit in the frame around it.
 	const [showingTable, setShowingTable] = useState(false);
 	const [showingNotes, setShowingNotes] = useState(false);
+	const [showingFeedback, setShowingFeedback] = useState(false);
 
 	// Something a reader did with this visual, told to the report's
 	// maintainers. Only on a report page, which is where both ids exist.
@@ -906,6 +908,13 @@ function VisualBody({
 							}}
 							available={Boolean(reportId && pageId)}
 						/>
+						<FeedbackAction
+							available={Boolean(reportId && pageId)}
+							onOpen={() => {
+								setShowingFeedback((open) => !open);
+								setShowingNotes(false);
+							}}
+						/>
 					</>
 				}
 				title={displayTitle(visual)}
@@ -922,6 +931,14 @@ function VisualBody({
 						sourceKey={sourceKey}
 						dimensions={valueFields}
 						onClose={() => setShowingNotes(false)}
+					/>
+				)}
+				{showingFeedback && reportId && (
+					<VisualFeedback
+						reportId={reportId}
+						visualId={visual.visualId}
+						title={visual.title ?? null}
+						onClose={() => setShowingFeedback(false)}
 					/>
 				)}
 				<SmallMultiples
@@ -971,6 +988,13 @@ function VisualBody({
 							}}
 							available={Boolean(reportId && pageId)}
 						/>
+						<FeedbackAction
+							available={Boolean(reportId && pageId)}
+							onOpen={() => {
+								setShowingFeedback((open) => !open);
+								setShowingNotes(false);
+							}}
+						/>
 					</>
 				}
 				title={displayTitle(visual)}
@@ -988,6 +1012,14 @@ function VisualBody({
 						sourceKey={sourceKey}
 						dimensions={valueFields}
 						onClose={() => setShowingNotes(false)}
+					/>
+				)}
+				{showingFeedback && reportId && (
+					<VisualFeedback
+						reportId={reportId}
+						visualId={visual.visualId}
+						title={visual.title ?? null}
+						onClose={() => setShowingFeedback(false)}
 					/>
 				)}
 				<MatrixTable
@@ -1063,6 +1095,13 @@ function VisualBody({
 								noteAction("notes");
 							}}
 							available={Boolean(reportId && pageId)}
+						/>
+						<FeedbackAction
+							available={Boolean(reportId && pageId)}
+							onOpen={() => {
+								setShowingFeedback((open) => !open);
+								setShowingNotes(false);
+							}}
 						/>
 						<WatchAction
 							visual={visual}
@@ -1169,6 +1208,14 @@ function VisualBody({
 						sourceKey={sourceKey}
 						dimensions={valueFields}
 						onClose={() => setShowingNotes(false)}
+					/>
+				)}
+				{showingFeedback && reportId && (
+					<VisualFeedback
+						reportId={reportId}
+						visualId={visual.visualId}
+						title={visual.title ?? null}
+						onClose={() => setShowingFeedback(false)}
 					/>
 				)}
 
@@ -1285,6 +1332,13 @@ function VisualBody({
 							}}
 							available={Boolean(reportId && pageId)}
 						/>
+						<FeedbackAction
+							available={Boolean(reportId && pageId)}
+							onOpen={() => {
+								setShowingFeedback((open) => !open);
+								setShowingNotes(false);
+							}}
+						/>
 					</>
 				}
 				title={displayTitle(visual)}
@@ -1303,6 +1357,14 @@ function VisualBody({
 						sourceKey={sourceKey}
 						dimensions={valueFields}
 						onClose={() => setShowingNotes(false)}
+					/>
+				)}
+				{showingFeedback && reportId && (
+					<VisualFeedback
+						reportId={reportId}
+						visualId={visual.visualId}
+						title={visual.title ?? null}
+						onClose={() => setShowingFeedback(false)}
 					/>
 				)}
 				<DataGrid

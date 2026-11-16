@@ -91,6 +91,8 @@ interface PropertiesPanelProps {
 	reportDescription: string;
 	reportTheme?: string | null;
 	onThemeChange?: (next: string | null) => void;
+	feedbackChanges?: "automatic" | "suggest";
+	onFeedbackChangesChange?: (next: "automatic" | "suggest") => void;
 	placement?: React.ReactNode;
 	onPageChange: (next: PageConfig) => void;
 	onPageTitleChange: (next: string) => void;
@@ -106,6 +108,8 @@ interface PropertiesPanelProps {
 	onClose?: () => void;
 	historySlug: string;
 	historyKey: number;
+	// A version whose comparison the history opens on, from a link.
+	historyVersion?: number | null;
 	// The history's comparison draws both versions of the page, so it needs
 	// every source on it rather than the one the selected visual reads.
 	reportId: string;
@@ -223,6 +227,8 @@ export function PropertiesPanel({
 	reportDescription,
 	reportTheme,
 	onThemeChange,
+	feedbackChanges = "suggest",
+	onFeedbackChangesChange,
 	placement,
 	onPageChange,
 	onPageTitleChange,
@@ -231,6 +237,7 @@ export function PropertiesPanel({
 	onPanelTab,
 	historySlug,
 	historyKey,
+	historyVersion = null,
 	reportId,
 	sources,
 	onRestored,
@@ -347,6 +354,7 @@ export function PropertiesPanel({
 						sources={sources}
 						refreshKey={historyKey}
 						onRestored={onRestored}
+						openVersion={historyVersion}
 					/>
 				) : panelTab === "report" ? (
 					<div className={styles.panelBody}>
@@ -379,6 +387,43 @@ export function PropertiesPanel({
 										value={reportTheme ?? null}
 										onChange={onThemeChange}
 									/>
+								)}
+								{onFeedbackChangesChange && (
+									<div className={styles.field}>
+										<label className={styles.fieldLabel}>
+											Reader feedback
+										</label>
+										<Select
+											value={feedbackChanges}
+											ariaLabel="Reader feedback"
+											onChange={(next) =>
+												onFeedbackChangesChange(
+													next === "automatic"
+														? "automatic"
+														: "suggest",
+												)
+											}
+											options={[
+												{
+													value: "suggest",
+													label: "Ask the maintainers",
+												},
+												{
+													value: "automatic",
+													label: "Change it automatically",
+												},
+											]}
+										/>
+										<Hint>
+											When enough readers agree on a
+											clearer way to show a visual and the
+											assistant is sure of it. Asking
+											opens a conversation with the
+											maintainers with its reasoning and
+											the change to approve. Automatic
+											makes the change and tells them.
+										</Hint>
+									</div>
 								)}
 								{reportDetails}
 							</Section>

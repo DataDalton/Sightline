@@ -221,6 +221,8 @@ interface ReportEditorProps {
 	slug: string;
 	pageId: string;
 	version: number;
+	// A version to open the history on, compared, from a link to it.
+	openHistoryVersion?: number | null;
 	visuals: EditableVisual[];
 	sources: Record<string, SourceMeta>;
 	// The page's own settings and the source they apply to, for the settings
@@ -235,6 +237,7 @@ interface ReportEditorProps {
 	// because that is where it is stored and where every page shows it.
 	reportDescription: string | null;
 	reportTheme?: string | null;
+	reportFeedbackChanges?: "automatic" | "suggest";
 	// "suggest" sends the changes for a Maintainer to approve instead of applying them.
 	editMode?: "edit" | "suggest" | null;
 	// Which section of the navigation the report sits in, and whether it is a
@@ -299,6 +302,7 @@ export function ReportEditor({
 	slug,
 	pageId,
 	version,
+	openHistoryVersion = null,
 	visuals: initialVisuals,
 	sources,
 	pageSourceKey,
@@ -307,6 +311,7 @@ export function ReportEditor({
 	reportTitle,
 	reportDescription: initialDescription,
 	reportTheme,
+	reportFeedbackChanges = "suggest",
 	editMode,
 	categoryId,
 	isPersonal,
@@ -406,7 +411,11 @@ export function ReportEditor({
 	// Which panel is open over the canvas, or none. Selecting a visual opens its panel, and deselecting it
 	// goes back to whatever was open before, or to nothing.
 	const [panel, setPanel] = useState<EditorPanel | null>(() =>
-		doctorOpensOn(pageId) ? "check" : null,
+		openHistoryVersion !== null
+			? "history"
+			: doctorOpensOn(pageId)
+				? "check"
+				: null,
 	);
 	const beforeVisualPanel = useRef<EditorPanel | null>(null);
 	// Which screen the canvas is being laid out for. "fit" is the editor's own
@@ -424,6 +433,9 @@ export function ReportEditor({
 	const [overlay, setOverlay] = useState<CanvasOverlayMode>("off");
 	const readership = useReadership(slug, editMode === "edit");
 	const [theme, setTheme] = useState<string | null>(reportTheme ?? null);
+	const [feedbackChanges, setFeedbackChanges] = useState<
+		"automatic" | "suggest"
+	>(reportFeedbackChanges);
 	useReportTheme(theme);
 	const themeRef = useRef(theme);
 	themeRef.current = theme;
@@ -1587,6 +1599,7 @@ export function ReportEditor({
 					type: "updateReport",
 					description,
 					theme: theme ?? "",
+					feedbackChanges,
 				};
 			}
 			if (op.type === "addPage") {
@@ -1778,6 +1791,7 @@ export function ReportEditor({
 		pageConfig,
 		pageTitle,
 		theme,
+		feedbackChanges,
 		description,
 		onSaved,
 	]);
@@ -2792,6 +2806,14 @@ export function ReportEditor({
 								pageTitle={pageTitle}
 								reportDescription={description}
 								reportTheme={theme}
+								feedbackChanges={feedbackChanges}
+								onFeedbackChangesChange={(next) => {
+									setFeedbackChanges(next);
+									pendingRef.current.set("report", {
+										type: "updateReport",
+									});
+									setDirty(true);
+								}}
 								onThemeChange={(next) => {
 									record("theme");
 									setTheme(next);
@@ -2974,6 +2996,7 @@ export function ReportEditor({
 								onClose={() => setPanel(null)}
 								historySlug={slug}
 								historyKey={historyKey}
+								historyVersion={openHistoryVersion}
 								onRestored={() => {
 									// The restore has already landed. Everything the
 									// editor is holding is now a version behind, and

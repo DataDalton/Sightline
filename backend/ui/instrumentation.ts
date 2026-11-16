@@ -42,6 +42,7 @@ export async function register() {
 		await import("@/lib/dataRules/runner");
 	const { settings: currentSettings } = await import("@/lib/settings");
 	const { sweepUpdates } = await import("@/lib/updates/store");
+	const { runUpkeep } = await import("@/lib/upkeep/runner");
 	const { evaluateLateness } = await import("@/lib/freshness/lateness");
 	const { startMarksPolling, stopMarksPolling } =
 		await import("@/lib/freshness/marks");
@@ -212,6 +213,13 @@ export async function register() {
 		});
 	}, 60 * 1000);
 	alertTimer.unref?.();
+
+	// The assistant acting on changes to sources: renames, removals, new
+	// fields, changed definitions, new sources and new pages. Every few
+	// minutes, and one replica at a time. Most ticks find nothing due. See
+	// lib/upkeep.
+	const upkeepTimer = setInterval(() => void runUpkeep(), 5 * 60 * 1000);
+	upkeepTimer.unref?.();
 
 	// Looks at the tables behind each source for new data. Every few seconds,
 	// though each table is only looked at on its own interval, so live

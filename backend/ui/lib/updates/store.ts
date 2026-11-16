@@ -3,6 +3,7 @@ import type { Identity } from "../auth/identity";
 import type { PolicyClass } from "../auth/policy";
 import { sql, transaction } from "../data/lakebase";
 import { notify, safeLink } from "../notify/store";
+import { autoWatch } from "./links";
 import {
 	can,
 	canOnReport,
@@ -554,6 +555,8 @@ export async function postUpdate(
 	);
 	const update = toUpdate(rows[0]);
 	await recordEvent(update.updateId, identity.email, "created", null, null);
+	// The author hears about notes and changes linked to what they posted.
+	await autoWatch(update.updateId, identity.email);
 	await insertLog({
 		recordType: "update",
 		recordId: update.updateId,
@@ -1387,6 +1390,18 @@ export async function noteOnUpdate(
 		throw new UpdateError("Not found", 404);
 	}
 	await recordEvent(updateId, identity.email, "note", note, null);
+}
+
+// A note the assistant writes on an update, saying what it did about it. Shown
+// in the update's notes like anybody's.
+export async function assistantNote(
+	updateId: string,
+	actor: string,
+	note: string,
+): Promise<void> {
+	const text = note.trim().slice(0, 2000);
+	if (!text) return;
+	await recordEvent(updateId, actor, "note", text, null);
 }
 
 export async function whoAcknowledged(updateId: string): Promise<string[]> {

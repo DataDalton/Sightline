@@ -19,6 +19,8 @@ export async function writeVersion(
 		label?: string | null;
 		snapshot: Snapshot;
 		createdBy: string;
+		// The update this version was made because of, when there is one.
+		updateId?: string | null;
 	},
 ): Promise<void> {
 	const text = JSON.stringify(input.snapshot);
@@ -35,8 +37,8 @@ export async function writeVersion(
 
 	await client.query(
 		`INSERT INTO report_versions
-		   (report_id, version, label, snapshot, created_by, changes)
-		 VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+		   (report_id, version, label, snapshot, created_by, changes, update_id)
+		 VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
 		 ON CONFLICT (report_id, version) DO NOTHING`,
 		[
 			input.reportId,
@@ -45,6 +47,7 @@ export async function writeVersion(
 			text,
 			input.createdBy,
 			JSON.stringify(changes),
+			input.updateId ?? null,
 		],
 	);
 }

@@ -137,6 +137,12 @@ export const adminNav = [
 				feed: "own",
 			},
 			{
+				id: "workQueue",
+				label: "Work queue",
+				blurb: "The columns, lists, owners and rules behind requests for the data engineers.",
+				feed: "own",
+			},
+			{
 				id: "sources",
 				label: "Sources",
 				blurb: "The datasets reports are built on, and how each is read.",

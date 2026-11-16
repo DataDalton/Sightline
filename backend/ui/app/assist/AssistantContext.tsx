@@ -430,6 +430,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 					body: JSON.stringify({
 						question,
 						history: turns,
+						conversationId: conversationIdRef.current || undefined,
 						sourceKey: sourceKey || undefined,
 						path: window.location.pathname,
 						title: document.title,
@@ -739,6 +740,12 @@ function required<T>(held: T | null, hook: string): T {
 // so it is never drawn again by the assistant.
 export function useAssistantActions(): AssistantActions {
 	return required(useContext(ActionsContext), "useAssistantActions");
+}
+
+// The functions, or null where the assistant is not on the page, for parts of
+// the page that offer it only when it is there.
+export function useOptionalAssistantActions(): AssistantActions | null {
+	return useContext(ActionsContext);
 }
 
 // The status and the actions, without the messages, so the reader is drawn

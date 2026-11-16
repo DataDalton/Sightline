@@ -1887,6 +1887,346 @@ const migrations: string[] = [
 		is_active   BOOLEAN NOT NULL DEFAULT TRUE
 	)`,
 
+	// What the assistant does on its own about a change, one row per action. The
+	// key is the action itself, so a change told by an update and found by the
+	// field sync is acted on once. See lib/upkeep.
+	`CREATE TABLE IF NOT EXISTS upkeep_actions (
+		action_key  TEXT PRIMARY KEY,
+		kind        TEXT NOT NULL,
+		action      JSONB NOT NULL,
+		update_id   UUID REFERENCES updates (update_id) ON DELETE SET NULL,
+		state       TEXT NOT NULL DEFAULT 'pending'
+			CHECK (state IN ('pending', 'waiting', 'done', 'skipped', 'failed')),
+		attempts    INTEGER NOT NULL DEFAULT 0,
+		next_try_on TIMESTAMPTZ NOT NULL DEFAULT now(),
+		result      JSONB,
+		reason      TEXT,
+		created_on  TIMESTAMPTZ NOT NULL DEFAULT now(),
+		finished_on TIMESTAMPTZ
+	)`,
+	`CREATE INDEX IF NOT EXISTS upkeep_actions_due_idx
+		ON upkeep_actions (next_try_on) WHERE state IN ('pending', 'waiting')`,
+	// When the assistant last read an update for actions, so each is read once.
+	`ALTER TABLE updates ADD COLUMN IF NOT EXISTS upkeep_read_on TIMESTAMPTZ`,
+
+	// The update a report version was made because of, shown in the report's
+	// history and linking back to it.
+	`ALTER TABLE report_versions ADD COLUMN IF NOT EXISTS update_id UUID`,
+
+	// Changes made because of an update, the way a pull request is linked to the
+	// issue it closes: a report version, a new report, or an item such as an
+	// alert that was changed or turned off. Shown on the update with what each
+	// one did, by the assistant or by a person.
+	`CREATE TABLE IF NOT EXISTS update_links (
+		link_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		update_id  UUID NOT NULL REFERENCES updates (update_id) ON DELETE CASCADE,
+		kind       TEXT NOT NULL,
+		report_id  UUID REFERENCES reports (report_id) ON DELETE CASCADE,
+		version    BIGINT,
+		target_id  TEXT,
+		title      TEXT NOT NULL,
+		message    TEXT NOT NULL DEFAULT '',
+		actor      TEXT NOT NULL,
+		created_on TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+	`CREATE INDEX IF NOT EXISTS update_links_update_idx
+		ON update_links (update_id, created_on)`,
+
+	// People told about an update's notes and the changes linked to it. Its
+	// author and anyone who writes a note watch it on their own.
+	`CREATE TABLE IF NOT EXISTS update_watchers (
+		update_id  UUID NOT NULL REFERENCES updates (update_id) ON DELETE CASCADE,
+		user_email TEXT NOT NULL,
+		watching   BOOLEAN NOT NULL DEFAULT TRUE,
+		PRIMARY KEY (update_id, user_email)
+	)`,
+
+	// What readers say about a visual, from its feedback button or by pointing at
+	// it in the assistant. Every message about a visual is kept, whether the
+	// assistant answered it or it is feedback, since many people confused by the
+	// same thing is itself a reason to change it. See lib/feedback.
+	`CREATE TABLE IF NOT EXISTS visual_feedback (
+		feedback_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		report_id      UUID NOT NULL REFERENCES reports (report_id) ON DELETE CASCADE,
+		page_id        UUID NOT NULL,
+		visual_id      UUID NOT NULL,
+		author_email   TEXT NOT NULL,
+		kind           TEXT NOT NULL
+			CHECK (kind IN ('hardToRead', 'wrongChart', 'missing', 'numbersOff', 'notNeeded', 'wantInstead', 'question', 'other')),
+		body           TEXT NOT NULL DEFAULT '',
+		-- What the assistant took it to mean, and whether it answered it.
+		interpretation TEXT,
+		state          TEXT NOT NULL DEFAULT 'open'
+			CHECK (state IN ('open', 'answered', 'grouped', 'acted', 'declined')),
+		theme_id       UUID,
+		conversation_id UUID,
+		created_on     TIMESTAMPTZ NOT NULL DEFAULT now(),
+		resolved_on    TIMESTAMPTZ
+	)`,
+	`CREATE INDEX IF NOT EXISTS visual_feedback_open_idx
+		ON visual_feedback (visual_id, created_on) WHERE state IN ('open', 'answered')`,
+
+	// Feedback on one visual grouped by what it asks for, with what the assistant
+	// did or recommended about it.
+	`CREATE TABLE IF NOT EXISTS feedback_themes (
+		theme_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		report_id      UUID NOT NULL REFERENCES reports (report_id) ON DELETE CASCADE,
+		visual_id      UUID NOT NULL,
+		summary        TEXT NOT NULL,
+		people         INTEGER NOT NULL DEFAULT 0,
+		-- presentation changes nothing a number means; meaning does.
+		change_kind    TEXT NOT NULL DEFAULT 'presentation'
+			CHECK (change_kind IN ('presentation', 'meaning', 'data', 'none')),
+		recommendation JSONB,
+		state          TEXT NOT NULL DEFAULT 'open'
+			CHECK (state IN ('open', 'applied', 'suggested', 'declined', 'escalated')),
+		suggestion_id  UUID,
+		version        BIGINT,
+		thread_id      UUID,
+		created_on     TIMESTAMPTZ NOT NULL DEFAULT now(),
+		decided_on     TIMESTAMPTZ
+	)`,
+
+	// What the assistant does with a fix readers agree on that it is sure of:
+	// "suggest" asks the report's maintainers, with its reasoning and the change
+	// to approve, and "automatic" makes the change itself. See lib/feedback/review.
+	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS feedback_changes TEXT NOT NULL DEFAULT 'suggest'`,
+
+	// The days the assistant read the open feedback, so it reads it once a day
+	// whichever replica gets there first.
+	`CREATE TABLE IF NOT EXISTS feedback_review_runs (
+		ran_on DATE PRIMARY KEY
+	)`,
+
+	// A conversation with maintainers can carry the assistant as a participant,
+	// the assistant conversation the person chose to share, and the visual it is
+	// about.
+	`ALTER TABLE threads ADD COLUMN IF NOT EXISTS with_assistant BOOLEAN NOT NULL DEFAULT FALSE`,
+	`ALTER TABLE threads ADD COLUMN IF NOT EXISTS shared_conversation_id UUID`,
+	`ALTER TABLE threads ADD COLUMN IF NOT EXISTS visual_id UUID`,
+	// A message is plain text, or a card the assistant posts such as a proposed
+	// change with Apply and Suggest.
+	`ALTER TABLE thread_messages ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'text'`,
+	`ALTER TABLE thread_messages ADD COLUMN IF NOT EXISTS payload JSONB`,
+
+	// Asking to read conversations that are not one's own, for the two reviewer
+	// roles. Nobody holds standing access: a request names what, why and for
+	// how long, and an administrator decides it. See lib/review.
+	`CREATE TABLE IF NOT EXISTS review_requests (
+		request_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		requester_email TEXT NOT NULL,
+		-- groupChats reads conversations between people, assistant reads
+		-- somebody's conversations with the assistant.
+		kind            TEXT NOT NULL CHECK (kind IN ('groupChats', 'assistant')),
+		-- conversation and its id, person and their address, or everyone, with
+		-- an optional date range.
+		scope           JSONB NOT NULL,
+		reason_category TEXT NOT NULL
+			CHECK (reason_category IN ('quality', 'complaint', 'security', 'other')),
+		reason          TEXT NOT NULL,
+		duration_days   INTEGER NOT NULL,
+		-- No notice to the people whose conversations are read.
+		security        BOOLEAN NOT NULL DEFAULT FALSE,
+		state           TEXT NOT NULL DEFAULT 'pending'
+			CHECK (state IN ('pending', 'approved', 'declined', 'revoked')),
+		self_granted    BOOLEAN NOT NULL DEFAULT FALSE,
+		decided_by      TEXT,
+		decided_on      TIMESTAMPTZ,
+		decision_note   TEXT,
+		expires_on      TIMESTAMPTZ,
+		created_on      TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+	// Every opening of a conversation under a grant.
+	`CREATE TABLE IF NOT EXISTS review_views (
+		view_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		request_id  UUID NOT NULL REFERENCES review_requests (request_id) ON DELETE CASCADE,
+		viewer      TEXT NOT NULL,
+		kind        TEXT NOT NULL,
+		target_id   TEXT NOT NULL,
+		owner_email TEXT,
+		viewed_on   TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
+	// The work queue: requests for the data engineers, from a form, the
+	// assistant or reader feedback. See lib/work.
+	`CREATE SEQUENCE IF NOT EXISTS work_item_number`,
+	`CREATE TABLE IF NOT EXISTS work_items (
+		item_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		number         BIGINT NOT NULL UNIQUE DEFAULT nextval('work_item_number'),
+		title          TEXT NOT NULL,
+		description    TEXT NOT NULL DEFAULT '',
+		status         TEXT NOT NULL DEFAULT 'new',
+		-- Set when it is finished without the work being done.
+		closed_as      TEXT CHECK (closed_as IN ('declined', 'duplicate')),
+		closed_reason  TEXT,
+		duplicate_of   UUID REFERENCES work_items (item_id) ON DELETE SET NULL,
+		work_type      TEXT,
+		priority       TEXT,
+		effort         TEXT,
+		layer          TEXT,
+		domain         TEXT,
+		-- When it is meant to be released. Taken from its release when it has one.
+		target_on      DATE,
+		release_id     UUID,
+		-- A flag on the card in whatever column it sits, never a column.
+		blocked        BOOLEAN NOT NULL DEFAULT FALSE,
+		blocked_reason TEXT,
+		assignees      TEXT[] NOT NULL DEFAULT '{}',
+		reviewer       TEXT,
+		approver       TEXT,
+		approved_by    TEXT,
+		approved_on    TIMESTAMPTZ,
+		security_reviewed_by TEXT,
+		security_reviewed_on TIMESTAMPTZ,
+		tags           TEXT[] NOT NULL DEFAULT '{}',
+		-- restricted keeps it to the people who asked and the engineers.
+		visibility     TEXT NOT NULL DEFAULT 'normal'
+			CHECK (visibility IN ('normal', 'restricted')),
+		parent_id      UUID REFERENCES work_items (item_id) ON DELETE SET NULL,
+		-- Where it came from: the form, the assistant or feedback, with what
+		-- it was filed from.
+		origin         JSONB NOT NULL DEFAULT '{"kind":"form"}'::jsonb,
+		-- Lets an automation retry a create without making two.
+		reference      TEXT UNIQUE,
+		created_by     TEXT NOT NULL,
+		created_on     TIMESTAMPTZ NOT NULL DEFAULT now(),
+		modified_on    TIMESTAMPTZ NOT NULL DEFAULT now(),
+		-- When it moved into the status it is in, for time in status and ageing.
+		status_since   TIMESTAMPTZ NOT NULL DEFAULT now(),
+		started_on     TIMESTAMPTZ,
+		closed_on      TIMESTAMPTZ,
+		reminded_on    TIMESTAMPTZ
+	)`,
+	`CREATE INDEX IF NOT EXISTS work_items_status_idx ON work_items (status, modified_on DESC)`,
+	`CREATE INDEX IF NOT EXISTS work_items_parent_idx ON work_items (parent_id) WHERE parent_id IS NOT NULL`,
+	// Everybody who asked for it: whoever filed it and everyone who added
+	// "me too", each told when it moves.
+	`CREATE TABLE IF NOT EXISTS work_requesters (
+		item_id    UUID NOT NULL REFERENCES work_items (item_id) ON DELETE CASCADE,
+		user_email TEXT NOT NULL,
+		added_on   TIMESTAMPTZ NOT NULL DEFAULT now(),
+		PRIMARY KEY (item_id, user_email)
+	)`,
+	`CREATE TABLE IF NOT EXISTS work_watchers (
+		item_id    UUID NOT NULL REFERENCES work_items (item_id) ON DELETE CASCADE,
+		user_email TEXT NOT NULL,
+		watching   BOOLEAN NOT NULL DEFAULT TRUE,
+		PRIMARY KEY (item_id, user_email)
+	)`,
+	// What a request is about and where it leads: datasets, fields, reports,
+	// pages and visuals in the app, plain addresses such as a pull request,
+	// other requests it depends on, and updates it shipped in.
+	`CREATE TABLE IF NOT EXISTS work_links (
+		link_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		item_id    UUID NOT NULL REFERENCES work_items (item_id) ON DELETE CASCADE,
+		kind       TEXT NOT NULL CHECK (kind IN
+			('source', 'field', 'report', 'page', 'visual', 'url', 'dependsOn', 'update')),
+		target     TEXT NOT NULL,
+		-- A field's source, or how an update relates: resolves or relates.
+		detail     TEXT,
+		label      TEXT,
+		created_by TEXT NOT NULL,
+		created_on TIMESTAMPTZ NOT NULL DEFAULT now(),
+		UNIQUE (item_id, kind, target)
+	)`,
+	`CREATE INDEX IF NOT EXISTS work_links_target_idx ON work_links (kind, target)`,
+	`CREATE TABLE IF NOT EXISTS work_criteria (
+		criterion_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		item_id      UUID NOT NULL REFERENCES work_items (item_id) ON DELETE CASCADE,
+		body         TEXT NOT NULL,
+		position     INTEGER NOT NULL DEFAULT 0,
+		done_by      TEXT,
+		done_on      TIMESTAMPTZ
+	)`,
+	`CREATE TABLE IF NOT EXISTS work_comments (
+		comment_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		item_id    UUID NOT NULL REFERENCES work_items (item_id) ON DELETE CASCADE,
+		reply_to   UUID REFERENCES work_comments (comment_id) ON DELETE SET NULL,
+		author     TEXT NOT NULL,
+		body       TEXT NOT NULL,
+		reactions  JSONB NOT NULL DEFAULT '{}'::jsonb,
+		created_on TIMESTAMPTZ NOT NULL DEFAULT now(),
+		edited_on  TIMESTAMPTZ,
+		removed_on TIMESTAMPTZ
+	)`,
+	`CREATE INDEX IF NOT EXISTS work_comments_item_idx ON work_comments (item_id, created_on)`,
+	// Everything that happened to a request, in order: moves, every field
+	// changed from what to what, links, blocks, approvals, edits to the
+	// description and to comments. Shown with the comments as one timeline.
+	`CREATE TABLE IF NOT EXISTS work_events (
+		event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		item_id  UUID NOT NULL REFERENCES work_items (item_id) ON DELETE CASCADE,
+		actor    TEXT NOT NULL,
+		kind     TEXT NOT NULL,
+		data     JSONB NOT NULL DEFAULT '{}'::jsonb,
+		at       TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+	`CREATE INDEX IF NOT EXISTS work_events_item_idx ON work_events (item_id, at)`,
+	`CREATE TABLE IF NOT EXISTS work_releases (
+		release_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		name       TEXT NOT NULL,
+		target_on  DATE,
+		notes      TEXT NOT NULL DEFAULT '',
+		shipped_on TIMESTAMPTZ,
+		update_id  UUID,
+		created_by TEXT NOT NULL,
+		created_on TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+	`CREATE TABLE IF NOT EXISTS work_views (
+		view_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		owner_email TEXT NOT NULL,
+		name        TEXT NOT NULL,
+		shared      BOOLEAN NOT NULL DEFAULT FALSE,
+		state       JSONB NOT NULL,
+		created_on  TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+	// How the queue is set up, edited in Administration: columns, the lists
+	// behind each field, domain and layer owners, and the rules.
+	`CREATE TABLE IF NOT EXISTS work_config (
+		key         TEXT PRIMARY KEY,
+		value       JSONB NOT NULL,
+		modified_by TEXT,
+		modified_on TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+	// Attachments. What lists and pages show lives in one table and the bytes
+	// in another, so nothing but the file itself ever reads them. A file is
+	// keyed by a hash of its bytes, so the same file is kept once and its
+	// address never changes, which lets the browser keep it for good. Stored
+	// without compression: images already are compressed, and a second pass
+	// only costs time on every read.
+	`CREATE TABLE IF NOT EXISTS work_attachment_data (
+		hash  TEXT PRIMARY KEY,
+		bytes BYTEA NOT NULL
+	)`,
+	`ALTER TABLE work_attachment_data ALTER COLUMN bytes SET STORAGE EXTERNAL`,
+	`CREATE TABLE IF NOT EXISTS work_attachments (
+		attachment_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		item_id       UUID NOT NULL REFERENCES work_items (item_id) ON DELETE CASCADE,
+		hash          TEXT NOT NULL REFERENCES work_attachment_data (hash),
+		file_name     TEXT NOT NULL,
+		content_type  TEXT NOT NULL,
+		size          INTEGER NOT NULL,
+		width         INTEGER,
+		height        INTEGER,
+		uploaded_by   TEXT NOT NULL,
+		uploaded_on   TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+	`CREATE INDEX IF NOT EXISTS work_attachments_item_idx ON work_attachments (item_id)`,
+	`CREATE INDEX IF NOT EXISTS work_attachments_hash_idx ON work_attachments (hash)`,
+
+	// Following the changes the assistant makes, as well as updates themselves.
+	`DO $$ BEGIN
+		IF NOT EXISTS (
+			SELECT 1 FROM pg_constraint
+			WHERE conname = 'update_follows_kind_check'
+			  AND pg_get_constraintdef(oid) LIKE '%changes%'
+		) THEN
+			ALTER TABLE update_follows DROP CONSTRAINT IF EXISTS update_follows_kind_check;
+			ALTER TABLE update_follows ADD CONSTRAINT update_follows_kind_check
+				CHECK (kind IN ('all', 'type', 'source', 'field', 'changes'));
+		END IF;
+	END $$`,
+
 	// Checks on the tables behind a source, and how each one went. Counts only, so
 	// nothing here holds a value out of those tables except a group's label.
 	`CREATE TABLE IF NOT EXISTS data_rules (

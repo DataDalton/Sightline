@@ -349,6 +349,22 @@
 	border-bottom: 1px solid var(--border-subtle);
 }
 
+.threadAction {
+	flex: none;
+	margin-left: auto;
+	padding: var(--space-1) var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-sm);
+	color: var(--text-primary);
+	font-size: var(--text-sm);
+	text-decoration: none;
+	white-space: nowrap;
+}
+
+.threadAction:hover {
+	background: var(--surface-sunken);
+}
+
 .back {
 	display: none;
 	align-items: center;
@@ -546,4 +562,149 @@
 	.back {
 		display: inline-flex;
 	}
+}
+
+/* The assistant's messages, set apart from people's by its avatar colour. */
+.messageAssistant .messageAvatar {
+	background: var(--brand-subtle);
+	color: var(--text-primary);
+}
+
+/* A change the assistant proposes, applied or suggested from the conversation. */
+.proposal {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	max-width: 520px;
+	padding: var(--space-3);
+	border: 1px solid var(--border-default);
+	border-left: 3px solid var(--brand);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+}
+
+.proposalKind {
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--text-muted);
+}
+
+.proposalWhy {
+	margin: 0;
+	font-size: var(--text-sm);
+	line-height: 1.5;
+}
+
+.proposalChange {
+	display: grid;
+	grid-template-columns: auto 1fr;
+	gap: var(--space-1) var(--space-3);
+	margin: 0;
+	font-size: var(--text-sm);
+}
+
+.proposalChange dt {
+	color: var(--text-muted);
+}
+
+.proposalChange dd {
+	margin: 0;
+}
+
+.proposalActions {
+	display: flex;
+	justify-content: flex-end;
+	gap: var(--space-2);
+}
+
+.proposalSecondary,
+.proposalPrimary {
+	padding: var(--space-1) var(--space-3);
+	border-radius: var(--radius-sm);
+	font: inherit;
+	font-size: var(--text-sm);
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.proposalSecondary {
+	border: 1px solid var(--border-default);
+	background: var(--surface-base);
+	color: var(--text-primary);
+}
+
+.proposalPrimary {
+	border: 1px solid var(--brand);
+	background: var(--brand);
+	color: var(--brand-contrast);
+}
+
+.proposalSecondary:disabled,
+.proposalPrimary:disabled {
+	opacity: 0.6;
+	cursor: default;
+}
+
+.proposalState {
+	font-size: var(--text-xs);
+	color: var(--text-secondary);
+}
+
+/* The assistant conversation the person shared, shown on request. */
+.shared {
+	padding: var(--space-2) var(--space-4);
+	border-bottom: 1px solid var(--border-subtle);
+}
+
+.sharedToggle {
+	padding: 0;
+	border: none;
+	background: none;
+	color: var(--text-link);
+	font: inherit;
+	font-size: var(--text-sm);
+	cursor: pointer;
+}
+
+.sharedToggle:hover {
+	text-decoration: underline;
+}
+
+.sharedBody {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	max-height: 320px;
+	margin-top: var(--space-2);
+	overflow-y: auto;
+}
+
+.sharedNote,
+.sharedMeta {
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+}
+
+.sharedNote {
+	margin: 0;
+}
+
+.sharedAsked {
+	margin: 0;
+	font-weight: 600;
+	font-size: var(--text-sm);
+}
+
+.sharedAnswer {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	font-size: var(--text-sm);
+}
+
+.sharedAnswer p {
+	margin: 0;
+	white-space: pre-wrap;
 }

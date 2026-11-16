@@ -127,6 +127,17 @@ export interface PlatformSettings {
 	autoUpdateFieldRemoved: boolean;
 	autoUpdateFieldRenamed: boolean;
 	autoUpdateDefinitionChanged: boolean;
+	// What the assistant does on its own when a change reaches a source. Each
+	// kind is switched separately. See lib/upkeep.
+	upkeepRenames: boolean;
+	upkeepRemovals: boolean;
+	upkeepNewFields: boolean;
+	upkeepDefinitions: boolean;
+	upkeepNewSources: boolean;
+	upkeepPageDescriptions: boolean;
+	// Schemas whose new tables and views become sources on their own, each as
+	// catalog.schema.
+	upkeepWatchedSchemas: string[];
 
 	// Alerts somebody sets on a measure. Off stops every check and hides the
 	// feature, without deleting anybody's alerts.
@@ -183,6 +194,13 @@ export const defaultSettings: PlatformSettings = {
 	autoUpdateFieldRemoved: true,
 	autoUpdateFieldRenamed: true,
 	autoUpdateDefinitionChanged: true,
+	upkeepRenames: true,
+	upkeepRemovals: true,
+	upkeepNewFields: true,
+	upkeepDefinitions: true,
+	upkeepNewSources: true,
+	upkeepPageDescriptions: true,
+	upkeepWatchedSchemas: [],
 
 	alertsEnabled: true,
 	pushEnabled: false,
@@ -391,6 +409,13 @@ export const writableSettings = [
 	"autoUpdateFieldRemoved",
 	"autoUpdateFieldRenamed",
 	"autoUpdateDefinitionChanged",
+	"upkeepRenames",
+	"upkeepRemovals",
+	"upkeepNewFields",
+	"upkeepDefinitions",
+	"upkeepNewSources",
+	"upkeepPageDescriptions",
+	"upkeepWatchedSchemas",
 	"alertsEnabled",
 	"pushEnabled",
 	"retentionMonths",

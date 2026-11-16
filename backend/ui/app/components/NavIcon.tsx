@@ -25,6 +25,10 @@ const iconPaths: Record<string, string> = {
 	sheets: "M3 3h18v18H3zM3 9h18M3 15h18M9 3v18",
 	status: "M22 12h-4l-3 9L9 3l-3 9H2",
 	updates: "M3 11l18-8-8 18-2-8-8-2z",
+	// A speech bubble with a magnifier, for reading conversations under review.
+	review: "M21 11.5a8.4 8.4 0 0 1-9 8.4 8.6 8.6 0 0 1-3.8-.9L3 21l1.9-5.2A8.4 8.4 0 1 1 21 11.5zM11 8a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM13.2 13.2 15 15",
+	// A board of three columns, for the work queue.
+	work: "M3 4h18v16H3zM9 4v16M15 4v16M5 7h2M11 7h2M17 7h2M11 10h2",
 	inbox: "M22 12h-6l-2 3h-4l-2-3H2M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z",
 	default: "M3 7h7v6H3zM14 7h7v6h-7zM3 16h18v5H3z",
 };

@@ -5,7 +5,9 @@ import Link from "../components/AppLink";
 import useSWR from "swr";
 import type { ThreadMessage, ThreadSummary } from "../../lib/messages/store";
 import { describeFetchError } from "../../lib/swr";
+import { useUser } from "../context/UserContext";
 import styles from "./Messages.module.css";
+import { ProposalCard, SharedConversation } from "./ThreadParts";
 
 // Conversations with the people who maintain categories, from both sides.
 //
@@ -191,6 +193,7 @@ function Thread({
 		messages: ThreadMessage[];
 	}>(key, { refreshInterval: refreshMs, dedupingInterval: dedupeMs });
 	const { mutate: mutateList } = useSWR(conversationsKey);
+	const { user } = useUser();
 
 	const [draft, setDraft] = useState("");
 	const [sending, setSending] = useState(false);
@@ -251,6 +254,27 @@ function Thread({
 		}
 	};
 
+	// A request for the data engineers, filled in from this conversation, with
+	// whoever started it as the person asking.
+	const mayRequestWork = Boolean(
+		user?.capabilities?.includes("work.request") ||
+		user?.capabilities?.includes("work.engineer"),
+	);
+	const opening = messages.find((m) => m.kind !== "proposal");
+	const requestLink = `/work?${new URLSearchParams({
+		new: "1",
+		title: thread.subject,
+		description: `${opening?.body ?? ""}
+
+From the conversation at /inbox/?view=conversations&thread=${threadId}`.trim(),
+		requesters: thread.createdBy,
+		origin: JSON.stringify({
+			kind: "thread",
+			threadId,
+			reportSlug: thread.reportSlug,
+		}),
+	})}`;
+
 	return (
 		<div className={styles.thread}>
 			<header className={styles.threadHeader}>
@@ -279,10 +303,20 @@ function Thread({
 						<span aria-hidden="true">·</span>
 						<span>
 							{thread.members.map((m) => m.name).join(", ")}
+							{thread.withAssistant ? ", and the assistant" : ""}
 						</span>
 					</div>
 				</div>
+				{mayRequestWork && (
+					<a href={requestLink} className={styles.threadAction}>
+						Turn into a request
+					</a>
+				)}
 			</header>
+
+			{thread.sharedConversationId && (
+				<SharedConversation threadKey={key} />
+			)}
 
 			<div className={styles.messages}>
 				{messages.map((message) => (
@@ -290,6 +324,10 @@ function Thread({
 						key={message.id}
 						className={`${styles.message} ${
 							message.mine ? styles.messageMine : ""
+						} ${
+							message.authorEmail.toLowerCase() === "assistant"
+								? styles.messageAssistant
+								: ""
 						}`}
 					>
 						{!message.mine && (
@@ -302,7 +340,21 @@ function Thread({
 								{message.mine ? "You" : message.authorName}
 								<span>{when(message.createdOn)}</span>
 							</span>
-							<p className={styles.bubble}>{message.body}</p>
+							{message.kind === "proposal" ? (
+								<ProposalCard
+									threadKey={key}
+									messageId={message.id}
+									body={message.body}
+									payload={
+										message.payload as Parameters<
+											typeof ProposalCard
+										>[0]["payload"]
+									}
+									onDone={() => void mutate()}
+								/>
+							) : (
+								<p className={styles.bubble}>{message.body}</p>
+							)}
 						</div>
 					</div>
 				))}

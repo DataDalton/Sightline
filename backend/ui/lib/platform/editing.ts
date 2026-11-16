@@ -4,6 +4,7 @@ import { insertLog } from "../activityLog";
 import { invalidateDefinitions } from "./definitionCache";
 import { invalidateReport, reportSubject } from "./curated";
 import { writeVersion } from "./versionWrite";
+import { linkChange } from "../updates/links";
 import {
 	effective,
 	refuse,
@@ -103,6 +104,8 @@ export type EditOperation =
 			description?: string | null;
 			// A theme's id. An empty string goes back to the default.
 			theme?: string;
+			// What the assistant does with a fix readers agree on.
+			feedbackChanges?: "automatic" | "suggest";
 	  }
 	| {
 			type: "updatePage";
@@ -679,24 +682,55 @@ export async function applyEdits(
 	email: string,
 	asked: EditRequest,
 ): Promise<EditResult> {
+	return runEdits(policy, email, asked, null);
+}
+
+// Edits the assistant makes on its own, recorded under its name with the reason
+// as the version label. No person's permission applies, so the checks are the
+// ones every edit gets regardless of who makes it: the targets belong to the
+// report, the definitions draw, and no page or report touched is protected.
+export async function applyAssistantEdits(
+	actor: string,
+	asked: EditRequest,
+	label: string,
+	// The update the edits were made because of, linked to the new version.
+	updateId: string | null = null,
+): Promise<EditResult> {
+	return runEdits(null, actor, asked, label, updateId);
+}
+
+async function runEdits(
+	policy: PolicyClass | null,
+	email: string,
+	asked: EditRequest,
+	label: string | null,
+	updateId: string | null = null,
+): Promise<EditResult> {
 	const request: EditRequest = {
 		...asked,
 		operations: Array.isArray(asked.operations)
 			? asked.operations.map(lowerCaseIds)
 			: asked.operations,
 	};
-	const personal = await assertCanEdit(
-		policy,
-		email,
-		request.reportId,
-		request.operations,
-	);
-	await logOverride(
-		policy,
-		email,
-		request.reportId,
-		request.operations.length,
-	);
+	let personal: boolean;
+	if (policy) {
+		personal = await assertCanEdit(
+			policy,
+			email,
+			request.reportId,
+			request.operations,
+		);
+		await logOverride(
+			policy,
+			email,
+			request.reportId,
+			request.operations.length,
+		);
+	} else {
+		const report = await reportSubject(request.reportId);
+		if (!report) throw new EditForbiddenError("Report not found");
+		personal = report.is_personal;
+	}
 
 	if (request.operations.length === 0) {
 		throw new Error("No operations supplied");
@@ -854,13 +888,16 @@ export async function applyEdits(
 						   title = COALESCE($2, title),
 						   description = COALESCE($3, description),
 						   theme = CASE WHEN $4::text IS NULL THEN theme
-						                ELSE NULLIF($4, '') END
+						                ELSE NULLIF($4, '') END,
+						   feedback_changes = CASE WHEN $5 IN ('automatic', 'suggest')
+						                           THEN $5 ELSE feedback_changes END
 						 WHERE report_id = $1`,
 						[
 							request.reportId,
 							op.title ?? null,
 							op.description ?? null,
 							op.theme ?? null,
+							op.feedbackChanges ?? null,
 						],
 					);
 					break;
@@ -1009,8 +1046,24 @@ export async function applyEdits(
 				pages: pageSnapshot.rows,
 				report: reportSnapshot.rows[0] ?? null,
 			},
+			label,
 			createdBy: email,
+			updateId,
 		});
+		if (updateId) {
+			await linkChange(
+				{
+					updateId,
+					kind: "reportVersion",
+					reportId: request.reportId,
+					version: nextVersion,
+					title: String(reportSnapshot.rows[0]?.title ?? "A report"),
+					message: label ?? "",
+					actor: email,
+				},
+				client,
+			);
+		}
 
 		// Notification is a hint. Delivery is guaranteed by the sequence above,
 		// so a listener that missed this still catches up on its next poll.
@@ -1034,7 +1087,7 @@ export async function applyEdits(
 		record({
 			occurredOn: new Date().toISOString(),
 			userEmail: email,
-			policyClass: policy.id,
+			policyClass: policy?.id ?? "assistant",
 			eventType: "edit",
 			reportId: request.reportId,
 		});
