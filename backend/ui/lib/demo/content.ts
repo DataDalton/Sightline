@@ -124,7 +124,7 @@ export const categories: CategorySeed[] = [
 	{
 		id: "sales",
 		name: "Sales Performance",
-		icon: "sales",
+		icon: "chart-line",
 		description:
 			"Revenue, margin and targets across regions, channels and products.",
 		// More maintainers than the panel shows at first, so the category page
@@ -358,7 +358,7 @@ export const categories: CategorySeed[] = [
 	{
 		id: "marketing",
 		name: "Marketing",
-		icon: "market",
+		icon: "chart-bar",
 		description:
 			"What campaigns cost, what they brought in, and which channels earn it.",
 		maintainers: [
@@ -464,7 +464,7 @@ export const categories: CategorySeed[] = [
 	{
 		id: "finance",
 		name: "Finance",
-		icon: "rebates",
+		icon: "dollar",
 		description:
 			"Operating spend against budget and forecast, by department and account.",
 		maintainers: [
@@ -565,7 +565,7 @@ export const categories: CategorySeed[] = [
 	{
 		id: "operations",
 		name: "Operations",
-		icon: "field",
+		icon: "map-pin",
 		description:
 			"Shipping speed, reliability and cost across warehouses and carriers.",
 		maintainers: [
@@ -685,7 +685,7 @@ export const categories: CategorySeed[] = [
 	{
 		id: "support",
 		name: "Customer Support",
-		icon: "customers",
+		icon: "people",
 		description: "How quickly customers hear back, and how they rate it.",
 		maintainers: [
 			{ type: "group", id: groups.support },
@@ -787,7 +787,7 @@ export const categories: CategorySeed[] = [
 	{
 		id: "people",
 		name: "People",
-		icon: "contracts",
+		icon: "document",
 		description:
 			"Headcount, hiring, attrition and engagement across the company.",
 		maintainers: [
@@ -893,7 +893,7 @@ export const categories: CategorySeed[] = [
 	{
 		id: "digital",
 		name: "Digital",
-		icon: "explore",
+		icon: "search",
 		description:
 			"Visits to the online store, how they convert, and what they spend.",
 		maintainers: [

@@ -4,6 +4,8 @@ import { Fragment, useState } from "react";
 import useSWR from "swr";
 import { Skeleton } from "../components/shared/Skeleton";
 import { ConfirmDialog } from "../components/shared/ConfirmDialog";
+import { IconPicker } from "../components/shared/IconPicker";
+import { NavIcon } from "../components/NavIcon";
 import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import styles from "./Admin.module.css";
 
@@ -127,7 +129,13 @@ export default function CategoriesPane() {
 							<Fragment key={category.categoryId}>
 								<tr>
 									<td>
-										{category.icon} {category.name}
+										<span className={styles.categoryName}>
+											<NavIcon
+												name={category.icon}
+												size={16}
+											/>
+											{category.name}
+										</span>
 										{category.description && (
 											<div className={styles.fieldHint}>
 												{category.description}
@@ -292,7 +300,7 @@ export default function CategoriesPane() {
 					<input
 						className={styles.input}
 						value={draft.categoryId}
-						placeholder="sales"
+						placeholder="finance"
 						disabled={editing}
 						onChange={(e) =>
 							setDraft((d) => ({
@@ -307,23 +315,19 @@ export default function CategoriesPane() {
 					<input
 						className={styles.input}
 						value={draft.name}
-						placeholder="Sales"
+						placeholder="Finance"
 						onChange={(e) =>
 							setDraft((d) => ({ ...d, name: e.target.value }))
 						}
 					/>
 				</label>
-				<label className={styles.field}>
+				<div className={styles.field}>
 					<span className={styles.fieldLabel}>Icon</span>
-					<input
-						className={styles.input}
+					<IconPicker
 						value={draft.icon}
-						placeholder="Optional"
-						onChange={(e) =>
-							setDraft((d) => ({ ...d, icon: e.target.value }))
-						}
+						onChange={(icon) => setDraft((d) => ({ ...d, icon }))}
 					/>
-				</label>
+				</div>
 				<label className={styles.field}>
 					<span className={styles.fieldLabel}>Description</span>
 					<input

@@ -580,6 +580,13 @@
 /* Two fields to a row where there is room, one where there is not. Most of
    these are short values, and a single column of full-width inputs reads as a
    form to be filled in rather than settings to be looked at. */
+/* A category's mark beside its name in the categories table. */
+.categoryName {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+}
+
 .fieldRow {
 	display: grid;
 	grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
