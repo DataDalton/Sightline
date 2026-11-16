@@ -435,7 +435,7 @@ export function KpiRow({
 		return (
 			<div key={name} className={styles.kpi} style={{ background }}>
 				<LabelHint
-					label={name}
+					label={fields.get(name)?.displayName || name}
 					text={tooltips?.[name] || fields.get(name)?.description}
 					className={styles.kpiLabel}
 				/>
@@ -512,7 +512,7 @@ export function KpiRow({
 				{spark.length > 1 && (
 					<Sparkline
 						values={spark}
-						label={`${name} over ${sparkline}`}
+						label={`${fields.get(name)?.displayName || name} over ${fields.get(sparkline ?? "")?.displayName || sparkline}`}
 						color={explicitColor}
 					/>
 				)}

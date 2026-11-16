@@ -63,8 +63,13 @@ export function nativeChartFor(input: {
 			upper: number[];
 		}[];
 	} | null;
+	// The name a reader sees for a measure. Absent means the measure's own.
+	labelFor?: (field: string) => string;
 }): NativeChart | null {
 	const { rows, dimensions, measures, forecast } = input;
+	// The name a reader sees for a measure, which on a table source differs
+	// from the column the rows are keyed by.
+	const nameOf = (field: string) => input.labelFor?.(field) ?? field;
 	// A forecast's range only reads as lines, so it stays with charts drawn as lines.
 	if (forecast && input.visualType !== "lineChart") return null;
 	const kind = kindOfVisual[input.visualType];
@@ -123,7 +128,7 @@ export function nativeChartFor(input: {
 				const index = forecast?.periods.indexOf(value) ?? -1;
 				return index >= 0 ? (values[index] ?? null) : null;
 			});
-		const label = measures.length > 1 ? `${held.measure} ` : "";
+		const label = measures.length > 1 ? `${nameOf(held.measure)} ` : "";
 		return [
 			{
 				name: `${label}Forecast`,
@@ -150,7 +155,7 @@ export function nativeChartFor(input: {
 		categories,
 		series: [
 			...measures.map((name) => ({
-				name,
+				name: nameOf(name),
 				values: categories.map((value) =>
 					number(byCategory.get(value)?.[name]),
 				),

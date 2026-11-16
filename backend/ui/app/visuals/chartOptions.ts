@@ -47,6 +47,9 @@ export interface ChartContext {
 	colors: ThemeColors;
 	style?: VisualStyle;
 	hintFor: (field: string) => FormatHint;
+	// The name a reader sees for a field, which on a table source differs from
+	// the column the rows are keyed by. Absent means the field's own name.
+	labelFor?: (field: string) => string;
 	// Set when this chart produced the page selection. Marks that are not in it
 	// are dimmed rather than removed, so the selection is read in context.
 	//
@@ -251,8 +254,15 @@ function tooltip(ctx: ChartContext, trigger: "item" | "axis" = "axis") {
 	};
 }
 
+// What a field is called on screen. Series, rows and keys stay on the field's
+// own name, and only the words drawn for a reader go through this.
+function fieldName(ctx: ChartContext, field: string): string {
+	return ctx.labelFor?.(field) ?? field;
+}
+
 function legend(ctx: ChartContext, show: boolean) {
 	return {
+		formatter: (name: string) => fieldName(ctx, name),
 		show: ctx.style?.legend?.show !== false && show,
 		top: ctx.style?.legend?.position === "bottom" ? undefined : 0,
 		bottom: ctx.style?.legend?.position === "bottom" ? 0 : undefined,
@@ -1253,7 +1263,7 @@ function cartesianTooltip(
 							100
 						).toFixed(1)}%)</span>`
 					: "";
-			return `<div>${e.marker} ${escapeHtml(e.seriesName)}: <b>${escapeHtml(value)}</b>${share}</div>`;
+			return `<div>${e.marker} ${escapeHtml(fieldName(ctx, e.seriesName))}: <b>${escapeHtml(value)}</b>${share}</div>`;
 		});
 
 		const extras = (ctx.style?.tooltip?.extraFields ?? [])
@@ -1938,7 +1948,7 @@ export function buildChoropleth(
 				if (typeof p.value !== "number" || Number.isNaN(p.value)) {
 					return `${escapeHtml(p.name)}<br/>No data`;
 				}
-				return `${escapeHtml(p.name)}<br/>${escapeHtml(measure)}: ${tipValue(p.value, hint)}`;
+				return `${escapeHtml(p.name)}<br/>${escapeHtml(fieldName(ctx, measure))}: ${tipValue(p.value, hint)}`;
 			},
 		},
 		visualMap: {
@@ -2083,7 +2093,7 @@ export function buildTimeline(ctx: ChartContext) {
 				];
 				if (measure && bar.value !== null) {
 					lines.push(
-						`${escapeHtml(measure)}: ${tipValue(bar.value, ctx.hintFor(measure))}`,
+						`${escapeHtml(fieldName(ctx, measure))}: ${tipValue(bar.value, ctx.hintFor(measure))}`,
 					);
 				}
 				return lines.join("<br/>");
@@ -2196,7 +2206,7 @@ export function buildCalendar(ctx: ChartContext) {
 			trigger: "item" as const,
 			formatter: (params: unknown) => {
 				const p = params as { value: [string, number] };
-				return `${escapeHtml(p.value[0])}<br/>${escapeHtml(measure)}: ${tipValue(p.value[1], hint)}`;
+				return `${escapeHtml(p.value[0])}<br/>${escapeHtml(fieldName(ctx, measure))}: ${tipValue(p.value[1], hint)}`;
 			},
 		},
 		visualMap: {
@@ -2479,7 +2489,7 @@ export function buildHistogram(ctx: ChartContext) {
 		xAxis: {
 			type: "category" as const,
 			data: categories,
-			name: ctx.style?.xAxis?.label ?? measure,
+			name: ctx.style?.xAxis?.label ?? fieldName(ctx, measure),
 			nameLocation: "middle" as const,
 			nameGap: 28,
 			nameTextStyle: { color: colors.textMuted },
@@ -2591,7 +2601,10 @@ export function buildBoxPlot(ctx: ChartContext) {
 		},
 		yAxis: {
 			type: "value" as const,
-			...verticalAxisName(ctx, ctx.style?.yAxis?.label ?? measure),
+			...verticalAxisName(
+				ctx,
+				ctx.style?.yAxis?.label ?? fieldName(ctx, measure),
+			),
 			// Not forced through zero. The box is the whole chart, and
 			// stretching the scale to the origin flattens it into a line.
 			scale: true,
@@ -2681,7 +2694,7 @@ export function buildPareto(ctx: ChartContext) {
 				const share = toNumber(row[paretoCumulative]);
 				return [
 					`<strong>${escapeHtml(row[labelField])}</strong>`,
-					`${escapeHtml(measure)}: ${tipValue(row[measure], hint)}`,
+					`${escapeHtml(fieldName(ctx, measure))}: ${tipValue(row[measure], hint)}`,
 					share === null ? "" : `Running share: ${share.toFixed(1)}%`,
 				]
 					.filter(Boolean)
@@ -3157,12 +3170,12 @@ export function buildScatter(ctx: ChartContext) {
 					value: [number, number, number];
 				};
 				const lines = [
-					`${escapeHtml(xField)}: ${tipValue(p.value[0], xHint)}`,
-					`${escapeHtml(yField)}: ${tipValue(p.value[1], yHint)}`,
+					`${escapeHtml(fieldName(ctx, xField))}: ${tipValue(p.value[0], xHint)}`,
+					`${escapeHtml(fieldName(ctx, yField))}: ${tipValue(p.value[1], yHint)}`,
 				];
 				if (sizeField) {
 					lines.push(
-						`${escapeHtml(sizeField)}: ${tipValue(p.value[2], ctx.hintFor(sizeField))}`,
+						`${escapeHtml(fieldName(ctx, sizeField))}: ${tipValue(p.value[2], ctx.hintFor(sizeField))}`,
 					);
 				}
 				const head = p.name
@@ -3173,7 +3186,7 @@ export function buildScatter(ctx: ChartContext) {
 		},
 		xAxis: {
 			type: "value" as const,
-			name: ctx.style?.xAxis?.label ?? xField,
+			name: ctx.style?.xAxis?.label ?? fieldName(ctx, xField),
 			nameLocation: "middle" as const,
 			nameGap: 26,
 			nameTextStyle: { color: colors.textMuted },
@@ -3195,7 +3208,10 @@ export function buildScatter(ctx: ChartContext) {
 		},
 		yAxis: {
 			type: "value" as const,
-			...verticalAxisName(ctx, ctx.style?.yAxis?.label ?? yField),
+			...verticalAxisName(
+				ctx,
+				ctx.style?.yAxis?.label ?? fieldName(ctx, yField),
+			),
 			scale: ctx.style?.yAxis?.beginAtZero !== true,
 			min: ctx.style?.yAxis?.min ?? yBounds?.min,
 			max: ctx.style?.yAxis?.max ?? yBounds?.max,
@@ -3341,7 +3357,10 @@ export function buildRadar(ctx: ChartContext) {
 		legend: legend(ctx, true),
 		tooltip: tooltip(ctx, "item"),
 		radar: {
-			indicator: measures.map((m, i) => ({ name: m, max: maxima[i] })),
+			indicator: measures.map((m, i) => ({
+				name: fieldName(ctx, m),
+				max: maxima[i],
+			})),
 			axisName: { color: colors.textMuted, fontSize: 11 },
 			splitLine: { lineStyle: { color: colors.grid } },
 			splitArea: { show: false },

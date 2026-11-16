@@ -64,13 +64,16 @@ export function describeChart(
 	dimensions: string[],
 	measures: string[],
 	title?: string | null,
+	// What each field is called on screen. Rows stay keyed by the field.
+	nameOf: (field: string) => string = (field) => field,
 ): string {
 	const kind = visualByType[visualType]?.label ?? "Chart";
 	const named = title?.trim() ? `${title.trim()}. ` : "";
 
 	if (rows.length === 0) return `${named}${kind} with no data.`;
 
-	const of = measures.length > 0 ? ` of ${joinWords(measures)}` : "";
+	const of =
+		measures.length > 0 ? ` of ${joinWords(measures.map(nameOf))}` : "";
 
 	// The distribution types read their last dimension as the grain the
 	// measure is taken at rather than as something the chart is drawn by, and
@@ -79,18 +82,19 @@ export function describeChart(
 	// marks on it and this one has eight.
 	if (visualType === "boxPlot" || visualType === "histogramChart") {
 		const grain = dimensions[dimensions.length - 1];
-		const across = grain ? ` across ${grain}` : "";
+		const across = grain ? ` across ${nameOf(grain)}` : "";
 		if (visualType === "histogramChart") {
 			return `${named}${kind}${of}${across}, ${rows.length} bars.`;
 		}
 		const group = dimensions.length > 1 ? dimensions[0] : null;
 		const boxes = rows.length === 1 ? "one box" : `${rows.length} boxes`;
 		return group
-			? `${named}${kind}${of}${across}, ${boxes}, one for each ${group}.`
+			? `${named}${kind}${of}${across}, ${boxes}, one for each ${nameOf(group)}.`
 			: `${named}${kind}${of}${across}, ${boxes}.`;
 	}
 
-	const by = dimensions.length > 0 ? ` by ${joinWords(dimensions)}` : "";
+	const by =
+		dimensions.length > 0 ? ` by ${joinWords(dimensions.map(nameOf))}` : "";
 	const count = rows.length === 1 ? "1 point" : `${rows.length} points`;
 
 	const parts = [`${named}${kind}${of}${by}`, count];

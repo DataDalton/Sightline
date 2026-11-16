@@ -14,6 +14,8 @@
 	"include": [],
 	"files": [
 		"app/visuals/chartOptions.ts",
+		"lib/semantic/fieldLabel.ts",
+		"lib/semantic/fieldLabel.test.ts",
 		"app/visuals/chartOptions.test.ts",
 		"lib/alerts/backtest.ts",
 		"lib/alerts/backtest.test.ts",

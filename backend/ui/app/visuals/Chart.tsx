@@ -601,6 +601,7 @@ export function Chart({
 			options,
 			hintFor: (field) =>
 				(fields.get(field)?.formatHint as FormatHint) ?? "decimal",
+			labelFor: (field) => fields.get(field)?.displayName || field,
 			// The same visual over the earlier window, for a chart whose shape
 			// is a change. Null when the page has no window to move.
 			comparisonRows: comparisonFilters ? comparison.rows : null,
@@ -1334,6 +1335,8 @@ export function Chart({
 								dimensions,
 								measures,
 								title,
+								(field) =>
+									fields.get(field)?.displayName || field,
 							)}${forecastCaption ? ` ${forecastCaption}` : ""} Arrow keys move between marks, Enter selects one, Escape clears the selection.`,
 							onKeyDown: onChartKey,
 							onFocus: onChartFocus,
@@ -1347,6 +1350,8 @@ export function Chart({
 								dimensions,
 								measures,
 								title,
+								(field) =>
+									fields.get(field)?.displayName || field,
 							)}${forecastCaption ? ` ${forecastCaption}` : ""}`,
 						})}
 				// No cursor of its own. The library sets one per element as
@@ -1448,13 +1453,14 @@ export function Chart({
 							dimensions,
 							measures,
 							title,
+							(field) => fields.get(field)?.displayName || field,
 						)}
 					</caption>
 					<thead>
 						<tr>
 							{columns.map((column) => (
 								<th key={column} scope="col">
-									{column}
+									{fields.get(column)?.displayName || column}
 								</th>
 							))}
 						</tr>

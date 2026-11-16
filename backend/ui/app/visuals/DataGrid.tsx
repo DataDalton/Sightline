@@ -1632,7 +1632,7 @@ export function DataGrid({
 								<span
 									className={styles.resizeHandle}
 									role="separator"
-									aria-label={`Resize ${column}`}
+									aria-label={`Resize ${fields.get(column)?.displayName || column}`}
 									onPointerDown={(e) =>
 										beginResize(
 											e,
@@ -1678,7 +1678,7 @@ export function DataGrid({
 											toggleSort(column);
 									}}
 								>
-									{column}
+									{fields.get(column)?.displayName || column}
 								</span>
 
 								{isSorted && (
@@ -1741,7 +1741,7 @@ export function DataGrid({
 										className={`${styles.filterButton} ${
 											hasFilter ? styles.filterActive : ""
 										}`}
-										aria-label={`Filter ${column}`}
+										aria-label={`Filter ${fields.get(column)?.displayName || column}`}
 										onClick={(e) => {
 											const rect =
 												e.currentTarget.getBoundingClientRect();

@@ -1389,7 +1389,9 @@ export function MatrixTable({
 			onClick={() => toggleSort(null)}
 			title="Sort by name"
 		>
-			{rowDimensions.join(" › ")}
+			{rowDimensions
+				.map((field) => fields.get(field)?.displayName || field)
+				.join(" › ")}
 			{sortArrow(null)}
 		</button>
 	);
@@ -1506,11 +1508,12 @@ export function MatrixTable({
 												title={
 													fields.get(measure)
 														?.description ??
-													`Sort by ${measure}`
+													`Sort by ${fields.get(measure)?.displayName || measure}`
 												}
 											>
 												{sortArrow(key)}
-												{measure}
+												{fields.get(measure)
+													?.displayName || measure}
 											</button>
 										</th>
 									);
@@ -1663,7 +1666,7 @@ export function MatrixTable({
 						className={`${styles.toolButton} ${styles.filterTool} ${
 							levelFilters[field] ? styles.filterToolActive : ""
 						}`}
-						aria-label={`Filter ${field}`}
+						aria-label={`Filter ${fields.get(field)?.displayName || field}`}
 						onClick={(e) => {
 							const rect =
 								e.currentTarget.getBoundingClientRect();
@@ -1686,7 +1689,7 @@ export function MatrixTable({
 						>
 							<path d="M3 5h18l-7 8v6l-4 2v-8z" />
 						</svg>
-						{field}
+						{fields.get(field)?.displayName || field}
 					</button>
 				))}
 
@@ -1758,7 +1761,7 @@ export function MatrixTable({
 					{activeChips.map(([field, values]) => (
 						<span key={field} className={gridStyles.chip}>
 							<span className={gridStyles.chipField}>
-								{field}
+								{fields.get(field)?.displayName || field}
 							</span>
 							<span>
 								{values.length === 1

@@ -5,6 +5,7 @@ import { parseMetricViewCalculations } from "./metricViewCalculations";
 import { readColumns, runCatalogQuery } from "./ucMetadata";
 import { isAuthored, isPresent } from "./authoredFields";
 import { defaultTableExpr, quotedRef } from "./types";
+import { legacyLabel, toLabel } from "./fieldLabel";
 import {
 	detectRenames,
 	type FieldPrint,
@@ -123,20 +124,6 @@ function isNumericType(dataType: string | null): boolean {
 	);
 }
 
-// A readable label from a raw column name, for tables whose columns are not
-// already written for a reader.
-function toLabel(column: string): string {
-	return column
-		.replace(/[_-]+/g, " ")
-		.replace(/([a-z])([A-Z])/g, "$1 $2")
-		.split(" ")
-		.filter(Boolean)
-		.map((w) =>
-			w.length <= 3 ? w.toUpperCase() : w[0].toUpperCase() + w.slice(1),
-		)
-		.join(" ");
-}
-
 async function discoverFields(
 	identity: Identity | null,
 	catalog: string,
@@ -239,6 +226,7 @@ interface ExistingRow {
 	sort_order: number;
 	fingerprint: Partial<Fingerprint> | null;
 	renamed_to: string | null;
+	display_name: string | null;
 }
 
 // What a field looked like before it went missing. Rows registered before
@@ -329,7 +317,7 @@ export async function syncSourceFields(
 	const existing = await sql<ExistingRow>(
 		`SELECT field_name, field_kind, sql_expr, status, data_type,
 		        description, description_edited_on::text, sort_order,
-		        fingerprint, renamed_to
+		        fingerprint, renamed_to, display_name
 		 FROM source_fields WHERE source_key = $1`,
 		[sourceKey],
 	);
@@ -420,6 +408,33 @@ export async function syncSourceFields(
 				dataType: dataType ?? known.data_type,
 			});
 		}
+	}
+
+	// Labels registration made under the old rule, which put every short word
+	// in capitals, take the current one. A label anybody changed no longer
+	// matches the old rule and is left as it is.
+	const relabelled =
+		source.kind === "metric_view"
+			? []
+			: existing
+					.filter(
+						(row) =>
+							row.display_name !== null &&
+							row.display_name === legacyLabel(row.field_name) &&
+							row.display_name !== toLabel(row.field_name),
+					)
+					.map((row) => ({
+						name: row.field_name,
+						label: toLabel(row.field_name),
+					}));
+	if (relabelled.length > 0) {
+		await sql(
+			`UPDATE source_fields AS f
+			 SET display_name = x.label, modified_on = now()
+			 FROM jsonb_to_recordset($2::jsonb) AS x(name text, label text)
+			 WHERE f.source_key = $1 AND f.field_name = x.name`,
+			[sourceKey, JSON.stringify(relabelled)],
+		);
 	}
 
 	if (refreshed.length > 0) {

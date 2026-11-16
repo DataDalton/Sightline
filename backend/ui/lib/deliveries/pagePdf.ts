@@ -343,6 +343,7 @@ async function kpiFigures(input: {
 	targets: unknown;
 	read: ReadRows;
 	hintFor: (field: string) => FormatHint;
+	labelFor: (field: string) => string;
 	colors: ThemeColors;
 	withAlpha: (color: string, alpha: number) => string;
 }): Promise<PdfFigure[]> {
@@ -435,7 +436,7 @@ async function kpiFigures(input: {
 				: null;
 			const basisWords = target ? describeBasis(target, hint) : null;
 			return {
-				label: name,
+				label: input.labelFor(name),
 				band: band.label,
 				text: `${match?.marker ? `${match.marker} ` : ""}${
 					signed && numeric !== null && numeric > 0 ? "+" : ""
@@ -493,8 +494,10 @@ async function matrixBody(input: {
 	filters: unknown[];
 	read: ReadRows;
 	hintFor: (field: string) => FormatHint;
+	labelFor: (field: string) => string;
 }): Promise<PdfBody> {
-	const { sourceKey, measures, pivot, filters, read, hintFor } = input;
+	const { sourceKey, measures, pivot, filters, read, hintFor, labelFor } =
+		input;
 	const first = input.namedDimensions.find((name) => name !== pivot);
 	if (!first) return { kind: "note", text: "This visual has no fields yet." };
 	const query = (dimensions: string[], limit: number) =>
@@ -518,8 +521,11 @@ async function matrixBody(input: {
 		return {
 			kind: "table",
 			columns: [
-				{ name: first, numeric: false },
-				...measures.map((name) => ({ name, numeric: true })),
+				{ name: labelFor(first), numeric: false },
+				...measures.map((name) => ({
+					name: labelFor(name),
+					numeric: true,
+				})),
 			],
 			rows: [
 				...rows.map((row) => [
@@ -549,7 +555,7 @@ async function matrixBody(input: {
 			])
 		: [[], []];
 	const label = (group: string, measure: string) =>
-		measures.length > 1 ? `${group} ${measure}` : group;
+		measures.length > 1 ? `${group} ${labelFor(measure)}` : group;
 	const byRow = new Map<string, Map<string, Record<string, unknown>>>();
 	for (const row of rows) {
 		const key = String(row[first] ?? "");
@@ -818,6 +824,12 @@ export async function readPageForExport(
 			(source?.measures.find((f) => f.name === field)?.formatHint ??
 				source?.dimensions.find((f) => f.name === field)?.formatHint ??
 				"text") as FormatHint;
+		// What a field is called on paper. A table source's columns carry a
+		// display name, and a metric view's fields are already named for a reader.
+		const labelFor = (field: string) =>
+			source?.measures.find((f) => f.name === field)?.displayName ||
+			source?.dimensions.find((f) => f.name === field)?.displayName ||
+			field;
 		const read = reads.rows;
 
 		if (type === "textPanel") {
@@ -1069,6 +1081,7 @@ export async function readPageForExport(
 					sourceKey,
 					read,
 					hintFor,
+					labelFor,
 					colors,
 					withAlpha,
 				}),
@@ -1085,6 +1098,7 @@ export async function readPageForExport(
 				filters: ownFilters,
 				read,
 				hintFor,
+				labelFor,
 			});
 		}
 
@@ -1095,7 +1109,7 @@ export async function readPageForExport(
 				return { kind: "note", text: "No rows match these filters." };
 			}
 			const pairs = [...dimensions, ...measures].map((name) => ({
-				label: name,
+				label: labelFor(name),
 				text: formatValue(rows[0][name], hintFor(name)),
 			}));
 			const notice =
@@ -1128,7 +1142,7 @@ export async function readPageForExport(
 			return {
 				kind: "table",
 				columns: shown.map((name) => ({
-					name,
+					name: labelFor(name),
 					numeric: measures.includes(name),
 				})),
 				rows: rows.map((row) =>
@@ -1202,6 +1216,7 @@ export async function readPageForExport(
 				comparisonRows,
 				forecast,
 				hintFor,
+				labelFor,
 			},
 			Math.max(120, Math.round(box.width - 20)),
 			Math.max(80, Math.round(box.height - 40)),
@@ -1218,6 +1233,7 @@ export async function readPageForExport(
 						measures,
 						hint: hintFor(measures[0]),
 						forecast,
+						labelFor,
 					}),
 				}
 			: {
