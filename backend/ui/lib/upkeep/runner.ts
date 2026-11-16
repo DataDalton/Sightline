@@ -29,9 +29,11 @@ import {
 	checkReportPlan,
 	checkVisual,
 	layoutPage,
-	newFieldEdits,
+	nameList,
+	newFieldsEdits,
 	parseJson,
 	withoutFigures,
+	type NewFieldShape,
 	type ReportShape,
 } from "./decide";
 import { describeFields, firstLook, reportsOn, sourceShape } from "./look";
@@ -646,64 +648,122 @@ async function applyToReport(
 
 // --- New fields, definitions, sources and pages ------------------------------
 
-async function newField(
-	row: ActionRow,
-	action: Extract<UpkeepAction, { kind: "newField" }>,
-): Promise<Outcome> {
-	if (!settings().upkeepNewFields)
-		return { state: "skipped", reason: "New fields are switched off" };
-	let source = getSource(action.sourceKey);
-	let field =
+// What a reader calls a field, for the lines the assistant writes.
+function readerName(sourceKey: string, field: string): string {
+	const source = getSource(sourceKey);
+	const found =
 		source &&
 		[...source.dimensions, ...source.measures].find(
-			(f) => f.name === action.field,
+			(f) => f.name === field,
 		);
-	if (!field) {
-		await resync(action.sourceKey);
-		source = getSource(action.sourceKey);
-		field =
-			source &&
-			[...source.dimensions, ...source.measures].find(
-				(f) => f.name === action.field,
-			);
-	}
-	if (!source || !field) {
-		return waitOrSkip(
-			row,
-			`${action.sourceKey} does not publish ${action.field} yet`,
-		);
-	}
-	const reports = await reportsOn(action.sourceKey);
-	if (reports.length === 0) {
+	return found?.displayName || field;
+}
+
+// The outcome of each queued row in a group, and the one note written about the
+// group as a whole.
+interface GroupOutcome {
+	outcomes: Map<string, Outcome>;
+	note: string | null;
+}
+
+function everyRow(rows: ActionRow[], outcome: Outcome): GroupOutcome {
+	return {
+		outcomes: new Map(rows.map((row) => [row.action_key, outcome])),
+		note: null,
+	};
+}
+
+// The fields one update added to one source, decided together.
+//
+// One look at where they belong, one edit to each report that takes any of them,
+// and one note about the lot, so an update adding nine fields reads as one change
+// rather than nine.
+async function newFields(rows: ActionRow[]): Promise<GroupOutcome> {
+	const actions = rows.map(
+		(row) => row.action as Extract<UpkeepAction, { kind: "newField" }>,
+	);
+	const sourceKey = actions[0].sourceKey;
+	if (!settings().upkeepNewFields) {
 		return {
-			state: "done",
-			summary: [
-				`No shared report is built on ${source.title} yet, so ${action.field} is available in Explore and the editor.`,
-			],
+			...everyRow(rows, {
+				state: "skipped",
+				reason: "New fields are switched off",
+			}),
+			note: `Did not place ${nameList(actions.map((a) => a.field))}: new fields are switched off.`,
 		};
 	}
-	const look = await firstLook(action.sourceKey, action.field);
+	const find = () => {
+		const source = getSource(sourceKey);
+		const all = source ? [...source.dimensions, ...source.measures] : [];
+		return { source, all };
+	};
+	let { source, all } = find();
+	if (actions.some((action) => !all.some((f) => f.name === action.field))) {
+		await resync(sourceKey);
+		({ source, all } = find());
+	}
+	const outcomes = new Map<string, Outcome>();
+	const present: { row: ActionRow; field: (typeof all)[number] }[] = [];
+	for (const row of rows) {
+		const name = (row.action as { field: string }).field;
+		const field = all.find((f) => f.name === name);
+		if (!source || !field) {
+			outcomes.set(
+				row.action_key,
+				waitOrSkip(row, `${sourceKey} does not publish ${name} yet`),
+			);
+		} else {
+			present.push({ row, field });
+		}
+	}
+	if (!source || present.length === 0) return { outcomes, note: null };
+
+	const shapes: NewFieldShape[] = present.map(({ field }) => ({
+		name: field.name,
+		kind: field.kind === "measure" ? "measure" : "dimension",
+		label: field.displayName || field.name,
+	}));
+	const names = nameList(shapes.map((shape) => shape.label ?? shape.name));
+	const finish = (summary: string[]) => {
+		for (const { row } of present) {
+			outcomes.set(row.action_key, { state: "done", summary });
+		}
+		return { outcomes, note: summary.join(" ") };
+	};
+
+	const reports = await reportsOn(sourceKey);
+	if (reports.length === 0) {
+		return finish([
+			`No shared report is built on ${source.title} yet, so ${names} ${shapes.length === 1 ? "is" : "are"} available in Explore and the editor.`,
+		]);
+	}
+
+	const looks: Record<string, unknown> = {};
+	for (const { field } of present) {
+		looks[field.name] = await firstLook(sourceKey, field.name);
+	}
 	let reply: unknown;
 	try {
 		reply = parseJson(
 			await askAsApplication(
 				[
-					"A new field has been added to a dataset that shared reports are built on. Decide where it belongs on those reports, if anywhere.",
-					"Add it to an existing table or matrix when it is a useful column there, add it to a filter when it is a category people would narrow by, and add a new chart only when the summary shows it tells something the reports do not already show.",
+					"New fields have been added to a dataset that shared reports are built on. Decide where they belong on those reports, if anywhere, treating them as one change.",
+					"Add fields to an existing table or matrix when they are useful columns there, put related fields into the same visual in one edit, add a field to a filter when it is a category people would narrow by, and add a new chart only when the summary shows it tells something the reports do not already show.",
 					"Prefer few, clearly useful changes over many. It is fine to change nothing.",
-					"The summary was read only for you to decide; never repeat a figure from it.",
-					'Answer with only JSON: {"edits": [{"do": "addToVisual", "visualId": "..."} or {"do": "addVisual", "pageId": "...", "visualType": "...", "title": "...", "dimensions": [...], "measures": [...]}], "note": "one or two sentences for the people who read these reports, saying what you added and why, with no numbers"}.',
+					"The summaries were read only for you to decide; never repeat a figure from them.",
+					'Answer with only JSON: {"edits": [{"do": "addToVisual", "visualId": "...", "fields": ["...", "..."]} or {"do": "addVisual", "pageId": "...", "visualType": "...", "title": "...", "dimensions": [...], "measures": [...]}], "note": "one or two sentences for the people who read these reports, saying what you added and why, with no numbers, naming fields as a reader would"}.',
 					"Visual types you may use: barChart, horizontalBarChart, lineChart, areaChart, stackedBarChart, pieChart, donutChart, treemapChart, table, matrixTable, kpiRow, scatterChart, heatmapChart, dropdownFilter.",
 				].join(" "),
 				{
-					newField: {
+					newFields: present.map(({ field }) => ({
 						name: field.name,
+						readerName: field.displayName || field.name,
 						kind: field.kind,
 						type: field.dataType,
 						description: field.description,
 						expression: field.expression,
-					},
-					summary: look,
+					})),
+					summaries: looks,
 					fields: describeFields(source),
 					reports: reports.map((report) => ({
 						reportId: report.reportId,
@@ -728,39 +788,44 @@ async function newField(
 		);
 	} catch (error) {
 		if (error instanceof ModelUnavailable) {
-			return waitOrSkip(
-				row,
-				`No model is available to decide where ${action.field} belongs`,
-			);
+			for (const { row } of present) {
+				outcomes.set(
+					row.action_key,
+					waitOrSkip(
+						row,
+						`No model is available to decide where ${names} belong`,
+					),
+				);
+			}
+			return { outcomes, note: null };
 		}
 		throw error;
 	}
-	const { byReport, doneByReport, done, skipped } = newFieldEdits(
-		reply,
-		action.field,
-		field.kind === "measure" ? "measure" : "dimension",
-		sourceShape(source),
-		reports,
-		() => randomUUID(),
-	);
+	const { byReport, doneByReport, fieldsByReport, done, skipped } =
+		newFieldsEdits(reply, shapes, sourceShape(source), reports, () =>
+			randomUUID(),
+		);
 	const applied: string[] = [];
 	for (const [reportId, operations] of byReport) {
-		const label = `${action.field} added: ${(doneByReport.get(reportId) ?? []).join("; ")}`;
+		const taken = (fieldsByReport.get(reportId) ?? []).map((name) =>
+			readerName(sourceKey, name),
+		);
+		const label = `Added ${nameList(taken)}: ${(doneByReport.get(reportId) ?? []).join("; ")}`;
 		if (
 			await applyToReport(
 				reportId,
 				operations as EditOperation[],
 				label,
-				row.update_id,
+				rows[0].update_id,
 			)
 		) {
 			applied.push(reportId);
 		}
 	}
 	await tellAboutChanges({
-		updateId: row.update_id,
-		sourceKey: action.sourceKey,
-		what: `${action.field} was added to ${source.title}`,
+		updateId: rows[0].update_id,
+		sourceKey,
+		what: `${names} ${shapes.length === 1 ? "was" : "were"} added to ${source.title}`,
 		reportIds: applied,
 	});
 	const note = withoutFigures(
@@ -774,34 +839,50 @@ async function newField(
 		if (note) summary.push(note);
 	} else {
 		summary.push(
-			`Looked at where ${action.field} could go on the reports built on ${source.title} and changed nothing.`,
+			`Looked at where ${names} could go on the reports built on ${source.title} and changed nothing.`,
 		);
 		if (note) summary.push(note);
 	}
-	if (skipped.length > 0) summary.push(`Left out: ${skipped.join("; ")}.`);
-	return { state: "done", summary };
+	if (skipped.length > 0) {
+		summary.push(`Left out: ${[...new Set(skipped)].join("; ")}.`);
+	}
+	return finish(summary);
 }
 
-async function definition(
-	row: ActionRow,
-	action: Extract<UpkeepAction, { kind: "definition" }>,
-): Promise<Outcome> {
-	if (!settings().upkeepDefinitions)
-		return {
+// The fields one update redefined on one source, noted together.
+//
+// Each chart reading any of them gets one note naming the ones it reads, and the
+// update gets one line saying where the notes went and which fields no shared
+// report shows.
+async function definitions(rows: ActionRow[]): Promise<GroupOutcome> {
+	const actions = rows.map(
+		(row) => row.action as Extract<UpkeepAction, { kind: "definition" }>,
+	);
+	const sourceKey = actions[0].sourceKey;
+	if (!settings().upkeepDefinitions) {
+		return everyRow(rows, {
 			state: "skipped",
 			reason: "Definition notes are switched off",
+		});
+	}
+	const source = getSource(sourceKey);
+	if (!source) {
+		return {
+			outcomes: new Map(
+				rows.map((row) => [
+					row.action_key,
+					waitOrSkip(row, `${sourceKey} is not a registered source`),
+				]),
+			),
+			note: null,
 		};
-	const source = getSource(action.sourceKey);
-	if (!source)
-		return waitOrSkip(
-			row,
-			`${action.sourceKey} is not a registered source`,
-		);
-	const update = row.update_id
+	}
+	const updateId = rows[0].update_id;
+	const update = updateId
 		? (
 				await sql<{ effective_on: string | null; posted_on: string }>(
 					`SELECT effective_on::text, posted_on::text FROM updates WHERE update_id = $1`,
-					[row.update_id],
+					[updateId],
 				)
 			)[0]
 		: null;
@@ -810,26 +891,36 @@ async function definition(
 		update?.posted_on ??
 		new Date().toISOString()
 	).slice(0, 10);
-	// Visuals reading the measure, each given a note anchored at the date it
-	// changed. The update itself already marks the date on charts.
+	const fields = [...new Set(actions.map((action) => action.field))];
+	// Visuals reading any of the measures, each with the ones it reads. The
+	// update itself already marks the date on charts.
 	const visuals = await sql<{
 		visual_id: string;
 		page_id: string;
 		report_id: string;
 		title: string;
+		measures: string[];
 	}>(
-		`SELECT v.visual_id::text, v.page_id::text, p.report_id::text, r.title
+		`SELECT v.visual_id::text, v.page_id::text, p.report_id::text, r.title,
+		        ARRAY(SELECT jsonb_array_elements_text(v.config->'measures')) AS measures
 		 FROM report_visuals v
 		 JOIN report_pages p ON p.page_id = v.page_id
 		 JOIN reports r ON r.report_id = p.report_id
 		 WHERE v.is_active AND NOT r.is_personal
 		   AND coalesce(v.source_key, p.source_key, r.source_key) = $1
-		   AND (v.config->'measures') ? $2`,
-		[action.sourceKey, action.field],
+		   AND (v.config->'measures') ?| $2::text[]`,
+		[sourceKey, fields],
 	);
-	const body = `How ${action.field} is worked out changed on ${day}. Figures before and after that date are not directly comparable.`;
-	let added = 0;
+	const shown = new Set<string>();
+	let noted = 0;
 	for (const visual of visuals) {
+		const reads = fields.filter((field) => visual.measures.includes(field));
+		if (reads.length === 0) continue;
+		for (const field of reads) shown.add(field);
+		const named = nameList(
+			reads.map((field) => readerName(sourceKey, field)),
+		);
+		const body = `How ${named} ${reads.length === 1 ? "is" : "are"} worked out changed on ${day}. Figures before and after that date are not directly comparable.`;
 		const existing = await sql(
 			`SELECT 1 FROM visual_notes
 			 WHERE visual_id = $1 AND author_email = $2 AND body = $3 LIMIT 1`,
@@ -848,19 +939,31 @@ async function definition(
 				day,
 			],
 		);
-		added++;
+		noted++;
 	}
 	const reportTitles = [...new Set(visuals.map((visual) => visual.title))];
+	const unseen = fields.filter((field) => !shown.has(field));
+	const summary: string[] = [];
+	const count = `${fields.length} field${fields.length === 1 ? " was" : "s were"} redefined`;
+	if (noted > 0) {
+		summary.push(
+			`${count}. Added a note to ${noted} chart${noted === 1 ? "" : "s"} on ${nameList(reportTitles)}, anchored at ${day}, so figures either side of that date are not compared as if they were alike.`,
+		);
+	} else if (shown.size > 0) {
+		summary.push(
+			`${count}. The charts reading them already carry a note about it.`,
+		);
+	} else {
+		summary.push(`${count}. No shared report shows any of them.`);
+	}
+	if (noted + shown.size > 0 && unseen.length > 0) {
+		summary.push(
+			`${nameList(unseen.map((field) => readerName(sourceKey, field)))} ${unseen.length === 1 ? "is" : "are"} not on any shared report.`,
+		);
+	}
 	return {
-		state: "done",
-		summary:
-			added > 0
-				? [
-						`Added a note about the change to ${added} visual${added === 1 ? "" : "s"} using ${action.field}, on ${reportTitles.join(", ")}, anchored at ${day}.`,
-					]
-				: [
-						`No shared report shows ${action.field}, so there was nothing to note.`,
-					],
+		...everyRow(rows, { state: "done", summary }),
+		note: summary.join(" "),
 	};
 }
 
@@ -1128,14 +1231,72 @@ async function carryOut(row: ActionRow): Promise<Outcome> {
 		case "remove":
 			return remove(row, action);
 		case "newField":
-			return newField(row, action);
+			return (await newFields([row])).outcomes.get(row.action_key)!;
 		case "definition":
-			return definition(row, action);
+			return (await definitions([row])).outcomes.get(row.action_key)!;
 		case "newSource":
 			return newSource(row, action);
 		case "pageAdded":
 			return pageAdded(row, action);
 	}
+}
+
+// The kinds handled a group at a time: everything one update said about one
+// source's new fields, or its redefined ones.
+const grouped = new Set(["newField", "definition"]);
+
+function groupKey(row: ActionRow): string | null {
+	if (!grouped.has(row.action.kind)) return null;
+	const sourceKey = (row.action as { sourceKey: string }).sourceKey;
+	return `${row.action.kind}|${row.update_id ?? ""}|${sourceKey}`;
+}
+
+async function recordOutcome(row: ActionRow, outcome: Outcome): Promise<void> {
+	if (outcome.state === "waiting") {
+		await sql(
+			`UPDATE upkeep_actions
+			 SET state = 'waiting', attempts = attempts + 1, reason = $2,
+			     next_try_on = now() + make_interval(secs => $3)
+			 WHERE action_key = $1`,
+			[row.action_key, outcome.reason, retryAfterSeconds],
+		);
+		return;
+	}
+	await sql(
+		`UPDATE upkeep_actions
+		 SET state = $2, attempts = attempts + 1, finished_on = now(),
+		     reason = $3, result = $4::jsonb
+		 WHERE action_key = $1`,
+		[
+			row.action_key,
+			outcome.state,
+			outcome.state === "skipped" ? outcome.reason : null,
+			JSON.stringify(
+				outcome.state === "done"
+					? {
+							summary: outcome.summary,
+							detail: outcome.result ?? null,
+						}
+					: null,
+			),
+		],
+	);
+}
+
+// What it did, written in the update's notes like a person would. A skip is
+// written too, so somebody reading the update knows why nothing changed.
+async function writeNote(updateId: string | null, text: string): Promise<void> {
+	if (!updateId || !text) return;
+	await assistantNote(updateId, assistantActor, text).catch((error) => {
+		console.warn("The assistant could not write its note:", error);
+	});
+}
+
+function noteFor(row: ActionRow, outcome: Outcome): string | null {
+	if (outcome.state === "waiting") return null;
+	return outcome.state === "done"
+		? outcome.summary.join(" ")
+		: `Did not act on ${describeAction(row.action).toLowerCase()}: ${outcome.reason}.`;
 }
 
 async function workDue(): Promise<void> {
@@ -1146,7 +1307,30 @@ async function workDue(): Promise<void> {
 		 LIMIT $1`,
 		[perTick],
 	);
+
+	// A group is worked whole, so the rest of it is read in even when the tick's
+	// limit cut it off.
+	const groups = new Map<string, ActionRow[]>();
+	const singles: ActionRow[] = [];
 	for (const row of due) {
+		const key = groupKey(row);
+		if (key === null) singles.push(row);
+		else groups.set(key, [...(groups.get(key) ?? []), row]);
+	}
+	for (const [key, held] of groups) {
+		const [kind, updateId, sourceKey] = key.split("|");
+		const rest = await sql<ActionRow>(
+			`SELECT action_key, action, update_id::text, attempts FROM upkeep_actions
+			 WHERE state IN ('pending', 'waiting') AND next_try_on <= now()
+			   AND kind = $1 AND coalesce(update_id::text, '') = $2
+			   AND action->>'sourceKey' = $3
+			   AND NOT (action_key = ANY($4::text[]))`,
+			[kind, updateId, sourceKey, held.map((row) => row.action_key)],
+		);
+		groups.set(key, [...held, ...rest]);
+	}
+
+	for (const row of singles) {
 		let outcome: Outcome;
 		try {
 			outcome = await carryOut(row);
@@ -1159,52 +1343,73 @@ async function workDue(): Promise<void> {
 					: "It could not be carried out",
 			);
 		}
-		if (outcome.state === "waiting") {
-			await sql(
-				`UPDATE upkeep_actions
-				 SET state = 'waiting', attempts = attempts + 1, reason = $2,
-				     next_try_on = now() + make_interval(secs => $3)
-				 WHERE action_key = $1`,
-				[row.action_key, outcome.reason, retryAfterSeconds],
+		await recordOutcome(row, outcome);
+		const text = noteFor(row, outcome);
+		if (text) await writeNote(row.update_id, text);
+	}
+
+	for (const rows of groups.values()) {
+		let result: GroupOutcome;
+		try {
+			result =
+				rows[0].action.kind === "newField"
+					? await newFields(rows)
+					: await definitions(rows);
+		} catch (error) {
+			console.warn(
+				`The assistant's ${rows[0].action.kind} group failed:`,
+				error,
 			);
-			continue;
-		}
-		await sql(
-			`UPDATE upkeep_actions
-			 SET state = $2, attempts = attempts + 1, finished_on = now(),
-			     reason = $3, result = $4::jsonb
-			 WHERE action_key = $1`,
-			[
-				row.action_key,
-				outcome.state,
-				outcome.state === "skipped" ? outcome.reason : null,
-				JSON.stringify(
-					outcome.state === "done"
-						? {
-								summary: outcome.summary,
-								detail: outcome.result ?? null,
-							}
-						: null,
+			const reason =
+				error instanceof Error
+					? error.message
+					: "It could not be carried out";
+			result = {
+				outcomes: new Map(
+					rows.map((row) => [
+						row.action_key,
+						waitOrSkip(row, reason),
+					]),
 				),
-			],
-		);
-		// What it did, written in the update's notes like a person would. A
-		// skip is written too, so somebody reading the update knows why nothing
-		// changed.
-		if (row.update_id) {
-			const text =
-				outcome.state === "done"
-					? outcome.summary.join(" ")
-					: `Did not act on ${describeAction(row.action).toLowerCase()}: ${outcome.reason}.`;
-			await assistantNote(row.update_id, assistantActor, text).catch(
-				(error) => {
-					console.warn(
-						"The assistant could not write its note:",
-						error,
-					);
-				},
+				note: null,
+			};
+		}
+		for (const row of rows) {
+			const outcome = result.outcomes.get(row.action_key);
+			if (outcome) await recordOutcome(row, outcome);
+		}
+		// One note for the group. Rows skipped for a reason of their own, rather
+		// than with the group, are added to it in one line.
+		const skippedRows = rows.filter((row) => {
+			const outcome = result.outcomes.get(row.action_key);
+			return outcome?.state === "skipped";
+		});
+		const lines = [result.note];
+		if (!result.note && skippedRows.length > 0) {
+			const reasons = [
+				...new Set(
+					skippedRows.map((row) => {
+						const outcome = result.outcomes.get(row.action_key);
+						return outcome?.state === "skipped"
+							? outcome.reason
+							: "";
+					}),
+				),
+			];
+			lines.push(
+				`Did not act on ${nameList(
+					skippedRows.map((row) => {
+						const action = row.action as {
+							sourceKey: string;
+							field: string;
+						};
+						return readerName(action.sourceKey, action.field);
+					}),
+				)}: ${reasons.join("; ")}.`,
 			);
 		}
+		const text = lines.filter(Boolean).join(" ");
+		if (text) await writeNote(rows[0].update_id, text);
 	}
 }
 

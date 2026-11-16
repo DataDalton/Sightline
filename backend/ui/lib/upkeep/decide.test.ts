@@ -4,7 +4,9 @@ import {
 	checkReportPlan,
 	checkVisual,
 	layoutPage,
+	nameList,
 	newFieldEdits,
+	newFieldsEdits,
 	parseJson,
 	placeBelow,
 	withoutFigures,
@@ -14,7 +16,7 @@ import {
 const source = {
 	sourceKey: "orders",
 	dimensions: ["Region", "Channel", "Order Date", "Discount Band"],
-	measures: ["Revenue", "Orders"],
+	measures: ["Revenue", "Orders", "Units", "Returns"],
 };
 
 test("a reply's JSON is found inside prose or a code fence", () => {
@@ -259,4 +261,39 @@ test("written text keeps no figures", () => {
 		),
 		"Discount band splits revenue clearly. Use it as a filter.",
 	);
+});
+
+test("several new fields going into one visual are one change to it", () => {
+	const { byReport, doneByReport, fieldsByReport, done } = newFieldsEdits(
+		{
+			edits: [
+				{ do: "addToVisual", visualId: "t1", fields: ["units"] },
+				{ do: "addToVisual", visualId: "t1", fields: ["returns"] },
+			],
+		},
+		[
+			{ name: "units", kind: "measure", label: "Units" },
+			{ name: "returns", kind: "measure", label: "Returns" },
+		],
+		{ ...source, measures: [...source.measures, "units", "returns"] },
+		reports(),
+		() => "x",
+	);
+	const operations = byReport.get("r1") ?? [];
+	assert.equal(operations.length, 1);
+	const update = operations[0] as { config: Record<string, unknown> };
+	assert.deepEqual(update.config.measures, ["Revenue", "units", "returns"]);
+	assert.deepEqual(update.config.options, { pageSize: 50 });
+	assert.deepEqual(done, [
+		"added Units and Returns to Every order on Orders",
+	]);
+	assert.deepEqual(doneByReport.get("r1"), done);
+	assert.deepEqual(fieldsByReport.get("r1"), ["units", "returns"]);
+});
+
+test("a list of names reads as a person would say it", () => {
+	assert.equal(nameList(["A"]), "A");
+	assert.equal(nameList(["A", "B"]), "A and B");
+	assert.equal(nameList(["A", "B", "C"]), "A, B and C");
+	assert.equal(nameList(["A", "B", "C", "D", "E"]), "A, B, C and 2 more");
 });

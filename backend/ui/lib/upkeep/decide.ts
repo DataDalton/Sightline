@@ -179,15 +179,33 @@ export function placeBelow(
 	return { x: 0, y: bottom, w: Math.min(size.w, gridColumns), h: size.h };
 }
 
-// The edits a plan for a new field asks for, grouped by report, with what was
+// A list of names as a reader says it: "A", "A and B", "A, B and C", and past
+// a few, "A, B, C and 4 more".
+export function nameList(names: string[], shown = 3): string {
+	if (names.length === 0) return "";
+	if (names.length === 1) return names[0];
+	if (names.length <= shown) {
+		return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+	}
+	return `${names.slice(0, shown).join(", ")} and ${names.length - shown} more`;
+}
+
+export interface NewFieldShape {
+	name: string;
+	kind: "dimension" | "measure";
+	// What a reader calls it, for the lines written about the change.
+	label?: string;
+}
+
+// The edits a plan for new fields asks for, grouped by report, with what was
 // left out and why.
 //
-// The plan says, per item, to add the field to an existing visual or to add a
-// new visual to a page. Adding to a visual keeps within what its type takes.
-export function newFieldEdits(
+// The plan says, per item, to add fields to an existing visual or to add a new
+// visual to a page. Several fields going into one visual are one change to it,
+// and adding to a visual keeps within what its type takes.
+export function newFieldsEdits(
 	plan: unknown,
-	field: string,
-	fieldKind: "dimension" | "measure",
+	fields: NewFieldShape[],
 	source: SourceShape,
 	reports: ReportShape[],
 	makeId: () => string,
@@ -195,20 +213,30 @@ export function newFieldEdits(
 	byReport: Map<string, EditOperation[]>;
 	// What was done on each report, for its version label.
 	doneByReport: Map<string, string[]>;
+	// The new fields each report took, for its version label.
+	fieldsByReport: Map<string, string[]>;
 	done: string[];
 	skipped: string[];
 } {
+	const labelOf = new Map(fields.map((f) => [f.name, f.label ?? f.name]));
+	const kindOf = new Map(fields.map((f) => [f.name, f.kind]));
+	const named = (list: string[]) =>
+		nameList(list.map((name) => labelOf.get(name) ?? name));
 	const doneByReport = new Map<string, string[]>();
-	const did = (reportId: string, line: string) => {
+	const fieldsByReport = new Map<string, string[]>();
+	const done: string[] = [];
+	const skipped: string[] = [];
+	const did = (reportId: string, line: string, used: string[]) => {
 		done.push(line);
 		doneByReport.set(reportId, [
 			...(doneByReport.get(reportId) ?? []),
 			line,
 		]);
+		fieldsByReport.set(reportId, [
+			...new Set([...(fieldsByReport.get(reportId) ?? []), ...used]),
+		]);
 	};
 	const byReport = new Map<string, EditOperation[]>();
-	const done: string[] = [];
-	const skipped: string[] = [];
 	const edits = Array.isArray((plan as { edits?: unknown })?.edits)
 		? ((plan as { edits: unknown[] }).edits as Record<string, unknown>[])
 		: [];
@@ -235,7 +263,30 @@ export function newFieldEdits(
 		byReport.set(reportId, held);
 	};
 
-	for (const edit of edits.slice(0, 12)) {
+	// What each existing visual is taking, gathered first so a visual given
+	// several fields across the plan is changed once.
+	const growing = new Map<
+		string,
+		{
+			found: {
+				report: ReportShape;
+				page: PageShape;
+				visual: VisualShape;
+			};
+			dimensions: string[];
+			measures: string[];
+			added: string[];
+		}
+	>();
+	// New visuals, written after the changes to existing ones.
+	const additions: {
+		reportId: string;
+		operation: EditOperation;
+		line: string;
+		used: string[];
+	}[] = [];
+
+	for (const edit of edits.slice(0, 24)) {
 		if (edit?.do === "addToVisual") {
 			const found = visualIndex.get(String(edit.visualId ?? ""));
 			if (!found) {
@@ -248,34 +299,43 @@ export function newFieldEdits(
 				continue;
 			}
 			if (visual.sourceKey !== source.sourceKey) continue;
-			const dimensions =
-				fieldKind === "dimension" && !visual.dimensions.includes(field)
-					? [...visual.dimensions, field]
-					: visual.dimensions;
-			const measures =
-				fieldKind === "measure" && !visual.measures.includes(field)
-					? [...visual.measures, field]
-					: visual.measures;
+			// Which of the new fields go in. A plan for one field may leave this
+			// out, which means that field.
+			const asked = Array.isArray(edit.fields)
+				? edit.fields.map(String)
+				: typeof edit.field === "string"
+					? [edit.field]
+					: fields.length === 1
+						? [fields[0].name]
+						: [];
+			const wanted = asked.filter((name) => kindOf.has(name));
+			if (wanted.length === 0) continue;
+			const held = growing.get(visual.visualId) ?? {
+				found,
+				dimensions: [...visual.dimensions],
+				measures: [...visual.measures],
+				added: [],
+			};
 			const encoding = visualByType[visual.visualType]?.encoding;
-			if (
-				!encoding ||
-				dimensions.length > encoding.dimensions.max ||
-				measures.length > encoding.measures.max
-			) {
-				skipped.push(
-					`${visual.title ?? "A visual"} on ${report.title} has no room for another ${fieldKind}`,
-				);
-				continue;
+			for (const name of wanted) {
+				const kind = kindOf.get(name)!;
+				const list =
+					kind === "dimension" ? held.dimensions : held.measures;
+				if (list.includes(name)) continue;
+				const max =
+					kind === "dimension"
+						? encoding?.dimensions.max
+						: encoding?.measures.max;
+				if (max === undefined || list.length + 1 > max) {
+					skipped.push(
+						`${visual.title ?? "A visual"} on ${report.title} has no room for ${labelOf.get(name) ?? name}`,
+					);
+					continue;
+				}
+				list.push(name);
+				held.added.push(name);
 			}
-			push(report.reportId, {
-				type: "updateVisual",
-				visualId: visual.visualId,
-				config: { ...visual.config, dimensions, measures },
-			});
-			did(
-				report.reportId,
-				`added ${field} to ${visual.title ?? "a visual"} on ${report.title}`,
-			);
+			growing.set(visual.visualId, held);
 		} else if (edit?.do === "addVisual") {
 			const found = pageIndex.get(String(edit.pageId ?? ""));
 			if (!found) {
@@ -293,16 +353,16 @@ export function newFieldEdits(
 				continue;
 			}
 			const visual = checked.value;
-			if (
-				!visual.dimensions.includes(field) &&
-				!visual.measures.includes(field)
-			) {
-				skipped.push(`${visual.title} did not use ${field}`);
+			const used = [...visual.dimensions, ...visual.measures].filter(
+				(name) => kindOf.has(name),
+			);
+			if (used.length === 0) {
+				skipped.push(`${visual.title} did not use a new field`);
 				continue;
 			}
 			const visualId = makeId();
 			const layout = placeBelow(page.visuals, visual.visualType);
-			push(report.reportId, {
+			const operation: EditOperation = {
 				type: "addVisual",
 				visualId,
 				pageId: page.pageId,
@@ -314,7 +374,7 @@ export function newFieldEdits(
 					measures: visual.measures,
 				},
 				layout,
-			});
+			};
 			// Later visuals on the same page go under this one.
 			page.visuals.push({
 				visualId,
@@ -330,12 +390,58 @@ export function newFieldEdits(
 				layout,
 				isActive: true,
 			});
-			did(
-				report.reportId,
-				`added ${visual.title} to ${page.title} in ${report.title}`,
-			);
+			additions.push({
+				reportId: report.reportId,
+				operation,
+				line: `added ${visual.title} to ${page.title} in ${report.title}`,
+				used,
+			});
 		}
 	}
+
+	for (const { found, dimensions, measures, added } of growing.values()) {
+		if (added.length === 0) continue;
+		const { report, visual } = found;
+		push(report.reportId, {
+			type: "updateVisual",
+			visualId: visual.visualId,
+			config: { ...visual.config, dimensions, measures },
+		});
+		did(
+			report.reportId,
+			`added ${named(added)} to ${visual.title ?? "a visual"} on ${report.title}`,
+			added,
+		);
+	}
+	for (const { reportId, operation, line, used } of additions) {
+		push(reportId, operation);
+		did(reportId, line, used);
+	}
+
+	return { byReport, doneByReport, fieldsByReport, done, skipped };
+}
+
+// The same for one field, as an update about a single field plans it.
+export function newFieldEdits(
+	plan: unknown,
+	field: string,
+	fieldKind: "dimension" | "measure",
+	source: SourceShape,
+	reports: ReportShape[],
+	makeId: () => string,
+): {
+	byReport: Map<string, EditOperation[]>;
+	doneByReport: Map<string, string[]>;
+	done: string[];
+	skipped: string[];
+} {
+	const { byReport, doneByReport, done, skipped } = newFieldsEdits(
+		plan,
+		[{ name: field, kind: fieldKind }],
+		source,
+		reports,
+		makeId,
+	);
 	return { byReport, doneByReport, done, skipped };
 }
 
