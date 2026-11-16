@@ -4,7 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import { useUser } from "../context/UserContext";
 import { useTheme, type ThemePreference } from "../context/ThemeContext";
 import { useNotify } from "../notify/NotifyContext";
+import { usePersonalTheme } from "../context/PersonalTheme";
+import { ColoursDialog } from "./ColoursDialog";
 import styles from "./AccountBlock.module.css";
+
+// The chart colour positions shown in the menu's colour bar.
+const chartSlots = [1, 2, 3, 4, 5, 6, 7, 8];
 
 // Who you are signed in as, at the foot of the navigation.
 //
@@ -27,7 +32,9 @@ export function AccountBlock() {
 	const { user, loading, error, refresh } = useUser();
 	const { preference, setPreference } = useTheme();
 	const { standalone, install } = useNotify();
+	const { theme } = usePersonalTheme();
 	const [open, setOpen] = useState(false);
+	const [choosingColours, setChoosingColours] = useState(false);
 	const wrapRef = useRef<HTMLDivElement | null>(null);
 
 	useEffect(() => {
@@ -71,6 +78,9 @@ export function AccountBlock() {
 
 	return (
 		<div className={styles.wrap} ref={wrapRef}>
+			{choosingColours && (
+				<ColoursDialog onClose={() => setChoosingColours(false)} />
+			)}
 			{open && (
 				<div className={styles.menu} role="menu">
 					<div className={styles.identity}>
@@ -108,6 +118,32 @@ export function AccountBlock() {
 								</button>
 							))}
 						</div>
+						<button
+							type="button"
+							className={styles.colours}
+							onClick={() => {
+								setOpen(false);
+								setChoosingColours(true);
+							}}
+						>
+							<span
+								className={styles.coloursStrip}
+								aria-hidden="true"
+							>
+								<span style={{ background: "var(--brand)" }} />
+								{chartSlots.map((slot) => (
+									<span
+										key={slot}
+										style={{
+											background: `var(--chart-${slot})`,
+										}}
+									/>
+								))}
+							</span>
+							<span className={styles.coloursLabel}>
+								Colours: {theme?.name ?? "App colours"}
+							</span>
+						</button>
 					</div>
 
 					{!standalone && (

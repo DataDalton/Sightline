@@ -190,3 +190,35 @@
 .retry:hover {
 	background: var(--surface-hover);
 }
+
+/* Opens the colour choice. The bar shows the colours in use right now. */
+.colours {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	padding: var(--space-2);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font-family: inherit;
+	font-size: var(--text-sm);
+	text-align: left;
+	cursor: pointer;
+}
+
+.colours:hover {
+	background: var(--surface-hover);
+}
+
+.coloursStrip {
+	display: grid;
+	grid-template-columns: 2fr repeat(8, 1fr);
+	height: 8px;
+	overflow: hidden;
+	border-radius: var(--radius-sm);
+}
+
+.coloursLabel {
+	font-weight: 500;
+}

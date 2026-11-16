@@ -1116,7 +1116,7 @@ export function MatrixTable({
 
 	// How each cell is drawn under the author's rules and colour scales. Null
 	// when there are none, which is most matrices and costs them nothing.
-	const { resolved: resolvedTheme } = useTheme();
+	const { paintKey } = useTheme();
 	const looksOf = useMemo(() => {
 		const conditions = style?.conditions ?? [];
 		const scales = style?.colorScales ?? [];
@@ -1197,7 +1197,7 @@ export function MatrixTable({
 		columnDimension,
 		measureFields,
 		rowFields,
-		resolvedTheme,
+		paintKey,
 	]);
 
 	// Alternating row shading, on unless an author turns it off.

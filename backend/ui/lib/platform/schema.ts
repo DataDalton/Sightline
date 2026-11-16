@@ -805,6 +805,16 @@ const statements: string[] = [
 		modified_on TIMESTAMPTZ NOT NULL DEFAULT now()
 	)`,
 
+	// The colours somebody chose for themselves. Either a workspace or built-in
+	// theme by id, or their own accent and chart colours. Absent means the
+	// app's colours, with each report's theme showing on that report.
+	`CREATE TABLE IF NOT EXISTS user_themes (
+		owner_email TEXT PRIMARY KEY,
+		theme_id    TEXT,
+		own_theme   JSONB,
+		modified_on TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
 	// Alerts. The definition is what the owner wrote, and state is what the last
 	// check saw for each group, which is what the next check compares with.
 	`CREATE TABLE IF NOT EXISTS alert_rules (

@@ -18,6 +18,7 @@ import Sidebar from "./components/Sidebar";
 import SWRProvider from "./components/SWRProvider";
 import { UserProvider } from "./context/UserContext";
 import { ThemeProvider, themeBootstrapScript } from "./context/ThemeContext";
+import { PersonalThemeLayer } from "./context/PersonalTheme";
 import { ShellProvider } from "./context/ShellContext";
 import NavScrim from "./components/NavScrim";
 import PaletteHost from "./components/PaletteHost";
@@ -162,6 +163,7 @@ export default async function RootLayout({
 				<ThemeProvider>
 					<SWRProvider fallback={shell.fallback}>
 						<UserProvider initial={shell.user}>
+							<PersonalThemeLayer />
 							<ShellProvider>
 								<NotifyProvider>
 									<AssistantProvider>

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+	contrastOn,
 	allThemes,
 	builtinThemes,
 	parseCustomThemes,
@@ -28,6 +29,12 @@ test("a short list of colours repeats across the series", () => {
 	assert.equal(tokens["--chart-3"], "#111111");
 	assert.equal(tokens["--chart-8"], "#222222");
 	assert.equal(tokens["--brand"], "#123456");
+});
+
+test("text on the accent is white on a dark accent and dark on a light one", () => {
+	assert.equal(contrastOn("#123456"), "#ffffff");
+	assert.equal(contrastOn("#ffb500"), "#16181d");
+	assert.equal(themeTokens(valid)["--brand-contrast"], "#ffffff");
 });
 
 test("stored themes are read back", () => {

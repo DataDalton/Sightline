@@ -436,7 +436,7 @@ export function ReportEditor({
 	const [feedbackChanges, setFeedbackChanges] = useState<
 		"automatic" | "suggest"
 	>(reportFeedbackChanges);
-	useReportTheme(theme);
+	useReportTheme(theme, { overPersonal: true });
 	const themeRef = useRef(theme);
 	themeRef.current = theme;
 

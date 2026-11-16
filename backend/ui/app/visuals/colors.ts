@@ -57,13 +57,28 @@ export interface ThemeColors {
 	resolve: (spec: ColorSpec | undefined, fallback: string) => string;
 }
 
-// A report's theme, read here as well as written to the document. A chart reads its
-// colours while the page first draws, which is before an effect could have written
-// them anywhere, and the first draw would otherwise use the wrong palette.
-let themeOverrides: Record<string, string> | null = null;
+// A report's theme and the reader's own colours, read here as well as written to
+// the document. A chart reads its colours while the page first draws, which is
+// before an effect could have written them anywhere, and the first draw would
+// otherwise use the wrong palette.
+let reportOverrides: Record<string, string> | null = null;
+let personalOverrides: Record<string, string> | null = null;
 
 export function setThemeOverrides(tokens: Record<string, string> | null): void {
-	themeOverrides = tokens;
+	reportOverrides = tokens;
+}
+
+export function setPersonalOverrides(
+	tokens: Record<string, string> | null,
+): void {
+	personalOverrides = tokens;
+}
+
+// The reader's own colours win over a report's. The report hook stands aside
+// while they are set, except in the editor, where its own colours are written
+// over the reader's so an author sees the theme being chosen.
+function activeOverrides(): Record<string, string> | null {
+	return reportOverrides ?? personalOverrides;
 }
 
 function readVariable(
@@ -83,7 +98,7 @@ function readVariable(
 // The server has no document to read and several reports drawing at once, so it names the
 // theme's tokens here rather than setting them for everyone.
 export function readThemeColors(
-	tokens: Record<string, string> | null = themeOverrides,
+	tokens: Record<string, string> | null = activeOverrides(),
 ): ThemeColors {
 	const variable = (name: string, fallback: string) =>
 		readVariable(name, fallback, tokens);

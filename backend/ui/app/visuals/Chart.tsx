@@ -313,7 +313,7 @@ export function Chart({
 	// the drawing effect runs again when a new one mounts.
 	const [container, setContainer] = useState<HTMLDivElement | null>(null);
 	const chartRef = useRef<echarts.ECharts | null>(null);
-	const { resolved } = useTheme();
+	const { paintKey } = useTheme();
 
 	// The catalogue says what this type needs, so an under-configured visual
 	// can say what it is waiting for instead of rendering an empty frame.
@@ -654,8 +654,8 @@ export function Chart({
 		forecast,
 		countries,
 		// The palette is read off the document when the option is built, so
-		// a theme change has to build it again.
-		resolved,
+		// a change of light, dark or the reader's colours builds it again.
+		paintKey,
 	]);
 
 	// Where updates about this source took effect, drawn on a time axis. Added to the
@@ -701,7 +701,7 @@ export function Chart({
 				oddOnes,
 				readThemeColors().negative,
 			),
-		[option, updateMarkers, oddOnes, resolved],
+		[option, updateMarkers, oddOnes, paintKey],
 	);
 
 	// Whether the built chart carries forecast marks. Read back off the option,
@@ -1124,13 +1124,13 @@ export function Chart({
 				},
 			);
 		}
-		// resolved is a dependency because the palette is read off the
-		// document, so a theme change has to repaint. container is one because
+		// paintKey is a dependency because the palette is read off the
+		// document, so a change of colours has to repaint. container is one because
 		// a new element needs a chart created on it.
 		// Deliberately narrow. The handlers read what they need at call time, so
 		// a fresh callback from the page is not a reason to rebuild the chart
 		// and throw away whatever the reader was doing in it.
-	}, [marked, resolved, supportsBrush, container]);
+	}, [marked, paintKey, supportsBrush, container]);
 
 	// The focused mark drawn as hovered, with its tooltip. Applied again after
 	// every redraw, because replacing the option clears the library's own

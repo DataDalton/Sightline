@@ -7,6 +7,7 @@ import {
 	themeTokens,
 	type ReportTheme,
 } from "../../lib/visuals/themes";
+import { usePersonalTheme } from "../context/PersonalTheme";
 import { setThemeOverrides } from "./colors";
 
 // Draws the page in a report's theme, and takes it off again on the way out so it
@@ -18,17 +19,30 @@ import { setThemeOverrides } from "./colors";
 //
 // Pass null to apply nothing, which is how the page behind the editor stands aside
 // while the editor shows the theme being chosen.
-export function useReportTheme(themeId: string | null | undefined): void {
+//
+// A reader with their own colours keeps them, and the report's theme is not
+// applied. The editor passes overPersonal, so an author still sees the theme
+// they are choosing for everybody else.
+export function useReportTheme(
+	themeId: string | null | undefined,
+	{ overPersonal = false }: { overPersonal?: boolean } = {},
+): void {
 	const { data } = useSWR<{ customThemes?: ReportTheme[] }>("/api/info");
+	const { tokens: personal } = usePersonalTheme();
+	const standAside = personal !== null && !overPersonal;
 	const tokens = useMemo(() => {
-		if (!themeId) return null;
+		if (!themeId || standAside) return null;
 		const theme = allThemes(data?.customThemes ?? []).find(
 			(t) => t.id === themeId,
 		);
 		return theme ? themeTokens(theme) : null;
-	}, [themeId, data?.customThemes]);
+	}, [themeId, standAside, data?.customThemes]);
 
 	if (tokens) setThemeOverrides(tokens);
+	// Cleared during render as well as in the effect below, because the charts
+	// under this page draw before that effect runs and would keep the report's
+	// palette after the reader's own colours arrive.
+	else if (standAside && themeId) setThemeOverrides(null);
 
 	useLayoutEffect(() => {
 		if (!tokens) return;

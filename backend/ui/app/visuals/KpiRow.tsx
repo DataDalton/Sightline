@@ -296,13 +296,13 @@ export function KpiRow({
 			: null,
 	);
 
-	const { resolved: resolvedTheme } = useTheme();
+	const { paintKey } = useTheme();
 	const colors = useMemo(
 		() => (typeof window === "undefined" ? null : readThemeColors()),
 		// Read again when the data arrives and when the theme switches, since
 		// the palette is read off the document.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-		[rows.length, isLoading, resolvedTheme],
+		[rows.length, isLoading, paintKey],
 	);
 
 	if (error) return <VisualError error={error} />;

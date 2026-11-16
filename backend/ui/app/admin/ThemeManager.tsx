@@ -39,7 +39,7 @@ function partHelp(part: ThemePart | null): string {
 	return `Chart colour ${part + 1}. The ${part === 0 ? "first" : `number ${part + 1}`} measure or category in any chart.`;
 }
 
-function ThemeCard({
+export function ThemeCard({
 	theme,
 	ground,
 	onChange,

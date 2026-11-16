@@ -126,12 +126,30 @@ export function allThemes(custom: ReportTheme[]): ReportTheme[] {
 	return [...custom, ...builtinThemes.filter((t) => !ids.has(t.id))];
 }
 
+// Dark or white text on the accent, whichever reads. The app's own text colour
+// on a button suits its yellow and is unreadable on a dark accent.
+export function contrastOn(hex: string): string {
+	const channel = (offset: number) => {
+		const value = parseInt(hex.slice(offset, offset + 2), 16) / 255;
+		return value <= 0.03928
+			? value / 12.92
+			: ((value + 0.055) / 1.055) ** 2.4;
+	};
+	const luminance =
+		0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
+	// The luminance at which black and white text read equally well.
+	return luminance > 0.179 ? "#16181d" : "#ffffff";
+}
+
 // The custom properties a theme sets. A shorter list of colours repeats, so every
-// series position still has one.
+// series position still has one. The subtle tint is mixed against the raised
+// surface, so it is pale on light and dark on dark from one value.
 export function themeTokens(theme: ReportTheme): Record<string, string> {
 	const tokens: Record<string, string> = {
 		"--brand": theme.accent,
 		"--brand-strong": theme.accent,
+		"--brand-contrast": contrastOn(theme.accent),
+		"--brand-subtle": `color-mix(in srgb, ${theme.accent} 18%, var(--surface-raised))`,
 	};
 	for (let i = 0; i < seriesCount; i++) {
 		tokens[`--chart-${i + 1}`] = theme.chart[i % theme.chart.length];

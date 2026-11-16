@@ -824,12 +824,12 @@ export function DataGrid({
 		return stats;
 	}, [rows, style]);
 
-	const { resolved: resolvedTheme } = useTheme();
+	const { paintKey } = useTheme();
 	const themeColors = useMemo(
 		() => (typeof window === "undefined" ? null : readThemeColors()),
 		// The palette is read off the document, so a theme switch reads it again.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-		[rows.length, resolvedTheme],
+		[rows.length, paintKey],
 	);
 
 	// Display order: pinned columns first in the order they were pinned, then

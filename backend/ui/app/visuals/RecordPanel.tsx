@@ -61,12 +61,12 @@ export function RecordPanel({
 	);
 
 	const rules = style?.conditions ?? [];
-	const { resolved: resolvedTheme } = useTheme();
+	const { paintKey } = useTheme();
 	const colors = useMemo(
 		() => (typeof window === "undefined" ? null : readThemeColors()),
 		// The palette is read off the document, so a theme switch reads it again.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-		[resolvedTheme],
+		[paintKey],
 	);
 
 	if (error) return <VisualError error={error} />;
