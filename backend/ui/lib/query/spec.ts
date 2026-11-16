@@ -87,6 +87,10 @@ export interface QuerySpec {
 	// entirely, so it is compiled by its own branch rather than by adding
 	// clauses to the flat query.
 	distribution?: QueryDistribution;
+	// Groups by the dimensions even on a table with no measure selected, so
+	// each combination comes back once. Set by the list of a field's values,
+	// never parsed from a request.
+	distinct?: boolean;
 }
 
 // Upper bounds on the shape of a single request.

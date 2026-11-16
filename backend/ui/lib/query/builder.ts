@@ -838,9 +838,12 @@ export function compileQuery(
 	// A metric view always aggregates: selecting dimensions alone still reads
 	// through the view's grain, and GROUP BY is what makes that explicit. A
 	// table only aggregates when a measure is present, so a dimensions-only
-	// query against one reads raw rows, which is what detail tables want.
+	// query against one reads raw rows, which is what detail tables want. A
+	// list of a field's values asks for distinct, which groups a table too.
 	const aggregates =
-		source.kind === "metric_view" || spec.measures.length > 0;
+		source.kind === "metric_view" ||
+		spec.measures.length > 0 ||
+		spec.distinct === true;
 
 	const lines = [
 		`SELECT ${selectParts.join(", ")}`,

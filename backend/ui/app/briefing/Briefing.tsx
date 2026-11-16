@@ -22,6 +22,8 @@ import { AskBar } from "./AskBar";
 import { BriefingCard } from "./BriefingCard";
 import { Trend } from "./Trend";
 import { useReorder } from "./useReorder";
+import { homeCardSize } from "../../lib/updates/live";
+import { useLiveUpdates, whenOf } from "../updates/UpdateSurfaces";
 import styles from "./Briefing.module.css";
 
 const ExplainDialog = dynamic(
@@ -899,6 +901,8 @@ export function Briefing({ firstName }: { firstName: string | null }) {
 						</section>
 					)}
 
+					<RecentUpdates />
+
 					{yours.length > 0 && (
 						<section className={styles.railBlock}>
 							<h2 className={styles.railTitle}>Your reports</h2>
@@ -1027,6 +1031,45 @@ export function Briefing({ firstName }: { firstName: string | null }) {
 					onClose={() => setExplaining(null)}
 				/>
 			)}
+		</section>
+	);
+}
+
+// The latest updates posted to Home, in the rail beside the briefing rather
+// than above it. Unread ones are in bold, as alerts are.
+function RecentUpdates() {
+	const { data } = useLiveUpdates();
+	const now = Date.now();
+	const shown = (data?.updates ?? [])
+		.filter((update) => update.delivery.home)
+		.slice(0, homeCardSize);
+	if (shown.length === 0) return null;
+	return (
+		<section className={styles.railBlock}>
+			<div className={styles.railHead}>
+				<h2 className={styles.railTitle}>Updates</h2>
+				<Link href="/status?tab=updates" className={styles.railMore}>
+					See all
+				</Link>
+			</div>
+			<ul className={styles.railList}>
+				{shown.map((update) => (
+					<li key={update.updateId}>
+						<Link
+							href={`/status?tab=updates&open=${update.updateId}`}
+							className={styles.railItem}
+							data-unread={!update.read || undefined}
+						>
+							<span className={styles.railItemTitle}>
+								{update.title}
+							</span>
+							<span className={styles.railItemMeta}>
+								{whenOf(update, now)}
+							</span>
+						</Link>
+					</li>
+				))}
+			</ul>
 		</section>
 	);
 }

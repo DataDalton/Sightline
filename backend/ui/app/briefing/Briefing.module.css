@@ -865,6 +865,25 @@
 	color: var(--text-muted);
 }
 
+/* A block title with a link to the whole list at the far end. */
+.railHead {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: var(--space-2);
+}
+
+.railMore {
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+	text-decoration: none;
+}
+
+.railMore:hover {
+	color: var(--text-primary);
+	text-decoration: underline;
+}
+
 .railBlock[data-tone="warning"] .railTitle {
 	color: var(--warning);
 }

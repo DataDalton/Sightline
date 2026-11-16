@@ -39,7 +39,7 @@ export interface LiveUpdate extends Pick<
 	body: string | null;
 }
 
-// How many entries the Home card lists.
+// How many entries the updates list in the Home rail shows.
 export const homeCardSize = 4;
 
 function compactAbout(about: AboutItem[]): AboutItem[] {

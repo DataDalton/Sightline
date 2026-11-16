@@ -17,7 +17,7 @@ import form from "../authoring/Authoring.module.css";
 import styles from "./Updates.module.css";
 
 // Updates where they are needed, away from their own page. A banner and pop-up across the
-// app, a card on Home, a line on affected pages, the field in the Dictionary, and markers
+// app, a list in the rail on Home, a line on affected pages, the field in the Dictionary, and markers
 // on charts at the date something took effect.
 
 // The light answer every page asks for, without the timeline's own parts. See app/api/changes.
@@ -175,34 +175,6 @@ export function UpdatesBanner() {
 				</Modal>
 			)}
 		</>
-	);
-}
-
-// The latest few on Home.
-export function UpdatesHomeCard() {
-	const { data } = useLiveUpdates();
-	const shown = (data?.updates ?? [])
-		.filter((update) => update.delivery.home)
-		.slice(0, 4);
-	if (shown.length === 0) return null;
-	return (
-		<section className={styles.homeCard}>
-			<div className={styles.homeHead}>
-				<strong>Updates</strong>
-				<Link href="/status?tab=updates" className={styles.link}>
-					See them all
-				</Link>
-			</div>
-			{shown.map((update) => (
-				<Link
-					key={update.updateId}
-					href={`/status?tab=updates&open=${update.updateId}`}
-					className={styles.fieldUpdate}
-				>
-					{update.title}
-				</Link>
-			))}
-		</section>
 	);
 }
 

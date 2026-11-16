@@ -134,6 +134,18 @@ test("a table omits GROUP BY when no measure is selected", () => {
 	assert.match(compiled.sql, /SELECT region AS `Region`/);
 });
 
+test("a table groups a dimension-only read asked for distinct values", () => {
+	const compiled = compileQuery(
+		tableSource,
+		spec({
+			sourceKey: "directory",
+			dimensions: ["Region"],
+			distinct: true,
+		}),
+	);
+	assert.match(compiled.sql, /GROUP BY region/);
+});
+
 test("a table uses its own aggregate expression, not MEASURE()", () => {
 	const compiled = compileQuery(
 		tableSource,

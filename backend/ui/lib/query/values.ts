@@ -77,6 +77,9 @@ function requestIdentity(request: ValuesRequest): string {
 	return JSON.stringify({
 		s: request.sourceKey,
 		f: request.field,
+		// Distinct lists. Lists kept before tables were grouped held a value
+		// once per row, and naming this keeps them from being served.
+		d: 1,
 		q: request.search ?? "",
 		l: request.limit ?? defaultLimit,
 		o: request.offset ?? 0,
@@ -234,6 +237,8 @@ export async function getDistinctValues(
 			measures: [],
 			filters,
 			sort: [{ field: request.field, direction: "asc" }],
+			// Each value once, on a table as well as a metric view.
+			distinct: true,
 			// One extra row reveals whether another page exists.
 			limit: limit + 1,
 			offset,
