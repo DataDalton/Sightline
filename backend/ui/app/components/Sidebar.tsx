@@ -303,7 +303,17 @@ export default memo(function Sidebar() {
 											href={href}
 											className={styles.navLink}
 											onClick={() =>
-												expand(category.categoryId)
+												// Already on its page, the name
+												// works like the arrow. From
+												// anywhere else it opens the
+												// category on the way there.
+												pathname === href
+													? toggle(
+															category.categoryId,
+														)
+													: expand(
+															category.categoryId,
+														)
 											}
 										>
 											<NavIcon name={category.icon} />
