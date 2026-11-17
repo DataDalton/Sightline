@@ -11,6 +11,7 @@ import {
 	type AccessContext,
 } from "./access";
 import { grantKey, type Capability } from "./accessRules";
+import { assistantConfigured } from "../assistant/endpoint";
 
 // What a person can navigate to, in one answer.
 //
@@ -28,7 +29,13 @@ export type TargetKind =
 	| "personal"
 	| "shared"
 	| "view"
-	| "action";
+	| "request"
+	| "dataset"
+	| "sheet"
+	| "board"
+	| "update"
+	| "action"
+	| "admin";
 
 export interface SearchTarget {
 	id: string;
@@ -69,50 +76,127 @@ interface ViewRow {
 	report_title: string | null;
 }
 
-// Destinations that are not content. Listed so the palette can take somebody
-// somewhere as well as to something, which is what makes it worth opening when
-// you already know where you are going.
+// The app's own pages and the tabs inside them. Listed so the palette can take
+// somebody somewhere as well as to something, which is what makes it worth
+// opening when you already know where you are going. Each is offered under the
+// same rule the navigation shows it by.
 const actions: {
 	id: string;
 	title: string;
 	href: string;
 	keywords: string;
-	capability?: Capability;
+	// Shown to somebody holding any one of these.
+	capabilities?: Capability[];
+	// Shown only while the assistant is on and this person may use it.
+	needsAssistant?: boolean;
 }[] = [
-	{ id: "home", title: "Home", href: "/", keywords: "start overview" },
+	{
+		id: "home",
+		title: "Home",
+		href: "/",
+		keywords: "start overview briefing",
+	},
+	{
+		id: "inbox",
+		title: "Inbox",
+		href: "/inbox",
+		keywords: "notifications messages alerts conversations",
+	},
 	{
 		id: "mine",
 		title: "My pages",
 		href: "/mine",
-		keywords: "personal shared with me saved questions",
+		keywords: "personal shared with me saved questions boards",
 	},
 	{
-		id: "admin",
-		title: "Administration",
-		href: "/admin",
-		keywords: "settings usage security platform configuration",
-		capability: "settings.manage",
+		id: "dictionary",
+		title: "Dictionary",
+		href: "/dictionary",
+		keywords: "fields definitions measures dimensions glossary",
 	},
 	{
-		id: "admin-access",
-		title: "Roles and access",
-		href: "/admin?section=security",
-		keywords: "permissions grants assignments who holds what",
-		capability: "access.grant",
+		id: "explore",
+		title: "Explore",
+		href: "/explore",
+		keywords: "query ad hoc dataset table look up",
 	},
 	{
-		id: "admin-sources",
-		title: "Sources",
-		href: "/admin?section=platform",
-		keywords: "datasets catalogue sync register",
-		capability: "semantic.sync",
+		id: "sheets",
+		title: "Sheets",
+		href: "/sheets",
+		keywords: "spreadsheet table formula pivot",
 	},
 	{
-		id: "admin-categories",
-		title: "Categories",
-		href: "/admin?section=platform",
-		keywords: "navigation sections order",
-		capability: "category.manage",
+		id: "status",
+		title: "Data status",
+		href: "/status",
+		keywords: "freshness late loads health",
+	},
+	{
+		id: "status-quality",
+		title: "Data quality",
+		href: "/status?tab=quality",
+		keywords: "rules checks failing data status",
+	},
+	{
+		id: "status-contradictions",
+		title: "Contradictions",
+		href: "/status?tab=contradictions",
+		keywords: "figures disagree reports mismatch data status",
+	},
+	{
+		id: "status-updates",
+		title: "Updates",
+		href: "/status?tab=updates",
+		keywords: "changelog changes maintenance incidents announcements",
+	},
+	{
+		id: "status-maintenance",
+		title: "Maintenance calendar",
+		href: "/status?tab=updates&view=calendar",
+		keywords: "updates planned downtime windows",
+	},
+	{
+		id: "work",
+		title: "Requests",
+		href: "/work",
+		keywords: "work queue board data engineers ask",
+		capabilities: ["work.request", "work.engineer"],
+	},
+	{
+		id: "work-table",
+		title: "Requests table",
+		href: "/work?tab=table",
+		keywords: "work queue bulk edit",
+		capabilities: ["work.request", "work.engineer"],
+	},
+	{
+		id: "work-calendar",
+		title: "Requests calendar",
+		href: "/work?tab=calendar",
+		keywords: "work queue due target dates",
+		capabilities: ["work.request", "work.engineer"],
+	},
+	{
+		id: "work-metrics",
+		title: "Requests metrics",
+		href: "/work?tab=metrics",
+		keywords: "work queue throughput cycle time ageing aging",
+		capabilities: ["work.request", "work.engineer"],
+	},
+	{
+		id: "assist",
+		title: "Assistant",
+		href: "/assist",
+		keywords: "ask chat question ai",
+		needsAssistant: true,
+	},
+	{
+		id: "review",
+		title: "Conversation review",
+		href: "/review",
+		keywords: "read conversations access approval audit",
+		capabilities: ["review.groupChats", "review.assistant"],
 	},
 ];
 
@@ -154,7 +238,7 @@ export async function searchTargets(
 	// Carried under the search prefix so publishing or removing content drops
 	// it with the rows it came from.
 	return await cachedDefinition(
-		`search:targets:${policy.id}|${email}`,
+		`search:targets:v2:${policy.id}|${email}`,
 		async () => {
 			const personal = await personalCandidates(
 				context,
@@ -310,7 +394,19 @@ async function buildTargets(
 	}
 
 	for (const action of actions) {
-		if (action.capability && !context.capabilities.has(action.capability)) {
+		if (
+			action.capabilities &&
+			!action.capabilities.some((capability) =>
+				context.capabilities.has(capability),
+			)
+		) {
+			continue;
+		}
+		if (
+			action.needsAssistant &&
+			(!assistantConfigured() ||
+				context.denied.get("assistant.use")?.has("*"))
+		) {
 			continue;
 		}
 		targets.push({

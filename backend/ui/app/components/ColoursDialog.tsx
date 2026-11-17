@@ -23,7 +23,7 @@ import styles from "./ColoursDialog.module.css";
 // that means "nothing of mine".
 const appColours: ReportTheme = {
 	id: "",
-	name: "App colours",
+	name: "App colors",
 	accent: "#ffb500",
 	chart: [
 		"#2563eb",
@@ -67,7 +67,7 @@ export function ColoursDialog({ onClose }: { onClose: () => void }) {
 			choice?.own ?? {
 				...(themes.find((t) => t.id === choice?.themeId) ?? appColours),
 				id: "personal",
-				name: "My colours",
+				name: "My colors",
 			},
 	);
 	const [busy, setBusy] = useState(false);
@@ -103,7 +103,7 @@ export function ColoursDialog({ onClose }: { onClose: () => void }) {
 			});
 			const answer = await response.json().catch(() => null);
 			if (!response.ok) {
-				setFailure(answer?.error ?? "Could not save your colours");
+				setFailure(answer?.error ?? "Could not save your colors");
 				return;
 			}
 			await mutate();
@@ -112,7 +112,7 @@ export function ColoursDialog({ onClose }: { onClose: () => void }) {
 			setFailure(
 				error instanceof Error
 					? error.message
-					: "Could not save your colours",
+					: "Could not save your colors",
 			);
 		} finally {
 			setBusy(false);
@@ -148,7 +148,7 @@ export function ColoursDialog({ onClose }: { onClose: () => void }) {
 		<Modal
 			isOpen
 			onClose={onClose}
-			title="Your colours"
+			title="Your colors"
 			width="880px"
 			footer={
 				<div className={styles.footer}>
@@ -186,19 +186,19 @@ export function ColoursDialog({ onClose }: { onClose: () => void }) {
 					<div
 						className={styles.choices}
 						role="radiogroup"
-						aria-label="Your colours"
+						aria-label="Your colors"
 					>
 						{option(
 							"app",
 							appColours,
-							"App colours, with each report's own",
+							"App colors, with each report's own",
 							selected.kind === "app",
 							() => setSelected({ kind: "app" }),
 						)}
 						{option(
 							"own",
 							own,
-							"My own colours",
+							"My own colors",
 							selected.kind === "own",
 							() => setSelected({ kind: "own" }),
 						)}
@@ -261,7 +261,7 @@ export function ColoursDialog({ onClose }: { onClose: () => void }) {
 									setOwn({
 										...shown,
 										id: "personal",
-										name: "My colours",
+										name: "My colors",
 									});
 									setSelected({ kind: "own" });
 								}}

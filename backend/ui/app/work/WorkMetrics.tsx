@@ -3,8 +3,9 @@
 import { useMemo, useState } from "react";
 import useSWR from "swr";
 import type { WorkConfig } from "@/lib/work/model";
-import { describeFetchError } from "@/lib/swr";
 import { Select } from "../components/shared/Select";
+import { LoadError } from "../components/shared/ErrorState";
+import { SkeletonTable } from "../components/shared/Skeleton";
 import styles from "./WorkExtras.module.css";
 
 // The queue's numbers for engineers. Throughput by week, what is open in each
@@ -196,7 +197,7 @@ function ThroughputChart({
 
 export function WorkMetrics({ config }: { config: WorkConfig }) {
 	const [days, setDays] = useState("90");
-	const { data, error, isLoading } = useSWR<MetricsAnswer>(
+	const { data, error, isLoading, mutate } = useSWR<MetricsAnswer>(
 		`/api/work/metrics?days=${days}`,
 	);
 
@@ -251,13 +252,15 @@ export function WorkMetrics({ config }: { config: WorkConfig }) {
 				</span>
 			</div>
 
-			{error && (
-				<p className={styles.empty}>
-					{describeFetchError(error, "page")}
-				</p>
+			{error && !data && (
+				<LoadError
+					error={error}
+					subject="queue numbers"
+					onRetry={() => void mutate()}
+				/>
 			)}
 			{!error && isLoading && !data && (
-				<p className={styles.empty}>Loading the numbers.</p>
+				<SkeletonTable rows={6} columns={4} />
 			)}
 
 			{data && (

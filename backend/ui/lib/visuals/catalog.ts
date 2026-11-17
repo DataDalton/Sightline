@@ -288,7 +288,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 				key: "groups",
 				label: "Bands",
 				kind: "measureGroups",
-				help: "Splits the tiles into labelled rows. Each band takes the next few measures in order, and anything left over becomes a final unlabelled row.",
+				help: "Splits the tiles into labeled rows. Each band takes the next few measures in order, and anything left over becomes a final unlabeled row.",
 			},
 			{
 				key: "tooltips",
@@ -340,10 +340,10 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		options: [
 			{
 				key: "colourByTarget",
-				label: "Colour by whether the target was met",
+				label: "Color by whether the target was met",
 				kind: "toggle",
 				fallback: true,
-				help: "Off leaves every bar the series colour, which is right when clearing the target is not straightforwardly good.",
+				help: "Off leaves every bar the series color, which is right when clearing the target is not straightforwardly good.",
 			},
 			{
 				key: "sortBy",
@@ -728,7 +728,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 				kind: "number",
 				min: 2,
 				max: 50,
-				help: "Keeps the largest slices and gathers the rest into one named Other. Left empty every value gets a slice, which past a dozen is a colour key with a circle attached.",
+				help: "Keeps the largest slices and gathers the rest into one named Other. Left empty every value gets a slice, which past a dozen is a color key with a circle attached.",
 			},
 			{
 				key: "sliceLabels",
@@ -764,7 +764,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 				kind: "number",
 				min: 2,
 				max: 50,
-				help: "Keeps the largest slices and gathers the rest into one named Other. Left empty every value gets a slice, which past a dozen is a colour key with a circle attached.",
+				help: "Keeps the largest slices and gathers the rest into one named Other. Left empty every value gets a slice, which past a dozen is a color key with a circle attached.",
 			},
 			{
 				key: "sliceLabels",
@@ -887,7 +887,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		label: "Calendar heatmap",
 		category: "distribution",
 		guidance:
-			"A year of daily figures laid out as a calendar. The clearest answer to when something is busy: weekday patterns, month ends and holidays all show without anybody modelling them.",
+			"A year of daily figures laid out as a calendar. The clearest answer to when something is busy: weekday patterns, month ends and holidays all show without anybody modeling them.",
 		encoding: {
 			dimensions: { min: 1, max: 1, label: "A date, one cell each" },
 			measures: { min: 1, max: 1 },
@@ -900,7 +900,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		label: "Map",
 		category: "distribution",
 		guidance:
-			"A figure by country, coloured on a world map. The dimension has to hold country names or two letter codes; anything it cannot place is named under the map rather than quietly left off.",
+			"A figure by country, colored on a world map. The dimension has to hold country names or two letter codes; anything it cannot place is named under the map rather than quietly left off.",
 		encoding: {
 			dimensions: { min: 1, max: 1, label: "A country each" },
 			measures: { min: 1, max: 1 },
@@ -1131,7 +1131,7 @@ export const visualCatalog: VisualTypeDefinition[] = [
 		label: "Heatmap",
 		category: "distribution",
 		guidance:
-			"One measure across two dimensions, such as month by product. Colour encodes the value.",
+			"One measure across two dimensions, such as month by product. Color encodes the value.",
 		encoding: {
 			dimensions: { min: 2, max: 2, label: "Rows and columns" },
 			measures: { min: 1, max: 1 },

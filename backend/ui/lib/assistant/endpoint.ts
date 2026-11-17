@@ -113,6 +113,30 @@ export interface StreamHandlers {
 	signal?: AbortSignal;
 }
 
+// The spelling everything the model writes for readers uses, whichever part of
+// the app asked. Joined to the conversation's own system message rather than
+// sent as a second one, which some serving endpoints refuse.
+export const spellingRule =
+	"Write in American English spelling, such as color, favorite, organize, center, catalog and canceled.";
+
+export function withSpellingRule(
+	messages: (ChatMessage | PictureMessage)[],
+): (ChatMessage | PictureMessage)[] {
+	const first = messages[0];
+	if (first && first.role === "system" && typeof first.content === "string") {
+		return [
+			{
+				role: "system",
+				content: `${first.content}
+
+${spellingRule}`,
+			},
+			...messages.slice(1),
+		];
+	}
+	return [{ role: "system", content: spellingRule }, ...messages];
+}
+
 async function post(
 	url: string,
 	authorization: string,
@@ -141,7 +165,7 @@ async function post(
 			// Named only where one is set, for a gateway that serves several
 			// models from one address. A serving endpoint is one model.
 			...(model ? { model } : {}),
-			messages,
+			messages: withSpellingRule(messages),
 			...(tools.length > 0 ? { tools } : {}),
 			max_tokens: maxTokens,
 			stream: true,

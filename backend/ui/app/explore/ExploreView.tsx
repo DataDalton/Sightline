@@ -3,9 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { SkeletonText } from "../components/shared/Skeleton";
+import { EmptyState, emptyIcons } from "../components/shared/EmptyState";
+import { LoadError } from "../components/shared/ErrorState";
 import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { usePageTitle } from "../hooks/usePageTitle";
-import { describeFetchError } from "../../lib/swr";
 import { toFilterLogic, type Condition } from "../../lib/explore/conditions";
 import { DataGrid } from "../visuals/DataGrid";
 import { fieldMap, type SourceMeta } from "../visuals/types";
@@ -42,9 +43,9 @@ import styles from "./Explore.module.css";
 export default function ExploreView() {
 	usePageTitle("Explore");
 
-	const { data, error, isLoading } = useSWR<{ sources: SourceMeta[] }>(
-		"/api/authoring",
-	);
+	const { data, error, isLoading, mutate } = useSWR<{
+		sources: SourceMeta[];
+	}>("/api/authoring");
 	const showSkeleton = useDeferredLoading(isLoading);
 
 	const [sourceKey, setSourceKey] = useState("");
@@ -240,9 +241,11 @@ export default function ExploreView() {
 	if (error) {
 		return (
 			<div className={styles.page}>
-				<div className={styles.state}>
-					{describeFetchError(error, "datasets")}
-				</div>
+				<LoadError
+					error={error}
+					subject="datasets"
+					onRetry={() => void mutate()}
+				/>
 			</div>
 		);
 	}
@@ -543,16 +546,16 @@ export default function ExploreView() {
 			)}
 
 			{settled && !source && (
-				<div className={styles.state}>
+				<EmptyState icon={emptyIcons.search} title="Choose a dataset">
 					Start by typing the name of a dataset, or of a field you
 					know.
-				</div>
+				</EmptyState>
 			)}
 
 			{source && columns.length === 0 && (
-				<div className={styles.state}>
+				<EmptyState icon={emptyIcons.columns} title="No columns yet">
 					Add a column to see rows from {source.title}.
-				</div>
+				</EmptyState>
 			)}
 
 			{source &&

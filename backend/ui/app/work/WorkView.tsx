@@ -1,13 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useTabParam } from "../hooks/useTabParam";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import type { WorkConfig } from "../../lib/work/model";
 import type { Release } from "../../lib/work/releases";
 import type { WorkSummary } from "../../lib/work/store";
-import { describeFetchError } from "../../lib/swr";
 import { Select } from "../components/shared/Select";
+import { EmptyState, emptyIcons } from "../components/shared/EmptyState";
+import { LoadError } from "../components/shared/ErrorState";
+import { SkeletonTable } from "../components/shared/Skeleton";
+import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { RequestForm, type RequestDraft } from "./RequestForm";
 import { WorkCalendar } from "./WorkCalendar";
@@ -30,6 +35,7 @@ import {
 	postJson,
 } from "./labels";
 import { BlockedIcon } from "./BlockedIcon";
+import { FilterMenu } from "./FilterMenu";
 import styles from "./Work.module.css";
 
 // The work queue: items for the data engineers, on a board whose columns are
@@ -38,7 +44,8 @@ import styles from "./Work.module.css";
 // Anybody can see what they asked for and what is about the data they read.
 // The engineers see everything, make items directly and move them.
 
-type Tab = "board" | "table" | "list" | "calendar" | "metrics";
+const tabIds = ["board", "table", "list", "calendar", "metrics"] as const;
+type Tab = (typeof tabIds)[number];
 
 interface Answer {
 	items: WorkSummary[];
@@ -57,7 +64,7 @@ interface Filters {
 	layer: string;
 	tag: string;
 	blocked: string;
-	closed: string;
+	archive: string;
 	release: string;
 }
 
@@ -71,15 +78,58 @@ const noFilters: Filters = {
 	layer: "",
 	tag: "",
 	blocked: "",
-	closed: "",
+	archive: "",
 	release: "",
 };
 
+// Where this browser keeps the board's last filters, sort and grouping.
+const boardMemoryKey = "work.board";
+
+// The orders a list can be read in. The first is the default.
+const sortOrders = [
+	{ value: "updated", label: "Recently updated" },
+	{ value: "newest", label: "Newest" },
+	{ value: "oldest", label: "Oldest" },
+	{ value: "priority", label: "Priority" },
+	{ value: "target", label: "Target date" },
+	{ value: "asked", label: "Most asked for" },
+] as const;
+type SortOrder = (typeof sortOrders)[number]["value"];
+
+// Ties keep the most recently updated first, so every order is stable.
+function sortItems(
+	items: WorkSummary[],
+	order: SortOrder,
+	config: WorkConfig,
+): WorkSummary[] {
+	const updated = (a: WorkSummary, b: WorkSummary) =>
+		b.modifiedOn.localeCompare(a.modifiedOn);
+	const rank = (item: WorkSummary) => {
+		const at = config.priorities.findIndex((p) => p.id === item.priority);
+		return at === -1 ? config.priorities.length : at;
+	};
+	const compare: Record<
+		SortOrder,
+		(a: WorkSummary, b: WorkSummary) => number
+	> = {
+		updated: () => 0,
+		newest: (a, b) => b.createdOn.localeCompare(a.createdOn),
+		oldest: (a, b) => a.createdOn.localeCompare(b.createdOn),
+		priority: (a, b) => rank(a) - rank(b),
+		// Requests with no target go last.
+		target: (a, b) =>
+			(a.target ?? "9999").localeCompare(b.target ?? "9999"),
+		asked: (a, b) => b.requesters - a.requesters,
+	};
+	return [...items].sort((a, b) => compare[order](a, b) || updated(a, b));
+}
+
 // What a saved view keeps.
 interface ViewState {
-	filters?: Partial<Filters>;
+	filters?: Partial<Filters> & { closed?: string };
 	tab?: Tab;
 	lanes?: string;
+	sort?: SortOrder;
 }
 
 const priorityOrder = ["urgent", "high", "medium", "low"];
@@ -102,12 +152,50 @@ export default function WorkView() {
 	usePageTitle("Requests");
 	const router = useRouter();
 	const asked = useSearchParams();
-	const [tab, setTab] = useState<Tab>("board");
+	const [tab, setTab] = useTabParam<Tab>("tab", tabIds, "board");
 	const [filters, setFilters] = useState<Filters>(noFilters);
 	const [lanes, setLanes] = useState("");
+	const [sort, setSort] = useState<SortOrder>("updated");
 	const [requesting, setRequesting] = useState<RequestDraft | null>(null);
 	const [failure, setFailure] = useState<string | null>(null);
 	const [selected, setSelected] = useState<Set<string>>(new Set());
+
+	// The filters, sort and grouping last chosen, kept in this browser so a
+	// reload comes back to the same board. Read after mount, so the server
+	// render and the first client render agree, and written only once read,
+	// so the defaults never overwrite what was kept.
+	const [remembered, setRemembered] = useState(false);
+	useEffect(() => {
+		try {
+			const kept = JSON.parse(
+				window.localStorage.getItem(boardMemoryKey) ?? "null",
+			) as {
+				filters?: Partial<Filters>;
+				lanes?: string;
+				sort?: string;
+			} | null;
+			if (kept) {
+				setFilters({ ...noFilters, ...(kept.filters ?? {}) });
+				setLanes(typeof kept.lanes === "string" ? kept.lanes : "");
+				if (sortOrders.some((order) => order.value === kept.sort))
+					setSort(kept.sort as SortOrder);
+			}
+		} catch {
+			// Unreadable or blocked storage starts from the defaults.
+		}
+		setRemembered(true);
+	}, []);
+	useEffect(() => {
+		if (!remembered) return;
+		try {
+			window.localStorage.setItem(
+				boardMemoryKey,
+				JSON.stringify({ filters, lanes, sort }),
+			);
+		} catch {
+			// Without storage the choices last until the page is left.
+		}
+	}, [remembered, filters, lanes, sort]);
 
 	// Opened with ?new=1 and a draft, from the assistant or a conversation.
 	useEffect(() => {
@@ -141,18 +229,68 @@ export default function WorkView() {
 		Release | "new" | null
 	>(null);
 	const [shipping, setShipping] = useState<Release | null>(null);
+	// Only a wait long enough to notice draws a placeholder.
+	const showSkeleton = useDeferredLoading(!data && !error);
 
-	if (error) {
+	if (error && !data) {
 		return (
 			<div className={styles.page}>
-				<p className={styles.empty}>
-					{describeFetchError(error, "requests")}
-				</p>
+				<LoadError
+					error={error}
+					subject="requests"
+					onRetry={() => void mutate()}
+				/>
 			</div>
 		);
 	}
-	if (!data) return <div className={styles.page} />;
-	const { config, items, may } = data;
+	if (!data) {
+		return (
+			<div className={styles.page}>
+				{showSkeleton && <SkeletonTable rows={8} columns={5} />}
+			</div>
+		);
+	}
+	const { config, may } = data;
+	const items = sortItems(data.items, sort, config);
+	const labelIn = (list: { id: string; label: string }[], id: string) =>
+		list.find((entry) => entry.id === id)?.label ?? id;
+	const menuFilters = [
+		{
+			key: "workType",
+			name: "Type",
+			value:
+				filters.workType && labelIn(config.workTypes, filters.workType),
+		},
+		{
+			key: "priority",
+			name: "Priority",
+			value:
+				filters.priority &&
+				labelIn(config.priorities, filters.priority),
+		},
+		{
+			key: "domain",
+			name: "Domain",
+			value: filters.domain && labelIn(config.domains, filters.domain),
+		},
+		{
+			key: "layer",
+			name: "Layer",
+			value: filters.layer && labelIn(config.layers, filters.layer),
+		},
+		{
+			key: "release",
+			name: "Release",
+			value:
+				filters.release &&
+				(releases.find((r) => r.id === filters.release)?.name ??
+					"A release"),
+		},
+	].filter((filter) => filter.value) as {
+		key: keyof Filters;
+		name: string;
+		value: string;
+	}[];
 	const set = (patch: Partial<Filters>) =>
 		setFilters((held) => ({ ...held, ...patch }));
 	const open = (key: string) => router.push(`/work/${key}`);
@@ -206,9 +344,21 @@ export default function WorkView() {
 
 	const applyView = (view: WorkSavedView<ViewState> | null) => {
 		setActiveView(view?.view_id ?? null);
-		setFilters({ ...noFilters, ...(view?.state.filters ?? {}) });
+		const { closed, ...saved } = view?.state.filters ?? {};
+		setFilters({
+			...noFilters,
+			...saved,
+			archive:
+				saved.archive ??
+				(closed === "include"
+					? "all"
+					: closed === "only"
+						? "archived"
+						: ""),
+		});
 		if (view?.state.tab) setTab(view.state.tab);
 		setLanes(view?.state.lanes ?? "");
+		setSort(view?.state.sort ?? "updated");
 	};
 
 	const tabs: [Tab, string][] = [
@@ -227,7 +377,9 @@ export default function WorkView() {
 	];
 
 	return (
-		<div className={styles.page}>
+		<div
+			className={`${styles.page} ${tab === "board" && !lanes ? styles.pageFit : ""}`}
+		>
 			<header className={styles.header}>
 				<div>
 					<h1 className={styles.title}>Requests</h1>
@@ -254,243 +406,334 @@ export default function WorkView() {
 			</div>
 
 			{tab !== "metrics" && (
-				<div className={styles.toolbar}>
-					{may.engineer && (
-						<button
-							type="button"
-							className={styles.create}
-							onClick={() => setRequesting({})}
-						>
-							<svg
-								viewBox="0 0 24 24"
-								width="16"
-								height="16"
-								aria-hidden="true"
-							>
-								<path
-									d="M12 5v14M5 12h14"
-									stroke="currentColor"
-									strokeWidth="2"
-									strokeLinecap="round"
-									fill="none"
-								/>
-							</svg>
-							New item
-						</button>
-					)}
-					{(may.request || may.engineer) && (
-						<button
-							type="button"
-							className={
-								may.engineer ? styles.secondary : styles.create
-							}
-							onClick={() => setRequesting({ asRequest: true })}
-						>
-							Request work
-						</button>
-					)}
-					<input
-						className={styles.search}
-						value={filters.q}
-						placeholder="Search titles, details, tags or a key"
-						aria-label="Search requests"
-						onChange={(e) => set({ q: e.target.value })}
-					/>
-					<div
-						className={styles.chips}
-						role="group"
-						aria-label="Quick filters"
-					>
-						<button
-							type="button"
-							className={styles.chip}
-							aria-pressed={filters.assignee === "me"}
-							onClick={() =>
-								set({
-									assignee:
-										filters.assignee === "me" ? "" : "me",
-								})
-							}
-						>
-							Assigned to me
-						</button>
-						<button
-							type="button"
-							className={styles.chip}
-							aria-pressed={filters.requester === "me"}
-							onClick={() =>
-								set({
-									requester:
-										filters.requester === "me" ? "" : "me",
-								})
-							}
-						>
-							Asked by me
-						</button>
-						<button
-							type="button"
-							className={styles.chip}
-							aria-pressed={filters.blocked === "true"}
-							onClick={() =>
-								set({
-									blocked:
-										filters.blocked === "true"
-											? ""
-											: "true",
-								})
-							}
-						>
-							<BlockedIcon size={12} />
-							Blocked
-						</button>
-					</div>
-					<div className={styles.menus}>
-						<span className={styles.menu}>
-							<Select
-								value={filters.workType}
-								ariaLabel="Work type"
-								onChange={(v) => set({ workType: v })}
-								options={choiceOptions(
-									config.workTypes,
-									"Any type",
-								)}
-							/>
-						</span>
-						<span className={styles.menu}>
-							<Select
-								value={filters.priority}
-								ariaLabel="Priority"
-								onChange={(v) => set({ priority: v })}
-								options={choiceOptions(
-									config.priorities,
-									"Any priority",
-								)}
-							/>
-						</span>
-						{config.domains.length > 0 && (
-							<span className={styles.menu}>
-								<Select
-									value={filters.domain}
-									ariaLabel="Domain"
-									onChange={(v) => set({ domain: v })}
-									options={choiceOptions(
-										config.domains,
-										"Any domain",
-									)}
-								/>
-							</span>
-						)}
-						{config.layers.length > 0 && (
-							<span className={styles.menu}>
-								<Select
-									value={filters.layer}
-									ariaLabel="Layer"
-									onChange={(v) => set({ layer: v })}
-									options={choiceOptions(
-										config.layers,
-										"Any layer",
-									)}
-								/>
-							</span>
-						)}
-						{releases.length > 0 && (
-							<span className={styles.menu}>
-								<Select
-									value={filters.release}
-									ariaLabel="Release"
-									onChange={(v) => set({ release: v })}
-									options={[
-										{ value: "", label: "Any release" },
-										...releases.map((r) => ({
-											value: r.id,
-											label: r.name,
-											note: releaseDate(r.target),
-										})),
-									]}
-								/>
-							</span>
-						)}
-					</div>
-					<div
-						className={styles.segmented}
-						role="group"
-						aria-label="Open or closed"
-					>
-						{[
-							{ value: "", label: "Open" },
-							{ value: "include", label: "All" },
-							{ value: "only", label: "Closed" },
-						].map((option) => (
+				<div className={styles.toolbarRows}>
+					<div className={styles.toolbar}>
+						{may.engineer && (
 							<button
-								key={option.value}
 								type="button"
-								className={styles.segment}
-								aria-pressed={filters.closed === option.value}
-								onClick={() => set({ closed: option.value })}
+								className={styles.create}
+								onClick={() => setRequesting({})}
 							>
-								{option.label}
+								<svg
+									viewBox="0 0 24 24"
+									width="16"
+									height="16"
+									aria-hidden="true"
+								>
+									<path
+										d="M12 5v14M5 12h14"
+										stroke="currentColor"
+										strokeWidth="2"
+										strokeLinecap="round"
+										fill="none"
+									/>
+								</svg>
+								New item
 							</button>
-						))}
-					</div>
-					{JSON.stringify(filters) !== JSON.stringify(noFilters) && (
-						<button
-							type="button"
-							className={styles.link}
-							onClick={() => setFilters(noFilters)}
-						>
-							Clear filters
-						</button>
-					)}
-					<div className={styles.toolbarEnd}>
-						{tab === "board" && (
-							<span className={styles.menu}>
-								<Select
-									value={lanes}
-									ariaLabel="Group the board"
-									onChange={setLanes}
-									options={[
-										{ value: "", label: "No grouping" },
-										...(config.domains.length > 0
-											? [
-													{
-														value: "domain",
-														label: "Group by domain",
-													},
-												]
-											: []),
-										{
-											value: "assignee",
-											label: "Group by assignee",
-										},
-										{
-											value: "priority",
-											label: "Group by priority",
-										},
-										{
-											value: "release",
-											label: "Group by release",
-										},
-									]}
-								/>
-							</span>
 						)}
-						{tab === "board" &&
-							lanes === "release" &&
-							may.engineer && (
+						{(may.request || may.engineer) && (
+							<button
+								type="button"
+								className={
+									may.engineer
+										? styles.secondary
+										: styles.create
+								}
+								onClick={() =>
+									setRequesting({ asRequest: true })
+								}
+							>
+								Request work
+							</button>
+						)}
+						<input
+							className={`${styles.search} ${styles.searchWide}`}
+							value={filters.q}
+							placeholder="Search titles, details, tags or a key"
+							aria-label="Search requests"
+							onChange={(e) => set({ q: e.target.value })}
+						/>
+						<div className={styles.toolbarEnd}>
+							<WorkViews<ViewState>
+								me={data.me}
+								current={{ filters, tab, lanes, sort }}
+								activeViewId={activeView}
+								onApply={applyView}
+							/>
+						</div>
+					</div>
+
+					<div className={styles.toolbar}>
+						<div
+							className={styles.chips}
+							role="group"
+							aria-label="Quick filters"
+						>
+							<button
+								type="button"
+								className={styles.chip}
+								aria-pressed={filters.assignee === "me"}
+								onClick={() =>
+									set({
+										assignee:
+											filters.assignee === "me"
+												? ""
+												: "me",
+									})
+								}
+							>
+								Assigned to me
+							</button>
+							<button
+								type="button"
+								className={styles.chip}
+								aria-pressed={filters.requester === "me"}
+								onClick={() =>
+									set({
+										requester:
+											filters.requester === "me"
+												? ""
+												: "me",
+									})
+								}
+							>
+								Asked by me
+							</button>
+							<button
+								type="button"
+								className={styles.chip}
+								aria-pressed={filters.blocked === "true"}
+								onClick={() =>
+									set({
+										blocked:
+											filters.blocked === "true"
+												? ""
+												: "true",
+									})
+								}
+							>
+								<BlockedIcon size={12} />
+								Blocked
+							</button>
+							<FilterMenu count={menuFilters.length}>
+								<label className={styles.filterField}>
+									<span className={styles.filterLabel}>
+										Type
+									</span>
+									<Select
+										value={filters.workType}
+										ariaLabel="Work type"
+										onChange={(v) => set({ workType: v })}
+										options={choiceOptions(
+											config.workTypes,
+											"Any type",
+										)}
+									/>
+								</label>
+								<label className={styles.filterField}>
+									<span className={styles.filterLabel}>
+										Priority
+									</span>
+									<Select
+										value={filters.priority}
+										ariaLabel="Priority"
+										onChange={(v) => set({ priority: v })}
+										options={choiceOptions(
+											config.priorities,
+											"Any priority",
+										)}
+									/>
+								</label>
+								{config.domains.length > 0 && (
+									<label className={styles.filterField}>
+										<span className={styles.filterLabel}>
+											Domain
+										</span>
+										<Select
+											value={filters.domain}
+											ariaLabel="Domain"
+											onChange={(v) => set({ domain: v })}
+											options={choiceOptions(
+												config.domains,
+												"Any domain",
+											)}
+										/>
+									</label>
+								)}
+								{config.layers.length > 0 && (
+									<label className={styles.filterField}>
+										<span className={styles.filterLabel}>
+											Layer
+										</span>
+										<Select
+											value={filters.layer}
+											ariaLabel="Layer"
+											onChange={(v) => set({ layer: v })}
+											options={choiceOptions(
+												config.layers,
+												"Any layer",
+											)}
+										/>
+									</label>
+								)}
+								{releases.length > 0 && (
+									<label className={styles.filterField}>
+										<span className={styles.filterLabel}>
+											Release
+										</span>
+										<Select
+											value={filters.release}
+											ariaLabel="Release"
+											onChange={(v) =>
+												set({ release: v })
+											}
+											options={[
+												{
+													value: "",
+													label: "Any release",
+												},
+												...releases.map((r) => ({
+													value: r.id,
+													label: r.name,
+													note: releaseDate(r.target),
+												})),
+											]}
+										/>
+									</label>
+								)}
+							</FilterMenu>
+						</div>
+
+						{menuFilters.map((filter) => (
+							<span
+								key={filter.key}
+								className={styles.filterChip}
+							>
+								<span className={styles.filterChipName}>
+									{filter.name}:
+								</span>
+								{filter.value}
 								<button
 									type="button"
-									className={styles.secondary}
-									onClick={() => setEditingRelease("new")}
+									className={styles.filterChipRemove}
+									aria-label={`Remove the ${filter.name.toLowerCase()} filter`}
+									onClick={() => set({ [filter.key]: "" })}
 								>
-									New release
+									<svg
+										width="12"
+										height="12"
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										strokeWidth="2.5"
+										strokeLinecap="round"
+										aria-hidden="true"
+									>
+										<path d="M18 6L6 18M6 6l12 12" />
+									</svg>
 								</button>
+							</span>
+						))}
+						{JSON.stringify(filters) !==
+							JSON.stringify(noFilters) && (
+							<button
+								type="button"
+								className={styles.link}
+								onClick={() => setFilters(noFilters)}
+							>
+								Clear all
+							</button>
+						)}
+
+						<div className={styles.toolbarEnd}>
+							<div
+								className={styles.segmented}
+								role="group"
+								aria-label="Active or archived"
+							>
+								{[
+									{ value: "", label: "Active" },
+									{ value: "archived", label: "Archived" },
+									{ value: "all", label: "All" },
+								].map((option) => (
+									<button
+										key={option.value}
+										type="button"
+										className={styles.segment}
+										aria-pressed={
+											filters.archive === option.value
+										}
+										title={
+											option.value === "archived"
+												? config.rules
+														.archiveDoneAfterDays
+													? `Declined, duplicates, and requests done for over ${config.rules.archiveDoneAfterDays} days`
+													: "Declined and duplicate requests"
+												: undefined
+										}
+										onClick={() =>
+											set({ archive: option.value })
+										}
+									>
+										{option.label}
+									</button>
+								))}
+							</div>
+							<span className={styles.menuShort}>
+								<Select
+									value={sort}
+									ariaLabel="Sort"
+									onChange={(v) => setSort(v as SortOrder)}
+									options={sortOrders.map((order) => ({
+										value: order.value,
+										label: `Sort: ${order.label}`,
+									}))}
+								/>
+							</span>
+							{tab === "board" && (
+								<span className={styles.menuShort}>
+									<Select
+										value={lanes}
+										ariaLabel="Group the board"
+										onChange={setLanes}
+										options={[
+											{ value: "", label: "Group: None" },
+											...(config.domains.length > 0
+												? [
+														{
+															value: "domain",
+															label: "Group: Domain",
+														},
+													]
+												: []),
+											{
+												value: "assignee",
+												label: "Group: Assignee",
+											},
+											{
+												value: "priority",
+												label: "Group: Priority",
+											},
+											{
+												value: "release",
+												label: "Group: Release",
+											},
+										]}
+									/>
+								</span>
 							)}
-						<WorkViews<ViewState>
-							me={data.me}
-							current={{ filters, tab, lanes }}
-							activeViewId={activeView}
-							onApply={applyView}
-						/>
+							{tab === "board" &&
+								lanes === "release" &&
+								may.engineer && (
+									<button
+										type="button"
+										className={styles.secondary}
+										onClick={() => setEditingRelease("new")}
+									>
+										New release
+									</button>
+								)}
+						</div>
 					</div>
 				</div>
 			)}
@@ -504,7 +747,7 @@ export default function WorkView() {
 					lanes={lanes}
 					releases={releases}
 					canMove={may.engineer}
-					onMove={(key, to, lane) => void move(key, to, lane)}
+					onMove={(key, to, lane) => move(key, to, lane)}
 					onOpen={open}
 					onAdd={
 						may.engineer
@@ -670,45 +913,62 @@ export default function WorkView() {
 function Card({
 	item,
 	config,
-	draggable,
 	onOpen,
+	onPointerDown,
+	onKeyDown,
+	state,
 }: {
 	item: WorkSummary;
 	config: WorkConfig;
-	draggable: boolean;
 	onOpen: (key: string) => void;
+	onPointerDown?: (event: React.PointerEvent<HTMLButtonElement>) => void;
+	// Shift with an arrow key, to move it a column.
+	onKeyDown?: (event: React.KeyboardEvent<HTMLButtonElement>) => void;
+	// Left behind while it is dragged, or the copy following the pointer.
+	state?: "left" | "lifted";
 }) {
 	return (
 		<button
 			type="button"
-			className={`${styles.card} ${item.blocked ? styles.cardBlocked : ""}`}
-			draggable={draggable}
-			onDragStart={(e) =>
-				e.dataTransfer.setData("text/work-key", item.key)
+			className={`${styles.card} ${item.blocked ? styles.cardBlocked : ""} ${state === "left" ? styles.cardLeft : ""} ${state === "lifted" ? styles.cardLifted : ""}`}
+			tabIndex={state === "lifted" ? -1 : undefined}
+			aria-hidden={state === "lifted" || undefined}
+			data-card={state === "lifted" ? undefined : item.key}
+			aria-keyshortcuts={
+				onKeyDown ? "Shift+ArrowLeft Shift+ArrowRight" : undefined
 			}
+			onPointerDown={onPointerDown}
+			onKeyDown={onKeyDown}
 			onClick={() => onOpen(item.key)}
 		>
 			<span className={styles.cardTop}>
 				<span className={styles.key}>{item.key}</span>
-				{item.priority && (
-					<span
-						className={`${styles.priority} ${styles[`priority_${item.priority}`] ?? ""}`}
-					>
-						{labelOf(config.priorities, item.priority)}
-					</span>
-				)}
-				{item.visibility === "restricted" && (
-					<span className={styles.badge}>Sensitive</span>
-				)}
+				<span className={styles.cardFlags}>
+					{item.blocked && (
+						<span className={styles.blockedFlag}>
+							<BlockedIcon size={12} />
+							Blocked
+						</span>
+					)}
+					{item.visibility === "restricted" && (
+						<span className={styles.badge}>Sensitive</span>
+					)}
+					{item.priority && (
+						<span
+							className={`${styles.priority} ${styles[`priority_${item.priority}`] ?? ""}`}
+						>
+							{labelOf(config.priorities, item.priority)}
+						</span>
+					)}
+				</span>
 			</span>
 			<span className={styles.cardTitle}>{item.title}</span>
-			{item.blocked && (
+			{item.blocked && item.blockedReason && (
 				<span
-					className={styles.blocked}
-					title={item.blockedReason ?? undefined}
+					className={styles.blockedReason}
+					title={item.blockedReason}
 				>
-					<BlockedIcon />
-					Blocked{item.blockedReason ? `: ${item.blockedReason}` : ""}
+					{item.blockedReason}
 				</span>
 			)}
 			<span className={styles.cardMeta}>
@@ -821,16 +1081,37 @@ function Board({
 	lanes: string;
 	releases: Release[];
 	canMove: boolean;
-	onMove: (key: string, to: string, lane: string | null) => void;
+	onMove: (key: string, to: string, lane: string | null) => Promise<void>;
 	onOpen: (key: string) => void;
 	onAdd: ((status: string, releaseId: string) => void) | null;
 	onEditRelease: (release: Release) => void;
 	onShipRelease: (release: Release) => void;
 }) {
 	const columns = config.columns.filter((column) => !column.hidden);
-	const open = items.filter((item) => !item.closedAs);
+	const [announcement, setAnnouncement] = useState("");
+	const { drag, landing, begin, wasDragged, moveTo } = useCardDrag({
+		canMove,
+		lanes,
+		items,
+		onMove,
+	});
+	// A card just dropped shows in its new column while the move is saved.
+	const open = items
+		.filter((item) => !item.closedAs)
+		.map((item) =>
+			landing && item.key === landing.key
+				? {
+						...item,
+						status: landing.status,
+						releaseId:
+							landing.lane === null
+								? item.releaseId
+								: landing.lane || null,
+					}
+				: item,
+		);
 	const rows = lanesFor(open, lanes, config, releases);
-	const [over, setOver] = useState<string | null>(null);
+	const over = drag?.over ?? null;
 	return (
 		<div className={styles.boardWrap}>
 			{rows.map((lane) => (
@@ -897,6 +1178,7 @@ function Board({
 					)}
 					<div
 						className={styles.board}
+						data-board=""
 						style={{
 							gridTemplateColumns: `repeat(${columns.length}, minmax(200px, 1fr))`,
 						}}
@@ -914,28 +1196,7 @@ function Board({
 								<div
 									key={column.id}
 									className={`${styles.column} ${over === target ? styles.columnOver : ""}`}
-									onDragOver={(e) => {
-										if (!canMove) return;
-										e.preventDefault();
-										setOver(target);
-									}}
-									onDragLeave={() => setOver(null)}
-									onDrop={(e) => {
-										e.preventDefault();
-										setOver(null);
-										const key =
-											e.dataTransfer.getData(
-												"text/work-key",
-											);
-										if (key)
-											onMove(
-												key,
-												column.id,
-												lanes === "release"
-													? lane.id
-													: null,
-											);
-									}}
+									data-drop={target}
 								>
 									<div className={styles.columnHead}>
 										<span>{column.label}</span>
@@ -975,14 +1236,84 @@ function Board({
 											)}
 										</span>
 									</div>
-									<div className={styles.cards}>
+									<div className={styles.cards} data-cards="">
+										{drag &&
+											over === target &&
+											drag.from !== target && (
+												<div
+													className={styles.dropSlot}
+													style={{
+														height: drag.height,
+													}}
+													aria-hidden="true"
+												/>
+											)}
 										{here.map((item) => (
 											<Card
 												key={item.id}
 												item={item}
 												config={config}
-												draggable={canMove}
-												onOpen={onOpen}
+												state={
+													drag?.item.key === item.key
+														? "left"
+														: undefined
+												}
+												onPointerDown={
+													canMove
+														? (e) =>
+																begin(
+																	item,
+																	target,
+																	e,
+																)
+														: undefined
+												}
+												onKeyDown={
+													canMove
+														? (e) => {
+																if (
+																	!e.shiftKey ||
+																	(e.key !==
+																		"ArrowLeft" &&
+																		e.key !==
+																			"ArrowRight")
+																)
+																	return;
+																e.preventDefault();
+																const at =
+																	columns.findIndex(
+																		(c) =>
+																			c.id ===
+																			column.id,
+																	);
+																const next =
+																	columns[
+																		at +
+																			(e.key ===
+																			"ArrowLeft"
+																				? -1
+																				: 1)
+																	];
+																if (!next)
+																	return;
+																moveTo(
+																	item.key,
+																	next.id,
+																	lanes ===
+																		"release"
+																		? lane.id
+																		: null,
+																);
+																setAnnouncement(
+																	`${item.key} moved to ${next.label}`,
+																);
+															}
+														: undefined
+												}
+												onOpen={(key) => {
+													if (!wasDragged())
+														onOpen(key);
+												}}
 											/>
 										))}
 									</div>
@@ -992,8 +1323,282 @@ function Board({
 					</div>
 				</section>
 			))}
+			<p className={styles.srOnly} aria-live="polite">
+				{announcement}
+			</p>
+			{drag &&
+				createPortal(
+					<div
+						className={styles.dragLayer}
+						style={{
+							width: drag.width,
+							transform: `translate(${drag.x - drag.offsetX}px, ${drag.y - drag.offsetY}px)`,
+						}}
+					>
+						<Card
+							item={drag.item}
+							config={config}
+							state="lifted"
+							onOpen={() => {}}
+						/>
+					</div>,
+					document.body,
+				)}
 		</div>
 	);
+}
+
+interface CardDrag {
+	item: WorkSummary;
+	// The lane and column it came from, as "lane|column".
+	from: string;
+	// Where it would land, as "lane|column", or null over nothing.
+	over: string | null;
+	x: number;
+	y: number;
+	// Where in the card it was picked up, so it stays under the pointer there.
+	offsetX: number;
+	offsetY: number;
+	width: number;
+	height: number;
+}
+
+// How far the pointer moves before a press becomes a drag, so a click with a
+// shaky hand still opens the card.
+const dragThreshold = 5;
+// How close to an edge of a scrolling area the pointer has to be to scroll it.
+const edgeZone = 56;
+// How long a finger rests on a card before it lifts, and how far it may drift
+// meanwhile. Moving further first is a scroll.
+const holdMs = 350;
+const holdDrift = 10;
+
+// Moving cards with the pointer rather than the browser's own drag, which
+// draws a faint copy and shows nothing of where the card will land. On touch a
+// card lifts after a short hold, so a quick swipe still scrolls the board.
+function useCardDrag({
+	canMove,
+	lanes,
+	items,
+	onMove,
+}: {
+	canMove: boolean;
+	lanes: string;
+	items: WorkSummary[];
+	onMove: (key: string, to: string, lane: string | null) => Promise<void>;
+}) {
+	const [drag, setDrag] = useState<CardDrag | null>(null);
+	const [landing, setLanding] = useState<{
+		key: string;
+		status: string;
+		lane: string | null;
+	} | null>(null);
+	const live = useRef<CardDrag | null>(null);
+	const pressed = useRef<{
+		item: WorkSummary;
+		from: string;
+		startX: number;
+		startY: number;
+		rect: DOMRect;
+		// A finger, which has to hold still before the card lifts.
+		touch: boolean;
+		held: boolean;
+	} | null>(null);
+	const holdTimer = useRef(0);
+	const startHold = useRef<() => void>(() => {});
+	const dragged = useRef(false);
+	const moveRef = useRef(onMove);
+	moveRef.current = onMove;
+
+	// The landing copy goes once the saved items agree, or the move failed.
+	useEffect(() => {
+		if (!landing) return;
+		const now = items.find((item) => item.key === landing.key);
+		if (!now || now.status === landing.status) setLanding(null);
+	}, [items, landing]);
+
+	useEffect(() => {
+		let frame = 0;
+		const show = (next: CardDrag | null) => {
+			live.current = next;
+			setDrag(next);
+		};
+		// Where a card under the pointer would go. Only grouping by release
+		// changes anything but the column, so other groupings land it in its
+		// own row.
+		const targetAt = (x: number, y: number, from: string) => {
+			const zone = document
+				.elementFromPoint(x, y)
+				?.closest<HTMLElement>("[data-drop]");
+			if (!zone) return null;
+			const [lane, column] = (zone.dataset.drop ?? "").split("|");
+			return lanes === "release"
+				? `${lane}|${column}`
+				: `${from.split("|")[0]}|${column}`;
+		};
+		// Scrolls the board sideways and a column up or down while the pointer
+		// is near their edges.
+		const scrollEdges = () => {
+			const current = live.current;
+			if (!current) return;
+			const under = document.elementFromPoint(current.x, current.y);
+			const board = under?.closest<HTMLElement>("[data-board]");
+			const cards = under?.closest<HTMLElement>("[data-cards]");
+			const nudge = (distance: number) =>
+				Math.round(((edgeZone - distance) / edgeZone) * 14);
+			if (board) {
+				const box = board.getBoundingClientRect();
+				if (current.x - box.left < edgeZone)
+					board.scrollLeft -= nudge(current.x - box.left);
+				else if (box.right - current.x < edgeZone)
+					board.scrollLeft += nudge(box.right - current.x);
+			}
+			if (cards) {
+				const box = cards.getBoundingClientRect();
+				if (current.y - box.top < edgeZone)
+					cards.scrollTop -= nudge(current.y - box.top);
+				else if (box.bottom - current.y < edgeZone)
+					cards.scrollTop += nudge(box.bottom - current.y);
+			}
+			frame = requestAnimationFrame(scrollEdges);
+		};
+		const finish = () => {
+			cancelAnimationFrame(frame);
+			window.clearTimeout(holdTimer.current);
+			document.body.style.userSelect = "";
+			pressed.current = null;
+			show(null);
+		};
+		const lift = (x: number, y: number) => {
+			const press = pressed.current;
+			if (!press) return;
+			document.body.style.userSelect = "none";
+			dragged.current = true;
+			cancelAnimationFrame(frame);
+			frame = requestAnimationFrame(scrollEdges);
+			show({
+				item: press.item,
+				from: press.from,
+				over: targetAt(x, y, press.from),
+				x,
+				y,
+				offsetX: press.startX - press.rect.left,
+				offsetY: press.startY - press.rect.top,
+				width: press.rect.width,
+				height: press.rect.height,
+			});
+		};
+		// Lets begin start the hold on a touch press.
+		startHold.current = () => {
+			window.clearTimeout(holdTimer.current);
+			holdTimer.current = window.setTimeout(() => {
+				const press = pressed.current;
+				if (!press?.touch) return;
+				press.held = true;
+				navigator.vibrate?.(10);
+				lift(press.startX, press.startY);
+			}, holdMs);
+		};
+		const onPointerMove = (event: PointerEvent) => {
+			const press = pressed.current;
+			if (!press) return;
+			const moved = Math.hypot(
+				event.clientX - press.startX,
+				event.clientY - press.startY,
+			);
+			if (press.touch && !press.held) {
+				// Moving before the hold ends is a scroll, not a drag.
+				if (moved > holdDrift) finish();
+				return;
+			}
+			if (!live.current && moved < dragThreshold) return;
+			lift(event.clientX, event.clientY);
+		};
+		// Once a card is lifted by a finger, moving it must not scroll the page.
+		const onTouchMove = (event: TouchEvent) => {
+			if (live.current) event.preventDefault();
+		};
+		const onContextMenu = (event: Event) => {
+			if (pressed.current?.touch) event.preventDefault();
+		};
+		const onPointerUp = () => {
+			const current = live.current;
+			finish();
+			if (!current?.over || current.over === current.from) return;
+			const [lane, status] = current.over.split("|");
+			const key = current.item.key;
+			const laneChange = lanes === "release" ? lane : null;
+			setLanding({ key, status, lane: laneChange });
+			void moveRef
+				.current(key, status, laneChange)
+				.finally(() => setLanding(null));
+		};
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key === "Escape" && live.current) finish();
+		};
+		window.addEventListener("pointermove", onPointerMove);
+		window.addEventListener("pointerup", onPointerUp);
+		window.addEventListener("pointercancel", finish);
+		window.addEventListener("keydown", onKeyDown);
+		window.addEventListener("touchmove", onTouchMove, { passive: false });
+		window.addEventListener("contextmenu", onContextMenu);
+		return () => {
+			cancelAnimationFrame(frame);
+			window.clearTimeout(holdTimer.current);
+			window.removeEventListener("pointermove", onPointerMove);
+			window.removeEventListener("pointerup", onPointerUp);
+			window.removeEventListener("pointercancel", finish);
+			window.removeEventListener("keydown", onKeyDown);
+			window.removeEventListener("touchmove", onTouchMove);
+			window.removeEventListener("contextmenu", onContextMenu);
+		};
+	}, [lanes]);
+
+	return {
+		drag,
+		landing,
+		begin: (
+			item: WorkSummary,
+			from: string,
+			event: React.PointerEvent<HTMLButtonElement>,
+		) => {
+			if (!canMove || event.button !== 0) return;
+			const touch = event.pointerType === "touch";
+			dragged.current = false;
+			pressed.current = {
+				item,
+				from,
+				startX: event.clientX,
+				startY: event.clientY,
+				rect: event.currentTarget.getBoundingClientRect(),
+				touch,
+				held: false,
+			};
+			if (touch) startHold.current();
+		},
+		// A move made from the keyboard, shown in its new column while it saves
+		// and keeping focus on the card.
+		moveTo: (key: string, status: string, lane: string | null) => {
+			setLanding({ key, status, lane });
+			requestAnimationFrame(() =>
+				requestAnimationFrame(() =>
+					document
+						.querySelector<HTMLElement>(`[data-card="${key}"]`)
+						?.focus(),
+				),
+			);
+			void moveRef
+				.current(key, status, lane)
+				.finally(() => setLanding(null));
+		},
+		// True once after a drag, so the click that ends it does not open the
+		// card.
+		wasDragged: () => {
+			const was = dragged.current;
+			dragged.current = false;
+			return was;
+		},
+	};
 }
 
 // --- Table and list ----------------------------------------------------------
@@ -1202,10 +1807,17 @@ function Table({
 					))}
 				</tbody>
 			</table>
-			{items.length === 0 && (
-				<p className={styles.empty}>No requests match.</p>
-			)}
+			{items.length === 0 && <NoRequests />}
 		</div>
+	);
+}
+
+// What the table and the list show when the filters leave nothing.
+function NoRequests() {
+	return (
+		<EmptyState icon={emptyIcons.filter} title="No requests match">
+			Try clearing a filter or the search above.
+		</EmptyState>
 	);
 }
 
@@ -1225,8 +1837,7 @@ function List({
 		})),
 		{ label: "Closed", items: items.filter((i) => i.closedAs) },
 	].filter((group) => group.items.length > 0);
-	if (groups.length === 0)
-		return <p className={styles.empty}>No requests match.</p>;
+	if (groups.length === 0) return <NoRequests />;
 	return (
 		<div className={styles.list}>
 			{groups.map((group) => (

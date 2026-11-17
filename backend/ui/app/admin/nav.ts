@@ -127,7 +127,7 @@ export const adminNav = [
 			{
 				id: "themes",
 				label: "Themes",
-				blurb: "Colour sets for reports. Editors pick one per report, and it changes that report's charts and accents, not the app around them.",
+				blurb: "Color sets for reports. Editors pick one per report, and it changes that report's charts and accents, not the app around them.",
 				feed: "own",
 			},
 			{
@@ -186,7 +186,7 @@ export const adminNav = [
 			{
 				id: "warehouse",
 				label: "Warehouse",
-				blurb: "Which warehouse runs the queries and which catalogue they read.",
+				blurb: "Which warehouse runs the queries and which catalog they read.",
 				feed: "settings",
 			},
 			{

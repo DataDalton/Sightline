@@ -11,6 +11,7 @@ import { ShareDialog } from "../authoring/PageActions";
 import { BoardsSection } from "../boards/BoardsSection";
 import { WaitingForYou } from "../components/RequestsPanel";
 import { BringReportIn } from "./BringReportIn";
+import { LoadError } from "../components/shared/ErrorState";
 import { SkeletonCards } from "../components/shared/Skeleton";
 import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { usePageTitle } from "../hooks/usePageTitle";
@@ -51,7 +52,7 @@ function when(iso: string): string {
 export default function MyPagesView() {
 	usePageTitle("My pages");
 
-	const { data, isLoading, mutate } = useSWR<Listing>("/api/personal");
+	const { data, error, isLoading, mutate } = useSWR<Listing>("/api/personal");
 	const showSkeleton = useDeferredLoading(isLoading && !data);
 	const [creating, setCreating] = useState(false);
 	const [sharing, setSharing] = useState<PersonalPage | null>(null);
@@ -204,9 +205,15 @@ export default function MyPagesView() {
 				</div>
 			</div>
 
-			{showSkeleton ? (
+			{error && !data ? (
+				<LoadError
+					error={error}
+					subject="pages"
+					onRetry={() => void mutate()}
+				/>
+			) : showSkeleton ? (
 				<SkeletonCards count={4} />
-			) : (
+			) : !data ? null : (
 				<>
 					{keepFailure && (
 						<div className={form.failure} role="alert">

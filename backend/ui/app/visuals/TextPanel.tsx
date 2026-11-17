@@ -371,8 +371,8 @@ export function TextPanel({
 								type="button"
 								className={styles.swatch}
 								style={{ background: swatch.value }}
-								title={`Text colour: ${swatch.label}`}
-								aria-label={`Text colour ${swatch.label}`}
+								title={`Text color: ${swatch.label}`}
+								aria-label={`Text color ${swatch.label}`}
 								onClick={() => run("foreColor", swatch.value)}
 							/>
 						))}

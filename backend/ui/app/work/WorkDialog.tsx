@@ -226,7 +226,7 @@ function Picker({
 		people: { email: string; name: string }[];
 	}>(field.kind === "person" ? "/api/changes?people=1" : null);
 	const { data: queue } = useSWR<{ items: WorkSummary[] }>(
-		field.kind === "request" ? "/api/work?closed=include&limit=500" : null,
+		field.kind === "request" ? "/api/work?archive=all&limit=500" : null,
 	);
 	const { data: choices } = useSWR<{
 		sources: { key: string; title: string }[];

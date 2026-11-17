@@ -4,10 +4,13 @@ import { useEffect, useState } from "react";
 import useSWR from "swr";
 import type { WorkConfig } from "../../lib/work/model";
 import type { WorkSummary } from "../../lib/work/store";
+import { DatePicker } from "../components/shared/DatePicker";
 import { Modal } from "../components/shared/Modal";
 import { Select } from "../components/shared/Select";
 import { Toggle } from "../components/shared/Toggle";
 import { columnLabel, effortLabel, postJson } from "./labels";
+import { attachmentProblem } from "../../lib/work/attachmentRules";
+import { AttachButton, filesFrom, uploadAttachment } from "./Attach";
 import { ReleaseSelect } from "./ReleaseControls";
 import styles from "./Work.module.css";
 
@@ -67,6 +70,30 @@ export function RequestForm({
 	);
 	const [title, setTitle] = useState(draft.title ?? "");
 	const [description, setDescription] = useState(draft.description ?? "");
+	// Files added before the request exists. They go up once it is created.
+	// Pasted ones are shown in the details, and attached ones are the
+	// request's files.
+	const [files, setFiles] = useState<{ file: File; pasted: boolean }[]>([]);
+	// A request that was created but whose files did not all go up, so the
+	// button opens it rather than filing it a second time.
+	const [created, setCreated] = useState<string | null>(null);
+
+	const addFiles = (added: File[], pasted: boolean) => {
+		const refused = added
+			.map((file) => ({ file, problem: attachmentProblem(file) }))
+			.filter((entry) => entry.problem !== null);
+		setFailure(
+			refused.length > 0
+				? `${refused.map((entry) => entry.file.name || "The pasted file").join(", ")} cannot be attached. ${refused[0].problem}`
+				: null,
+		);
+		const accepted = added.filter((file) => !attachmentProblem(file));
+		if (accepted.length > 0)
+			setFiles((held) => [
+				...held,
+				...accepted.map((file) => ({ file, pasted })),
+			]);
+	};
 	const [priority, setPriority] = useState("");
 	const [domain, setDomain] = useState("");
 	const [layer, setLayer] = useState("");
@@ -153,6 +180,37 @@ export function RequestForm({
 				asRequest: !engineer,
 			});
 			const item = answer.item as WorkSummary;
+			if (files.length > 0) {
+				const references: string[] = [];
+				const missed: string[] = [];
+				for (const { file, pasted } of files) {
+					try {
+						const reference = await uploadAttachment(
+							item.key,
+							file,
+							pasted,
+						);
+						if (pasted) references.push(reference);
+					} catch {
+						missed.push(file.name || "a pasted file");
+					}
+				}
+				if (references.length > 0) {
+					await postJson(`/api/work/${item.key}`, {
+						action: "update",
+						description: [description.trim(), ...references]
+							.filter(Boolean)
+							.join("\n\n"),
+					});
+				}
+				if (missed.length > 0) {
+					setCreated(item.key);
+					setFailure(
+						`${item.key} was filed, but ${missed.join(", ")} could not be attached. Open it to attach ${missed.length === 1 ? "it" : "them"} again.`,
+					);
+					return;
+				}
+			}
 			onCreated(item.key);
 		} catch (error) {
 			setFailure(
@@ -306,8 +364,65 @@ export function RequestForm({
 								: "What is needed, and why")
 						}
 						onChange={(e) => setDescription(e.target.value)}
+						onPaste={(e) => {
+							const pasted = filesFrom(e.clipboardData);
+							if (pasted.length === 0) return;
+							e.preventDefault();
+							addFiles(pasted, true);
+						}}
+						onDrop={(e) => {
+							const dropped = filesFrom(e.dataTransfer);
+							if (dropped.length === 0) return;
+							e.preventDefault();
+							addFiles(dropped, true);
+						}}
 					/>
 				</label>
+				<div className={styles.composerFoot}>
+					<AttachButton
+						onFiles={(added) => addFiles(added, false)}
+						disabled={sending}
+					/>
+					<span className={styles.hint}>
+						Or paste or drop a screenshot into the details.
+					</span>
+				</div>
+				{files.length > 0 && (
+					<ul className={styles.pendingFiles} aria-label="Attached">
+						{files.map(({ file }, i) => (
+							<li
+								key={`${file.name}-${i}`}
+								className={styles.pendingFile}
+							>
+								<span title={file.name}>
+									{file.name || "Pasted image"}
+								</span>
+								<button
+									type="button"
+									aria-label={`Remove ${file.name || "the pasted image"}`}
+									onClick={() =>
+										setFiles((held) =>
+											held.filter((_, at) => at !== i),
+										)
+									}
+								>
+									<svg
+										width="12"
+										height="12"
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										strokeWidth="2.5"
+										strokeLinecap="round"
+										aria-hidden="true"
+									>
+										<path d="M18 6L6 18M6 6l12 12" />
+									</svg>
+								</button>
+							</li>
+						))}
+					</ul>
+				)}
 
 				{engineer && (
 					<div className={styles.formGrid}>
@@ -347,15 +462,16 @@ export function RequestForm({
 						</label>
 						<label className={styles.field}>
 							<span>Target</span>
-							<input
-								type="date"
-								className={styles.input}
+							<DatePicker
+								size="form"
 								value={target}
+								ariaLabel="Target"
+								placeholder="No target"
 								disabled={Boolean(release)}
 								title={
 									release ? "Set by its release" : undefined
 								}
-								onChange={(e) => setTarget(e.target.value)}
+								onChange={setTarget}
 							/>
 						</label>
 					</div>
@@ -432,15 +548,19 @@ export function RequestForm({
 						type="button"
 						className={styles.primary}
 						disabled={sending || !title.trim()}
-						onClick={() => void send()}
+						onClick={() =>
+							created ? onCreated(created) : void send()
+						}
 					>
-						{engineer
-							? sending
-								? "Creating"
-								: "Create item"
-							: sending
-								? "Sending"
-								: "Send request"}
+						{created
+							? `Open ${created}`
+							: engineer
+								? sending
+									? "Creating"
+									: "Create item"
+								: sending
+									? "Sending"
+									: "Send request"}
 					</button>
 				</div>
 			</div>

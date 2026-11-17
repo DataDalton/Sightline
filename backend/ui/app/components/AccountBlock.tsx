@@ -141,7 +141,7 @@ export function AccountBlock() {
 								))}
 							</span>
 							<span className={styles.coloursLabel}>
-								Colours: {theme?.name ?? "App colours"}
+								Colors: {theme?.name ?? "App colors"}
 							</span>
 						</button>
 					</div>

@@ -7,7 +7,7 @@ import { isRetentionKind } from "../../lib/retention/rules";
 import { KeepIcon, markKeep } from "../mine/Retention";
 import { ago, clock } from "../admin/when";
 import { Skeleton } from "../components/shared/Skeleton";
-import { BellIcon, KindIcon } from "./icons";
+import { KindIcon } from "./icons";
 import styles from "./Notify.module.css";
 
 // Inbox entries, newest first. The same list in the header panel and on the
@@ -50,12 +50,10 @@ export function InboxList({
 	items,
 	loading,
 	onChanged,
-	emptyText = "Nothing here yet. Alerts you set and pages shared with you arrive here.",
 }: {
 	items: InboxItem[] | undefined;
 	loading: boolean;
 	onChanged: () => void;
-	emptyText?: string;
 }) {
 	const router = useRouter();
 	// Warnings whose item was marked Keep from here, so the button says so.
@@ -71,16 +69,9 @@ export function InboxList({
 		);
 	}
 
-	if (!items || items.length === 0) {
-		return (
-			<div className={styles.empty}>
-				<span className={styles.emptyIcon}>
-					<BellIcon size={20} />
-				</span>
-				<p>{emptyText}</p>
-			</div>
-		);
-	}
+	// An empty list is drawn by the page, in the same form as every other
+	// empty page.
+	if (!items || items.length === 0) return null;
 
 	const open = async (item: InboxItem) => {
 		if (!item.readOn) {

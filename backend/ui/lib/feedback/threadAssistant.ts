@@ -136,7 +136,8 @@ export async function respondInThread(threadId: string): Promise<void> {
 		kind: string;
 	}>(
 		`SELECT author_email, body, kind FROM thread_messages
-		 WHERE thread_id::text = $1 ORDER BY created_on DESC LIMIT 40`,
+		 WHERE thread_id::text = $1 AND removed_on IS NULL
+		 ORDER BY created_on DESC LIMIT 40`,
 		[threadId],
 	);
 	// Its own message last means nothing new has been said to it.

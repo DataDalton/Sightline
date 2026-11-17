@@ -353,7 +353,7 @@ export function ConditionsEditor({
 									style={{ marginTop: 8 }}
 								>
 									<label className={styles.fieldLabel}>
-										Text colour
+										Text color
 									</label>
 									<div className={styles.swatchGrid}>
 										<button
@@ -367,7 +367,7 @@ export function ConditionsEditor({
 												background: "transparent",
 												borderStyle: "dashed",
 											}}
-											title="No colour"
+											title="No color"
 											onClick={() =>
 												updateRule(index, {
 													textColor: undefined,
@@ -495,9 +495,9 @@ export function ConditionsEditor({
 										{(rule.textColor || rule.background) &&
 											!rule.marker && (
 												<Hint>
-													This rule uses colour only.
-													A marker keeps it readable
-													in print and for readers who
+													This rule uses color only. A
+													marker keeps it readable in
+													print and for readers who
 													cannot distinguish the hue.
 												</Hint>
 											)}
@@ -551,14 +551,14 @@ export function ConditionsEditor({
 			{allowScales && (
 				<Section
 					id="visual-scales"
-					title="Colour scale"
+					title="Color scale"
 					defaultOpen={false}
 					count={scales.length}
 				>
 					<Hint>
 						A gradient across the column range, for finding extremes
 						rather than testing a threshold. A data bar compares
-						more precisely and reads without colour at all.
+						more precisely and reads without color at all.
 					</Hint>
 
 					{scales.map((scale, index) => (
@@ -808,7 +808,7 @@ export function ConditionsEditor({
 								})
 							}
 						>
-							Add colour scale
+							Add color scale
 						</button>
 					)}
 				</Section>

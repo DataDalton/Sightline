@@ -534,7 +534,7 @@ export const pageTemplates: PageTemplate[] = [
 	{
 		key: "activity",
 		label: "When it happens",
-		blurb: "A year of daily figures as a calendar, so weekday patterns and quiet spells are visible without anybody modelling them.",
+		blurb: "A year of daily figures as a calendar, so weekday patterns and quiet spells are visible without anybody modeling them.",
 		slots: [
 			{
 				key: "date",
@@ -974,7 +974,11 @@ export function buildPage(
 		});
 	}
 
-	return { templateKey: template.key, visuals: closeControlRows(visuals), unfilled };
+	return {
+		templateKey: template.key,
+		visuals: closeControlRows(visuals),
+		unfilled,
+	};
 }
 
 // A template lays its filters out on the grid like any other visual, but a
@@ -983,7 +987,9 @@ export function buildPage(
 // and the reader both start with the first visual at the top.
 function closeControlRows(visuals: BuiltVisual[]): BuiltVisual[] {
 	const onGrid = visuals.flatMap((visual, index) =>
-		isPageControl(visual.visualType) ? [] : [{ index, rect: visual.layout }],
+		isPageControl(visual.visualType)
+			? []
+			: [{ index, rect: visual.layout }],
 	);
 	const moved = new Map(
 		compactRows(onGrid).map((item) => [item.index, item.rect]),

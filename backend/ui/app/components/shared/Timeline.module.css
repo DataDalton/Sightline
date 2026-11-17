@@ -81,12 +81,52 @@
 .comment {
 	position: relative;
 	display: flex;
+	flex-wrap: wrap;
 	align-items: flex-start;
 	gap: var(--space-3);
 }
 
-.reply {
-	margin-left: var(--space-6, 40px);
+/* A comment with replies draws one unbroken line from the bottom of its
+   author's initials down past the last reply, so the thread reads as one. */
+.comment:has(> .replies, > .repliesLevel)::before {
+	content: "";
+	position: absolute;
+	top: 32px;
+	bottom: 0;
+	left: 15px;
+	width: 2px;
+	border-radius: 1px;
+	background: var(--border-subtle);
+}
+
+/* The replies to a comment, on their own row beneath its card, indented to
+   hang from the line above. */
+.replies,
+.repliesLevel {
+	flex-basis: 100%;
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.replies {
+	margin-left: 15px;
+	padding-left: 29px;
+}
+
+/* Past the deepest indent, replies line up under the last level. */
+.repliesLevel {
+	margin-left: 0;
+}
+
+/* The box a reply is written in, under the comment it answers. */
+.replyBox {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
 }
 
 .avatar {

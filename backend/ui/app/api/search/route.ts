@@ -6,7 +6,11 @@ import {
 	listFavourites,
 	recentReports,
 	searchTargets,
+	type SearchTarget,
 } from "@/lib/platform/search";
+import { contentTargets } from "@/lib/platform/searchContent";
+import { getAccessContext, isAdmin } from "@/lib/platform/access";
+import { adminNav } from "@/app/admin/nav";
 
 // Everything the caller can navigate to, plus what they opened last and what
 // they marked.
@@ -31,11 +35,16 @@ export async function GET(request: NextRequest) {
 
 	try {
 		const policy = await resolvePolicyClass(identity);
-		const [targets, recent, favourites] = await Promise.all([
-			searchTargets(identity, policy),
-			recentReports(identity.email),
-			listFavourites(identity.email),
-		]);
+		const [reports, content, panes, recent, favourites] = await Promise.all(
+			[
+				searchTargets(identity, policy),
+				contentTargets(identity, policy),
+				adminTargets(identity, policy),
+				recentReports(identity.email),
+				listFavourites(identity.email),
+			],
+		);
+		const targets = [...reports, ...content, ...panes];
 
 		const response = NextResponse.json({ targets, recent, favourites });
 		response.headers.set("Cache-Control", "private, no-store");
@@ -52,4 +61,25 @@ export async function GET(request: NextRequest) {
 			degraded: true,
 		});
 	}
+}
+
+// Every pane of Administration, for somebody who can open it, under the group
+// the rail files it in. The blurb is matched too, so a pane is found by what
+// it is for as well as by its name.
+async function adminTargets(
+	identity: NonNullable<ReturnType<typeof getIdentity>>,
+	policy: Awaited<ReturnType<typeof resolvePolicyClass>>,
+): Promise<SearchTarget[]> {
+	const context = await getAccessContext(policy, identity);
+	if (!isAdmin(policy) && context.baseline !== "admin") return [];
+	return adminNav.flatMap((group) =>
+		group.panes.map((pane) => ({
+			id: `admin:${pane.id}`,
+			kind: "admin" as const,
+			title: pane.label,
+			context: `Administration, ${group.label}`,
+			href: `/admin?pane=${pane.id}`,
+			keywords: pane.blurb,
+		})),
+	);
 }

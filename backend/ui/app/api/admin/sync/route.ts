@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
 	if (demoMode) {
 		return NextResponse.json(
 			{
-				error: "The demo has no Databricks catalogue to sync from. Its sample sources are already up to date.",
+				error: "The demo has no Databricks catalog to sync from. Its sample sources are already up to date.",
 			},
 			{ status: 409 },
 		);

@@ -115,8 +115,8 @@ export function DerivedFigures({
 		>
 			<Hint>
 				Worked out from the answer rather than asked of the warehouse,
-				so no modelling is needed upstream. Each one becomes a column
-				the visual can encode, sort and export like any other.
+				so no modeling is needed upstream. Each one becomes a column the
+				visual can encode, sort and export like any other.
 			</Hint>
 
 			{available.length === 0 && (

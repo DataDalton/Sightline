@@ -327,7 +327,7 @@ export function diffSnapshots(
 				kind: "changed",
 				text: reportAfter.theme
 					? "Changed the theme"
-					: "Went back to the app's own colours",
+					: "Went back to the app's own colors",
 			});
 		}
 	}

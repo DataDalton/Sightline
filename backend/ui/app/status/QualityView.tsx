@@ -6,6 +6,8 @@ import { useMemo, useState } from "react";
 import Link from "../components/AppLink";
 import useSWR from "swr";
 import { EmptyState, emptyIcons } from "../components/shared/EmptyState";
+import { LoadError } from "../components/shared/ErrorState";
+import { SkeletonTable } from "../components/shared/Skeleton";
 import { Select } from "../components/shared/Select";
 import { ConfirmDialog } from "../components/shared/ConfirmDialog";
 import form from "../authoring/Authoring.module.css";
@@ -1101,7 +1103,7 @@ function Suggestions({
 			{failure && <p className={styles.failure}>{failure}</p>}
 			{found?.length === 0 && (
 				<p className={styles.hint}>
-					The catalogue could not be read for this table, so there is
+					The catalog could not be read for this table, so there is
 					nothing to suggest.
 				</p>
 			)}
@@ -1314,9 +1316,16 @@ export default function QualityView({
 
 	const sources = data?.sources ?? [];
 
-	if (error)
-		return <p className={styles.hint}>Data rules could not be loaded.</p>;
-	if (!data) return null;
+	if (error) {
+		return (
+			<LoadError
+				error={error}
+				subject="data rules"
+				onRetry={() => void mutate()}
+			/>
+		);
+	}
+	if (!data) return <SkeletonTable rows={5} columns={3} />;
 	if (sources.length === 0) {
 		return (
 			<EmptyState

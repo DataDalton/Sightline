@@ -35,6 +35,13 @@ export async function POST(request: NextRequest) {
 		config.prefix =
 			(config.prefix || "WR").replace(/[^A-Za-z0-9]/g, "").slice(0, 8) ||
 			"WR";
+		// A whole number of days, at least one, or null to keep done requests
+		// on the board.
+		const days = Number(config.rules.archiveDoneAfterDays);
+		config.rules.archiveDoneAfterDays =
+			config.rules.archiveDoneAfterDays === null || !Number.isFinite(days)
+				? null
+				: Math.min(Math.max(Math.round(days), 1), 3650);
 		await saveConfig(who.actor, config);
 		return privateJson({ config });
 	} catch (error) {

@@ -59,3 +59,12 @@ export function rankTarget(
 	if (onTitle !== null) return onTitle + titleBand;
 	return scoreMatch(other, query);
 }
+
+// Whether a rank came from letters scattered through the text rather than the
+// query appearing whole. Worth showing when nothing better is found, and noise
+// beside a real match, where a report whose letters happen to spell the query
+// would sit above the thing actually called that.
+export function isLooseMatch(rank: number, query: string): boolean {
+	const own = rank >= titleBand ? rank - titleBand : rank;
+	return own <= query.length;
+}

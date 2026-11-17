@@ -2,11 +2,12 @@
 
 import Link from "../components/AppLink";
 import useSWR from "swr";
-import { describeFetchError } from "../../lib/swr";
 import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { useUser } from "../context/UserContext";
-import { SkeletonCards } from "../components/shared/Skeleton";
+import { Skeleton, SkeletonCards } from "../components/shared/Skeleton";
+import { EmptyState, emptyIcons } from "../components/shared/EmptyState";
+import { LoadError } from "../components/shared/ErrorState";
 import {
 	CategoryContacts,
 	type CategoryContact,
@@ -41,7 +42,7 @@ export default function CategoryView({
 	categoryId: string;
 	initial?: CategoryDetail;
 }) {
-	const { data, error, isLoading } = useSWR<CategoryDetail>(
+	const { data, error, isLoading, mutate } = useSWR<CategoryDetail>(
 		`/api/category/${encodeURIComponent(categoryId)}`,
 		{ fallbackData: initial },
 	);
@@ -60,9 +61,11 @@ export default function CategoryView({
 	if (error) {
 		return (
 			<div className={styles.page}>
-				<div className={styles.state}>
-					{describeFetchError(error, "category")}
-				</div>
+				<LoadError
+					error={error}
+					subject="category"
+					onRetry={() => void mutate()}
+				/>
 			</div>
 		);
 	}
@@ -72,7 +75,11 @@ export default function CategoryView({
 			<div className={styles.breadcrumb}>
 				<Link href="/">Home</Link>
 				<span aria-hidden="true">/</span>
-				<span>{data?.name ?? "Loading"}</span>
+				{data ? (
+					<span>{data.name}</span>
+				) : (
+					<Skeleton width={120} height={12} />
+				)}
 			</div>
 
 			<h1 className={styles.title}>{data?.name ?? " "}</h1>
@@ -100,13 +107,26 @@ export default function CategoryView({
 				// need different answers. The home page already distinguishes
 				// them; this said the same sentence to all three, so the same
 				// reader got a diagnosis on one screen and a shrug on the next.
-				<div className={styles.state}>
+				<EmptyState
+					icon={
+						user?.policy.degraded || (user && !user.canQueryAsUser)
+							? emptyIcons.lock
+							: emptyIcons.folder
+					}
+					title={
+						user?.policy.degraded
+							? "Your access could not be checked"
+							: user && !user.canQueryAsUser
+								? "Reports cannot be opened"
+								: "No reports here yet"
+					}
+				>
 					{user?.policy.degraded
 						? "Your group membership could not be resolved, so nothing here can be shown. This is usually a missing permission on the SQL warehouse rather than on the data. Please wait a moment or try again."
 						: user && !user.canQueryAsUser
 							? "No user token was forwarded to the app, so nothing here can be opened. Enable user authorization with the sql scope on the app."
-							: "No reports in this category yet, or none that you can open."}
-				</div>
+							: "This category has no reports yet, or none that you can open."}
+				</EmptyState>
 			) : (
 				<div className={styles.grid}>
 					{data?.reports.map((report) => (

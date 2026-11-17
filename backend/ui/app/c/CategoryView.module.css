@@ -117,14 +117,6 @@
 	color: var(--text-secondary);
 }
 
-.state {
-	padding: var(--space-7);
-	text-align: center;
-	color: var(--text-muted);
-	border: 1px dashed var(--border-default);
-	border-radius: var(--radius-lg);
-}
-
 /* The title and whatever acts on the category, on one line. */
 .heading {
 	display: flex;

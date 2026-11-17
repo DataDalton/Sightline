@@ -125,7 +125,7 @@ export function MultiEditPanel({
 
 				{withColour.length > 0 && (
 					<div className={styles.field}>
-						<label className={styles.fieldLabel}>Colours</label>
+						<label className={styles.fieldLabel}>Colors</label>
 						<Select
 							value=""
 							onChange={(id) => {
@@ -139,9 +139,9 @@ export function MultiEditPanel({
 									);
 								}
 							}}
-							ariaLabel="Colours"
+							ariaLabel="Colors"
 							options={[
-								{ value: "", label: "Choose a set of colours" },
+								{ value: "", label: "Choose a set of colors" },
 								...palettePresets.map((p) => ({
 									value: p.id,
 									label: p.label,

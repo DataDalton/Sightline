@@ -5,9 +5,10 @@ import Link from "../components/AppLink";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import type { SheetSummary } from "../../lib/sheets/store";
-import { describeFetchError } from "../../lib/swr";
 import { ago } from "../admin/when";
 import { SkeletonText } from "../components/shared/Skeleton";
+import { EmptyState, emptyIcons } from "../components/shared/EmptyState";
+import { LoadError } from "../components/shared/ErrorState";
 import { usePageTitle } from "../hooks/usePageTitle";
 import type { SourceMeta } from "../visuals/types";
 import { KeptBadge } from "../mine/Retention";
@@ -148,43 +149,31 @@ export default function SheetsList() {
 			</header>
 
 			{error ? (
-				<div className={styles.empty}>
-					{describeFetchError(error, "list")}
-				</div>
+				<LoadError
+					error={error}
+					subject="sheets"
+					onRetry={() => void mutate()}
+				/>
 			) : isLoading ? (
 				<SkeletonText lines={4} />
 			) : (data?.sheets ?? []).length === 0 ? (
-				<div className={styles.emptyLarge}>
-					<span className={styles.emptyIcon} aria-hidden="true">
-						<svg
-							width="22"
-							height="22"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							strokeWidth="1.8"
-							strokeLinecap="round"
-							strokeLinejoin="round"
+				<EmptyState
+					icon={emptyIcons.table}
+					title="No sheets yet"
+					action={
+						<button
+							type="button"
+							className={styles.primary}
+							onClick={create}
+							disabled={creating}
 						>
-							<path d="M3 3h18v18H3zM3 9h18M3 15h18M9 3v18" />
-						</svg>
-					</span>
-					<span className={styles.emptyText}>
-						<h2 className={styles.emptyTitle}>No sheets yet</h2>
-						<p className={styles.fieldHint}>
-							Start one here, or open anything you build in
-							Explore as a sheet.
-						</p>
-					</span>
-					<button
-						type="button"
-						className={styles.primary}
-						onClick={create}
-						disabled={creating}
-					>
-						New sheet
-					</button>
-				</div>
+							New sheet
+						</button>
+					}
+				>
+					Start one here, or open anything you build in Explore as a
+					sheet.
+				</EmptyState>
 			) : (
 				<>
 					{mine.length > 0 && (

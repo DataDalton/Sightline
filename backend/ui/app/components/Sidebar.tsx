@@ -242,7 +242,7 @@ export default memo(function Sidebar() {
 
 			{favourites.length > 0 && (
 				<div className={styles.section}>
-					<div className={styles.sectionTitle}>Favourites</div>
+					<div className={styles.sectionTitle}>Favorites</div>
 					<nav className={styles.nav}>
 						{favourites.map((report) => {
 							const href = `/r/${report.slug}`;

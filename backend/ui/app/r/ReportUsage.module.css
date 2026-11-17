@@ -37,10 +37,6 @@
 	outline-offset: 2px;
 }
 
-.state {
-	color: var(--text-secondary);
-}
-
 .figures {
 	display: flex;
 	gap: var(--space-5);

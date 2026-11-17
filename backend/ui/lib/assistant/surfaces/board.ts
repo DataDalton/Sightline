@@ -94,13 +94,13 @@ const itemSchema = {
 		color: {
 			type: "string",
 			enum: [...noteColorsAsked],
-			description: "A note's colour.",
+			description: "A note's color.",
 		},
 		shape: { type: "string", enum: [...shapesAsked] },
 		fill: {
 			type: "string",
 			enum: colorNames.filter((c) => c !== "none" && c !== "default"),
-			description: "A box's colour.",
+			description: "A box's color.",
 		},
 	},
 	required: ["kind"],
@@ -120,7 +120,7 @@ const linkSchema = {
 		flow: {
 			type: "boolean",
 			description:
-				"Dashes moving towards where it points, for a flow of work or money.",
+				"Dashes moving toward where it points, for a flow of work or money.",
 		},
 		label: { type: "string" },
 	},

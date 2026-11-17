@@ -801,7 +801,7 @@ export const sources: SourceSeed[] = [
 		key: "finance_ledger",
 		title: "Operating spend",
 		description:
-			"Monthly operating spend by department, account and cost centre, with budget and forecast.",
+			"Monthly operating spend by department, account and cost center, with budget and forecast.",
 		schema: "finance",
 		object: "ledger",
 		timeField: "Month",
@@ -825,7 +825,7 @@ export const sources: SourceSeed[] = [
 			dimension(
 				"Cost Center",
 				"cost_center",
-				"The regional cost centre.",
+				"The regional cost center.",
 			),
 			measure(
 				"Actual Spend",

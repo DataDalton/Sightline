@@ -49,7 +49,7 @@ export function readChoice(raw: unknown): UserThemeChoice {
 					name:
 						typeof given.name === "string" && given.name.trim()
 							? given.name.trim().slice(0, 60)
-							: "My colours",
+							: "My colors",
 					accent: given.accent,
 					chart: given.chart,
 				},
@@ -57,7 +57,7 @@ export function readChoice(raw: unknown): UserThemeChoice {
 		)[0];
 		if (!own) {
 			throw new UserThemeError(
-				"Each colour has to be a six digit hex value, such as #2563eb.",
+				"Each color has to be a six digit hex value, such as #2563eb.",
 			);
 		}
 		return { themeId: null, own };

@@ -6,12 +6,6 @@
 
 .lead,
 .hint,
-.state {
-	margin: 0;
-	font-size: var(--text-sm);
-	color: var(--text-secondary);
-}
-
 .hint {
 	color: var(--text-muted);
 }

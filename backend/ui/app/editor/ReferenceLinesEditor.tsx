@@ -219,7 +219,7 @@ export function ReferenceLinesEditor({
 					</div>
 
 					<div className={styles.field}>
-						<label className={styles.fieldLabel}>Colour</label>
+						<label className={styles.fieldLabel}>Color</label>
 						<div className={styles.swatchGrid}>
 							{/* Nothing chosen is a real answer here, not an
 							    unset field: it draws the line in the axis
@@ -229,7 +229,7 @@ export function ReferenceLinesEditor({
 								type="button"
 								className={styles.markerButton}
 								aria-pressed={!line.color}
-								title="The axis colour"
+								title="The axis color"
 								onClick={() =>
 									update(line.id, { color: undefined })
 								}

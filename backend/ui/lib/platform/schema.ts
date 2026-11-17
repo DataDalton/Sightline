@@ -2018,6 +2018,10 @@ const migrations: string[] = [
 	// change with Apply and Suggest.
 	`ALTER TABLE thread_messages ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'text'`,
 	`ALTER TABLE thread_messages ADD COLUMN IF NOT EXISTS payload JSONB`,
+	// Set when its author removes a message. The row stays, so the order of the
+	// conversation holds and replies still make sense, and the text is no longer
+	// shown or read by the assistant.
+	`ALTER TABLE thread_messages ADD COLUMN IF NOT EXISTS removed_on TIMESTAMPTZ`,
 
 	// Asking to read conversations that are not one's own, for the two reviewer
 	// roles. Nobody holds standing access: a request names what, why and for
@@ -2160,6 +2164,11 @@ const migrations: string[] = [
 		removed_on TIMESTAMPTZ
 	)`,
 	`CREATE INDEX IF NOT EXISTS work_comments_item_idx ON work_comments (item_id, created_on)`,
+	// A top-level comment's thread: who is looking into it, and who resolved
+	// it and when.
+	`ALTER TABLE work_comments ADD COLUMN IF NOT EXISTS looking TEXT[] NOT NULL DEFAULT '{}'`,
+	`ALTER TABLE work_comments ADD COLUMN IF NOT EXISTS resolved_by TEXT`,
+	`ALTER TABLE work_comments ADD COLUMN IF NOT EXISTS resolved_on TIMESTAMPTZ`,
 	// Everything that happened to a request, in order: moves, every field
 	// changed from what to what, links, blocks, approvals, edits to the
 	// description and to comments. Shown with the comments as one timeline.
@@ -2222,6 +2231,10 @@ const migrations: string[] = [
 		uploaded_on   TIMESTAMPTZ NOT NULL DEFAULT now()
 	)`,
 	`CREATE INDEX IF NOT EXISTS work_attachments_item_idx ON work_attachments (item_id)`,
+	// True for a file pasted or dropped into a comment or the description,
+	// false for one attached on purpose. Null on files from before the two
+	// were told apart, which are judged by whether the discussion shows them.
+	`ALTER TABLE work_attachments ADD COLUMN IF NOT EXISTS pasted BOOLEAN`,
 	`CREATE INDEX IF NOT EXISTS work_attachments_hash_idx ON work_attachments (hash)`,
 
 	// Following the changes the assistant makes, as well as updates themselves.

@@ -507,7 +507,7 @@ function compileDistribution(
 	}
 	if (distribution.kind === "summary" && spec.dimensions.length > 1) {
 		throw new QuerySpecError(
-			"A summarised distribution groups by at most one field, one box each",
+			"A summarized distribution groups by at most one field, one box each",
 		);
 	}
 

@@ -101,7 +101,7 @@ export const visualPresets: VisualPreset[] = [
 	{
 		key: "on-plan",
 		label: "On plan or not",
-		blurb: "Actual against target, furthest behind at the top, coloured by whether it cleared.",
+		blurb: "Actual against target, furthest behind at the top, colored by whether it cleared.",
 		visualType: "bulletChart",
 		options: { sortBy: "valueAsc", colourByTarget: true },
 	},

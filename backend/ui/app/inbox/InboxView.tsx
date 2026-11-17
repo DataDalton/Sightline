@@ -4,8 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import type { InboxItem } from "../../lib/notify/store";
-import { describeFetchError } from "../../lib/swr";
 import { AlertsPanel, alertsKey, type AlertList } from "../alerts/AlertsView";
+import { EmptyState, emptyIcons } from "../components/shared/EmptyState";
+import { LoadError } from "../components/shared/ErrorState";
 import { ScheduledPages } from "../deliveries/ScheduledPages";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { InboxList } from "../notify/InboxList";
@@ -81,11 +82,30 @@ const heading: Record<InboxViewId, { title: string; blurb: string }> = {
 	},
 };
 
-const emptyText: Record<"all" | "unread" | "alert" | "share", string> = {
-	all: "Nothing here yet. Alerts you set and pages shared with you arrive here.",
-	unread: "You are all caught up.",
-	alert: "None of your alerts has found anything yet.",
-	share: "Nobody has shared anything with you yet.",
+const emptyViews: Record<
+	"all" | "unread" | "alert" | "share",
+	{ icon: string; title: string; body: string }
+> = {
+	all: {
+		icon: emptyIcons.inbox,
+		title: "Nothing here yet",
+		body: "Alerts you set and pages shared with you arrive here.",
+	},
+	unread: {
+		icon: emptyIcons.check,
+		title: "All caught up",
+		body: "Everything in your inbox has been read.",
+	},
+	alert: {
+		icon: emptyIcons.bell,
+		title: "No alerts have fired",
+		body: "None of your alerts has found anything yet.",
+	},
+	share: {
+		icon: emptyIcons.send,
+		title: "Nothing shared with you",
+		body: "Nobody has shared anything with you yet.",
+	},
 };
 
 function keyFor(view: InboxViewId): string | null {
@@ -404,16 +424,24 @@ export default function InboxView({
 				) : view === "settings" ? (
 					<NotificationSettings />
 				) : error ? (
-					<div className={styles.state}>
-						{describeFetchError(error, "inbox")}
-					</div>
+					<LoadError
+						error={error}
+						subject="inbox"
+						onRetry={() => void mutate()}
+					/>
+				) : items && items.length === 0 ? (
+					<EmptyState
+						icon={emptyViews[view].icon}
+						title={emptyViews[view].title}
+					>
+						{emptyViews[view].body}
+					</EmptyState>
 				) : (
 					<div className={styles.listFrame}>
 						<InboxList
 							items={items}
 							loading={isLoading}
 							onChanged={changed}
-							emptyText={emptyText[view]}
 						/>
 						{items && items.length >= pageSize && !exhausted && (
 							<button

@@ -170,16 +170,20 @@ async function updateChoices(policy: PolicyClass, identity: Identity) {
 // than with the choices every reader of the timeline asks for. Held for a few
 // minutes for everyone, since someone signing in for the first time only adds a
 // name to suggest, and an author can always be typed in full.
-const peopleKey = "update-people";
+const peopleKey = "update-people:v2";
 const peopleLifetimeMs = 5 * 60 * 1000;
 
 function knownPeople(): Promise<{ email: string; name: string }[]> {
 	return cachedDefinition(
 		peopleKey,
 		async () =>
+			// People only. Service principals sign in under an id
+			// rather than an address and cannot be assigned or credited.
 			(
 				await sql<{ user_email: string }>(
-					`SELECT user_email FROM member_groups ORDER BY user_email`,
+					`SELECT user_email FROM member_groups
+					 WHERE user_email LIKE '%_@_%'
+					 ORDER BY user_email`,
 				)
 			).map((row) => ({
 				email: row.user_email,

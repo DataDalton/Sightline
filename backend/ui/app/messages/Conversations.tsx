@@ -4,7 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import Link from "../components/AppLink";
 import useSWR from "swr";
 import type { ThreadMessage, ThreadSummary } from "../../lib/messages/store";
-import { describeFetchError } from "../../lib/swr";
+import { ConfirmDialog } from "../components/shared/ConfirmDialog";
+import { EmptyState, emptyIcons } from "../components/shared/EmptyState";
+import { LoadError } from "../components/shared/ErrorState";
+import { SkeletonText } from "../components/shared/Skeleton";
 import { useUser } from "../context/UserContext";
 import styles from "./Messages.module.css";
 import { ProposalCard, SharedConversation } from "./ThreadParts";
@@ -72,8 +75,6 @@ function Icon({ d, size = 14 }: { d: string; size?: number }) {
 
 const backPath = "M15 18l-6-6 6-6";
 const sendPath = "M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z";
-const bubblePath =
-	"M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z";
 
 export function Conversations({
 	threadId,
@@ -82,7 +83,7 @@ export function Conversations({
 	threadId: string | null;
 	onOpen: (id: string | null) => void;
 }) {
-	const { data, error, isLoading } = useSWR<{
+	const { data, error, isLoading, mutate } = useSWR<{
 		threads: ThreadSummary[];
 		unread: number;
 	}>(conversationsKey, {
@@ -92,29 +93,24 @@ export function Conversations({
 
 	if (error) {
 		return (
-			<div className={styles.state}>
-				{describeFetchError(error, "inbox")}
-			</div>
+			<LoadError
+				error={error}
+				subject="conversations"
+				onRetry={() => void mutate()}
+			/>
 		);
 	}
 
 	const threads = data?.threads ?? [];
 
-	if (!isLoading && threads.length === 0) {
+	if (isLoading && !data) return <SkeletonText lines={4} />;
+
+	if (threads.length === 0) {
 		return (
-			<div className={styles.empty}>
-				<span className={styles.emptyIcon}>
-					<Icon d={bubblePath} size={20} />
-				</span>
-				<div>
-					<h2 className={styles.emptyTitle}>No conversations yet</h2>
-					<p className={styles.emptyText}>
-						Every category and report names who maintains it. Ask
-						them something from there and the conversation carries
-						on here.
-					</p>
-				</div>
-			</div>
+			<EmptyState icon={emptyIcons.chat} title="No conversations yet">
+				Every category and report names who maintains it. Ask them
+				something from there and the conversation carries on here.
+			</EmptyState>
 		);
 	}
 
@@ -198,6 +194,34 @@ function Thread({
 	const [draft, setDraft] = useState("");
 	const [sending, setSending] = useState(false);
 	const [sendError, setSendError] = useState<string | null>(null);
+	// The message waiting on its author's confirmation before it is removed.
+	const [removing, setRemoving] = useState<string | null>(null);
+	const [removeBusy, setRemoveBusy] = useState(false);
+
+	const remove = async () => {
+		if (!removing) return;
+		setRemoveBusy(true);
+		try {
+			const response = await fetch(key, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ action: "remove", messageId: removing }),
+			});
+			if (!response.ok) {
+				const answer = (await response.json().catch(() => ({}))) as {
+					error?: string;
+				};
+				setSendError(
+					answer.error ?? "It could not be removed. Try again.",
+				);
+			}
+			await mutate();
+			void mutateList();
+		} finally {
+			setRemoveBusy(false);
+			setRemoving(null);
+		}
+	};
 
 	// Opening a conversation marks it read, so the list and the unread count
 	// are asked again once it has loaded.
@@ -215,12 +239,21 @@ function Thread({
 
 	if (error) {
 		return (
+			<LoadError
+				error={error}
+				subject="conversation"
+				onRetry={() => void mutate()}
+				inline
+			/>
+		);
+	}
+	if (!data) {
+		return (
 			<div className={styles.state}>
-				{describeFetchError(error, "conversation")}
+				<SkeletonText lines={4} />
 			</div>
 		);
 	}
-	if (!data) return <div className={styles.pick}>Loading</div>;
 
 	const { thread, messages } = data;
 
@@ -339,8 +372,27 @@ From the conversation at /inbox/?view=conversations&thread=${threadId}`.trim(),
 							<span className={styles.messageMeta}>
 								{message.mine ? "You" : message.authorName}
 								<span>{when(message.createdOn)}</span>
+								{message.mine &&
+									!message.removed &&
+									message.kind !== "proposal" && (
+										<button
+											type="button"
+											className={styles.messageRemove}
+											onClick={() =>
+												setRemoving(message.id)
+											}
+										>
+											Remove
+										</button>
+									)}
 							</span>
-							{message.kind === "proposal" ? (
+							{message.removed ? (
+								<p
+									className={`${styles.bubble} ${styles.bubbleRemoved}`}
+								>
+									This message was removed.
+								</p>
+							) : message.kind === "proposal" ? (
 								<ProposalCard
 									threadKey={key}
 									messageId={message.id}
@@ -395,6 +447,16 @@ From the conversation at /inbox/?view=conversations&thread=${threadId}`.trim(),
 					<span className={styles.formError}>{sendError}</span>
 				)}
 			</form>
+			{removing && (
+				<ConfirmDialog
+					title="Remove this message?"
+					body="Everyone in the conversation sees that a message was removed, but not what it said."
+					confirmLabel="Remove"
+					busy={removeBusy}
+					onConfirm={() => void remove()}
+					onCancel={() => setRemoving(null)}
+				/>
+			)}
 		</div>
 	);
 }

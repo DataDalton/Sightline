@@ -237,9 +237,9 @@ function isProse(type: string | null | undefined, key: string): boolean {
 
 const styleLabels: Record<string, string> = {
 	palette: "Palette",
-	series: "Series colours",
+	series: "Series colors",
 	conditions: "Conditional formatting",
-	colorScales: "Colour scales",
+	colorScales: "Color scales",
 	tooltip: "Tooltip",
 	xAxis: "X axis",
 	yAxis: "Y axis",

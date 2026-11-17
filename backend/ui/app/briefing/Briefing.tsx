@@ -922,7 +922,7 @@ export function Briefing({ firstName }: { firstName: string | null }) {
 												className={styles.railItemMeta}
 											>
 												{report.why === "favourite"
-													? "Favourite"
+													? "Favorite"
 													: report.why === "yours"
 														? "Yours"
 														: "You open it often"}

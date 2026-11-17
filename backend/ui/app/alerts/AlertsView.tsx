@@ -6,9 +6,10 @@ import { aftermathOf } from "../../lib/alerts/backtest";
 import useSWR from "swr";
 import type { AlertEvent, AlertRecord } from "../../lib/alerts/store";
 import { describeConditions } from "../../lib/explore/conditions";
-import { describeFetchError } from "../../lib/swr";
 import { ago, clock } from "../admin/when";
 import { ConfirmDialog } from "../components/shared/ConfirmDialog";
+import { EmptyState, emptyIcons } from "../components/shared/EmptyState";
+import { LoadError } from "../components/shared/ErrorState";
 import { SkeletonText } from "../components/shared/Skeleton";
 import { Toggle } from "../components/shared/Toggle";
 import { Modal } from "../components/shared/Modal";
@@ -532,18 +533,20 @@ export function AlertsPanel() {
 
 	if (error) {
 		return (
-			<div className={styles.state}>
-				{describeFetchError(error, "list")}
-			</div>
+			<LoadError
+				error={error}
+				subject="alerts"
+				onRetry={() => void mutate()}
+			/>
 		);
 	}
 
 	if (data?.enabled === false) {
 		return (
-			<div className={styles.state}>
-				Alerts are turned off for this app. An administrator can turn
-				them on under Administration, Notifications.
-			</div>
+			<EmptyState icon={emptyIcons.power} title="Alerts are turned off">
+				An administrator can turn them on under Administration,
+				Notifications.
+			</EmptyState>
 		);
 	}
 
@@ -575,42 +578,27 @@ export function AlertsPanel() {
 			{isLoading && !data ? (
 				<SkeletonText lines={4} />
 			) : alerts.length === 0 ? (
-				<div className={styles.empty}>
-					<span className={styles.emptyIcon} aria-hidden="true">
-						<svg
-							width="22"
-							height="22"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							strokeWidth="2"
-							strokeLinecap="round"
-							strokeLinejoin="round"
-						>
-							<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0" />
-						</svg>
-					</span>
-					<div className={styles.emptyText}>
-						<h2 className={styles.emptyTitle}>No alerts yet</h2>
-						<p className={styles.fieldHint}>
-							Pick a measure and a threshold here, or build the
-							numbers in Explore first and choose Alert from
-							there.
-						</p>
-					</div>
-					<div className={styles.emptyActions}>
-						<button
-							type="button"
-							className={styles.primary}
-							onClick={() => setDialog({ editing: null })}
-						>
-							New alert
-						</button>
-						<Link href="/explore/" className={styles.secondary}>
-							Open Explore
-						</Link>
-					</div>
-				</div>
+				<EmptyState
+					icon={emptyIcons.bell}
+					title="No alerts yet"
+					action={
+						<div className={styles.emptyActions}>
+							<button
+								type="button"
+								className={styles.primary}
+								onClick={() => setDialog({ editing: null })}
+							>
+								New alert
+							</button>
+							<Link href="/explore/" className={styles.secondary}>
+								Open Explore
+							</Link>
+						</div>
+					}
+				>
+					Pick a measure and a threshold here, or build the numbers in
+					Explore first and choose Alert from there.
+				</EmptyState>
 			) : (
 				<>
 					<div className={styles.toolbar}>

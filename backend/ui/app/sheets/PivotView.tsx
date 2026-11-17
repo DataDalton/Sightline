@@ -2,6 +2,7 @@
 
 import { formatValue, type FormatHint } from "../../lib/format";
 import type { PivotLayout, PivotTable } from "../../lib/sheets/definition";
+import { EmptyState, emptyIcons } from "../components/shared/EmptyState";
 import { Select } from "../components/shared/Select";
 import type { SourceMeta } from "../visuals/types";
 import styles from "./Sheets.module.css";
@@ -149,9 +150,9 @@ export function PivotGrid({
 }) {
 	if (table.columns.length === 0) {
 		return (
-			<div className={styles.empty}>
+			<EmptyState icon={emptyIcons.table} title="No values yet">
 				Choose at least one measure under Values to fill the pivot.
-			</div>
+			</EmptyState>
 		);
 	}
 	return (

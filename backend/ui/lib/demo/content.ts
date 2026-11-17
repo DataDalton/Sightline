@@ -551,7 +551,7 @@ export const categories: CategorySeed[] = [
 						slots: { by: "Account Group", measure: "Forecast" },
 					},
 					{
-						title: "By cost centre",
+						title: "By cost center",
 						template: "breakdown",
 						slots: {
 							by: "Cost Center",

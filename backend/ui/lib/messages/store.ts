@@ -69,6 +69,8 @@ export interface ThreadMessage {
 	// Suggest, whose details are in payload.
 	kind: string;
 	payload: unknown;
+	// Removed by its author. The body is empty when it is.
+	removed: boolean;
 }
 
 // The name the assistant posts under. Matches lib/upkeep/actor.
@@ -299,13 +301,15 @@ export async function listThreads(
 		        t.with_assistant, t.shared_conversation_id::text,
 		        t.visual_id::text,
 		        t.last_message_on::text, last.author_email AS last_author,
-		        left(last.body, 200) AS preview, r.read_on::text
+		        CASE WHEN last.removed_on IS NULL THEN left(last.body, 200)
+		             ELSE 'Message removed' END AS preview,
+		        r.read_on::text
 		 FROM threads t
 		 LEFT JOIN categories c ON c.category_id = t.category_id
 		 LEFT JOIN thread_reads r
 		   ON r.thread_id = t.thread_id AND r.user_email = $1
 		 LEFT JOIN LATERAL (
-		   SELECT author_email, body FROM thread_messages
+		   SELECT author_email, body, removed_on FROM thread_messages
 		   WHERE thread_id = t.thread_id
 		   ORDER BY created_on DESC LIMIT 1
 		 ) last ON TRUE
@@ -399,12 +403,13 @@ interface MessageRow {
 	created_on: string;
 	kind: string;
 	payload: unknown;
+	removed_on: string | null;
 }
 
 async function messagesOf(threadId: string): Promise<MessageRow[]> {
 	return sql<MessageRow>(
 		`SELECT message_id::text, author_email, body, created_on::text, kind,
-		        payload
+		        payload, removed_on::text
 		 FROM thread_messages WHERE thread_id = $1 ORDER BY created_on`,
 		[threadId],
 	);
@@ -418,12 +423,39 @@ function toMessage(row: MessageRow, me: string): ThreadMessage {
 			row.author_email.toLowerCase() === assistantAuthor.toLowerCase()
 				? assistantAuthor
 				: displayNameFromEmail(row.author_email),
-		body: row.body,
+		body: row.removed_on ? "" : row.body,
 		createdOn: row.created_on,
 		mine: row.author_email === me,
 		kind: row.kind,
-		payload: row.payload,
+		payload: row.removed_on ? null : row.payload,
+		removed: row.removed_on !== null,
 	};
+}
+
+// Removes a message its author wrote. Somebody else's message, or one in a
+// conversation the caller is not in, reads as not found.
+export async function removeMessage(
+	threadId: string,
+	messageId: string,
+	email: string,
+	groups: string[],
+): Promise<void> {
+	const me = email.toLowerCase();
+	const members = (await membersOf([threadId])).get(threadId) ?? [];
+	if (!canSee(members, me, groups)) {
+		throw new MessageError("Conversation not found", 404);
+	}
+	const removed = await sql<{ message_id: string }>(
+		`UPDATE thread_messages SET removed_on = now()
+		 WHERE thread_id::text = $1 AND message_id::text = $2
+		   AND lower(author_email) = $3 AND removed_on IS NULL
+		 RETURNING message_id::text`,
+		[threadId, messageId, me],
+	);
+	if (removed.length === 0) {
+		throw new MessageError("Message not found", 404);
+	}
+	forgetSummary(me);
 }
 
 // A conversation read by somebody granted review of it. Nothing is marked read

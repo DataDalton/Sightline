@@ -76,13 +76,13 @@ export async function GET(request: NextRequest) {
 		// A catalogue the caller cannot browse, or a warehouse that is not
 		// answering. Named, because "no catalogues" and "could not ask" call
 		// for different things.
-		console.error("Catalogue browse failed:", error);
+		console.error("Catalog browse failed:", error);
 		return NextResponse.json(
 			{
 				error:
 					error instanceof Error
 						? error.message
-						: "Could not read the catalogue.",
+						: "Could not read the catalog.",
 			},
 			{ status: 502 },
 		);

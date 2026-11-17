@@ -7,9 +7,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { Select } from "../components/shared/Select";
 import { SkeletonTable } from "../components/shared/Skeleton";
+import { EmptyState, emptyIcons } from "../components/shared/EmptyState";
+import { LoadError } from "../components/shared/ErrorState";
 import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { usePageTitle } from "../hooks/usePageTitle";
-import { describeFetchError } from "../../lib/swr";
 import { visualByType } from "../../lib/visuals/catalog";
 import styles from "./Dictionary.module.css";
 
@@ -127,13 +128,19 @@ export default function DictionaryView() {
 	);
 	usePageTitle("Dictionary");
 
-	const { data, error, isLoading } = useSWR<{ fields: Field[] }>(
+	const { data, error, isLoading, mutate } = useSWR<{ fields: Field[] }>(
 		"/api/dictionary",
 	);
 	const showSkeleton = useDeferredLoading(isLoading);
 
 	const [term, setTerm] = useState("");
 	const [source, setSource] = useState("");
+	// Opened on one dataset by a link, such as from the search palette. Read
+	// after mount, since the server render has no address to read.
+	useEffect(() => {
+		const named = new URLSearchParams(window.location.search).get("source");
+		if (named) setSource(named);
+	}, []);
 	const [shown, setShown] = useState<Shown>("all");
 	const [open, setOpen] = useState<Field | null>(null);
 
@@ -214,9 +221,11 @@ export default function DictionaryView() {
 	if (error) {
 		return (
 			<div className={styles.page}>
-				<div className={styles.state}>
-					{describeFetchError(error, "dictionary")}
-				</div>
+				<LoadError
+					error={error}
+					subject="dictionary"
+					onRetry={() => void mutate()}
+				/>
 			</div>
 		);
 	}
@@ -322,113 +331,131 @@ export default function DictionaryView() {
 						</div>
 					)}
 
-					<div className={styles.tableWrap} ref={scrollRef}>
-						<table className={styles.table}>
-							<thead>
-								<tr>
-									<th>Field</th>
-									<th>Source</th>
-									<th>Type</th>
-									<th>Definition</th>
-									<th className={styles.numeric}>Used on</th>
-									<th>Data rules</th>
-								</tr>
-							</thead>
-							<tbody>
-								{matching.slice(0, drawn).map((f) => (
-									<tr
-										key={`${f.sourceKey}.${f.name}`}
-										className={styles.row}
-										tabIndex={0}
-										onClick={() => setOpen(f)}
-										onKeyDown={(e) => {
-											// Enter and Space open it, the same as a click.
-											if (e.target !== e.currentTarget)
-												return;
-											if (
-												e.key === "Enter" ||
-												e.key === " "
-											) {
-												e.preventDefault();
-												setOpen(f);
-											}
-										}}
-										title="See where this is used"
-									>
-										<td>
-											<span className={styles.fieldName}>
-												{f.displayName ?? f.name}
-											</span>
-											<span
-												className={`${styles.kind} ${
-													f.kind === "measure"
-														? styles.kindMeasure
-														: ""
-												}`}
-											>
-												{f.kind}
-											</span>
-										</td>
-										<td className={styles.muted}>
-											{f.sourceTitle}
-										</td>
-										<td className={styles.muted}>
-											{readableType(f.dataType)}
-										</td>
-										<td className={styles.definition}>
-											{f.description ?? (
-												<span
-													className={styles.missing}
-												>
-													No definition written on the
-													source
-												</span>
-											)}
-										</td>
-										<td className={styles.numeric}>
-											{f.uses === 0 ? (
-												<span
-													className={styles.missing}
-												>
-													—
-												</span>
-											) : (
-												f.uses
-											)}
-										</td>
-										<td
-											className={styles.ruleCell}
-											onClick={(e) => e.stopPropagation()}
-										>
-											<FieldRules
-												field={f}
-												rules={rulesBySource.get(
-													f.sourceKey,
-												)}
-												onSaved={() =>
-													void mutateRules()
-												}
-											/>
-										</td>
-									</tr>
-								))}
-								{drawn < matching.length && (
-									<tr ref={sentinelRef}>
-										<td colSpan={5} className={styles.more}>
-											Loading more
-										</td>
-									</tr>
-								)}
-								{matching.length === 0 && (
+					{matching.length === 0 ? (
+						<EmptyState
+							icon={emptyIcons.search}
+							title="No fields match"
+						>
+							Try a shorter search, or choose a different source
+							or view above.
+						</EmptyState>
+					) : (
+						<div className={styles.tableWrap} ref={scrollRef}>
+							<table className={styles.table}>
+								<thead>
 									<tr>
-										<td colSpan={5}>
-											Nothing matches that.
-										</td>
+										<th>Field</th>
+										<th>Source</th>
+										<th>Type</th>
+										<th>Definition</th>
+										<th className={styles.numeric}>
+											Used on
+										</th>
+										<th>Data rules</th>
 									</tr>
-								)}
-							</tbody>
-						</table>
-					</div>
+								</thead>
+								<tbody>
+									{matching.slice(0, drawn).map((f) => (
+										<tr
+											key={`${f.sourceKey}.${f.name}`}
+											className={styles.row}
+											tabIndex={0}
+											onClick={() => setOpen(f)}
+											onKeyDown={(e) => {
+												// Enter and Space open it, the same as a click.
+												if (
+													e.target !== e.currentTarget
+												)
+													return;
+												if (
+													e.key === "Enter" ||
+													e.key === " "
+												) {
+													e.preventDefault();
+													setOpen(f);
+												}
+											}}
+											title="See where this is used"
+										>
+											<td>
+												<span
+													className={styles.fieldName}
+												>
+													{f.displayName ?? f.name}
+												</span>
+												<span
+													className={`${styles.kind} ${
+														f.kind === "measure"
+															? styles.kindMeasure
+															: ""
+													}`}
+												>
+													{f.kind}
+												</span>
+											</td>
+											<td className={styles.muted}>
+												{f.sourceTitle}
+											</td>
+											<td className={styles.muted}>
+												{readableType(f.dataType)}
+											</td>
+											<td className={styles.definition}>
+												{f.description ?? (
+													<span
+														className={
+															styles.missing
+														}
+													>
+														No definition written on
+														the source
+													</span>
+												)}
+											</td>
+											<td className={styles.numeric}>
+												{f.uses === 0 ? (
+													<span
+														className={
+															styles.missing
+														}
+													>
+														—
+													</span>
+												) : (
+													f.uses
+												)}
+											</td>
+											<td
+												className={styles.ruleCell}
+												onClick={(e) =>
+													e.stopPropagation()
+												}
+											>
+												<FieldRules
+													field={f}
+													rules={rulesBySource.get(
+														f.sourceKey,
+													)}
+													onSaved={() =>
+														void mutateRules()
+													}
+												/>
+											</td>
+										</tr>
+									))}
+									{drawn < matching.length && (
+										<tr ref={sentinelRef}>
+											<td
+												colSpan={6}
+												className={styles.more}
+											>
+												Loading more
+											</td>
+										</tr>
+									)}
+								</tbody>
+							</table>
+						</div>
+					)}
 				</>
 			)}
 

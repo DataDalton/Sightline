@@ -3,6 +3,8 @@
 import { useState } from "react";
 import useSWR from "swr";
 import { ago } from "../admin/when";
+import { LoadError } from "../components/shared/ErrorState";
+import { SkeletonText } from "../components/shared/Skeleton";
 import { conversationsKey, useAssistantStatus } from "./AssistantContext";
 import styles from "./Assist.module.css";
 
@@ -50,9 +52,9 @@ export function ConversationList({
 	// The narrow list in the floating panel, where each row is one line.
 	compact?: boolean;
 }) {
-	const { data, isLoading } = useSWR<{ conversations: Summary[] }>(
-		conversationsKey,
-	);
+	const { data, error, isLoading, mutate } = useSWR<{
+		conversations: Summary[];
+	}>(conversationsKey);
 	const { conversationId, openConversation, deleteConversation, busy } =
 		useAssistantStatus();
 	const [term, setTerm] = useState("");
@@ -81,8 +83,18 @@ export function ConversationList({
 				/>
 			)}
 
-			{isLoading && <p className={styles.historyEmpty}>Loading</p>}
-			{!isLoading && all.length === 0 && <EmptyState />}
+			{error && !data ? (
+				<LoadError
+					error={error}
+					subject="conversations"
+					onRetry={() => void mutate()}
+					inline
+				/>
+			) : isLoading ? (
+				<SkeletonText lines={4} />
+			) : (
+				all.length === 0 && <EmptyState />
+			)}
 			{!isLoading && all.length > 0 && shown.length === 0 && (
 				<p className={styles.historyEmpty}>
 					No conversation matches that.

@@ -48,7 +48,7 @@ export function SyncFreshness({ run }: { run: Run | null }) {
 			<div className={`${styles.notice} ${styles.noticeWarn}`}>
 				<div>
 					<div className={styles.noticeTitle}>
-						No catalogue sync has been recorded
+						No catalog sync has been recorded
 					</div>
 					<p className={styles.noticeBody}>
 						Everything below came from whatever was registered by
@@ -94,8 +94,8 @@ export function SyncFreshness({ run }: { run: Run | null }) {
 						It reached {run.completed} of {run.total} sources{" "}
 						{describe(run.startedOn)} and has not reported since, so
 						some of the list below may be current and some may not.
-						Running it again picks up from the catalogue as it
-						stands now.
+						Running it again picks up from the catalog as it stands
+						now.
 					</p>
 				</div>
 			</div>

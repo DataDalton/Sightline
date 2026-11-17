@@ -4,7 +4,6 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { NewRuleButton } from "../status/QualityView";
 import useSWR from "swr";
-import { describeFetchError } from "../../lib/swr";
 import { sanitizeSvg } from "../../lib/visuals/svgSanitize";
 import { formatCompact } from "../../lib/format";
 import { describeInterval } from "../../lib/freshness/history";
@@ -19,6 +18,7 @@ import { Select } from "../components/shared/Select";
 import { Toggle } from "../components/shared/Toggle";
 import { ErrorBoundary } from "../components/shared/ErrorBoundary";
 import { ConfirmDialog } from "../components/shared/ConfirmDialog";
+import { LoadError } from "../components/shared/ErrorState";
 import { AccessSettings } from "./AccessSettings";
 import { AccessReviewPane } from "./AccessReviewPane";
 import { ActivityPane } from "./ActivityPane";
@@ -214,9 +214,11 @@ export default function AdminView() {
 	const body = () => {
 		if (error) {
 			return (
-				<div className={styles.state}>
-					{describeFetchError(error, "pane")}
-				</div>
+				<LoadError
+					error={error}
+					subject="page"
+					onRetry={() => void mutate()}
+				/>
 			);
 		}
 
@@ -1089,7 +1091,7 @@ function ConfigurationSection({ group }: { group: PaneId }) {
 
 		if (!/\.svg$/i.test(file.name)) {
 			setFailure(
-				"Marks are SVG. A raster image cannot stay sharp at every size or take its colour from the theme.",
+				"Marks are SVG. A raster image cannot stay sharp at every size or take its color from the theme.",
 			);
 			return;
 		}
@@ -1284,14 +1286,14 @@ function ConfigurationSection({ group }: { group: PaneId }) {
 							</Field>
 
 							<Field
-								label="Colour"
-								hint="A mark drawn in fixed brand colours should keep them."
+								label="Color"
+								hint="A mark drawn in fixed brand colors should keep them."
 							>
 								<div className={styles.choiceRow}>
 									{(
 										[
 											[true, "Follow the theme"],
-											[false, "Keep its own colours"],
+											[false, "Keep its own colors"],
 										] as [boolean, string][]
 									).map(([value, label]) => (
 										<button
@@ -1377,7 +1379,7 @@ function ConfigurationSection({ group }: { group: PaneId }) {
 								So the connection is declared where the
 								deployment is declared: app.yaml for a
 								Databricks App, or .env when running locally.
-								The warehouse and catalogue above are different
+								The warehouse and catalog above are different
 								because they are read after the platform has
 								connected, so a wrong value stops reports
 								returning data and leaves this page working.
@@ -1564,7 +1566,7 @@ function ConfigurationSection({ group }: { group: PaneId }) {
 				{group === "editingRules" && (
 					<SettingGroup
 						title="What posts itself to Updates"
-						blurb="After the daily field sync. Somebody can add the reason afterwards. A change inside a pipeline cannot be seen from here, so a person or automation has to post it."
+						blurb="After the daily field sync. Somebody can add the reason afterward. A change inside a pipeline cannot be seen from here, so a person or automation has to post it."
 					>
 						<SwitchSetting
 							label="A field was added"
@@ -2024,8 +2026,8 @@ function SecuritySection({
 						<details className={styles.details}>
 							<summary>
 								{unreadable.length} source
-								{unreadable.length === 1 ? "" : "s"} the
-								catalogue walk could not read
+								{unreadable.length === 1 ? "" : "s"} the catalog
+								walk could not read
 							</summary>
 							<div className={styles.mono}>
 								{unreadable.join(", ")}
@@ -2511,7 +2513,7 @@ function SyncSources({
 					disabled={busy}
 					onClick={run}
 				>
-					{busy ? "Syncing" : "Sync from catalogue"}
+					{busy ? "Syncing" : "Sync from catalog"}
 				</button>
 			</div>
 			{result && <p className={styles.paneNote}>{result}</p>}
@@ -2592,9 +2594,12 @@ function FieldChanges({ refreshKey }: { refreshKey: string }) {
 
 	if (error) {
 		return (
-			<div className={styles.saveError}>
-				{describeFetchError(error, "missing fields")}
-			</div>
+			<LoadError
+				error={error}
+				subject="missing fields"
+				onRetry={() => void mutate()}
+				inline
+			/>
 		);
 	}
 	const sources = data?.sources ?? [];

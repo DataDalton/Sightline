@@ -30,14 +30,14 @@ const starter: string[] = [
 	"#dc2626",
 ];
 
-const defaultHelp = "Point at a colour to see where it goes on a report.";
+const defaultHelp = "Point at a color to see where it goes on a report.";
 
 function partHelp(part: ThemePart | null): string {
 	if (part === null) return defaultHelp;
 	if (part === "accent") {
 		return "Accent. Buttons, the selected tab and progress bars on the report.";
 	}
-	return `Chart colour ${part + 1}. The ${part === 0 ? "first" : `number ${part + 1}`} measure or category in any chart.`;
+	return `Chart color ${part + 1}. The ${part === 0 ? "first" : `number ${part + 1}`} measure or category in any chart.`;
 }
 
 export function ThemeCard({
@@ -234,7 +234,7 @@ export function ThemeManager({
 												store([...themes, theme])
 											}
 										>
-											Change colours
+											Change colors
 										</button>
 									)}
 								</>

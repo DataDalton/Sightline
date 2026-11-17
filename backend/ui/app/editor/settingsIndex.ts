@@ -80,7 +80,7 @@ export const editorSettings: EditorSetting[] = [
 		words: "display labels density height border weight legend",
 	},
 	{
-		label: "Series colours",
+		label: "Series colors",
 		where: visual,
 		panel: "visual",
 		section: "visual-series",
@@ -94,7 +94,7 @@ export const editorSettings: EditorSetting[] = [
 		words: "axis axes scale gridline reference",
 	},
 	{
-		label: "Colour rules and appearance",
+		label: "Color rules and appearance",
 		where: visual,
 		panel: "visual",
 		section: "visual-appearance",

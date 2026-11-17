@@ -113,8 +113,8 @@ function Colors({
 					type="button"
 					role="radio"
 					aria-checked={(value ?? "default") === name}
-					aria-label={name === "default" ? "Theme colour" : name}
-					title={name === "default" ? "Theme colour" : name}
+					aria-label={name === "default" ? "Theme color" : name}
+					title={name === "default" ? "Theme color" : name}
 					data-on={(value ?? "default") === name || undefined}
 					data-kind={name}
 					className={styles.colorSwatch}
@@ -171,7 +171,7 @@ function TextControls({
 					label="Align across"
 					value={style.align}
 					options={["left", "center", "right"] as const}
-					names={{ left: "Left", center: "Centre", right: "Right" }}
+					names={{ left: "Left", center: "Center", right: "Right" }}
 					onPick={(align) => onStyle({ align })}
 				/>
 			</Row>
@@ -184,9 +184,9 @@ function TextControls({
 					onPick={(valign) => onStyle({ valign })}
 				/>
 			</Row>
-			<Row label="Text colour">
+			<Row label="Text color">
 				<Colors
-					label="Text colour"
+					label="Text color"
 					value={style.textColor}
 					onPick={(textColor) => onStyle({ textColor })}
 				/>
@@ -253,7 +253,7 @@ export function ItemFormat({
 					</Row>
 					<Row label="Border">
 						<Colors
-							label="Border colour"
+							label="Border color"
 							allowNone
 							value={style.stroke}
 							onPick={(stroke) => onStyle({ stroke })}
@@ -293,7 +293,7 @@ export function ItemFormat({
 
 			{item.kind === "note" && (
 				<section className={styles.formatSection}>
-					<Row label="Colour">
+					<Row label="Color">
 						<div className={styles.colorRow}>
 							{noteColors.map((color) => (
 								<button
@@ -397,9 +397,9 @@ export function LinkFormat({
 						</span>
 					</div>
 				</Row>
-				<Row label="Colour">
+				<Row label="Color">
 					<Colors
-						label="Arrow colour"
+						label="Arrow color"
 						value={link.color}
 						onPick={(color) => onChange({ color })}
 					/>

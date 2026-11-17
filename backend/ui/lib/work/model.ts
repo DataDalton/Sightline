@@ -61,6 +61,9 @@ export interface WorkConfig {
 		securityReview: { enabled: boolean; workTypes: string[] };
 		// Days in a column before the people on it are reminded.
 		ageingDays: Record<string, number>;
+		// Days a request stays on the board after reaching Done, before it is
+		// archived. Null keeps done requests on the board.
+		archiveDoneAfterDays: number | null;
 	};
 }
 
@@ -201,8 +204,13 @@ export const defaultConfig: WorkConfig = {
 		onlyDevSecOpsDeploys: false,
 		securityReview: { enabled: false, workTypes: [] },
 		ageingDays: { inReview: 3, validating: 5, needsInfo: 7 },
+		archiveDoneAfterDays: 30,
 	},
 };
+
+// Which requests a list holds. Archived means closed as declined or a
+// duplicate, or done for longer than the configured days.
+export type ArchiveScope = "active" | "archived" | "all";
 
 // A stored configuration over the defaults, so a key added later has a value.
 export function withDefaults(

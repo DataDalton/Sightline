@@ -37,6 +37,8 @@ const paths: Record<string, string> = {
 	// A checklist line: a box with a tick.
 	criterion:
 		"M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11",
+	// An open eye, for somebody looking into a thread.
+	eye: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z",
 	// Anything else: a dot.
 	dot: "M12 12h.01",
 };
@@ -67,6 +69,10 @@ const kinds: Record<string, [keyof typeof paths, Tone]> = {
 	commentEdited: ["pencil", null],
 	commentRemoved: ["cross", null],
 	reminded: ["bell", "warn"],
+	threadLooking: ["eye", "info"],
+	threadNotLooking: ["eye", null],
+	threadResolved: ["check", "good"],
+	threadReopened: ["reopen", null],
 	// Updates
 	published: ["check", "good"],
 	corrected: ["pencil", "info"],

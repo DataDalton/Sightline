@@ -1,5 +1,6 @@
 "use client";
 
+import { useTabParam } from "../hooks/useTabParam";
 import { useMemo, useState } from "react";
 import useSWR from "swr";
 import { displayNameFromEmail } from "../../lib/auth/names";
@@ -7,6 +8,9 @@ import type { SharedTurn } from "../../lib/feedback/sharedLog";
 import { describeFetchError } from "../../lib/swr";
 import { EmptyState } from "../components/shared/EmptyState";
 import { Modal } from "../components/shared/Modal";
+import { LoadError } from "../components/shared/ErrorState";
+import { SkeletonTable } from "../components/shared/Skeleton";
+import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { Select } from "../components/shared/Select";
 import { Toggle } from "../components/shared/Toggle";
 import { usePageTitle } from "../hooks/usePageTitle";
@@ -63,7 +67,8 @@ interface Overview {
 	views: Reading[];
 }
 
-type Tab = "mine" | "waiting" | "all" | "log";
+const tabIds = ["mine", "waiting", "all", "log"] as const;
+type Tab = (typeof tabIds)[number];
 
 const kindLabels: Record<Kind, string> = {
 	groupChats: "Group conversations",
@@ -166,24 +171,34 @@ async function post(body: Record<string, unknown>): Promise<void> {
 export default function ReviewView() {
 	usePageTitle("Conversation review");
 	const { data, error, mutate } = useSWR<Overview>("/api/review");
-	const [tab, setTab] = useState<Tab>("mine");
+	const [tab, setTab] = useTabParam<Tab>("tab", tabIds, "mine");
 	const [asking, setAsking] = useState(false);
 	const [browsing, setBrowsing] = useState<Grant | null>(null);
 	const [deciding, setDeciding] = useState<{
 		grant: Grant;
 		decision: "approve" | "decline" | "revoke";
 	} | null>(null);
+	// Only a wait long enough to notice draws a placeholder.
+	const showSkeleton = useDeferredLoading(!data && !error);
 
-	if (error) {
+	if (error && !data) {
 		return (
 			<div className={styles.page}>
-				<p className={styles.empty}>
-					{describeFetchError(error, "review")}
-				</p>
+				<LoadError
+					error={error}
+					subject="review"
+					onRetry={() => void mutate()}
+				/>
 			</div>
 		);
 	}
-	if (!data) return <div className={styles.page} />;
+	if (!data) {
+		return (
+			<div className={styles.page}>
+				{showSkeleton && <SkeletonTable rows={5} columns={4} />}
+			</div>
+		);
+	}
 	const canAsk = data.mayRequest.groupChats || data.mayRequest.assistant;
 	const pending = data.all.filter((grant) => grant.state === "pending");
 	const tabs: [Tab, string][] = [

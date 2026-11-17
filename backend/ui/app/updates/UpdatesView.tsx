@@ -1,7 +1,10 @@
 "use client";
 
+import { useTabParam } from "../hooks/useTabParam";
 import { TabStrip } from "../components/shared/TabStrip";
 import { EmptyState, emptyIcons } from "../components/shared/EmptyState";
+import { LoadError } from "../components/shared/ErrorState";
+import { SkeletonText } from "../components/shared/Skeleton";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import useSWRInfinite from "swr/infinite";
@@ -1612,7 +1615,9 @@ function DetailDialog({
 	onEdit: (update: Update) => void;
 	onClose: () => void;
 }) {
-	const { data, mutate } = useSWR<Detail>(`/api/changes?id=${updateId}`);
+	const { data, error, mutate } = useSWR<Detail>(
+		`/api/changes?id=${updateId}`,
+	);
 	const choices = useUpdateChoices();
 	const [note, setNote] = useState("");
 	const [failure, setFailure] = useState<string | null>(null);
@@ -1627,7 +1632,24 @@ function DetailDialog({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [updateId]);
 
-	if (!data) return null;
+	if (!data) {
+		// The dialog opens at once, so the click is answered while the
+		// update loads, and says so if it never does.
+		return (
+			<Modal isOpen onClose={onClose} title="Update" width="760px">
+				{error ? (
+					<LoadError
+						error={error}
+						subject="update"
+						onRetry={() => void mutate()}
+						inline
+					/>
+				) : (
+					<SkeletonText lines={6} />
+				)}
+			</Modal>
+		);
+	}
 	const { update } = data;
 	const mine = update.createdBy.toLowerCase() === selfEmail?.toLowerCase();
 	const canChange = mine || canModerate;
@@ -2220,7 +2242,11 @@ export default function UpdatesView() {
 	});
 	const choices = useUpdateChoices();
 	const { data: me } = useSWR<{ email: string }>("/api/user");
-	const [tab, setTab] = useState<"timeline" | "calendar" | "following">(
+	// "view" rather than "tab", since this sits inside Data status, whose own
+	// tab already holds that name in the address.
+	const [tab, setTab] = useTabParam(
+		"view",
+		["timeline", "calendar", "following"] as const,
 		"timeline",
 	);
 	const [term, setTerm] = useState("");
@@ -2272,6 +2298,7 @@ export default function UpdatesView() {
 	};
 	const {
 		data: pages,
+		error: timelineError,
 		size,
 		setSize,
 		isValidating: loadingPages,
@@ -2446,6 +2473,16 @@ export default function UpdatesView() {
 						</div>
 					)}
 
+					{!firstPage &&
+						(timelineError ? (
+							<LoadError
+								error={timelineError}
+								subject="updates"
+								onRetry={() => void mutateTimeline()}
+							/>
+						) : (
+							<SkeletonText lines={5} />
+						))}
 					{firstPage && shown.length === 0 && (
 						<EmptyState
 							icon={emptyIcons.send}

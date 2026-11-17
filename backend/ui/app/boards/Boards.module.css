@@ -566,43 +566,15 @@
 	padding: var(--space-1) var(--space-2);
 }
 
+/* Holds the empty state in the middle of the canvas, without catching the
+   clicks that start drawing on it. */
 .empty {
 	position: absolute;
 	top: 50%;
 	left: 50%;
 	transform: translate(-50%, -50%);
 	width: min(440px, calc(100% - 32px));
-	padding: var(--space-5);
-	border-radius: var(--radius-lg);
-	border: 1px dashed var(--border-default);
-	background: var(--surface-raised);
-	text-align: center;
-	color: var(--text-secondary);
-	font-size: var(--text-md);
-	line-height: 1.5;
 	pointer-events: none;
-}
-
-.emptyTitle {
-	font-size: var(--text-lg);
-	font-weight: 600;
-	color: var(--text-primary);
-	margin-bottom: var(--space-2);
-}
-
-.missing {
-	display: flex;
-	flex-direction: column;
-	align-items: flex-start;
-	gap: var(--space-3);
-	padding: var(--space-6) var(--space-5);
-	color: var(--text-secondary);
-}
-
-.missingTitle {
-	font-size: var(--text-2xl);
-	font-weight: 600;
-	color: var(--text-primary);
 }
 
 /* --- Shared controls ------------------------------------------------------ */

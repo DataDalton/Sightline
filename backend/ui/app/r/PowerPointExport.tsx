@@ -118,7 +118,7 @@ export function PowerPointDialog({
 				<p className={form.hint}>
 					Tables and common charts stay editable in PowerPoint, with
 					their numbers under Edit Data. Other charts come as shapes
-					you can move and recolour. It holds what you can see, as of
+					you can move and recolor. It holds what you can see, as of
 					now.
 				</p>
 				<label className={form.field}>

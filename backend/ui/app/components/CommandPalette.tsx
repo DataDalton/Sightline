@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import type { SearchTarget, TargetKind } from "../../lib/platform/search";
-import { rankTarget } from "../../lib/platform/searchMatch";
+import { isLooseMatch, rankTarget } from "../../lib/platform/searchMatch";
 import { useAssistantActions } from "../assist/AssistantContext";
 import { useUser } from "../context/UserContext";
 import styles from "./CommandPalette.module.css";
@@ -32,7 +32,15 @@ const kindIcons: Record<TargetKind, string> = {
 	personal: "M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z",
 	shared: "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M23 21v-2a4 4 0 0 0-3-3.87",
 	view: "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z",
+	// A board of columns, as the navigation draws the work queue.
+	request: "M3 4h18v16H3zM9 4v16M15 4v16M5 7h2M11 7h2M17 7h2M11 10h2",
+	dataset:
+		"M12 8c4.97 0 9-1.34 9-3s-4.03-3-9-3-9 1.34-9 3 4.03 3 9 3zM21 12c0 1.66-4 3-9 3s-9-1.34-9-3M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5",
+	sheet: "M3 3h18v18H3zM3 9h18M3 15h18M9 3v18",
+	board: "M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z",
+	update: "M3 11l18-8-8 18-2-8-8-2z",
 	action: "M9 18l6-6-6-6",
+	admin: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z",
 };
 
 // The row that hands what was typed to the assistant, kept apart from the
@@ -61,7 +69,13 @@ const groupOrder: { kind: TargetKind; label: string }[] = [
 	{ kind: "personal", label: "My pages" },
 	{ kind: "shared", label: "Shared with me" },
 	{ kind: "view", label: "Saved views" },
+	{ kind: "request", label: "Requests" },
+	{ kind: "dataset", label: "Datasets" },
+	{ kind: "sheet", label: "Sheets" },
+	{ kind: "board", label: "Boards" },
+	{ kind: "update", label: "Updates" },
 	{ kind: "action", label: "Go to" },
+	{ kind: "admin", label: "Administration" },
 ];
 
 export function CommandPalette({
@@ -117,7 +131,7 @@ export function CommandPalette({
 		const trimmed = query.trim().toLowerCase();
 		if (!trimmed) return initial;
 
-		return targets
+		const ranked = targets
 			.map((target) => {
 				const rank = rankTarget(
 					target.title,
@@ -128,7 +142,11 @@ export function CommandPalette({
 			})
 			.filter((row): row is { target: SearchTarget; rank: number } =>
 				Boolean(row),
-			)
+			);
+		// Letters scattered through a title are kept only when nothing holds
+		// the query whole, so they never sit above the thing actually named.
+		const whole = ranked.filter((row) => !isLooseMatch(row.rank, trimmed));
+		return (whole.length > 0 ? whole : ranked)
 			.sort(
 				(a, b) =>
 					b.rank - a.rank ||
@@ -151,12 +169,25 @@ export function CommandPalette({
 				? [{ label: "Jump back in", items: results }]
 				: [];
 		}
+		// Groups in the order of their best result, since the results arrive
+		// strongest first, so what matches best is at the top and is what Enter
+		// opens, whichever kind of thing it is.
+		const firstAt = new Map<TargetKind, number>();
+		results.forEach((target, index) => {
+			if (!firstAt.has(target.kind)) firstAt.set(target.kind, index);
+		});
 		const found = groupOrder
 			.map(({ kind, label }) => ({
+				kind,
 				label,
 				items: results.filter((t) => t.kind === kind),
 			}))
-			.filter((group) => group.items.length > 0);
+			.filter((group) => group.items.length > 0)
+			.sort(
+				(a, b) =>
+					(firstAt.get(a.kind) ?? 0) - (firstAt.get(b.kind) ?? 0),
+			)
+			.map(({ label, items }) => ({ label, items }));
 		if (!asking) return found;
 		const askRow = {
 			label: "Ask the assistant",
@@ -366,7 +397,7 @@ export function CommandPalette({
 													height="13"
 													viewBox="0 0 24 24"
 													fill="currentColor"
-													aria-label="Favourite"
+													aria-label="Favorite"
 												>
 													<path d="M12 2l3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z" />
 												</svg>

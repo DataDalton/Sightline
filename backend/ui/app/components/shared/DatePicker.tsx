@@ -18,6 +18,7 @@ import styles from "./DatePicker.module.css";
 // the panel is anchored to the field wherever it is on screen.
 
 const weekdays = ["S", "M", "T", "W", "T", "F", "S"];
+const yearsShown = 12;
 const monthNames = [
 	"January",
 	"February",
@@ -95,6 +96,9 @@ export function DatePicker({
 	ariaLabel,
 	placeholder = "Any date",
 	className,
+	size = "compact",
+	disabled,
+	title,
 }: {
 	// An ISO date, or empty for no date chosen.
 	value: string;
@@ -105,8 +109,17 @@ export function DatePicker({
 	ariaLabel?: string;
 	placeholder?: string;
 	className?: string;
+	// Compact in a filter strip, the height of a text input in a form.
+	size?: "compact" | "form";
+	disabled?: boolean;
+	// Says why the field is locked, where it is.
+	title?: string;
 }) {
 	const [open, setOpen] = useState(false);
+	// Days of one month, the months of one year, or a run of years. The title
+	// steps out to the wider view, and a choice there steps back in, so a date
+	// years away is three clicks rather than dozens of presses on an arrow.
+	const [view, setView] = useState<"days" | "months" | "years">("days");
 	const [box, setBox] = useState<{
 		left: number;
 		top?: number;
@@ -182,6 +195,7 @@ export function DatePicker({
 		const at = selected ?? today;
 		setCursor(at);
 		setMonth(new Date(at.getFullYear(), at.getMonth(), 1));
+		setView("days");
 		// Capture, so a scroll inside a panel is seen as well as one on the
 		// page. A fixed panel does not move with what it is anchored to.
 		window.addEventListener("scroll", place, true);
@@ -253,6 +267,41 @@ export function DatePicker({
 
 	const days = useMemo(() => gridFor(month), [month]);
 
+	const year = month.getFullYear();
+	// Twelve years to a page, starting on a multiple of twelve so paging
+	// forward and back always lands on the same pages.
+	const firstYear = Math.floor(year / yearsShown) * yearsShown;
+
+	// A month or a year is open to choice when any day of it is.
+	const monthOutOfRange = (y: number, m: number) =>
+		outOfRange(new Date(y, m, 1)) && outOfRange(new Date(y, m + 1, 0));
+	const yearOutOfRange = (y: number) =>
+		outOfRange(new Date(y, 0, 1)) && outOfRange(new Date(y, 11, 31));
+
+	// Opens a month in the day view, keeping the day of the month the cursor
+	// was on where that month has it.
+	const openMonth = (y: number, m: number) => {
+		const last = new Date(y, m + 1, 0).getDate();
+		setMonth(new Date(y, m, 1));
+		setCursor(new Date(y, m, Math.min(cursor.getDate(), last)));
+		setView("days");
+	};
+
+	const step = (direction: -1 | 1) => {
+		if (view === "days") setMonth(addMonths(month, direction));
+		else if (view === "months")
+			setMonth(new Date(year + direction, month.getMonth(), 1));
+		else
+			setMonth(
+				new Date(year + direction * yearsShown, month.getMonth(), 1),
+			);
+	};
+
+	const stepLabel = (direction: -1 | 1) =>
+		`${direction < 0 ? "Previous" : "Next"} ${
+			view === "days" ? "month" : view === "months" ? "year" : "years"
+		}`;
+
 	// The field itself. Written the way the rest of the page writes a date,
 	// rather than in whatever order the browser would have chosen.
 	const label = selected
@@ -263,10 +312,12 @@ export function DatePicker({
 		<div className={styles.wrap} ref={wrapRef}>
 			<button
 				type="button"
-				className={`${styles.field} ${className ?? ""} ${
-					selected ? "" : styles.empty
-				}`}
+				className={`${styles.field} ${
+					size === "form" ? styles.fieldForm : ""
+				} ${className ?? ""} ${selected ? "" : styles.empty}`}
 				aria-label={ariaLabel}
+				title={title}
+				disabled={disabled}
 				aria-haspopup="dialog"
 				aria-expanded={open}
 				onClick={() => setOpen((v) => !v)}
@@ -306,6 +357,18 @@ export function DatePicker({
 						}
 						role="dialog"
 						aria-label={ariaLabel ?? "Choose a date"}
+						onKeyDown={(e) => {
+							// Steps back out of the wider views before it closes.
+							if (e.key !== "Escape") return;
+							e.preventDefault();
+							e.stopPropagation();
+							if (view !== "days") {
+								setView(view === "years" ? "months" : "days");
+								return;
+							}
+							close();
+							wrapRef.current?.querySelector("button")?.focus();
+						}}
 						style={{
 							left: box.left,
 							top: box.top,
@@ -316,8 +379,8 @@ export function DatePicker({
 							<button
 								type="button"
 								className={styles.step}
-								aria-label="Previous month"
-								onClick={() => setMonth(addMonths(month, -1))}
+								aria-label={stepLabel(-1)}
+								onClick={() => step(-1)}
 							>
 								<svg
 									width="14"
@@ -332,15 +395,35 @@ export function DatePicker({
 									<path d="M15 6l-6 6 6 6" />
 								</svg>
 							</button>
-							<span className={styles.month} aria-live="polite">
-								{monthNames[month.getMonth()]}{" "}
-								{month.getFullYear()}
-							</span>
+							<button
+								type="button"
+								className={styles.month}
+								aria-live="polite"
+								disabled={view === "years"}
+								aria-label={
+									view === "days"
+										? `${monthNames[month.getMonth()]} ${year}, choose a month`
+										: view === "months"
+											? `${year}, choose a year`
+											: undefined
+								}
+								onClick={() =>
+									setView(
+										view === "days" ? "months" : "years",
+									)
+								}
+							>
+								{view === "days"
+									? `${monthNames[month.getMonth()]} ${year}`
+									: view === "months"
+										? year
+										: `${firstYear} to ${firstYear + yearsShown - 1}`}
+							</button>
 							<button
 								type="button"
 								className={styles.step}
-								aria-label="Next month"
-								onClick={() => setMonth(addMonths(month, 1))}
+								aria-label={stepLabel(1)}
+								onClick={() => step(1)}
 							>
 								<svg
 									width="14"
@@ -357,50 +440,137 @@ export function DatePicker({
 							</button>
 						</div>
 
-						<div className={styles.weekdays} aria-hidden="true">
-							{weekdays.map((day, i) => (
-								<span key={i}>{day}</span>
-							))}
-						</div>
+						{view === "months" && (
+							<div className={styles.picks}>
+								{monthNames.map((name, m) => {
+									const isSelected =
+										selected !== null &&
+										selected.getFullYear() === year &&
+										selected.getMonth() === m;
+									const isNow =
+										today.getFullYear() === year &&
+										today.getMonth() === m;
+									return (
+										<button
+											key={name}
+											type="button"
+											className={`${styles.pick} ${
+												isSelected
+													? styles.selected
+													: ""
+											} ${isNow ? styles.today : ""}`}
+											aria-label={`${name} ${year}`}
+											aria-pressed={isSelected}
+											disabled={monthOutOfRange(year, m)}
+											onClick={() => openMonth(year, m)}
+										>
+											{name.slice(0, 3)}
+										</button>
+									);
+								})}
+							</div>
+						)}
 
-						{/* Buttons rather than a grid role. A grid needs rows
+						{view === "years" && (
+							<div className={styles.picks}>
+								{Array.from(
+									{ length: yearsShown },
+									(_, i) => firstYear + i,
+								).map((y) => {
+									const isSelected =
+										selected !== null &&
+										selected.getFullYear() === y;
+									return (
+										<button
+											key={y}
+											type="button"
+											className={`${styles.pick} ${
+												isSelected
+													? styles.selected
+													: ""
+											} ${
+												today.getFullYear() === y
+													? styles.today
+													: ""
+											}`}
+											aria-pressed={isSelected}
+											disabled={yearOutOfRange(y)}
+											onClick={() => {
+												setMonth(
+													new Date(
+														y,
+														month.getMonth(),
+														1,
+													),
+												);
+												setView("months");
+											}}
+										>
+											{y}
+										</button>
+									);
+								})}
+							</div>
+						)}
+
+						{view === "days" && (
+							<>
+								<div
+									className={styles.weekdays}
+									aria-hidden="true"
+								>
+									{weekdays.map((day, i) => (
+										<span key={i}>{day}</span>
+									))}
+								</div>
+
+								{/* Buttons rather than a grid role. A grid needs rows
 						    to be valid and a date grid has none worth
 						    announcing, so each day carries its own full date
 						    instead and the arrows walk between them. */}
-						<div
-							className={styles.grid}
-							ref={gridRef}
-							onKeyDown={onGridKey}
-						>
-							{days.map((day) => {
-								const outside =
-									day.getMonth() !== month.getMonth();
-								const disabled = outOfRange(day);
-								const isSelected =
-									selected !== null && sameDay(day, selected);
-								return (
-									<button
-										key={iso(day)}
-										type="button"
-										data-day={iso(day)}
-										className={`${styles.day} ${
-											outside ? styles.outside : ""
-										} ${isSelected ? styles.selected : ""} ${
-											sameDay(day, today)
-												? styles.today
-												: ""
-										}`}
-										tabIndex={sameDay(day, cursor) ? 0 : -1}
-										aria-label={`${monthNames[day.getMonth()]} ${day.getDate()}, ${day.getFullYear()}`}
-										aria-pressed={isSelected}
-										disabled={disabled}
-										onClick={() => choose(day)}
-									>
-										{day.getDate()}
-									</button>
-								);
-							})}
-						</div>
+								<div
+									className={styles.grid}
+									ref={gridRef}
+									onKeyDown={onGridKey}
+								>
+									{days.map((day) => {
+										const outside =
+											day.getMonth() !== month.getMonth();
+										const disabled = outOfRange(day);
+										const isSelected =
+											selected !== null &&
+											sameDay(day, selected);
+										return (
+											<button
+												key={iso(day)}
+												type="button"
+												data-day={iso(day)}
+												className={`${styles.day} ${
+													outside
+														? styles.outside
+														: ""
+												} ${isSelected ? styles.selected : ""} ${
+													sameDay(day, today)
+														? styles.today
+														: ""
+												}`}
+												tabIndex={
+													sameDay(day, cursor)
+														? 0
+														: -1
+												}
+												aria-label={`${monthNames[day.getMonth()]} ${day.getDate()}, ${day.getFullYear()}`}
+												aria-pressed={isSelected}
+												disabled={disabled}
+												onClick={() => choose(day)}
+											>
+												{day.getDate()}
+											</button>
+										);
+									})}
+								</div>
+							</>
+						)}
 
 						<div className={styles.foot}>
 							<button

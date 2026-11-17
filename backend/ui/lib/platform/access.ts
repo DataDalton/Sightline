@@ -645,7 +645,7 @@ export async function getAccessContext(
 				} catch (error) {
 					partial.add(context);
 					console.error(
-						"Catalogue reachability unavailable, serving explicit grants only:",
+						"Catalog reachability unavailable, serving explicit grants only:",
 						error,
 					);
 				}

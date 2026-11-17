@@ -516,7 +516,7 @@ export async function POST(request: NextRequest) {
 		}
 
 		return NextResponse.json(
-			{ error: "Unrecognised action." },
+			{ error: "Unrecognized action." },
 			{ status: 400 },
 		);
 	} catch (error) {

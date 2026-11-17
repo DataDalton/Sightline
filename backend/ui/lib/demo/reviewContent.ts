@@ -114,11 +114,11 @@ export async function seedUpdates(): Promise<void> {
 	const entries = [
 		{
 			type: "dataChange",
-			title: "Revenue now excludes cancelled orders",
-			body: "Cancelled orders were counted until they were refunded. They now leave Revenue on the day they are cancelled.",
+			title: "Revenue now excludes canceled orders",
+			body: "Canceled orders were counted until they were refunded. They now leave Revenue on the day they are canceled.",
 			impact: "notable",
 			before: "Included until refunded",
-			after: "Excluded when cancelled",
+			after: "Excluded when canceled",
 			postedDaysAgo: 2,
 			startsInDays: null,
 			incidentState: null,
@@ -137,7 +137,7 @@ export async function seedUpdates(): Promise<void> {
 		{
 			type: "maintenance",
 			title: "Sales warehouse maintenance",
-			body: "Sales figures stop updating during this window and catch up afterwards.",
+			body: "Sales figures stop updating during this window and catch up afterward.",
 			impact: "notable",
 			before: null,
 			after: null,

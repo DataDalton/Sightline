@@ -58,8 +58,8 @@ export function FavouriteButton({
 			onClick={toggle}
 			disabled={busy}
 			aria-pressed={on}
-			title={on ? "Remove from favourites" : "Add to favourites"}
-			aria-label={on ? "Remove from favourites" : "Add to favourites"}
+			title={on ? "Remove from favorites" : "Add to favorites"}
+			aria-label={on ? "Remove from favorites" : "Add to favorites"}
 		>
 			<svg
 				width="16"

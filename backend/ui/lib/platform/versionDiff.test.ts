@@ -246,7 +246,7 @@ test("a change of theme is recorded, and a version from before themes is not", (
 		"Changed the theme",
 	]);
 	assert.deepEqual(text({ theme: "ocean" }, { theme: null }), [
-		"Went back to the app's own colours",
+		"Went back to the app's own colors",
 	]);
 	assert.deepEqual(text({}, { theme: "ocean" }), [
 		"Saved with no visible change",

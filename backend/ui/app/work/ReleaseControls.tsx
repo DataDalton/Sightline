@@ -3,6 +3,7 @@
 import { useState } from "react";
 import useSWR from "swr";
 import type { Release } from "../../lib/work/releases";
+import { DatePicker } from "../components/shared/DatePicker";
 import { Modal } from "../components/shared/Modal";
 import { Select } from "../components/shared/Select";
 import { Toggle } from "../components/shared/Toggle";
@@ -142,11 +143,12 @@ export function ReleaseDialog({
 				</label>
 				<label className={styles.field}>
 					<span>Date</span>
-					<input
-						type="date"
-						className={styles.input}
+					<DatePicker
+						size="form"
 						value={target}
-						onChange={(e) => setTarget(e.target.value)}
+						ariaLabel="Date"
+						placeholder="Choose a date"
+						onChange={setTarget}
 					/>
 					<span className={styles.hint}>
 						Every item in the release takes this as its target.

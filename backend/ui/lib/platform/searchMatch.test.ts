@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { rankTarget, scoreMatch } from "./searchMatch.js";
+import { isLooseMatch, rankTarget, scoreMatch } from "./searchMatch.js";
 
 test("an empty query matches everything equally", () => {
 	assert.equal(scoreMatch("Sales pipeline", ""), 0);
@@ -63,4 +63,17 @@ test("matching neither the title nor the rest is no match", () => {
 		rankTarget("Quarterly figures", "rebate detail", "zzzz"),
 		null,
 	);
+});
+
+test("a scattered match is loose and a whole word is not", () => {
+	const scattered = rankTarget("The monthly expense summary", "", "themes");
+	const whole = rankTarget("Themes", "", "themes");
+	assert.ok(scattered !== null && isLooseMatch(scattered, "themes"));
+	assert.ok(whole !== null && !isLooseMatch(whole, "themes"));
+	const inKeywords = rankTarget(
+		"Colour sets",
+		"themes for reports",
+		"themes",
+	);
+	assert.ok(inKeywords !== null && !isLooseMatch(inKeywords, "themes"));
 });

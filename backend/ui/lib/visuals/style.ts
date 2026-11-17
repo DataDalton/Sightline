@@ -322,7 +322,7 @@ export const palettePresets: PalettePreset[] = [
 		id: "pair",
 		label: "Blue and amber",
 		tokens: ["chart-1", "chart-3"],
-		note: "Two series that stay apart in print, in greyscale, and for the most common form of colour blindness. The safest choice when there are only two.",
+		note: "Two series that stay apart in print, in grayscale, and for the most common form of color blindness. The safest choice when there are only two.",
 	},
 	{
 		id: "spread",
@@ -346,7 +346,7 @@ export const palettePresets: PalettePreset[] = [
 		id: "status",
 		label: "Status",
 		tokens: ["success", "warning", "danger", "info"],
-		note: "Only where the categories really are good, watch, bad. Anywhere else this asserts a judgement the data does not carry.",
+		note: "Only where the categories really are good, watch, bad. Anywhere else this asserts a judgment the data does not carry.",
 	},
 ];
 

@@ -6,6 +6,7 @@ import {
 	MessageError,
 	openThread,
 	proposalOf,
+	removeMessage,
 	reply,
 	updateProposal,
 } from "@/lib/messages/store";
@@ -59,6 +60,7 @@ export async function GET(request: NextRequest, { params }: Context) {
 }
 
 // { body }: a reply.
+// { action: "remove", messageId }: takes back a message the caller wrote.
 // { action: "apply" | "suggest", messageId }: a change the assistant proposed,
 // applied by somebody who can edit the report or suggested by somebody who can
 // suggest, each under their own permissions.
@@ -69,6 +71,24 @@ export async function POST(request: NextRequest, { params }: Context) {
 	if (!isUuid(id)) return notFound();
 
 	const input = ((await readJson(request)) ?? {}) as Record<string, unknown>;
+	if (input.action === "remove") {
+		try {
+			const policy = await resolvePolicyClass(identity);
+			await removeMessage(
+				id,
+				String(input.messageId ?? ""),
+				identity.email,
+				policy.grants,
+			);
+			return privateJson({ removed: true });
+		} catch (error) {
+			if (error instanceof MessageError) {
+				return privateJson({ error: error.message }, error.status);
+			}
+			console.error("Message could not be removed:", error);
+			return privateJson({ error: "Internal error" }, 500);
+		}
+	}
 	if (input.action === "apply" || input.action === "suggest") {
 		return decideProposal(
 			identity,

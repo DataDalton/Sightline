@@ -1,5 +1,6 @@
 "use client";
 
+import { describeFetchError } from "../../../lib/swr";
 import styles from "./ErrorState.module.css";
 
 // What an unhandled failure looks like, wherever it is caught.
@@ -80,5 +81,48 @@ export function ErrorState({
 
 			{digest && <div className={styles.digest}>Reference {digest}</div>}
 		</div>
+	);
+}
+
+// A request for what a page or panel shows that did not succeed.
+//
+// The same screen as an unhandled failure, worded from the response. Something
+// the reader may not open offers no retry, because asking again gets the same
+// answer, and an ended session offers a reload, which is what signs them back in.
+export function LoadError({
+	error,
+	subject,
+	onRetry,
+	inline,
+}: {
+	error: unknown;
+	// What was being loaded, as it reads after "the", such as "report".
+	subject: string;
+	onRetry?: () => void;
+	inline?: boolean;
+}) {
+	const status = (error as { status?: number } | null)?.status;
+	const refused = status === 403 || status === 404;
+	const signedOut = status === 401;
+	return (
+		<ErrorState
+			title={
+				refused
+					? "Not available to you"
+					: signedOut
+						? "Your session has ended"
+						: `The ${subject} did not load`
+			}
+			body={describeFetchError(error, subject)}
+			inline={inline}
+			onRetry={
+				refused
+					? undefined
+					: signedOut
+						? () => window.location.reload()
+						: onRetry
+			}
+			retryLabel={signedOut ? "Reload" : "Try again"}
+		/>
 	);
 }

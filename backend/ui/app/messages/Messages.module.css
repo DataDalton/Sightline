@@ -175,41 +175,6 @@
 
 /* --- conversations in the inbox --- */
 
-.empty {
-	display: flex;
-	align-items: flex-start;
-	gap: var(--space-3);
-	max-width: 560px;
-	padding: var(--space-4);
-	border: 1px dashed var(--border-default);
-	border-radius: var(--radius-lg);
-}
-
-.emptyIcon {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	flex-shrink: 0;
-	width: 40px;
-	height: 40px;
-	border-radius: var(--radius-md);
-	background: color-mix(in srgb, var(--brand) 16%, transparent);
-	color: var(--brand-text);
-}
-
-.emptyTitle {
-	margin: 0;
-	font-size: var(--text-md);
-	font-weight: 600;
-}
-
-.emptyText {
-	margin: 4px 0 0;
-	color: var(--text-secondary);
-	font-size: var(--text-sm);
-	text-wrap: pretty;
-}
-
 /* The list and the open conversation, side by side and as tall as the
    window allows, so a long conversation scrolls inside itself rather than
    taking the page with it. */
@@ -468,6 +433,28 @@
 .messageMeta span {
 	font-weight: 400;
 	color: var(--text-muted);
+}
+
+/* Shown on the reader's own messages, quiet until it is reached for. */
+.messageRemove {
+	padding: 0;
+	background: none;
+	color: var(--text-muted);
+	font: inherit;
+	font-weight: 400;
+	cursor: pointer;
+}
+
+.messageRemove:hover {
+	color: var(--danger);
+	text-decoration: underline;
+}
+
+.bubbleRemoved {
+	background: transparent;
+	border: 1px dashed var(--border-default);
+	color: var(--text-muted);
+	font-style: italic;
 }
 
 .bubble {

@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 import { sql, transaction } from "../data/lakebase";
 import { notify, safeLink } from "../notify/store";
+import { dropPastedWith } from "./attachments";
 import {
 	canSee,
 	loadConfig,
@@ -15,6 +16,7 @@ import {
 	numberOfKey,
 	ownersFor,
 	refuseMove,
+	type ArchiveScope,
 	type FieldChange,
 	type TrackedField,
 	type WorkConfig,
@@ -227,7 +229,8 @@ export async function recordEvent(
 export async function tellAbout(
 	itemId: string,
 	key: string,
-	except: string,
+	// Whoever did it, and anybody already told about it more directly.
+	except: string | string[],
 	title: string,
 	body: string,
 	extra: string[] = [],
@@ -243,7 +246,8 @@ export async function tellAbout(
 		...rows.map((r) => r.email.toLowerCase()),
 		...extra.map((e) => e.toLowerCase()),
 	]);
-	people.delete(except.toLowerCase());
+	for (const person of Array.isArray(except) ? except : [except])
+		people.delete(person.toLowerCase());
 	people.delete("assistant");
 	for (const person of people) {
 		await notify(person, {
@@ -511,6 +515,8 @@ export interface ListFilter {
 	statuses?: string[];
 	includeClosed?: boolean;
 	onlyClosed?: boolean;
+	// Set by the board and its lists. Takes the place of the two above.
+	archive?: ArchiveScope;
 	search?: string;
 	assignee?: string;
 	requester?: string;
@@ -523,6 +529,8 @@ export interface ListFilter {
 	release?: string;
 	blocked?: boolean;
 	parent?: string;
+	// Everything under a request, at any depth.
+	under?: string;
 	limit?: number;
 }
 
@@ -545,7 +553,16 @@ export async function listItems(
 			filter.keys.map(numberOfKey).filter((n) => n !== null),
 		);
 	}
-	if (filter.onlyClosed) where.push("w.closed_as IS NOT NULL");
+	if (filter.archive === "active" || filter.archive === "archived") {
+		// Worked out when read, so a request leaves the board on time without
+		// anything scheduled to move it.
+		params.push(config.rules.archiveDoneAfterDays);
+		const days = `$${params.length}::int`;
+		const archived = `(w.closed_as IS NOT NULL OR (w.status = 'done' AND ${days} IS NOT NULL AND w.status_since < now() - make_interval(days => ${days})))`;
+		where.push(filter.archive === "active" ? `NOT ${archived}` : archived);
+	} else if (filter.archive === "all") {
+		// Every request, archived or not.
+	} else if (filter.onlyClosed) where.push("w.closed_as IS NOT NULL");
 	else if (!filter.includeClosed && !filter.ids && !filter.keys)
 		where.push("w.closed_as IS NULL");
 	if (filter.statuses?.length)
@@ -566,6 +583,18 @@ export async function listItems(
 	if (filter.tag) add((n) => `${n} = ANY(w.tags)`, filter.tag);
 	if (filter.release) add((n) => `w.release_id::text = ${n}`, filter.release);
 	if (filter.parent) add((n) => `w.parent_id::text = ${n}`, filter.parent);
+	if (filter.under) {
+		// UNION rather than UNION ALL, so a loop left in older data ends.
+		add(
+			(n) => `w.item_id IN (
+			  WITH RECURSIVE d AS (
+			    SELECT item_id FROM work_items WHERE parent_id::text = ${n}
+			    UNION
+			    SELECT c.item_id FROM work_items c JOIN d ON c.parent_id = d.item_id)
+			  SELECT item_id FROM d)`,
+			filter.under,
+		);
+	}
 	if (filter.blocked !== undefined)
 		add((n) => `w.blocked = ${n}`, filter.blocked);
 	if (filter.source) {
@@ -605,8 +634,16 @@ export async function listItems(
 		`SELECT ${columns},
 		        (SELECT count(*)::int FROM work_requesters r WHERE r.item_id = w.item_id) AS requester_count,
 		        coalesce((SELECT array_agg(l.target) FROM work_links l WHERE l.item_id = w.item_id AND l.kind = 'source'), '{}') AS sources,
-		        (SELECT count(*)::int FROM work_items c WHERE c.parent_id = w.item_id) AS child_total,
-		        (SELECT count(*)::int FROM work_items c WHERE c.parent_id = w.item_id AND (c.status = 'done' OR c.closed_as IS NOT NULL)) AS child_done
+		        (WITH RECURSIVE d AS (
+		              SELECT c.item_id, c.status, c.closed_as FROM work_items c WHERE c.parent_id = w.item_id
+		              UNION
+		              SELECT c.item_id, c.status, c.closed_as FROM work_items c JOIN d ON c.parent_id = d.item_id)
+		         SELECT count(*)::int FROM d) AS child_total,
+		        (WITH RECURSIVE d AS (
+		              SELECT c.item_id, c.status, c.closed_as FROM work_items c WHERE c.parent_id = w.item_id
+		              UNION
+		              SELECT c.item_id, c.status, c.closed_as FROM work_items c JOIN d ON c.parent_id = d.item_id)
+		         SELECT count(*)::int FROM d WHERE d.status = 'done' OR d.closed_as IS NOT NULL) AS child_done
 		 FROM work_items w
 		 WHERE ${where.join(" AND ")}
 		 ORDER BY w.modified_on DESC
@@ -636,6 +673,10 @@ export interface TimelineEntry {
 	reactions?: Record<string, string[]>;
 	editedOn?: string | null;
 	removed?: boolean;
+	// A top-level comment's thread.
+	looking?: string[];
+	resolvedBy?: string | null;
+	resolvedOn?: string | null;
 }
 
 export async function getItem(actor: WorkActor, key: string) {
@@ -697,9 +738,13 @@ export async function getItem(actor: WorkActor, key: string) {
 			created_on: string;
 			edited_on: string | null;
 			removed_on: string | null;
+			looking: string[];
+			resolved_by: string | null;
+			resolved_on: string | null;
 		}>(
 			`SELECT comment_id::text, reply_to::text, author, body, reactions,
-				        created_on::text, edited_on::text, removed_on::text
+				        created_on::text, edited_on::text, removed_on::text,
+				        looking, resolved_by, resolved_on::text
 				 FROM work_comments WHERE item_id = $1 ORDER BY created_on`,
 			[row.item_id],
 		),
@@ -713,13 +758,14 @@ export async function getItem(actor: WorkActor, key: string) {
 			height: number | null;
 			uploaded_by: string;
 			uploaded_on: string;
+			pasted: boolean | null;
 		}>(
 			`SELECT attachment_id::text, hash, file_name, content_type, size, width,
-				        height, uploaded_by, uploaded_on::text
+				        height, uploaded_by, uploaded_on::text, pasted
 				 FROM work_attachments WHERE item_id = $1 ORDER BY uploaded_on`,
 			[row.item_id],
 		),
-		listItems(actor, { parent: row.item_id, includeClosed: true }),
+		listItems(actor, { under: row.item_id, includeClosed: true }),
 		sql<{ item_id: string }>(
 			`SELECT item_id::text FROM work_links WHERE kind = 'dependsOn' AND target = $1`,
 			[row.item_id],
@@ -777,8 +823,40 @@ export async function getItem(actor: WorkActor, key: string) {
 			reactions: c.reactions ?? {},
 			editedOn: c.edited_on,
 			removed: Boolean(c.removed_on),
+			looking: c.looking ?? [],
+			resolvedBy: c.resolved_by,
+			resolvedOn: c.resolved_on,
 		})),
 	].sort((a, b) => a.at.localeCompare(b.at));
+
+	// A pasted file points at the comment or description that shows it. A file
+	// from before pasted files were marked counts as pasted when the
+	// discussion shows it.
+	const liveComments = comments.filter((c) => !c.removed_on);
+	const placedAttachments = attachments.map((a) => {
+		const reference = `/api/work/files/${a.hash}`;
+		const comment = liveComments.find((c) => c.body.includes(reference));
+		const inDescription = row.description.includes(reference);
+		const fromDiscussion =
+			a.pasted === true ||
+			(a.pasted === null && (Boolean(comment) || inDescription));
+		return {
+			...a,
+			section: fromDiscussion
+				? ("discussion" as const)
+				: ("files" as const),
+			foundIn: comment
+				? {
+						kind: "comment" as const,
+						commentId: comment.comment_id,
+						author: comment.author,
+						at: comment.created_on,
+					}
+				: inDescription
+					? { kind: "description" as const }
+					: null,
+		};
+	});
 
 	const own =
 		row.created_by === actor.email || requesters.includes(actor.email);
@@ -814,9 +892,15 @@ export async function getItem(actor: WorkActor, key: string) {
 		meToo: requesters.includes(actor.email),
 		links: links.filter((l) => l.kind !== "dependsOn"),
 		criteria,
-		attachments,
+		attachments: placedAttachments,
 		children,
-		dependsOn,
+		// Each carries the link that made it, so the link can be removed.
+		dependsOn: dependsOn.map((d) => ({
+			...d,
+			linkId:
+				links.find((l) => l.kind === "dependsOn" && l.target === d.id)
+					?.link_id ?? null,
+		})),
 		blocks,
 		timeline,
 		may: {
@@ -871,7 +955,8 @@ function emailList(value: unknown): string[] {
 					value
 						.filter(
 							(v): v is string =>
-								typeof v === "string" && v.trim().length > 0,
+								typeof v === "string" &&
+								/^[^@\s]+@[^@\s]+$/.test(v.trim()),
 						)
 						.map((v) => v.trim().toLowerCase()),
 				),
@@ -914,6 +999,24 @@ export async function updateItem(
 		const parent = patch.parentKey ? await rowByKey(patch.parentKey) : null;
 		if (parent && parent.item_id === row.item_id)
 			throw new WorkError("A request cannot be its own parent.");
+		if (parent) {
+			// Walks up from the new parent. Meeting this request on the way
+			// means the new parent sits under it, which would make a loop.
+			const loop = await sql<{ found: boolean }>(
+				`WITH RECURSIVE above AS (
+				   SELECT item_id, parent_id FROM work_items WHERE item_id = $1
+				   UNION
+				   SELECT w.item_id, w.parent_id FROM work_items w
+				   JOIN above a ON w.item_id = a.parent_id
+				 )
+				 SELECT EXISTS (SELECT 1 FROM above WHERE item_id = $2) AS found`,
+				[parent.item_id, row.item_id],
+			);
+			if (loop[0]?.found)
+				throw new WorkError(
+					"That request is under this one, so it cannot be its parent.",
+				);
+		}
 		parentId = parent?.item_id ?? null;
 	}
 	let releaseId = row.release_id;
@@ -1034,6 +1137,9 @@ export async function updateItem(
 			);
 		}
 	});
+	// A pasted file edited out of the description goes with it.
+	if (description !== null)
+		await dropPastedWith(row.item_id, row.description);
 
 	const key2 = formatKey(config.prefix, Number(row.number));
 	const assigned = changes.find((c) => c.field === "assignees");

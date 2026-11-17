@@ -15,10 +15,11 @@ import {
 } from "../../lib/sheets/definition";
 import type { PivotData, TableData } from "../../lib/sheets/data";
 import { computeColumns, type FormulaColumn } from "../../lib/sheets/formula";
-import { describeFetchError } from "../../lib/swr";
 import { ago } from "../admin/when";
 import { Modal } from "../components/shared/Modal";
 import { SkeletonText } from "../components/shared/Skeleton";
+import { EmptyState, emptyIcons } from "../components/shared/EmptyState";
+import { LoadError } from "../components/shared/ErrorState";
 import { ExploreBar } from "../explore/ExploreBar";
 import { usePageTitle } from "../hooks/usePageTitle";
 import type { SourceMeta } from "../visuals/types";
@@ -381,9 +382,11 @@ export default function SheetEditor({
 	if (s.error) {
 		return (
 			<div className={styles.page}>
-				<div className={styles.empty}>
-					{describeFetchError(s.error, "sheet")}
-				</div>
+				<LoadError
+					error={s.error}
+					subject="sheet"
+					onRetry={() => window.location.reload()}
+				/>
 			</div>
 		);
 	}
@@ -569,10 +572,10 @@ export default function SheetEditor({
 			)}
 
 			{!def.sourceKey ? (
-				<div className={styles.empty}>
+				<EmptyState icon={emptyIcons.search} title="Choose a dataset">
 					Type the name of a dataset in the bar above to start. The
 					sheet reads from it live and never changes it.
-				</div>
+				</EmptyState>
 			) : def.mode === "pivot" ? (
 				<>
 					<PivotBuilder
@@ -582,9 +585,12 @@ export default function SheetEditor({
 						onChange={(pivot) => update({ pivot })}
 					/>
 					{s.dataError ? (
-						<div className={styles.empty}>
-							{describeFetchError(s.dataError, "sheet")}
-						</div>
+						<LoadError
+							error={s.dataError}
+							subject="rows"
+							onRetry={s.reload}
+							inline
+						/>
 					) : pivot ? (
 						<PivotGrid
 							table={pivot.table}
@@ -714,16 +720,22 @@ export default function SheetEditor({
 					)}
 
 					{s.dataError ? (
-						<div className={styles.empty}>
-							{describeFetchError(s.dataError, "sheet")}
-						</div>
+						<LoadError
+							error={s.dataError}
+							subject="rows"
+							onRetry={s.reload}
+							inline
+						/>
 					) : !table ? (
 						<SkeletonText lines={6} />
 					) : def.columns.length === 0 ? (
-						<div className={styles.empty}>
+						<EmptyState
+							icon={emptyIcons.columns}
+							title="No columns yet"
+						>
 							Add columns from {source?.title ?? "the dataset"} in
 							the bar above.
-						</div>
+						</EmptyState>
 					) : (
 						<SheetGrid
 							columns={shown}

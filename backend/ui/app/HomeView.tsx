@@ -7,6 +7,8 @@ import { Briefing } from "./briefing/Briefing";
 import { NavIcon } from "./components/NavIcon";
 import { seedResponses } from "./components/SWRProvider";
 import { SkeletonCards } from "./components/shared/Skeleton";
+import { EmptyState, emptyIcons } from "./components/shared/EmptyState";
+import { LoadError } from "./components/shared/ErrorState";
 import { useDeferredLoading } from "./hooks/useDeferredLoading";
 import { usePageTitle } from "./hooks/usePageTitle";
 import { useUser } from "./context/UserContext";
@@ -39,7 +41,7 @@ export default function HomeView({
 	usePageTitle(null);
 
 	const { user } = useUser();
-	const { data, isLoading } = useSWR<{
+	const { data, error, isLoading, mutate } = useSWR<{
 		categories: NavCategory[];
 		degraded: boolean;
 	}>("/api/navigation");
@@ -152,23 +154,33 @@ export default function HomeView({
 
 			{showSkeleton ? (
 				<SkeletonCards count={6} />
+			) : error && !data ? (
+				<LoadError
+					error={error}
+					subject="list of reports"
+					onRetry={() => void mutate()}
+				/>
 			) : isLoading ? null : categories.length === 0 ? (
-				<div className={styles.empty}>
-					<div className={styles.emptyTitle}>
-						{membershipUnresolved
+				<EmptyState
+					icon={
+						membershipUnresolved || navigationDegraded
+							? emptyIcons.lock
+							: emptyIcons.folder
+					}
+					title={
+						membershipUnresolved
 							? "Your access could not be checked"
 							: navigationDegraded
 								? "Reports are unavailable"
-								: "Nothing here yet"}
-					</div>
-					<p className={styles.emptyBody}>
-						{membershipUnresolved
-							? "Your group membership could not be resolved, so no report can be shown. This is usually a missing permission on the SQL warehouse rather than on the data. Ask an administrator to grant your group CAN USE on it, then try again."
-							: navigationDegraded
-								? "The app could not load the list of reports. This is a fault in the app rather than in your access. Please wait a moment or try again. An administrator can see the reason under Administration."
-								: "No report categories are available to you. Once datasets are registered and you are granted access, they appear here."}
-					</p>
-				</div>
+								: "Nothing here yet"
+					}
+				>
+					{membershipUnresolved
+						? "Your group membership could not be resolved, so no report can be shown. This is usually a missing permission on the SQL warehouse rather than on the data. Ask an administrator to grant your group CAN USE on it, then try again."
+						: navigationDegraded
+							? "The app could not load the list of reports. This is a fault in the app rather than in your access. Please wait a moment or try again. An administrator can see the reason under Administration."
+							: "No report categories are available to you. Once datasets are registered and you are granted access, they appear here."}
+				</EmptyState>
 			) : (
 				<div className={styles.grid}>
 					{categories.map((category) => (

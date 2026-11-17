@@ -526,7 +526,7 @@ const announcementTitles = [
 
 const reportChangeTitles = [
 	(name: string) => `${name} has a new page`,
-	(name: string) => `${name} filters were reorganised`,
+	(name: string) => `${name} filters were reorganized`,
 	(name: string) => `${name} now opens on the last ninety days`,
 	(name: string) => `${name} shows targets beside actuals`,
 	(name: string) => `Charts on ${name} were redrawn as ranked bars`,
@@ -569,7 +569,7 @@ const bodies = [
 	"The change was tested against a month of history before it went live.",
 	"Totals moved by less than a percent on the reports checked.",
 	"Questions go to the data platform team through the usual channel.",
-	"The previous behaviour stays available for a month under its old name.",
+	"The previous behavior stays available for a month under its old name.",
 	"Readers will see the new figures after their next refresh.",
 	"This brings the definition in line with the finance close.",
 	"Older pages that pinned the old field show a warning until they are edited.",
@@ -586,7 +586,7 @@ const whatToDoLines = [
 
 const beforeAfterPairs: [string, string][] = [
 	["Counted when ordered", "Counted when shipped"],
-	["Includes cancelled records", "Excludes cancelled records"],
+	["Includes canceled records", "Excludes canceled records"],
 	["Local currency", "Reporting currency"],
 	["Calendar month", "Fiscal month"],
 	["Refreshed nightly", "Refreshed hourly"],
@@ -1126,11 +1126,11 @@ export const ruleSpecs: Record<string, RuleSpec[]> = {
 	finance_ledger: [
 		unique(
 			["month", "department", "account_group", "cost_center"],
-			"Each month, department, account and cost centre",
+			"Each month, department, account and cost center",
 		),
 		notBlank("department", "department", "critical"),
 		allowed("account_group", "Account group"),
-		allowed("cost_center", "Cost centre"),
+		allowed("cost_center", "Cost center"),
 		range("actual", "Actual spend is never negative", 0, null),
 		range("budget", "Budget is never negative", 0, null),
 		range("forecast", "Forecast is never negative", 0, null),
@@ -1561,7 +1561,7 @@ export function buildDeck(
 
 const valueNoteLines = [
 	(value: string) =>
-		`${value} was reorganised this quarter, so earlier months are not comparable.`,
+		`${value} was reorganized this quarter, so earlier months are not comparable.`,
 	(value: string) =>
 		`Figures for ${value} include a one off correction in the spring.`,
 	(value: string) =>

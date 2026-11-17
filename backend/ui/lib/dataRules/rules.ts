@@ -384,7 +384,7 @@ export function judge(
 				failing: 0,
 				checked: 0,
 				groups: [],
-				detail: "The catalogue could not be read, so this was not checked.",
+				detail: "The catalog could not be read, so this was not checked.",
 				measures: {},
 			};
 		}

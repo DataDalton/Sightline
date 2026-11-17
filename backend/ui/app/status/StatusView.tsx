@@ -1,5 +1,6 @@
 "use client";
 
+import { useTabParam } from "../hooks/useTabParam";
 import { useEffect, useMemo, useState } from "react";
 import QualityView from "./QualityView";
 import UpdatesView from "../updates/UpdatesView";
@@ -7,9 +8,10 @@ import ContradictionsView from "./ContradictionsView";
 import { StatusUpdates } from "../updates/UpdateSurfaces";
 import useSWR from "swr";
 import { SkeletonTable } from "../components/shared/Skeleton";
+import { EmptyState, emptyIcons } from "../components/shared/EmptyState";
+import { LoadError } from "../components/shared/ErrorState";
 import { Toggle } from "../components/shared/Toggle";
 import { usePageTitle } from "../hooks/usePageTitle";
-import { describeFetchError } from "../../lib/swr";
 import styles from "./Status.module.css";
 
 // Whether the data behind each source is current, for everyone who reads it.
@@ -145,35 +147,31 @@ function explanation(source: SourceStatus): string {
 	}
 }
 
-type StatusTab = "freshness" | "quality" | "contradictions" | "updates";
+const statusTabs = [
+	"freshness",
+	"quality",
+	"contradictions",
+	"updates",
+] as const;
+type StatusTab = (typeof statusTabs)[number];
 
 export default function StatusView() {
 	usePageTitle("Data status");
 
-	// Which tab, and for which source, read after mount since the server has no address
-	// bar to read it from.
-	const [tab, setTab] = useState<StatusTab>("freshness");
+	// Which tab, kept in the address so the back button returns to it, and for
+	// which source, read after mount since the server has no address bar.
+	const [tab, openTab] = useTabParam<StatusTab>(
+		"tab",
+		statusTabs,
+		"freshness",
+	);
 	const [linked, setLinked] = useState<{ source: string | null } | null>(
 		null,
 	);
 	useEffect(() => {
 		const params = new URLSearchParams(window.location.search);
-		const named = params.get("tab");
-		if (
-			named === "quality" ||
-			named === "contradictions" ||
-			named === "updates"
-		) {
-			setTab(named);
-		}
 		setLinked({ source: params.get("source") });
 	}, []);
-	const openTab = (next: StatusTab) => {
-		setTab(next);
-		const url = new URL(window.location.href);
-		url.searchParams.set("tab", next);
-		window.history.replaceState(window.history.state, "", url);
-	};
 
 	const { data, error, isLoading, mutate } = useSWR<{
 		sources: SourceStatus[];
@@ -316,9 +314,11 @@ export default function StatusView() {
 			{tab === "freshness" && (
 				<>
 					{error ? (
-						<div className={styles.state}>
-							{describeFetchError(error, "data status")}
-						</div>
+						<LoadError
+							error={error}
+							subject="data status"
+							onRetry={() => void mutate()}
+						/>
 					) : isLoading && !data ? (
 						<SkeletonTable rows={6} columns={3} />
 					) : (
@@ -381,11 +381,22 @@ export default function StatusView() {
 							)}
 
 							{shown.length === 0 ? (
-								<div className={styles.state}>
+								<EmptyState
+									icon={
+										sources.length === 0
+											? emptyIcons.folder
+											: emptyIcons.search
+									}
+									title={
+										sources.length === 0
+											? "No sources you can read"
+											: "No sources match"
+									}
+								>
 									{sources.length === 0
-										? "There are no sources you can read."
-										: "No sources match."}
-								</div>
+										? "Datasets appear here once they are registered and you are granted access."
+										: "Try a shorter search, or clear the filter above."}
+								</EmptyState>
 							) : (
 								<ul className={styles.list}>
 									{shown.map((source) => {

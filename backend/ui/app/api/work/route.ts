@@ -11,7 +11,8 @@ import { failed, workCaller } from "./shared";
 //
 // GET: requests this caller can see, narrowed by any of status, q, assignee,
 // requester ("me" for oneself), workType, priority, domain, layer, tag, source,
-// release, blocked, closed (include or only) and limit, with the queue's
+// release, blocked, archive (archived or all, active when left out) and limit,
+// with the queue's
 // configuration and what the caller may do.
 // GET ?similar=1&title=&description=&sources=a,b: open requests that read alike.
 // POST: a new request, { title, description, workType, priority, effort, layer,
@@ -57,8 +58,12 @@ export async function GET(request: NextRequest) {
 				params.get("blocked") === null
 					? undefined
 					: params.get("blocked") === "true",
-			includeClosed: params.get("closed") === "include",
-			onlyClosed: params.get("closed") === "only",
+			archive:
+				params.get("archive") === "archived"
+					? "archived"
+					: params.get("archive") === "all"
+						? "all"
+						: "active",
 			limit: Number(params.get("limit")) || undefined,
 		};
 		const [items, config] = await Promise.all([

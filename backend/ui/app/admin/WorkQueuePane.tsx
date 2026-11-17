@@ -2,7 +2,6 @@
 
 import { useState, type ReactNode } from "react";
 import useSWR from "swr";
-import { describeFetchError } from "../../lib/swr";
 import {
 	defaultConfig,
 	type Choice,
@@ -13,6 +12,7 @@ import {
 	type WorkTypeChoice,
 } from "../../lib/work/model";
 import { SkeletonText } from "../components/shared/Skeleton";
+import { LoadError } from "../components/shared/ErrorState";
 import { Toggle } from "../components/shared/Toggle";
 import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import styles from "./Admin.module.css";
@@ -463,9 +463,11 @@ export function WorkQueuePane() {
 
 	if (error) {
 		return (
-			<div className={styles.state}>
-				{describeFetchError(error, "work queue settings")}
-			</div>
+			<LoadError
+				error={error}
+				subject="work queue settings"
+				onRetry={() => void mutate()}
+			/>
 		);
 	}
 	const config = draft ?? data?.config ?? null;
@@ -1037,7 +1039,7 @@ export function WorkQueuePane() {
 			</Group>
 
 			<Group
-				title="Ageing reminders"
+				title="Aging reminders"
 				blurb="Days a request can sit in a column before the people on it are reminded. Leave blank for no reminder."
 			>
 				<div className={pane.ageingGrid}>
@@ -1069,6 +1071,30 @@ export function WorkQueuePane() {
 							/>
 						</label>
 					))}
+				</div>
+			</Group>
+
+			<Group
+				title="Archiving"
+				blurb="Days a request stays on the board after reaching Done. After that it is archived, still found with the Archived filter. Leave blank to keep done requests on the board."
+			>
+				<div className={pane.ageingGrid}>
+					<label className={styles.numberSetting}>
+						<span className={styles.fieldLabel}>
+							Archive done requests after
+						</span>
+						<OptionalNumber
+							label="Days in Done before a request is archived"
+							unit="days"
+							value={config.rules.archiveDoneAfterDays}
+							onChange={(days) =>
+								editRules({
+									archiveDoneAfterDays:
+										days === null ? null : Math.round(days),
+								})
+							}
+						/>
+					</label>
 				</div>
 			</Group>
 

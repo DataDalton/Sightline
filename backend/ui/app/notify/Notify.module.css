@@ -180,29 +180,6 @@
 	padding: var(--space-3);
 }
 
-.empty {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	gap: var(--space-3);
-	padding: var(--space-6) var(--space-5);
-	color: var(--text-muted);
-	font-size: var(--text-sm);
-	text-align: center;
-	line-height: 1.5;
-}
-
-.emptyIcon {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 44px;
-	height: 44px;
-	border-radius: var(--radius-full);
-	background: var(--brand-subtle);
-	color: var(--brand-text);
-}
-
 /* --- Something new, while the app is open ----------------------------- */
 
 .toast {

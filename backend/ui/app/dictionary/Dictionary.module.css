@@ -31,14 +31,6 @@
 	max-width: 70ch;
 }
 
-.state {
-	padding: var(--space-6);
-	text-align: center;
-	color: var(--text-muted);
-	border: 1px dashed var(--border-default);
-	border-radius: var(--radius-lg);
-}
-
 /* Search, source and kind on one line. All three narrow the same list, so
    splitting them across rows would read as three unrelated controls. */
 .controls {

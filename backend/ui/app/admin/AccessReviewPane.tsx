@@ -1,5 +1,6 @@
 "use client";
 
+import { useTabParam } from "../hooks/useTabParam";
 import { useState } from "react";
 import useSWR from "swr";
 import { Select } from "../components/shared/Select";
@@ -64,7 +65,11 @@ export function AccessReviewPane({
 }: {
 	reports: { id: string; name: string }[];
 }) {
-	const [direction, setDirection] = useState<"report" | "person">("report");
+	const [direction, setDirection] = useTabParam(
+		"by",
+		["report", "person"] as const,
+		"report",
+	);
 
 	return (
 		<>
@@ -248,7 +253,7 @@ function ByPerson() {
 					{answer.direct.length === 0 ? (
 						<div className={styles.state}>
 							Nothing names {answer.subject}. Anything they can
-							open comes through a group or through the catalogue.
+							open comes through a group or through the catalog.
 						</div>
 					) : (
 						<div className={styles.tableWrap}>

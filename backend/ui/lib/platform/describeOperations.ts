@@ -81,7 +81,7 @@ export function describeOperations(
 					say(
 						op.theme
 							? "Changes the theme"
-							: "Goes back to the app's own colours",
+							: "Goes back to the app's own colors",
 					);
 				}
 				break;

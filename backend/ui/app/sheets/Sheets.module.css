@@ -149,59 +149,6 @@
 	font-size: var(--text-xs);
 }
 
-.empty {
-	padding: var(--space-6);
-	border: 1px dashed var(--border-default);
-	border-radius: var(--radius-lg);
-	color: var(--text-muted);
-	text-align: center;
-}
-
-/* A card at the start of the page, in line with the heading above it, rather
-   than a box stretched across however wide the window is. */
-.emptyLarge {
-	display: flex;
-	align-items: center;
-	gap: var(--space-4);
-	max-width: 760px;
-	padding: var(--space-5);
-	border: 1px solid var(--border-subtle);
-	border-radius: var(--radius-lg);
-	background: var(--surface-raised);
-}
-
-@media (max-width: 720px) {
-	.emptyLarge {
-		flex-direction: column;
-		align-items: flex-start;
-	}
-}
-
-.emptyText {
-	flex: 1;
-	min-width: 0;
-	display: flex;
-	flex-direction: column;
-	gap: 2px;
-}
-
-.emptyIcon {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	flex-shrink: 0;
-	width: 48px;
-	height: 48px;
-	border-radius: var(--radius-full);
-	background: var(--success-subtle);
-	color: var(--success);
-}
-
-.emptyTitle {
-	font-size: var(--text-lg);
-	font-weight: 600;
-}
-
 /* --- The editor -------------------------------------------------------- */
 
 /* Fills the space under the header, so the grid scrolls inside itself and

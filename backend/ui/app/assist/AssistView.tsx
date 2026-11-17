@@ -16,7 +16,7 @@ import styles from "./Assist.module.css";
 // something went wrong before anybody has looked.
 const examples = [
 	"Show revenue by region this year",
-	"Summarise order volume by category",
+	"Summarize order volume by category",
 	"How is revenue split across channels?",
 ];
 

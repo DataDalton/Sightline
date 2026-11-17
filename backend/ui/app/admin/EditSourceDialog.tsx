@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { Modal } from "../components/shared/Modal";
+import { LoadError } from "../components/shared/ErrorState";
+import { SkeletonText } from "../components/shared/Skeleton";
 import { Select } from "../components/shared/Select";
 import { TabStrip } from "../components/shared/TabStrip";
 import type { FreshnessDetail } from "../../lib/freshness/marks";
@@ -70,7 +72,7 @@ export function EditSourceDialog({
 	onClose: () => void;
 	onSaved: () => void;
 }) {
-	const { data } = useSWR<{ source?: SourceDetail }>(
+	const { data, error, mutate } = useSWR<{ source?: SourceDetail }>(
 		`/api/admin?section=source&sourceKey=${encodeURIComponent(sourceKey)}`,
 	);
 	const source = data?.source;
@@ -191,8 +193,15 @@ export function EditSourceDialog({
 
 	return (
 		<Modal isOpen onClose={onClose} title="Edit source" width="760px">
-			{!source ? (
-				<div className={styles.state}>Loading</div>
+			{error && !data ? (
+				<LoadError
+					error={error}
+					subject="source"
+					onRetry={() => void mutate()}
+					inline
+				/>
+			) : !source ? (
+				<SkeletonText lines={6} />
 			) : (
 				<>
 					<div className={styles.paneNav}>

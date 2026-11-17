@@ -12,6 +12,8 @@ import {
 	useState,
 } from "react";
 import useSWR from "swr";
+import { EmptyState, emptyIcons } from "../components/shared/EmptyState";
+import { LoadError } from "../components/shared/ErrorState";
 import {
 	cleanDefinition,
 	defaultSizes,
@@ -1059,15 +1061,11 @@ export default function BoardView({
 
 	if (board.error) {
 		return (
-			<div className={styles.missing}>
-				<h1 className={styles.missingTitle}>
-					This board could not be opened
-				</h1>
-				<p>It may have been deleted, or it is not shared with you.</p>
-				<Link href="/mine/" className={styles.primary}>
-					Back to My pages
-				</Link>
-			</div>
+			<LoadError
+				error={board.error}
+				subject="board"
+				onRetry={() => window.location.reload()}
+			/>
 		);
 	}
 
@@ -1422,15 +1420,17 @@ export default function BoardView({
 
 				{definition && items.length === 0 && (
 					<div className={styles.empty}>
-						<h2 className={styles.emptyTitle}>An empty board</h2>
-						<p>
+						<EmptyState
+							icon={emptyIcons.grid}
+							title="An empty board"
+						>
 							Use <strong>Add to board</strong> on any chart or
 							table in a report, a card on your home page, or an
 							answer from the assistant.
 							{editable
 								? " Boxes, notes, text and arrows are in the bar above."
 								: ""}
-						</p>
+						</EmptyState>
 					</div>
 				)}
 

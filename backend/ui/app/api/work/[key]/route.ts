@@ -15,7 +15,9 @@ import {
 	editComment,
 	react,
 	removeLink,
+	setLooking,
 	setMeToo,
+	setResolved,
 	setWatching,
 } from "@/lib/work/activity";
 import { detach } from "@/lib/work/attachments";
@@ -116,6 +118,22 @@ export async function POST(request: NextRequest, { params }: Context) {
 				break;
 			case "removeComment":
 				await editComment(who.actor, key, text("commentId"), null);
+				break;
+			case "looking":
+				await setLooking(
+					who.actor,
+					key,
+					text("commentId"),
+					body.on === true,
+				);
+				break;
+			case "resolve":
+				await setResolved(
+					who.actor,
+					key,
+					text("commentId"),
+					body.on === true,
+				);
 				break;
 			case "react":
 				await react(

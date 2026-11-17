@@ -24,7 +24,7 @@ import styles from "./Assist.module.css";
 // page, which is the same conversation at full width.
 
 const examples = [
-	"Summarise this page",
+	"Summarize this page",
 	"Explain what these charts show",
 	"Break this down by month",
 ];

@@ -5,7 +5,8 @@ import useSWR from "swr";
 import type { ReportUsage as Usage } from "../../lib/platform/reportUsage";
 import { visualByType } from "../../lib/visuals/catalog";
 import { Modal } from "../components/shared/Modal";
-import { describeFetchError } from "../../lib/swr";
+import { LoadError } from "../components/shared/ErrorState";
+import { SkeletonText } from "../components/shared/Skeleton";
 import styles from "./ReportUsage.module.css";
 
 // How a report is read, for the people who maintain it: how often it is
@@ -36,7 +37,7 @@ export function ReportUsage({
 	onClose: () => void;
 }) {
 	const [days, setDays] = useState<(typeof windows)[number]>(30);
-	const { data, error } = useSWR<Usage>(
+	const { data, error, mutate } = useSWR<Usage>(
 		`/api/report/${encodeURIComponent(slug)}/readership/?days=${days}`,
 	);
 
@@ -69,11 +70,14 @@ export function ReportUsage({
 				</div>
 
 				{error ? (
-					<p className={styles.state}>
-						{describeFetchError(error, "usage")}
-					</p>
+					<LoadError
+						error={error}
+						subject="usage"
+						onRetry={() => void mutate()}
+						inline
+					/>
 				) : !data ? (
-					<p className={styles.state}>Loading</p>
+					<SkeletonText lines={4} />
 				) : (
 					<>
 						<div className={styles.figures}>

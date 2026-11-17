@@ -65,7 +65,7 @@ export async function queryAsApp(
 	const warehouseId = resolveWarehousePath().split("/").pop();
 	if (!warehouseId) {
 		throw new Error(
-			"No SQL warehouse configured, so catalogue metadata cannot be read.",
+			"No SQL warehouse configured, so catalog metadata cannot be read.",
 		);
 	}
 

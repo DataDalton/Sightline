@@ -631,7 +631,7 @@ export function PropertiesPanel({
 				<PanelTabs
 					tabs={[
 						{ id: "data" as const, label: "Data" },
-						{ id: "behaviour" as const, label: "Behaviour" },
+						{ id: "behaviour" as const, label: "Behavior" },
 						{ id: "style" as const, label: "Style" },
 					]}
 					value={tab}
@@ -686,7 +686,7 @@ export function PropertiesPanel({
 					{(query || tab === "behaviour") && (
 						<div data-search-tab>
 							{query && (
-								<h3 className={styles.tabHeading}>Behaviour</h3>
+								<h3 className={styles.tabHeading}>Behavior</h3>
 							)}
 							<BehaviourTab
 								visual={visual}
@@ -1682,7 +1682,7 @@ function ThemePicker({
 				onChange={(next) => onChange(next || null)}
 				ariaLabel="Theme"
 				options={[
-					{ value: "", label: "The app's own colours" },
+					{ value: "", label: "The app's own colors" },
 					...themes.map((theme) => ({
 						value: theme.id,
 						label: theme.name,
@@ -1698,8 +1698,8 @@ function ThemePicker({
 				</div>
 			)}
 			<Hint>
-				The accent and chart colours for this report. Light and dark
-				stay the reader&apos;s choice.
+				The accent and chart colors for this report. Light and dark stay
+				the reader&apos;s choice.
 			</Hint>
 			<p className={styles.panelAbout}>
 				{canManage ? (
@@ -1910,7 +1910,7 @@ function FormatTab({
 							supports.paletteOnly) && (
 							<div className={styles.field}>
 								<span className={styles.fieldLabel}>
-									Series colours
+									Series colors
 								</span>
 								<div className={styles.swatchGrid}>
 									{palettePresets.map((preset) => {
@@ -1956,16 +1956,14 @@ function FormatTab({
 												style.palette ?? [],
 											) === JSON.stringify(preset.tokens),
 									)?.note ??
-										"Colours are taken by series position, so a chart keeps its colours as measures are added."}
+										"Colors are taken by series position, so a chart keeps its colors as measures are added."}
 								</Hint>
 							</div>
 						)}
 
 						{!supports.paletteOnly && (
 							<div className={styles.field}>
-								<span className={styles.fieldLabel}>
-									Colour
-								</span>
+								<span className={styles.fieldLabel}>Color</span>
 								<div className={styles.swatchGrid}>
 									{swatches.map((s) => {
 										const active =
@@ -1979,7 +1977,7 @@ function FormatTab({
 												className={`${styles.swatch} ${active ? styles.swatchActive : ""}`}
 												style={{ background: s.hex }}
 												title={s.token}
-												aria-label={`Colour ${s.token}`}
+												aria-label={`Color ${s.token}`}
 												onClick={() =>
 													updateSeries({
 														color: {

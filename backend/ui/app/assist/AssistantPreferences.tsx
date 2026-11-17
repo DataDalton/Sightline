@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
+import { LoadError } from "../components/shared/ErrorState";
+import { SkeletonText } from "../components/shared/Skeleton";
 import styles from "./Assist.module.css";
 
 // How somebody wants the assistant to work with them, carried into every
@@ -27,7 +29,7 @@ const profileKey = "/api/assist/profile";
 const maxInstructions = 2000;
 
 export function AssistantPreferences() {
-	const { data, isLoading, mutate } = useSWR<Profile>(profileKey);
+	const { data, error, isLoading, mutate } = useSWR<Profile>(profileKey);
 	const [instructions, setInstructions] = useState("");
 	const [saving, setSaving] = useState(false);
 	const [saved, setSaved] = useState(false);
@@ -74,9 +76,17 @@ export function AssistantPreferences() {
 		}
 	};
 
-	if (isLoading || !data) {
-		return <p className={styles.historyEmpty}>Loading</p>;
+	if (error && !data) {
+		return (
+			<LoadError
+				error={error}
+				subject="preferences"
+				onRetry={() => void mutate()}
+				inline
+			/>
+		);
 	}
+	if (isLoading || !data) return <SkeletonText lines={4} />;
 
 	const dirty = instructions !== data.instructions;
 

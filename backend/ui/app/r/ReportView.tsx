@@ -5,9 +5,10 @@ import { BoardOriginContext } from "../boards/AddToBoard";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "../components/AppLink";
 import useSWR from "swr";
-import { describeFetchError } from "../../lib/swr";
 import { primeBatchCache } from "../hooks/queryBatch";
 import { SkeletonReport } from "../components/shared/Skeleton";
+import { EmptyState, emptyIcons } from "../components/shared/EmptyState";
+import { LoadError } from "../components/shared/ErrorState";
 import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { titleSeparator, usePageTitle } from "../hooks/usePageTitle";
 import { DataHealth } from "./DataHealth";
@@ -502,6 +503,14 @@ export default function ReportView({
 		setStateEpoch((held) => held + 1);
 	}, []);
 
+	// The back button returning to a page tab. The address already holds that
+	// page and its filters, so it is read the same way a followed link is.
+	useEffect(() => {
+		const back = () => goToState(window.location.search, null);
+		window.addEventListener("popstate", back);
+		return () => window.removeEventListener("popstate", back);
+	}, [goToState]);
+
 	// A link can start a tour or slides, which is also how the Inbox does.
 	const startedFromLink = useRef(false);
 	useEffect(() => {
@@ -702,9 +711,11 @@ export default function ReportView({
 	if (error) {
 		return (
 			<div className={styles.page}>
-				<div className={styles.state}>
-					{describeFetchError(error, "report")}
-				</div>
+				<LoadError
+					error={error}
+					subject="report"
+					onRetry={() => void mutate()}
+				/>
 			</div>
 		);
 	}
@@ -965,9 +976,10 @@ export default function ReportView({
 	if (!page) {
 		return (
 			<div className={styles.page}>
-				<div className={styles.state}>
-					This report has no pages yet.
-				</div>
+				<EmptyState icon={emptyIcons.page} title="No pages yet">
+					This report has no pages yet. Pages appear here once someone
+					adds one in the editor.
+				</EmptyState>
 			</div>
 		);
 	}
@@ -1702,11 +1714,25 @@ export default function ReportView({
 																							? styles.tabActive
 																							: ""
 																					}`}
-																					onClick={() =>
+																					onClick={() => {
+																						// A step the back button can return to, unlike a filter.
+																						if (
+																							p.pageId !==
+																							page?.pageId
+																						)
+																							window.history.pushState(
+																								window
+																									.history
+																									.state,
+																								"",
+																								window
+																									.location
+																									.href,
+																							);
 																						openPage(
 																							p.pageId,
-																						)
-																					}
+																						);
+																					}}
 																				>
 																					{
 																						p.title

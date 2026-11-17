@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "../components/AppLink";
 import useSWR from "swr";
 import { EmptyState, emptyIcons } from "../components/shared/EmptyState";
+import { LoadError } from "../components/shared/ErrorState";
+import { SkeletonTable } from "../components/shared/Skeleton";
 import styles from "./Quality.module.css";
 
 // Data status's Contradictions tab. Two published reports showing one measure in ways that
@@ -274,9 +276,15 @@ export default function ContradictionsView() {
 	}, [candidates]);
 
 	if (error) {
-		return <p className={styles.hint}>These could not be loaded.</p>;
+		return (
+			<LoadError
+				error={error}
+				subject="comparisons"
+				onRetry={() => void mutate()}
+			/>
+		);
 	}
-	if (!data) return null;
+	if (!data) return <SkeletonTable rows={5} columns={3} />;
 	if (candidates.length === 0) {
 		return (
 			<EmptyState icon={emptyIcons.check} title="Nothing to compare">

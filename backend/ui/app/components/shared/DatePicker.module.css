@@ -26,7 +26,21 @@
 	cursor: pointer;
 }
 
-.field:hover {
+/* The height and type of the text inputs in a form, for a date that sits in a
+   row of them. */
+.fieldForm {
+	min-height: 38px;
+	padding: var(--space-2) var(--space-3);
+	background: var(--surface-raised);
+	font-size: var(--text-sm);
+}
+
+.field:disabled {
+	opacity: 0.55;
+	cursor: not-allowed;
+}
+
+.field:hover:not(:disabled) {
 	border-color: var(--border-strong);
 }
 
@@ -80,10 +94,29 @@
 	padding-bottom: var(--space-2);
 }
 
+/* The title, which steps out to the months of the year and then to a run of
+   years. Plain text until hovered, so the panel reads as a calendar first. */
 .month {
+	padding: 3px var(--space-2);
+	border-radius: var(--radius-sm);
+	background: transparent;
 	font-size: var(--text-sm);
 	font-weight: 600;
 	color: var(--text-primary);
+	font-variant-numeric: tabular-nums;
+}
+
+.month:hover:not(:disabled) {
+	background: var(--state-hover);
+}
+
+.month:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: -2px;
+}
+
+.month:disabled {
+	cursor: default;
 }
 
 .step {
@@ -121,6 +154,40 @@
 	font-weight: 700;
 	letter-spacing: 0.04em;
 	color: var(--text-muted);
+}
+
+/* The months of a year, or a run of years, three to a row in the space the
+   day grid takes, so the panel does not change size between views. */
+.picks {
+	display: grid;
+	grid-template-columns: repeat(3, 1fr);
+	grid-auto-rows: 1fr;
+	gap: 4px;
+	min-height: 188px;
+}
+
+.pick {
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--text-primary);
+	font-size: var(--text-sm);
+	font-variant-numeric: tabular-nums;
+	text-align: center;
+}
+
+.pick:hover:not(:disabled) {
+	background: var(--state-hover);
+}
+
+.pick:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: -2px;
+}
+
+.pick:disabled {
+	color: var(--text-muted);
+	opacity: 0.35;
+	cursor: not-allowed;
 }
 
 .day {

@@ -4,7 +4,9 @@ import Link from "../components/AppLink";
 import { useState } from "react";
 import useSWR from "swr";
 import type { DeliveryRecord } from "../../lib/deliveries/store";
-import { describeFetchError } from "../../lib/swr";
+import { EmptyState, emptyIcons } from "../components/shared/EmptyState";
+import { LoadError } from "../components/shared/ErrorState";
+import { SkeletonText } from "../components/shared/Skeleton";
 import { deliveriesKey } from "./ScheduleButton";
 import styles from "./Deliveries.module.css";
 
@@ -36,18 +38,20 @@ export function ScheduledPages() {
 
 	if (error) {
 		return (
-			<p className={styles.state}>
-				{describeFetchError(error, "scheduled pages")}
-			</p>
+			<LoadError
+				error={error}
+				subject="scheduled pages"
+				onRetry={() => void mutate()}
+			/>
 		);
 	}
-	if (!data) return <p className={styles.state}>Loading</p>;
+	if (!data) return <SkeletonText lines={4} />;
 	if (data.deliveries.length === 0) {
 		return (
-			<p className={styles.state}>
-				Nothing is scheduled. Open a report page and press Schedule to
-				have its figures sent to you.
-			</p>
+			<EmptyState icon={emptyIcons.calendar} title="Nothing is scheduled">
+				Open a report page and press Schedule to have its figures sent
+				to you.
+			</EmptyState>
 		);
 	}
 
