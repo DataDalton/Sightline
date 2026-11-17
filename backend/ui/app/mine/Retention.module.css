@@ -6,7 +6,7 @@
 	padding: 2px var(--space-2);
 	border-radius: var(--radius-sm);
 	background: var(--state-selected);
-	color: var(--brand);
+	color: var(--brand-text);
 	font-size: var(--text-xs);
 	font-weight: 600;
 	white-space: nowrap;

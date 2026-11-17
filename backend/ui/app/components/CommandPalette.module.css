@@ -151,7 +151,7 @@
 
 .star {
 	flex-shrink: 0;
-	color: var(--brand);
+	color: var(--brand-text);
 }
 
 .empty {

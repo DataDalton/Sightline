@@ -1,0 +1,149 @@
+/* A history read top to bottom, the way an issue reads on a code host: a line
+   down the left, each event a small mark on it, and each comment a card with
+   the author's initials on the line. */
+
+.list {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+/* The line, behind the marks and avatars, through the middle of their column. */
+.list::before {
+	content: "";
+	position: absolute;
+	top: 4px;
+	bottom: 4px;
+	left: 15px;
+	width: 2px;
+	border-radius: 1px;
+	background: var(--border-default);
+}
+
+/* An event: its mark on the line and one line of words beside it. */
+.event {
+	position: relative;
+	display: flex;
+	align-items: flex-start;
+	gap: var(--space-3);
+	color: var(--text-secondary);
+	font-size: var(--text-sm);
+	line-height: 1.5;
+}
+
+.event > :last-child {
+	flex: 1;
+	min-width: 0;
+	padding-top: 4px;
+}
+
+.badge {
+	position: relative;
+	z-index: 1;
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 32px;
+	height: 32px;
+	border: 2px solid var(--surface-raised);
+	border-radius: var(--radius-full);
+	background: var(--surface-sunken);
+	color: var(--text-secondary);
+	box-shadow: 0 0 0 1px var(--border-default);
+}
+
+.badgegood {
+	background: var(--success-subtle);
+	color: var(--success);
+}
+
+.badgebad {
+	background: var(--danger-subtle);
+	color: var(--danger);
+}
+
+.badgewarn {
+	background: var(--warning-subtle);
+	color: var(--warning);
+}
+
+.badgeinfo {
+	background: var(--info-subtle);
+	color: var(--info);
+}
+
+/* A comment: the author's initials on the line and the words in a card. */
+.comment {
+	position: relative;
+	display: flex;
+	align-items: flex-start;
+	gap: var(--space-3);
+}
+
+.reply {
+	margin-left: var(--space-6, 40px);
+}
+
+.avatar {
+	position: relative;
+	z-index: 1;
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 32px;
+	height: 32px;
+	border: 2px solid var(--surface-raised);
+	border-radius: var(--radius-full);
+	background: var(--brand-subtle);
+	color: var(--text-primary);
+	font-size: var(--text-xs);
+	font-weight: 700;
+	box-shadow: 0 0 0 1px var(--border-default);
+}
+
+.card {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	gap: var(--space-2);
+	min-width: 0;
+	padding-bottom: var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	font-size: var(--text-sm);
+	overflow: hidden;
+}
+
+/* The author and the time, on a strip across the top of the card. */
+.cardHead {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: var(--space-2);
+	padding: var(--space-2) var(--space-3);
+	border-bottom: 1px solid var(--border-subtle);
+	background: var(--surface-sunken);
+	color: var(--text-secondary);
+	font-size: var(--text-sm);
+}
+
+.cardHead strong {
+	color: var(--text-primary);
+}
+
+.card > :not(.cardHead) {
+	margin: 0 var(--space-3);
+}
+
+.time {
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+	white-space: nowrap;
+}

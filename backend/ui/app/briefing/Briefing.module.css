@@ -75,7 +75,7 @@
 
 .askIcon {
 	flex-shrink: 0;
-	color: var(--brand-strong);
+	color: var(--brand-text);
 }
 
 .askInput {
@@ -120,7 +120,7 @@
 	padding: 4px var(--space-3);
 	border: 1px solid var(--border-subtle);
 	border-radius: var(--radius-full);
-	background: transparent;
+	background: var(--surface-raised);
 	color: var(--text-secondary);
 	cursor: pointer;
 }
@@ -474,7 +474,7 @@
 }
 
 .tool[data-on] {
-	color: var(--brand-strong);
+	color: var(--brand-text);
 }
 
 .tool:focus-visible {
@@ -605,7 +605,7 @@
 	padding: var(--space-1) var(--space-3);
 	border-radius: var(--radius-full);
 	border: 1px solid var(--border-default);
-	background: transparent;
+	background: var(--surface-raised);
 	color: var(--text-primary);
 	cursor: pointer;
 }

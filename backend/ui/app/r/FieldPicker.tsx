@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { FieldMeta, SourceMeta } from "../visuals/types";
 import styles from "./FieldPicker.module.css";
 
@@ -27,16 +28,42 @@ export function FieldPicker({
 	const [open, setOpen] = useState(false);
 	const [search, setSearch] = useState("");
 	const wrapperRef = useRef<HTMLDivElement | null>(null);
+	const panelRef = useRef<HTMLDivElement | null>(null);
 	const inputRef = useRef<HTMLInputElement | null>(null);
+	// Where the panel opens, worked out from the button. The panel is drawn on
+	// the page rather than inside the visual, whose card clips what overflows it.
+	const [place, setPlace] = useState<{ top: number; right: number } | null>(
+		null,
+	);
+
+	useLayoutEffect(() => {
+		if (!open) return;
+		const measure = () => {
+			const box = wrapperRef.current?.getBoundingClientRect();
+			if (!box) return;
+			setPlace({
+				top: box.bottom + 8,
+				right: Math.max(8, window.innerWidth - box.right),
+			});
+		};
+		measure();
+		window.addEventListener("resize", measure);
+		window.addEventListener("scroll", measure, true);
+		return () => {
+			window.removeEventListener("resize", measure);
+			window.removeEventListener("scroll", measure, true);
+		};
+	}, [open]);
 
 	useEffect(() => {
 		if (!open) return;
 		inputRef.current?.focus();
 
 		const onClick = (e: MouseEvent) => {
+			const target = e.target as Node;
 			if (
-				wrapperRef.current &&
-				!wrapperRef.current.contains(e.target as Node)
+				!wrapperRef.current?.contains(target) &&
+				!panelRef.current?.contains(target)
 			) {
 				setOpen(false);
 			}
@@ -115,7 +142,7 @@ export function FieldPicker({
 		<div className={styles.wrapper} ref={wrapperRef}>
 			<button
 				type="button"
-				className={styles.trigger}
+				className={`${styles.trigger} ${styles.triggerFrame}`}
 				onClick={() => setOpen((v) => !v)}
 				aria-expanded={open}
 				aria-haspopup="true"
@@ -132,71 +159,88 @@ export function FieldPicker({
 					<path d="M3 6h18M6 12h12M10 18h4" />
 				</svg>
 				Columns
-				{total > 0 && <span className={styles.count}>{total}</span>}
+				{total > 0 && (
+					<span className={`${styles.count} ${styles.countQuiet}`}>
+						{total}
+					</span>
+				)}
 			</button>
 
-			{open && (
-				<div className={styles.panel}>
-					<div className={styles.search}>
-						<input
-							ref={inputRef}
-							type="text"
-							className={styles.searchInput}
-							placeholder="Search fields"
-							value={search}
-							onChange={(e) => setSearch(e.target.value)}
-						/>
-					</div>
+			{open &&
+				place &&
+				createPortal(
+					<div
+						className={styles.panel}
+						ref={panelRef}
+						style={{
+							position: "fixed",
+							top: place.top,
+							right: place.right,
+							maxHeight: `min(460px, calc(100vh - ${place.top + 16}px))`,
+						}}
+					>
+						<div className={styles.search}>
+							<input
+								ref={inputRef}
+								type="text"
+								className={styles.searchInput}
+								placeholder="Search fields"
+								value={search}
+								onChange={(e) => setSearch(e.target.value)}
+							/>
+						</div>
 
-					<div className={styles.list}>
-						{dimensions.length === 0 && measures.length === 0 ? (
-							<div className={styles.empty}>
-								No fields match &quot;{search}&quot;
-							</div>
-						) : (
-							<>
-								{measures.length > 0 && (
-									<>
-										<div className={styles.groupTitle}>
-											Measures ({measures.length})
-										</div>
-										{measures.map((f) =>
-											renderItem(f, "measure"),
-										)}
-									</>
-								)}
-								{dimensions.length > 0 && (
-									<>
-										<div className={styles.groupTitle}>
-											Dimensions ({dimensions.length})
-										</div>
-										{dimensions.map((f) =>
-											renderItem(f, "dimension"),
-										)}
-									</>
-								)}
-							</>
-						)}
-					</div>
+						<div className={styles.list}>
+							{dimensions.length === 0 &&
+							measures.length === 0 ? (
+								<div className={styles.empty}>
+									No fields match &quot;{search}&quot;
+								</div>
+							) : (
+								<>
+									{measures.length > 0 && (
+										<>
+											<div className={styles.groupTitle}>
+												Measures ({measures.length})
+											</div>
+											{measures.map((f) =>
+												renderItem(f, "measure"),
+											)}
+										</>
+									)}
+									{dimensions.length > 0 && (
+										<>
+											<div className={styles.groupTitle}>
+												Dimensions ({dimensions.length})
+											</div>
+											{dimensions.map((f) =>
+												renderItem(f, "dimension"),
+											)}
+										</>
+									)}
+								</>
+							)}
+						</div>
 
-					<div className={styles.footer}>
-						<button
-							type="button"
-							className={styles.footerButton}
-							onClick={() => onChange([], [])}
-						>
-							Clear
-						</button>
-						<button
-							type="button"
-							className={`${styles.footerButton} ${styles.primary}`}
-							onClick={() => setOpen(false)}
-						>
-							Done
-						</button>
-					</div>
-				</div>
-			)}
+						<div className={styles.footer}>
+							<button
+								type="button"
+								className={styles.footerButton}
+								onClick={() => onChange([], [])}
+							>
+								Clear
+							</button>
+							<button
+								type="button"
+								className={`${styles.footerButton} ${styles.primary}`}
+								onClick={() => setOpen(false)}
+							>
+								Done
+							</button>
+						</div>
+					</div>,
+					document.body,
+				)}
 		</div>
 	);
 }

@@ -114,7 +114,7 @@
 	height: 32px;
 	border-radius: var(--radius-md);
 	background: color-mix(in srgb, var(--brand) 16%, transparent);
-	color: var(--brand);
+	color: var(--brand-text);
 }
 
 .panelTitle {

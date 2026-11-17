@@ -18,7 +18,7 @@
 	height: 44px;
 	border-radius: 50%;
 	background: var(--state-hover);
-	color: var(--brand);
+	color: var(--brand-text);
 }
 
 .title {

@@ -544,7 +544,7 @@
 
 .sortMark {
 	flex-shrink: 0;
-	color: var(--brand-strong);
+	color: var(--brand-text);
 	font-size: 9px;
 }
 

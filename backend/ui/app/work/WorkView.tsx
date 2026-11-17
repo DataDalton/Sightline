@@ -29,6 +29,7 @@ import {
 	personName,
 	postJson,
 } from "./labels";
+import { BlockedIcon } from "./BlockedIcon";
 import styles from "./Work.module.css";
 
 // The work queue: items for the data engineers, on a board whose columns are
@@ -339,6 +340,7 @@ export default function WorkView() {
 								})
 							}
 						>
+							<BlockedIcon size={12} />
 							Blocked
 						</button>
 					</div>
@@ -705,6 +707,7 @@ function Card({
 					className={styles.blocked}
 					title={item.blockedReason ?? undefined}
 				>
+					<BlockedIcon />
 					Blocked{item.blockedReason ? `: ${item.blockedReason}` : ""}
 				</span>
 			)}
@@ -1117,6 +1120,7 @@ function Table({
 								</button>
 								{item.blocked && (
 									<span className={styles.blockedMini}>
+										<BlockedIcon size={12} />
 										Blocked
 									</span>
 								)}
@@ -1249,6 +1253,7 @@ function List({
 									</span>
 									{item.blocked && (
 										<span className={styles.blockedMini}>
+											<BlockedIcon size={12} />
 											Blocked
 										</span>
 									)}

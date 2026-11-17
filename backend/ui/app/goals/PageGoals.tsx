@@ -48,6 +48,26 @@ interface GoalsAnswer {
 	canManage: boolean;
 }
 
+// What the bar measures, since it is progress from where the goal started
+// rather than the figure as a share of the target, and the two read alike
+// beside "$1.2M of $1.3M" when the goal began close to its target.
+function progressWords(goal: Goal): string {
+	const percent = Math.max(
+		0,
+		Math.min(Math.round(goal.status?.percent ?? 0), 100),
+	);
+	const since = goal.history?.[0]?.day;
+	const when = since
+		? new Date(`${since.slice(0, 10)}T00:00:00`).toLocaleDateString(
+				undefined,
+				{ month: "short", day: "numeric" },
+			)
+		: null;
+	return when
+		? `${percent}% of the way since it was set on ${when}`
+		: `${percent}% of the way since it was set`;
+}
+
 const stateWords = {
 	done: "Reached",
 	onTrack: "On track",
@@ -277,7 +297,10 @@ export function PageGoals({ pageId }: { pageId: string | null }) {
 	return (
 		<section className={styles.strip} aria-label="Goals on this page">
 			{goals.map((goal) => (
-				<div key={goal.goalId} className={styles.goal}>
+				<div
+					key={goal.goalId}
+					className={`${styles.goal} ${goal.status ? styles[`tone${goal.status.state}`] : ""}`}
+				>
 					<div className={styles.goalHead}>
 						<strong className={styles.goalTitle}>
 							{goal.title}
@@ -286,6 +309,10 @@ export function PageGoals({ pageId }: { pageId: string | null }) {
 							<span
 								className={`${styles.state} ${styles[`state${goal.status.state}`]}`}
 							>
+								<span
+									className={styles.stateDot}
+									aria-hidden="true"
+								/>
 								{stateWords[goal.status.state]}
 							</span>
 						)}
@@ -315,6 +342,11 @@ export function PageGoals({ pageId }: { pageId: string | null }) {
 							)}
 						</div>
 					)}
+					{goal.status && goal.status.state !== "done" && (
+						<p className={styles.progressNote}>
+							{progressWords(goal)}
+						</p>
+					)}
 					<div className={styles.goalFoot}>
 						<span className={styles.muted}>
 							{goal.measure}
@@ -325,12 +357,14 @@ export function PageGoals({ pageId }: { pageId: string | null }) {
 							. Set by {goal.createdBy}.
 						</span>
 						{(goal.history?.length ?? 0) > 1 && (
-							<Sparkline
-								values={(goal.history ?? []).map(
-									(point) => point.value,
-								)}
-								label={`${goal.title} over time`}
-							/>
+							<span className={styles.spark}>
+								<Sparkline
+									values={(goal.history ?? []).map(
+										(point) => point.value,
+									)}
+									label={`${goal.title} over time`}
+								/>
+							</span>
 						)}
 					</div>
 				</div>

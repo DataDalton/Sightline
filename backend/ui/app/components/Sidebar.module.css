@@ -223,10 +223,13 @@
 	width: 100%;
 	margin-top: var(--space-2);
 	padding: var(--space-2) var(--space-3);
-	border: 1px dashed var(--border-strong);
+	/* The chrome's own colours, since the navigation stays dark on the light
+	   theme and the page's text colours vanish against it. */
+	border: 1px dashed
+		color-mix(in srgb, var(--chrome-text-muted) 45%, transparent);
 	border-radius: var(--radius-md);
 	background: none;
-	color: var(--text-secondary);
+	color: var(--chrome-text-muted);
 	font-size: var(--text-sm);
 	font-family: inherit;
 	cursor: pointer;
@@ -236,7 +239,8 @@
 .newReport:hover {
 	border-color: var(--brand);
 	border-style: solid;
-	color: var(--text-primary);
+	background: var(--chrome-hover);
+	color: var(--chrome-text);
 }
 
 /* Navigation is for getting to the page. On paper the reader is already there,

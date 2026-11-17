@@ -59,9 +59,10 @@
 }
 
 .tabOn {
-	background: var(--surface-sunken);
+	background: var(--surface-raised);
 	color: var(--text-primary);
 	font-weight: 600;
+	box-shadow: 0 0 0 1px var(--border-default);
 }
 
 .primary,
@@ -155,6 +156,7 @@ textarea.input {
 	padding: 2px;
 	border: 1px solid var(--border-default);
 	border-radius: var(--radius-full);
+	background: var(--surface-sunken);
 }
 
 .segment {
@@ -170,7 +172,8 @@ textarea.input {
 }
 
 .segment[aria-pressed="true"] {
-	background: var(--surface-sunken);
+	background: var(--surface-raised);
+	box-shadow: var(--shadow-sm);
 	color: var(--text-primary);
 	font-weight: 600;
 }

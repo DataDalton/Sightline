@@ -363,7 +363,7 @@
 }
 
 .filterToolActive svg {
-	color: var(--brand-strong);
+	color: var(--brand-text);
 }
 
 /* A heading that sorts its column. Drawn as the heading text, with an arrow

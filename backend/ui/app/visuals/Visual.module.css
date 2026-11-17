@@ -77,9 +77,26 @@
 	color: var(--text-primary);
 }
 
+/* Controls a page adds to a visual's header, such as the table's columns.
+   Revealed with the visual's own actions, and kept while one of them has a
+   menu open so the menu is not left hanging from nothing. */
+.frameControls {
+	display: flex;
+	align-items: center;
+	opacity: 0;
+	transition: opacity var(--transition-fast);
+}
+
+.visual:hover .frameControls,
+.frameControls:focus-within,
+.frameControls:has([aria-expanded="true"]) {
+	opacity: 1;
+}
+
 /* Touch has no hover to reveal them with, so they are simply there. */
 @media (hover: none) {
-	.frameAction {
+	.frameAction,
+	.frameControls {
 		opacity: 1;
 	}
 }
@@ -634,7 +651,7 @@
 	border: 1px solid var(--brand);
 	border-radius: var(--radius-full);
 	background: var(--surface-sunken);
-	color: var(--brand-strong);
+	color: var(--brand-text);
 	font-size: var(--text-xs);
 	font-weight: 600;
 	white-space: nowrap;
@@ -964,7 +981,7 @@
 /* A visual carrying notes colours its notes control, which shows on hover like the
    others. */
 .frameActionMarked {
-	color: var(--brand);
+	color: var(--brand-text);
 }
 
 .noteCount {
@@ -1091,6 +1108,74 @@
 	font-size: var(--text-xs);
 	line-height: 1.5;
 	resize: vertical;
+}
+
+/* Writing a note: what it is about, then the fields for that kind. */
+.noteCompose {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	padding-top: var(--space-2);
+	border-top: 1px solid var(--border-subtle);
+}
+
+/* A sunken track with the chosen kind raised out of it, as the app's other
+   two-way switches are. */
+.noteKinds {
+	display: flex;
+	gap: 2px;
+	padding: 2px;
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-sunken);
+}
+
+.noteKind {
+	flex: 1;
+	padding: var(--space-1) var(--space-2);
+	border: none;
+	border-radius: var(--radius-sm);
+	background: none;
+	color: var(--text-secondary);
+	font: inherit;
+	font-size: var(--text-xs);
+	font-weight: 500;
+	cursor: pointer;
+}
+
+.noteKind:hover:not(.noteKindOn) {
+	color: var(--text-primary);
+}
+
+.noteKindOn {
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font-weight: 600;
+	box-shadow: var(--shadow-sm);
+}
+
+.noteHint {
+	margin: 0;
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+	line-height: 1.4;
+}
+
+.noteValueRow {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+	gap: var(--space-2);
+}
+
+.noteField {
+	min-width: 0;
+	padding: var(--space-1) var(--space-2);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-sm);
+	background: var(--surface-base);
+	color: var(--text-primary);
+	font: inherit;
+	font-size: var(--text-xs);
 }
 
 .noteActions {

@@ -200,7 +200,7 @@
 	height: 44px;
 	border-radius: var(--radius-full);
 	background: var(--brand-subtle);
-	color: var(--brand-strong);
+	color: var(--brand-text);
 }
 
 /* --- Something new, while the app is open ----------------------------- */
@@ -235,7 +235,7 @@
 .toastIcon {
 	display: inline-flex;
 	flex-shrink: 0;
-	color: var(--brand-strong);
+	color: var(--brand-text);
 }
 
 .toastText {

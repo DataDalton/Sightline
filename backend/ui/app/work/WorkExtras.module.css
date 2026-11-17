@@ -274,8 +274,10 @@
 	background: var(--surface-raised);
 }
 
+/* Days either side of the month, on the sunken fill so the month itself
+   stands out on either theme. */
 .dayOutside {
-	background: var(--surface-base);
+	background: var(--surface-sunken);
 }
 
 .dayOutside .dayNumber {

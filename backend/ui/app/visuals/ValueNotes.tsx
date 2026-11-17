@@ -2,7 +2,10 @@
 
 import { useMemo, useState } from "react";
 import useSWR from "swr";
+import { DatePicker } from "../components/shared/DatePicker";
+import { Select } from "../components/shared/Select";
 import styles from "./ValueNotes.module.css";
+import visual from "./Visual.module.css";
 
 // Notes on values showing in a visual, under it, with the thread each one started. Asked
 // for by naming what is on screen, so a note can only reach someone already looking at
@@ -235,7 +238,9 @@ export function ValueNotesStrip({
 	);
 }
 
-// For the visual's notes panel, where a value note starts.
+// For the visual's notes panel, where a value note starts. Drawn with the same
+// box, date and button as a note on the chart, since the two are one choice in
+// that panel rather than two forms.
 export function ValueNoteComposer({
 	sourceKey,
 	dimensions,
@@ -249,57 +254,56 @@ export function ValueNoteComposer({
 	const [value, setValue] = useState("");
 	const [body, setBody] = useState("");
 	const [expiresOn, setExpiresOn] = useState("");
+	const [busy, setBusy] = useState(false);
 	const [said, setSaid] = useState<string | null>(null);
 	const [failure, setFailure] = useState<string | null>(null);
 	if (!sourceKey || dimensions.length === 0) return null;
 	return (
-		<div className={styles.composer}>
-			<strong>A note on a value</strong>
-			<p className={styles.meta}>
-				Shows wherever that value appears, for anyone who can see it.
-			</p>
-			<div className={styles.replyRow}>
-				<select
-					className={styles.input}
+		<>
+			<div className={visual.noteValueRow}>
+				<Select
 					value={field}
-					aria-label="Field"
-					onChange={(e) => setField(e.target.value)}
-				>
-					{dimensions.map((name) => (
-						<option key={name} value={name}>
-							{name}
-						</option>
-					))}
-				</select>
+					ariaLabel="Field"
+					onChange={setField}
+					options={dimensions.map((name) => ({
+						value: name,
+						label: name,
+					}))}
+				/>
 				<input
-					className={styles.input}
+					className={visual.noteField}
 					value={value}
 					placeholder="The value, exactly as shown"
 					aria-label="Value"
 					onChange={(e) => setValue(e.target.value)}
 				/>
 			</div>
-			<input
-				className={styles.input}
+			<textarea
+				className={visual.noteInput}
 				value={body}
-				placeholder="Soon to be retired"
+				placeholder="What readers should know about it, such as soon to be retired"
 				aria-label="Note"
 				onChange={(e) => setBody(e.target.value)}
 			/>
-			<div className={styles.replyRow}>
-				<input
-					type="date"
-					className={styles.input}
-					value={expiresOn}
-					aria-label="Ends on"
-					onChange={(e) => setExpiresOn(e.target.value)}
-				/>
+			<div className={visual.noteActions}>
+				<div
+					className={visual.noteDate}
+					title="The day the note stops showing, if it should"
+				>
+					<DatePicker
+						value={expiresOn}
+						onChange={setExpiresOn}
+						placeholder="Shows until removed"
+						ariaLabel="The day the note stops showing"
+					/>
+				</div>
 				<button
 					type="button"
-					className={styles.button}
-					disabled={!value.trim() || !body.trim()}
+					className={visual.noteSave}
+					disabled={busy || !value.trim() || !body.trim()}
 					onClick={async () => {
 						setFailure(null);
+						setBusy(true);
 						try {
 							await post({
 								action: "add",
@@ -319,14 +323,16 @@ export function ValueNoteComposer({
 									? error.message
 									: "That did not save.",
 							);
+						} finally {
+							setBusy(false);
 						}
 					}}
 				>
-					Add
+					{busy ? "Saving" : "Add note"}
 				</button>
 			</div>
 			{said && <p className={styles.meta}>{said}</p>}
-			{failure && <p className={styles.failure}>{failure}</p>}
-		</div>
+			{failure && <p className={visual.notesFailure}>{failure}</p>}
+		</>
 	);
 }

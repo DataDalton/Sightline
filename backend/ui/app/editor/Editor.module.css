@@ -770,7 +770,7 @@
 /* Which tab a group lives on, while a search shows all three at once. */
 .tabHeading {
 	margin: var(--space-2) var(--space-1) var(--space-1);
-	color: var(--brand-strong);
+	color: var(--brand-text);
 	font-size: var(--text-xs);
 	font-weight: 700;
 	letter-spacing: 0.04em;
@@ -1138,7 +1138,7 @@ textarea.input {
 }
 
 .fieldMoving .fieldGrip {
-	color: var(--brand-strong);
+	color: var(--brand-text);
 }
 
 /* The row itself. A button, because pressing it is what puts the field in or
@@ -1424,7 +1424,7 @@ textarea.input {
 .railButtonOn,
 .railButtonOn:hover:not(:disabled) {
 	background: var(--brand-subtle);
-	color: var(--brand-strong);
+	color: var(--brand-text);
 }
 
 .railLabel {
@@ -2197,7 +2197,7 @@ textarea.input {
 }
 
 .pageAddButton:hover {
-	color: var(--brand-strong);
+	color: var(--brand-text);
 }
 
 .pageStripNote {

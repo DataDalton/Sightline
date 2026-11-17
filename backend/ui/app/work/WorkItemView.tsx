@@ -13,6 +13,9 @@ import { usePageTitle } from "../hooks/usePageTitle";
 import { useUser } from "../context/UserContext";
 import { RequestForm } from "./RequestForm";
 import { useAsk } from "./WorkDialog";
+import { BlockedIcon } from "./BlockedIcon";
+import { TimelineIcon } from "../components/shared/TimelineIcon";
+import timeline from "../components/shared/Timeline.module.css";
 import { ReleaseSelect } from "./ReleaseControls";
 import {
 	columnLabel,
@@ -459,6 +462,7 @@ export default function WorkItemView({ itemKey }: { itemKey: string }) {
 					</span>
 					{item.blocked && (
 						<span className={styles.blocked}>
+							<BlockedIcon />
 							Blocked: {item.blockedReason}
 						</span>
 					)}
@@ -859,14 +863,14 @@ export default function WorkItemView({ itemKey }: { itemKey: string }) {
 								]}
 							/>
 						</div>
-						<ol className={styles.timeline}>
+						<ol className={timeline.list}>
 							{shown.map((entry) =>
 								entry.type === "event" ? (
-									<li key={entry.id} className={styles.event}>
-										<span
-											className={styles.eventDot}
-											aria-hidden="true"
-										/>
+									<li
+										key={entry.id}
+										className={`${timeline.event} ${styles.event}`}
+									>
+										<TimelineIcon kind={entry.kind ?? ""} />
 										<span>
 											<strong>
 												{personName(entry.actor)}
@@ -934,13 +938,16 @@ export default function WorkItemView({ itemKey }: { itemKey: string }) {
 								) : (
 									<li
 										key={entry.id}
-										className={`${styles.comment} ${entry.replyTo ? styles.reply : ""}`}
+										className={`${timeline.comment} ${entry.replyTo ? timeline.reply : ""}`}
 									>
-										<span className={styles.avatar}>
+										<span
+											className={timeline.avatar}
+											aria-hidden="true"
+										>
 											{initials(entry.actor)}
 										</span>
-										<div className={styles.commentBody}>
-											<div className={styles.commentHead}>
+										<div className={timeline.card}>
+											<div className={timeline.cardHead}>
 												<strong>
 													{personName(entry.actor)}
 												</strong>

@@ -58,7 +58,7 @@ export const themeBootstrapScript = `
 				var value = colours[name];
 				var hex = /^#[0-9a-fA-F]{6}$/.test(value);
 				var tint = /^color-mix\\(in srgb, #[0-9a-fA-F]{6} \\d+%, var\\(--surface-raised\\)\\)$/.test(value);
-				if ((/^--(brand|brand-strong|brand-contrast|chart-[1-8])$/.test(name) && hex) || (name === '--brand-subtle' && tint)) {
+				if ((/^--(brand|brand-strong|brand-contrast|brand-text|chart-[1-8])$/.test(name) && hex) || (name === '--brand-subtle' && tint)) {
 					document.documentElement.style.setProperty(name, value);
 				}
 			}

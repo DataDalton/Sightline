@@ -107,7 +107,7 @@
 	padding: 0 12px 0 6px;
 	border: 1px solid var(--border-default);
 	border-radius: 999px;
-	background: transparent;
+	background: var(--surface-raised);
 	font-size: var(--text-sm);
 	color: var(--text-secondary);
 	cursor: pointer;
@@ -194,7 +194,7 @@
 	height: 40px;
 	border-radius: var(--radius-md);
 	background: color-mix(in srgb, var(--brand) 16%, transparent);
-	color: var(--brand);
+	color: var(--brand-text);
 }
 
 .emptyTitle {

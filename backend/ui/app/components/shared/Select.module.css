@@ -140,7 +140,7 @@
 .tick {
 	flex-shrink: 0;
 	width: 14px;
-	color: var(--brand-strong);
+	color: var(--brand-text);
 	font-size: 12px;
 	line-height: 1;
 }

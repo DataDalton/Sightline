@@ -236,7 +236,7 @@
 	padding: 2px;
 	border: 1px solid var(--border-subtle);
 	border-radius: var(--radius-sm);
-	background: none;
+	background: var(--surface-raised);
 	cursor: pointer;
 }
 

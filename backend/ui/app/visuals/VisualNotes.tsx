@@ -53,6 +53,9 @@ export function VisualNotes({
 	sourceKey,
 	dimensions = [],
 }: VisualNotesProps) {
+	// What a new note is about: this chart, or one value wherever it appears.
+	const [about, setAbout] = useState<"chart" | "value">("chart");
+	const valueNotesPossible = Boolean(sourceKey) && dimensions.length > 0;
 	const [draft, setDraft] = useState("");
 	const [anchor, setAnchor] = useState("");
 	const [busy, setBusy] = useState(false);
@@ -166,44 +169,86 @@ export function VisualNotes({
 				</div>
 			))}
 
-			<textarea
-				className={styles.noteInput}
-				value={draft}
-				maxLength={maxNoteLength}
-				placeholder="What happened here?"
-				onChange={(e) => setDraft(e.target.value)}
-			/>
-			<div className={styles.noteActions}>
-				{/* Optional, and the reason it is worth asking: a note about
+			<div className={styles.noteCompose}>
+				{valueNotesPossible && (
+					<>
+						<div
+							className={styles.noteKinds}
+							role="radiogroup"
+							aria-label="What the note is about"
+						>
+							{(
+								[
+									["chart", "On this chart"],
+									["value", "On a value"],
+								] as const
+							).map(([id, label]) => (
+								<button
+									key={id}
+									type="button"
+									role="radio"
+									aria-checked={about === id}
+									className={`${styles.noteKind} ${about === id ? styles.noteKindOn : ""}`}
+									onClick={() => setAbout(id)}
+								>
+									{label}
+								</button>
+							))}
+						</div>
+						<p className={styles.noteHint}>
+							{about === "chart"
+								? "Shows on this chart, at a date if you give one."
+								: "Shows wherever that value appears, on every report, for anyone who can see it."}
+						</p>
+					</>
+				)}
+				{about === "value" && valueNotesPossible ? (
+					<ValueNoteComposer
+						sourceKey={sourceKey}
+						dimensions={dimensions}
+					/>
+				) : (
+					<>
+						<textarea
+							className={styles.noteInput}
+							value={draft}
+							maxLength={maxNoteLength}
+							placeholder="What happened here?"
+							onChange={(e) => setDraft(e.target.value)}
+						/>
+						<div className={styles.noteActions}>
+							{/* Optional, and the reason it is worth asking: a note about
 				    one point on a line is far more useful when it says which
 				    point. */}
-				<div
-					className={styles.noteDate}
-					title="The date this is about, if it is about one"
-				>
-					<DatePicker
-						value={anchor}
-						onChange={setAnchor}
-						placeholder="No date"
-						ariaLabel="The date this note is about"
-					/>
-				</div>
-				<button
-					type="button"
-					className={styles.noteSave}
-					onClick={add}
-					disabled={busy || draft.trim() === ""}
-				>
-					{busy ? "Saving" : "Add note"}
-				</button>
-			</div>
+							<div
+								className={styles.noteDate}
+								title="The date this is about, if it is about one"
+							>
+								<DatePicker
+									value={anchor}
+									onChange={setAnchor}
+									placeholder="No date"
+									ariaLabel="The date this note is about"
+								/>
+							</div>
+							<button
+								type="button"
+								className={styles.noteSave}
+								onClick={add}
+								disabled={busy || draft.trim() === ""}
+							>
+								{busy ? "Saving" : "Add note"}
+							</button>
+						</div>
 
-			{failure && (
-				<p className={styles.notesFailure} role="status">
-					{failure}
-				</p>
-			)}
-			<ValueNoteComposer sourceKey={sourceKey} dimensions={dimensions} />
+						{failure && (
+							<p className={styles.notesFailure} role="status">
+								{failure}
+							</p>
+						)}
+					</>
+				)}
+			</div>
 		</div>
 	);
 }

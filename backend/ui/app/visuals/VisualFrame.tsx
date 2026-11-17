@@ -251,7 +251,11 @@ export function VisualFrame({
 					    on every visual whether or not it has a breadcrumb. */}
 					<span className={styles.headerSpacer} aria-hidden="true" />
 
-					{pageControls}
+					{pageControls && (
+						<span className={styles.frameControls}>
+							{pageControls}
+						</span>
+					)}
 					{actions}
 
 					{canExpand && (

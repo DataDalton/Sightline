@@ -24,7 +24,7 @@
 .icon {
 	display: inline-flex;
 	flex-shrink: 0;
-	color: var(--brand-strong);
+	color: var(--brand-text);
 }
 
 .input {

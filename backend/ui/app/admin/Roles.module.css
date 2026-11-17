@@ -106,7 +106,7 @@
 
 .levelEdit {
 	background: color-mix(in srgb, var(--brand) 14%, transparent);
-	color: var(--brand-strong, var(--brand));
+	color: var(--brand-text);
 }
 
 .levelAdmin {

@@ -174,7 +174,7 @@
 
 .kindMeasure {
 	background: color-mix(in srgb, var(--brand) 16%, transparent);
-	color: var(--brand);
+	color: var(--brand-text);
 }
 
 .muted {
@@ -321,7 +321,7 @@
 }
 
 .usageReport:hover {
-	color: var(--brand);
+	color: var(--brand-text);
 	text-decoration: underline;
 }
 
@@ -388,7 +388,7 @@
 	border: 1px solid var(--border-subtle);
 	border-radius: var(--radius-full);
 	background: var(--surface-raised);
-	color: var(--brand);
+	color: var(--brand-text);
 	font-family: inherit;
 	font-size: var(--text-sm);
 	cursor: pointer;
@@ -469,7 +469,7 @@
 }
 
 .rulesLink {
-	color: var(--brand);
+	color: var(--brand-text);
 	font-size: var(--text-sm);
 	white-space: nowrap;
 }
@@ -490,7 +490,7 @@
 	padding: 2px var(--space-2);
 	border: 1px solid var(--border-default);
 	border-radius: var(--radius-sm);
-	background: none;
+	background: var(--surface-raised);
 	color: var(--text-primary);
 	font: inherit;
 	font-size: var(--text-xs);

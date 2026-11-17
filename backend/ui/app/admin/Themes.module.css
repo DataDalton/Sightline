@@ -59,7 +59,9 @@
 
 .grid {
 	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+	/* Narrow enough for three or four across a wide window, so the full set
+	   of built-in themes can be compared without a long scroll. */
+	grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
 	gap: var(--space-3);
 }
 

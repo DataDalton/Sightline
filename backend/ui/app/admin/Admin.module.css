@@ -299,7 +299,7 @@
 
 .badgeAdmin {
 	background: var(--brand-subtle);
-	color: var(--brand-strong);
+	color: var(--brand-text);
 	border-color: var(--brand);
 }
 

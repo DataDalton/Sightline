@@ -34,7 +34,7 @@
 	padding: var(--space-1) var(--space-3);
 	border: 1px solid var(--border-default);
 	border-radius: var(--radius-sm);
-	background: none;
+	background: var(--surface-raised);
 	color: var(--text-primary);
 	font: inherit;
 	font-size: var(--text-sm);
@@ -82,7 +82,7 @@
 
 .secondary[aria-pressed="true"] {
 	border-color: var(--brand);
-	color: var(--brand);
+	color: var(--brand-text);
 }
 
 .primary:disabled,
@@ -96,7 +96,7 @@
 	padding: 0;
 	border: none;
 	background: none;
-	color: var(--brand);
+	color: var(--brand-text);
 	font: inherit;
 	font-size: var(--text-sm);
 	cursor: pointer;
@@ -193,10 +193,13 @@ textarea.input {
 
 .chip,
 .segment {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1);
 	padding: var(--space-1) var(--space-3);
 	border: 1px solid var(--border-default);
 	border-radius: var(--radius-full);
-	background: none;
+	background: var(--surface-raised);
 	color: var(--text-secondary);
 	font: inherit;
 	font-size: var(--text-sm);
@@ -216,21 +219,27 @@ textarea.input {
 	font-weight: 600;
 }
 
+/* A sunken track with the chosen option raised out of it, the same as the
+   tab strips, so the choice reads on either theme. */
 .segmented {
 	gap: 0;
 	padding: 2px;
 	border: 1px solid var(--border-default);
 	border-radius: var(--radius-full);
+	background: var(--surface-sunken);
 }
 
 .segment {
 	border-color: transparent;
+	background: none;
 }
 
 .segment[aria-pressed="true"] {
-	background: var(--surface-sunken);
+	border-color: var(--border-subtle);
+	background: var(--surface-raised);
 	color: var(--text-primary);
 	font-weight: 600;
+	box-shadow: var(--shadow-sm);
 }
 
 .chip:focus-visible,
@@ -362,7 +371,9 @@ textarea.input {
 	gap: var(--space-2);
 	min-height: 120px;
 	padding: var(--space-2);
-	border: 1px solid var(--border-subtle);
+	/* The default border rather than the subtle one, because the sunken fill
+	   is close to the page on the light theme and the edge is what shows. */
+	border: 1px solid var(--border-default);
 	border-radius: var(--radius-md);
 	background: var(--surface-sunken);
 }
@@ -377,7 +388,8 @@ textarea.input {
 	align-items: center;
 	justify-content: space-between;
 	gap: var(--space-2);
-	padding: 0 var(--space-1);
+	padding: 0 var(--space-1) var(--space-2);
+	border-bottom: 1px solid var(--border-subtle);
 	font-size: var(--text-sm);
 	font-weight: 600;
 }
@@ -456,6 +468,12 @@ textarea.input {
 	background: var(--warning-subtle);
 }
 
+/* The priority pill shares the blocked card's amber, so it takes the raised
+   surface there to keep its shape. */
+.cardBlocked .priority {
+	background: var(--surface-raised);
+}
+
 .cardTop,
 .cardBottom {
 	display: flex;
@@ -514,6 +532,9 @@ textarea.input {
 }
 
 .blocked {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--space-1);
 	color: var(--warning);
 	font-size: var(--text-xs);
 	font-weight: 600;
@@ -634,6 +655,9 @@ textarea.input {
 }
 
 .blockedMini {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
 	margin-left: var(--space-2);
 	color: var(--warning);
 	font-size: var(--text-xs);
@@ -653,26 +677,55 @@ textarea.input {
 	flex-direction: column;
 	margin: 0;
 	padding: 0;
-	border: 1px solid var(--border-subtle);
+	border: 1px solid var(--border-default);
 	border-radius: var(--radius-md);
 	list-style: none;
+	/* Keeps the rows' fill inside the rounded corners. */
+	overflow: hidden;
 }
 
+/* One line per request: the key in a column of its own so titles line up,
+   then the title, then what else is known about it at the far end. */
 .listRow {
 	display: flex;
-	flex-wrap: wrap;
 	align-items: baseline;
-	gap: var(--space-2);
+	gap: var(--space-3);
+	width: 100%;
 	padding: var(--space-2) var(--space-3);
+	border: none;
 	border-bottom: 1px solid var(--border-subtle);
+	background: var(--surface-raised);
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
 }
 
-.listRow:last-child {
+.listRow:hover {
+	background: var(--surface-hover);
+}
+
+.listRow:focus-visible {
+	outline: 2px solid var(--brand);
+	outline-offset: -2px;
+}
+
+.listRow > :first-child {
+	flex: 0 0 64px;
+}
+
+.listRow > :last-child {
+	margin-left: auto;
+	text-align: right;
+}
+
+.listItems > li:last-child .listRow {
 	border-bottom: none;
 }
 
 .listTitle {
-	flex: 1 1 280px;
+	flex: 1 1 auto;
+	min-width: 0;
 	color: var(--text-primary);
 	font-weight: 600;
 	text-decoration: none;
@@ -933,23 +986,15 @@ textarea.input {
 	gap: var(--space-1);
 }
 
-.timeline {
-	display: flex;
-	flex-direction: column;
-	gap: var(--space-3);
-	margin: 0;
-	padding: 0 0 0 var(--space-3);
-	border-left: 2px solid var(--border-subtle);
-	list-style: none;
+/* An event on the request's timeline. Its comparison of a description wraps
+   onto a line of its own, under the words rather than beside the mark. */
+.event {
+	flex-wrap: wrap;
 }
 
-.event {
-	position: relative;
-	display: flex;
-	flex-direction: column;
-	gap: var(--space-2);
-	color: var(--text-secondary);
-	font-size: var(--text-sm);
+.event .compare {
+	flex-basis: 100%;
+	margin-left: calc(32px + var(--space-3));
 }
 
 .event strong {
@@ -960,17 +1005,6 @@ textarea.input {
 	margin-left: var(--space-2);
 }
 
-.eventDot {
-	position: absolute;
-	top: 6px;
-	left: calc(var(--space-3) * -1 - 6px);
-	width: 10px;
-	height: 10px;
-	border: 2px solid var(--surface-raised);
-	border-radius: var(--radius-full);
-	background: var(--text-muted);
-}
-
 .compare {
 	display: grid;
 	grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -979,36 +1013,6 @@ textarea.input {
 	border-radius: var(--radius-sm);
 	background: var(--surface-sunken);
 	color: var(--text-primary);
-}
-
-.comment {
-	display: flex;
-	gap: var(--space-2);
-	margin-left: calc(var(--space-3) * -1 - 13px);
-}
-
-.reply {
-	margin-left: var(--space-5);
-}
-
-.commentBody {
-	display: flex;
-	flex: 1;
-	flex-direction: column;
-	gap: var(--space-2);
-	min-width: 0;
-	padding: var(--space-2) var(--space-3);
-	border: 1px solid var(--border-subtle);
-	border-radius: var(--radius-md);
-	background: var(--surface-base);
-}
-
-.commentHead {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: baseline;
-	gap: var(--space-2);
-	font-size: var(--text-sm);
 }
 
 .commentActions {
@@ -1022,7 +1026,7 @@ textarea.input {
 	padding: 0 var(--space-2);
 	border: 1px solid var(--border-subtle);
 	border-radius: var(--radius-full);
-	background: none;
+	background: var(--surface-raised);
 	color: var(--text-secondary);
 	font: inherit;
 	font-size: var(--text-xs);
@@ -1036,7 +1040,7 @@ textarea.input {
 
 .reactionOn {
 	border-color: var(--brand);
-	color: var(--brand);
+	color: var(--brand-text);
 }
 
 .newComment {

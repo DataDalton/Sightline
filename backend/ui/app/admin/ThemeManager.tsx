@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
 	builtinThemes,
 	parseCustomThemes,
@@ -12,6 +12,7 @@ import {
 	type ThemeGround,
 	type ThemePart,
 } from "../components/shared/ThemePreview";
+import { useTheme } from "../context/ThemeContext";
 import styles from "./Themes.module.css";
 
 // The workspace's themes. Editors choose one on each report, under Edit, Report, Theme. Built-in
@@ -134,7 +135,11 @@ export function ThemeManager({
 	value: string;
 	onChange: (next: string) => void;
 }) {
-	const [ground, setGround] = useState<ThemeGround>("dark");
+	// Starts on the reader's own light or dark choice, so a theme is first seen
+	// the way they will see it.
+	const { resolved } = useTheme();
+	const [ground, setGround] = useState<ThemeGround>(resolved);
+	useEffect(() => setGround(resolved), [resolved]);
 	const themes = parseCustomThemes(value);
 	const store = (next: ReportTheme[]) =>
 		onChange(next.length > 0 ? JSON.stringify(next) : "");

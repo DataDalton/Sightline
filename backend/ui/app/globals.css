@@ -12,7 +12,7 @@
 
 :root {
 	/* Surfaces, from furthest back to closest to the reader. */
-	--surface-sunken: #eaedf1;
+	--surface-sunken: #e4e8ed;
 	--surface-base: #f1f3f6;
 	--surface-raised: #ffffff;
 	--surface-overlay: #ffffff;
@@ -34,10 +34,10 @@
 	   layer over them flattens that to grey: the dialog stops looking like the
 	   application it is in. These carry the same cast, so a hovered row lands
 	   on the next colour along the ramp rather than beside it. */
-	--state-hover: rgba(19, 44, 82, 0.07);
+	--state-hover: rgba(19, 44, 82, 0.09);
 	--state-selected: color-mix(in srgb, var(--brand) 15%, transparent);
-	--surface-hover: #e8ebef;
-	--surface-active: #dee2e7;
+	--surface-hover: #e2e6eb;
+	--surface-active: #d5dae1;
 
 	/* Chrome is deliberately dark in both themes: it frames the content
 	   rather than competing with it, and keeps the product recognisable. */
@@ -50,21 +50,24 @@
 
 	--text-primary: #16181d;
 	--text-secondary: #434952;
-	--text-muted: #666d77;
+	--text-muted: #5b626c;
 	--text-inverse: #ffffff;
 	--text-link: #0b5cd5;
 	/* The knob of a switch, light on either track in both themes. */
 	--control-thumb: #ffffff;
 
-	--border-subtle: #e1e5ea;
-	--border-default: #ccd2d9;
-	--border-strong: #b3bac3;
+	--border-subtle: #d8dde3;
+	--border-default: #c0c7cf;
+	--border-strong: #9aa3ae;
 
 	/* Brand. Gold is an accent, not a field: it marks the active item and the
 	   primary action. Large gold areas fight with chart colour, so there are
 	   no gold surfaces. */
 	--brand: #ffb500;
 	--brand-strong: #d99a00;
+	/* The accent as text or an icon on a page surface. The accent itself is a
+	   fill colour and too light to read on white. */
+	--brand-text: #8f5f00;
 	--brand-subtle: #fff0c7;
 	--brand-contrast: #16181d;
 
@@ -203,6 +206,7 @@
 
 		--brand: #ffb500;
 		--brand-strong: #ffc633;
+		--brand-text: #ffc633;
 		--brand-subtle: #3d2f0a;
 		--brand-contrast: #16181d;
 
@@ -277,6 +281,7 @@
 
 	--brand: #ffb500;
 	--brand-strong: #ffc633;
+	--brand-text: #ffc633;
 	--brand-subtle: #3d2f0a;
 	--brand-contrast: #16181d;
 

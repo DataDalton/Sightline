@@ -33,10 +33,10 @@
    the one filled star on a page reads as the reader's own mark rather than as
    another piece of chrome. */
 .on {
-	color: var(--brand);
+	color: var(--brand-text);
 }
 
 .on:hover:not(:disabled) {
 	background: var(--state-hover);
-	color: var(--brand-strong);
+	color: var(--brand-text);
 }

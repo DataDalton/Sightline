@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import type { WorkConfig } from "@/lib/work/model";
 import type { WorkSummary } from "@/lib/work/store";
+import { BlockedIcon } from "./BlockedIcon";
 import styles from "./WorkExtras.module.css";
 
 // Requests on a month grid by target date, weeks starting on Monday. Requests
@@ -44,24 +45,6 @@ function monthDays(year: number, month: number): Date[] {
 		days.push(cursor);
 	}
 	return days;
-}
-
-function BlockedIcon() {
-	return (
-		<svg
-			className={styles.chipIcon}
-			width="11"
-			height="11"
-			viewBox="0 0 16 16"
-			fill="none"
-			stroke="currentColor"
-			strokeWidth="2"
-			aria-hidden="true"
-		>
-			<circle cx="8" cy="8" r="6" />
-			<path d="M3.8 12.2l8.4-8.4" />
-		</svg>
-	);
 }
 
 function Chevron({ direction }: { direction: "left" | "right" }) {
@@ -113,7 +96,9 @@ function ItemChip({
 			}
 			aria-label={described}
 		>
-			{item.blocked && <BlockedIcon />}
+			{item.blocked && (
+				<BlockedIcon size={12} className={styles.chipIcon} />
+			)}
 			<span className={styles.chipKey}>{item.key}</span>
 			<span className={styles.chipTitle}>{item.title}</span>
 		</button>
@@ -240,7 +225,7 @@ export function WorkCalendar({
 					</span>
 				))}
 				<span className={styles.legendItem}>
-					<BlockedIcon />
+					<BlockedIcon size={12} className={styles.chipIcon} />
 					Blocked
 				</span>
 			</div>

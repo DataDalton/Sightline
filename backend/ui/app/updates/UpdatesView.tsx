@@ -32,6 +32,8 @@ import {
 	type UpdateTypeDefinition,
 } from "../../lib/updates/model";
 import form from "../authoring/Authoring.module.css";
+import { TimelineIcon } from "../components/shared/TimelineIcon";
+import timeline from "../components/shared/Timeline.module.css";
 import styles from "./Updates.module.css";
 
 // The Updates page. A timeline with filters and search, a maintenance calendar, what each
@@ -183,6 +185,17 @@ const audienceWords: Record<string, string> = {
 	report: "Readers of a report",
 };
 
+// What each event says on the activity timeline, after who did it.
+const eventPhrases: Record<string, string> = {
+	created: "posted this update",
+	published: "published this update",
+	corrected: "corrected this update",
+	retracted: "retracted this update",
+	investigating: "marked this as being looked into",
+	identified: "marked the cause as found",
+	resolved: "marked this resolved",
+};
+
 const historyWords: Record<string, string> = {
 	created: "Posted",
 	published: "Published",
@@ -280,10 +293,22 @@ function TypeBadge({
 	types: UpdateTypeDefinition[];
 }) {
 	const found = types.find((t) => t.typeId === type);
+	// An administrator picks the colour, and a light one is unreadable as text
+	// on the light theme. Mixed with the page's own text colour it darkens on
+	// light and lightens on dark, so the label reads whatever was picked.
+	const color = found?.color;
 	return (
 		<span
 			className={styles.badge}
-			style={{ borderColor: found?.color, color: found?.color }}
+			style={
+				color
+					? {
+							borderColor: color,
+							color: `color-mix(in srgb, ${color} 55%, var(--text-primary))`,
+							background: `color-mix(in srgb, ${color} 10%, transparent)`,
+						}
+					: undefined
+			}
 		>
 			{found?.label ?? type}
 		</span>
@@ -1681,8 +1706,12 @@ function DetailDialog({
 				]
 			: []),
 	] as [string, React.ReactNode][];
-	const notes = data.history.filter((event) => event.kind === "note");
-	const events = data.history.filter((event) => event.kind !== "note");
+	// Notes and events together, oldest first, so the activity reads as one
+	// story down the timeline the way an issue does.
+	const history = [...data.history].sort(
+		(a, b) => new Date(a.at).getTime() - new Date(b.at).getTime(),
+	);
+	const notes = history.filter((event) => event.kind === "note");
 
 	return (
 		<Modal
@@ -1992,32 +2021,79 @@ function DetailDialog({
 				<section className={styles.activity}>
 					<h3 className={styles.sectionTitle}>Activity</h3>
 
-					{notes.length > 0 && (
-						<ol className={styles.notes}>
-							{notes.map((event, index) => (
-								<li key={index} className={styles.noteEntry}>
-									<span
-										className={styles.noteAvatar}
-										aria-hidden="true"
+					{history.length > 0 && (
+						<ol className={timeline.list}>
+							{history.map((event, index) =>
+								event.kind === "note" ? (
+									<li
+										key={index}
+										className={timeline.comment}
 									>
-										{initialsOf(
-											event.by_name ?? event.by_email,
-										)}
-									</span>
-									<div className={styles.noteBody}>
-										<div>
+										<span
+											className={timeline.avatar}
+											aria-hidden="true"
+										>
+											{initialsOf(
+												event.by_name ?? event.by_email,
+											)}
+										</span>
+										<div className={timeline.card}>
+											<div className={timeline.cardHead}>
+												<strong>
+													{event.by_name ??
+														event.by_email}
+												</strong>
+												<span className={timeline.time}>
+													{when(event.at)}
+												</span>
+											</div>
+											{event.note && <p>{event.note}</p>}
+										</div>
+									</li>
+								) : (
+									<li key={index} className={timeline.event}>
+										<TimelineIcon
+											kind={
+												event.kind === "created"
+													? "published"
+													: event.kind
+											}
+										/>
+										<span>
 											<strong>
 												{event.by_name ??
 													event.by_email}
 											</strong>{" "}
-											<span className={styles.meta}>
+											{eventPhrases[event.kind] ??
+												(
+													historyWords[event.kind] ??
+													event.kind
+												).toLowerCase()}{" "}
+											<span className={timeline.time}>
 												{when(event.at)}
 											</span>
-										</div>
-										{event.note && <p>{event.note}</p>}
-									</div>
-								</li>
-							))}
+											{event.note && (
+												<span className={styles.meta}>
+													{" "}
+													· {event.note}
+												</span>
+											)}
+											{event.snapshot?.title &&
+												event.snapshot.title !==
+													update.title && (
+													<span
+														className={styles.meta}
+													>
+														{" "}
+														· It read &quot;
+														{event.snapshot.title}
+														&quot;
+													</span>
+												)}
+										</span>
+									</li>
+								),
+							)}
 						</ol>
 					)}
 
@@ -2053,35 +2129,6 @@ function DetailDialog({
 							Acknowledged by {data.acknowledgedBy.join(", ")}
 						</p>
 					)}
-
-					<ol className={styles.events}>
-						{events.map((event, index) => (
-							<li key={index}>
-								<span>
-									{historyWords[event.kind] ?? event.kind}
-								</span>{" "}
-								<span className={styles.meta}>
-									{event.by_name ?? event.by_email},{" "}
-									{when(event.at)}
-								</span>
-								{event.note && (
-									<span className={styles.meta}>
-										{" "}
-										· {event.note}
-									</span>
-								)}
-								{event.snapshot?.title &&
-									event.snapshot.title !== update.title && (
-										<span className={styles.meta}>
-											{" "}
-											· It read &quot;
-											{event.snapshot.title}
-											&quot;
-										</span>
-									)}
-							</li>
-						))}
-					</ol>
 				</section>
 				{failure && <div className={form.failure}>{failure}</div>}
 			</div>
