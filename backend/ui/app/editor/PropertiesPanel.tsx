@@ -92,6 +92,8 @@ interface PropertiesPanelProps {
 	reportTheme?: string | null;
 	onThemeChange?: (next: string | null) => void;
 	feedbackChanges?: "automatic" | "suggest";
+	opensIn?: "briefing" | "analysis";
+	onOpensInChange?: (next: "briefing" | "analysis") => void;
 	onFeedbackChangesChange?: (next: "automatic" | "suggest") => void;
 	placement?: React.ReactNode;
 	onPageChange: (next: PageConfig) => void;
@@ -228,6 +230,8 @@ export function PropertiesPanel({
 	reportTheme,
 	onThemeChange,
 	feedbackChanges = "suggest",
+	opensIn = "briefing",
+	onOpensInChange,
 	onFeedbackChangesChange,
 	placement,
 	onPageChange,
@@ -387,6 +391,41 @@ export function PropertiesPanel({
 										value={reportTheme ?? null}
 										onChange={onThemeChange}
 									/>
+								)}
+								{onOpensInChange && (
+									<div className={styles.field}>
+										<label className={styles.fieldLabel}>
+											Opens in
+										</label>
+										<Select
+											value={opensIn}
+											ariaLabel="Opens in"
+											onChange={(next) =>
+												onOpensInChange(
+													next === "analysis"
+														? "analysis"
+														: "briefing",
+												)
+											}
+											options={[
+												{
+													value: "briefing",
+													label: "Briefing",
+												},
+												{
+													value: "analysis",
+													label: "Analysis",
+												},
+											]}
+										/>
+										<Hint>
+											Briefing reads top to bottom, one
+											section per measure with what it
+											means. Analysis is the full grid.
+											Readers can switch, and their choice
+											is remembered.
+										</Hint>
+									</div>
 								)}
 								{onFeedbackChangesChange && (
 									<div className={styles.field}>

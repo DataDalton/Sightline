@@ -1,5 +1,11 @@
 "use client";
 
+import { ReportBriefing } from "./briefing/ReportBriefing";
+import briefingStyles from "./briefing/Briefing.module.css";
+import {
+	planSections,
+	type BriefingSettings,
+} from "../../lib/visuals/briefing";
 import { seedResponses } from "../components/SWRProvider";
 import { BoardOriginContext } from "../boards/AddToBoard";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -138,6 +144,7 @@ interface ReportDetail {
 	description: string | null;
 	// What the assistant does with a fix readers agree on.
 	feedbackChanges?: "automatic" | "suggest";
+	opensIn?: "briefing" | "analysis";
 	sourceKey: string | null;
 	permission: "view" | "edit" | "admin";
 	editMode: "edit" | "suggest" | null;
@@ -280,6 +287,32 @@ export default function ReportView({
 	// away a report the server had already resolved.
 	const showSkeleton = useDeferredLoading(isLoading && !data);
 	const [editing, setEditing] = useState(false);
+	// The form this reader last chose for this report, Briefing or Analysis.
+	// Null until they choose, which leaves the report's own setting in charge.
+	// Read after mount, so the server render and the first client render
+	// agree.
+	const formKey = `report.form.${slug}`;
+	const [formChoice, setFormChoice] = useState<
+		"briefing" | "analysis" | null
+	>(null);
+	useEffect(() => {
+		try {
+			const held = window.localStorage.getItem(formKey);
+			setFormChoice(
+				held === "briefing" || held === "analysis" ? held : null,
+			);
+		} catch {
+			// Blocked storage leaves the report's own setting in charge.
+		}
+	}, [formKey]);
+	const chooseForm = (next: "briefing" | "analysis") => {
+		setFormChoice(next);
+		try {
+			window.localStorage.setItem(formKey, next);
+		} catch {
+			// Without storage the choice lasts until the page is left.
+		}
+	};
 	const [showingUsage, setShowingUsage] = useState(false);
 	// Whether the report bar is pinned at the top, which is when the sentinel above it
 	// has scrolled out of view.
@@ -742,6 +775,51 @@ export default function ReportView({
 
 	const page = pageOf(report, activePageId, namedPageId);
 
+	// The Briefing needs at least one measure to brief on. A page of tables or
+	// text alone stays the grid, and offers no switch. Editing is always the
+	// grid, since that is what the editor arranges.
+	const canBrief =
+		planSections(
+			(page?.visuals ?? []) as never,
+			page?.sourceKey ?? report.sourceKey ?? null,
+		).length > 0;
+	const form: "briefing" | "analysis" =
+		!canBrief || editing
+			? "analysis"
+			: (formChoice ?? report.opensIn ?? "briefing");
+	// Saves what an author changed about this page's Briefing, as a change
+	// to the page's settings, the same way the editor saves them.
+	const saveBriefing = async (next: BriefingSettings): Promise<boolean> => {
+		if (!page) return false;
+		const send = (baseVersion: number) =>
+			fetch(`/api/report/${encodeURIComponent(report.slug)}/edit`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					baseVersion,
+					operations: [
+						{
+							type: "updatePage",
+							pageId: page.pageId,
+							config: { briefing: next },
+						},
+					],
+				}),
+			});
+		let response = await send(report.version);
+		// Somebody saved in between. The change touches only this page's
+		// Briefing, so it goes again on top of theirs.
+		if (response.status === 409) {
+			const detail = (await response.json().catch(() => null)) as {
+				currentVersion?: number;
+			} | null;
+			if (detail?.currentVersion)
+				response = await send(detail.currentVersion);
+		}
+		await mutate();
+		return response.ok;
+	};
+
 	// What the link this reader followed asked the page to open on.
 	const shared = arrivedWith
 		? decodeShareParams(
@@ -922,6 +1000,7 @@ export default function ReportView({
 					reportDescription={report.description}
 					reportTheme={report.theme}
 					reportFeedbackChanges={report.feedbackChanges}
+					reportOpensIn={report.opensIn}
 					editMode={modeHere}
 					categoryId={report.categoryId}
 					isPersonal={report.isPersonal}
@@ -1252,6 +1331,63 @@ export default function ReportView({
 																			styles.actions
 																		}
 																	>
+																		{canBrief &&
+																			!editing && (
+																				<div
+																					className={
+																						briefingStyles.formSwitch
+																					}
+																					role="group"
+																					aria-label="How to read this page"
+																				>
+																					{(
+																						[
+																							[
+																								"briefing",
+																								"Briefing",
+																								"Each measure in plain words, what needs attention first",
+																							],
+																							[
+																								"analysis",
+																								"Analysis",
+																								"Every visual on the page, to explore",
+																							],
+																						] as const
+																					).map(
+																						([
+																							value,
+																							label,
+																							title,
+																						]) => (
+																							<button
+																								key={
+																									value
+																								}
+																								type="button"
+																								className={
+																									briefingStyles.formOption
+																								}
+																								aria-pressed={
+																									form ===
+																									value
+																								}
+																								title={
+																									title
+																								}
+																								onClick={() =>
+																									chooseForm(
+																										value,
+																									)
+																								}
+																							>
+																								{
+																									label
+																								}
+																							</button>
+																						),
+																					)}
+																				</div>
+																			)}
 																		{/* How current the data is, and anything to know about
 																    it: changes, failing rules and late loads, in one
 																    chip rather than above the report. */}
@@ -1818,6 +1954,38 @@ export default function ReportView({
 																						.emptyText
 																				: "This page has no visuals configured yet."}
 																		</div>
+																	) : form ===
+																			"briefing" &&
+																	  page ? (
+																		<ReportBriefing
+																			visuals={
+																				visuals
+																			}
+																			sources={
+																				sources
+																			}
+																			reportId={
+																				report.reportId
+																			}
+																			pageId={
+																				page.pageId
+																			}
+																			pageSourceKey={
+																				page.sourceKey ??
+																				report.sourceKey ??
+																				null
+																			}
+																			pageConfig={
+																				page.config
+																			}
+																			canEdit={
+																				modeHere ===
+																				"edit"
+																			}
+																			onSaveSettings={
+																				saveBriefing
+																			}
+																		/>
 																	) : (
 																		<ReportGrid
 																			visuals={

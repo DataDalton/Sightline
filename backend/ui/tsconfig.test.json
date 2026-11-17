@@ -26,6 +26,8 @@
 		"lib/visuals/worldGeo.test.ts",
 		"lib/visuals/kpiChange.ts",
 		"lib/visuals/kpiChange.test.ts",
+		"lib/visuals/briefing.ts",
+		"lib/visuals/briefing.test.ts",
 		"lib/pptx/zip.ts",
 		"lib/pptx/nativeChart.ts",
 		"lib/pptx/presentation.ts",

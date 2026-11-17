@@ -89,6 +89,8 @@ export interface ReportDetail extends ReportSummary {
 	// What the assistant does with a fix readers agree on: ask the maintainers,
 	// or make it. See lib/feedback/review.
 	feedbackChanges: "automatic" | "suggest";
+	// The form a reader lands on until they choose one themselves.
+	opensIn: "briefing" | "analysis";
 	// Whether this reader edits it, suggests a change to it, or neither.
 	editMode: EditMode;
 	// Pages where somebody's answer differs from the report's, through a right or an
@@ -122,6 +124,7 @@ interface ReportRow {
 	protect_edit: boolean;
 	theme?: string | null;
 	feedback_changes?: string | null;
+	opens_in?: string | null;
 	tags?: string[] | null;
 	edit_policy?: string | null;
 	protect_add_page: boolean;
@@ -131,7 +134,7 @@ interface ReportRow {
 const reportColumns = `report_id, category_id, slug, title, description,
 	        source_key, visibility, version, modified_on,
 	        is_personal, owner_email, protect_delete, protect_edit,
-	        protect_add_page, theme, tags, edit_policy, feedback_changes`;
+	        protect_add_page, theme, tags, edit_policy, feedback_changes, opens_in`;
 
 export async function listReports(
 	policy: PolicyClass,
@@ -492,6 +495,7 @@ export async function getReport(
 		theme: report.theme ?? null,
 		feedbackChanges:
 			report.feedback_changes === "automatic" ? "automatic" : "suggest",
+		opensIn: report.opens_in === "analysis" ? "analysis" : "briefing",
 		editMode,
 		pageModes: pageModesOn(
 			explicit,

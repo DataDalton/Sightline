@@ -106,6 +106,7 @@ export type EditOperation =
 			theme?: string;
 			// What the assistant does with a fix readers agree on.
 			feedbackChanges?: "automatic" | "suggest";
+			opensIn?: "briefing" | "analysis";
 	  }
 	| {
 			type: "updatePage";
@@ -890,7 +891,9 @@ async function runEdits(
 						   theme = CASE WHEN $4::text IS NULL THEN theme
 						                ELSE NULLIF($4, '') END,
 						   feedback_changes = CASE WHEN $5 IN ('automatic', 'suggest')
-						                           THEN $5 ELSE feedback_changes END
+						                           THEN $5 ELSE feedback_changes END,
+						   opens_in = CASE WHEN $6 IN ('briefing', 'analysis')
+						                   THEN $6 ELSE opens_in END
 						 WHERE report_id = $1`,
 						[
 							request.reportId,
@@ -898,6 +901,7 @@ async function runEdits(
 							op.description ?? null,
 							op.theme ?? null,
 							op.feedbackChanges ?? null,
+							op.opensIn ?? null,
 						],
 					);
 					break;

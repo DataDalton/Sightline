@@ -2001,6 +2001,9 @@ const migrations: string[] = [
 	// "suggest" asks the report's maintainers, with its reasoning and the change
 	// to approve, and "automatic" makes the change itself. See lib/feedback/review.
 	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS feedback_changes TEXT NOT NULL DEFAULT 'suggest'`,
+	// Which form a reader lands on: the Briefing, a top to bottom read in
+	// sections, or the Analysis grid. A reader's own choice outranks it.
+	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS opens_in TEXT NOT NULL DEFAULT 'briefing'`,
 
 	// The days the assistant read the open feedback, so it reads it once a day
 	// whichever replica gets there first.

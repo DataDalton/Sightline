@@ -238,6 +238,7 @@ interface ReportEditorProps {
 	reportDescription: string | null;
 	reportTheme?: string | null;
 	reportFeedbackChanges?: "automatic" | "suggest";
+	reportOpensIn?: "briefing" | "analysis";
 	// "suggest" sends the changes for a Maintainer to approve instead of applying them.
 	editMode?: "edit" | "suggest" | null;
 	// Which section of the navigation the report sits in, and whether it is a
@@ -312,6 +313,7 @@ export function ReportEditor({
 	reportDescription: initialDescription,
 	reportTheme,
 	reportFeedbackChanges = "suggest",
+	reportOpensIn = "briefing",
 	editMode,
 	categoryId,
 	isPersonal,
@@ -436,6 +438,9 @@ export function ReportEditor({
 	const [feedbackChanges, setFeedbackChanges] = useState<
 		"automatic" | "suggest"
 	>(reportFeedbackChanges);
+	const [opensIn, setOpensIn] = useState<"briefing" | "analysis">(
+		reportOpensIn,
+	);
 	useReportTheme(theme, { overPersonal: true });
 	const themeRef = useRef(theme);
 	themeRef.current = theme;
@@ -1600,6 +1605,7 @@ export function ReportEditor({
 					description,
 					theme: theme ?? "",
 					feedbackChanges,
+					opensIn,
 				};
 			}
 			if (op.type === "addPage") {
@@ -1792,6 +1798,7 @@ export function ReportEditor({
 		pageTitle,
 		theme,
 		feedbackChanges,
+		opensIn,
 		description,
 		onSaved,
 	]);
@@ -2807,6 +2814,14 @@ export function ReportEditor({
 								reportDescription={description}
 								reportTheme={theme}
 								feedbackChanges={feedbackChanges}
+								opensIn={opensIn}
+								onOpensInChange={(next) => {
+									setOpensIn(next);
+									pendingRef.current.set("report", {
+										type: "updateReport",
+									});
+									setDirty(true);
+								}}
 								onFeedbackChangesChange={(next) => {
 									setFeedbackChanges(next);
 									pendingRef.current.set("report", {

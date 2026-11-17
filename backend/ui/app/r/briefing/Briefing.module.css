@@ -1,0 +1,436 @@
+/* The Briefing form of a report page. Sections run top to bottom across the
+   full width, each with its figures and words on the left and the charts that
+   explain them on the right. */
+
+.briefing {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-4);
+	min-width: 0;
+}
+
+/* The period and how many sections need a look. */
+.summary {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-2) var(--space-4);
+	color: var(--text-secondary);
+	font-size: var(--text-sm);
+}
+
+.summaryPeriod {
+	color: var(--text-primary);
+	font-weight: 600;
+}
+
+.summaryCounts {
+	display: inline-flex;
+	flex-wrap: wrap;
+	gap: var(--space-3);
+}
+
+.summaryCounts [data-tone="bad"] {
+	color: var(--danger);
+	font-weight: 600;
+}
+
+.summaryCounts [data-tone="good"] {
+	color: var(--success, var(--text-secondary));
+}
+
+.summaryHow {
+	margin-left: auto;
+	text-decoration: underline dotted;
+	text-underline-offset: 3px;
+	cursor: help;
+}
+
+.sections {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+}
+
+/* One measure. The edge colour says how it stands before a word is read. */
+.section {
+	--tone: var(--border-default);
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	border: 1px solid var(--border-subtle);
+	border-left: 4px solid var(--tone);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+}
+
+.section[data-tone="bad"] {
+	--tone: var(--danger);
+}
+
+.section[data-tone="warn"] {
+	--tone: var(--warning);
+}
+
+.section[data-tone="good"] {
+	--tone: var(--success, var(--brand));
+}
+
+.section[data-tone="neutral"][data-off] {
+	--tone: var(--info, var(--brand));
+}
+
+.head {
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	width: 100%;
+	padding: var(--space-3) var(--space-4);
+	border: none;
+	background: none;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.head:focus-visible {
+	outline: 2px solid var(--brand);
+	outline-offset: -2px;
+	border-radius: var(--radius-md);
+}
+
+.status {
+	flex: none;
+	padding: 2px var(--space-2);
+	border-radius: var(--radius-full);
+	background: var(--surface-sunken);
+	color: var(--text-secondary);
+	font-size: var(--text-xs);
+	font-weight: 700;
+	letter-spacing: 0.02em;
+	white-space: nowrap;
+}
+
+.status[data-tone="bad"] {
+	background: var(--danger-subtle);
+	color: var(--danger);
+}
+
+.status[data-tone="warn"] {
+	background: var(--warning-subtle);
+	color: var(--warning);
+}
+
+.status[data-tone="good"] {
+	background: var(--success-subtle, var(--brand-subtle));
+	color: var(--success, var(--brand-text));
+}
+
+.section[data-off] .status[data-tone="neutral"] {
+	background: var(--info-subtle, var(--brand-subtle));
+	color: var(--info, var(--brand-text));
+}
+
+.headline {
+	flex: 1;
+	min-width: 0;
+	color: var(--text-primary);
+	font-size: var(--text-md);
+	font-weight: 600;
+	line-height: 1.35;
+	text-wrap: pretty;
+}
+
+.chevron {
+	flex: none;
+	color: var(--text-muted);
+	transition: transform 120ms ease;
+}
+
+.head[aria-expanded="true"] .chevron {
+	transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.chevron {
+		transition: none;
+	}
+}
+
+/* Words on the left and charts on the right, stacking on a narrow screen. */
+.body {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	gap: var(--space-4);
+	padding: 0 var(--space-4) var(--space-4);
+}
+
+.body[data-detail] {
+	grid-template-columns: minmax(280px, 2fr) minmax(0, 5fr);
+}
+
+@media (max-width: 900px) {
+	.body[data-detail] {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+.facts {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+	min-width: 0;
+}
+
+.figure {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.figureLabel {
+	color: var(--text-secondary);
+	font-size: var(--text-xs);
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+
+.figureValue {
+	color: var(--text-primary);
+	font-size: 1.75rem;
+	font-weight: 700;
+	line-height: 1.1;
+	font-variant-numeric: tabular-nums;
+}
+
+/* The four answers: what it measures, compared with what, why, what next. */
+.explain {
+	display: grid;
+	grid-template-columns: max-content minmax(0, 1fr);
+	gap: var(--space-2) var(--space-3);
+	margin: 0;
+	font-size: var(--text-sm);
+	line-height: 1.5;
+}
+
+.explain dt {
+	color: var(--text-muted);
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.explain dd {
+	margin: 0;
+	color: var(--text-primary);
+}
+
+.missing {
+	color: var(--text-muted);
+	font-style: italic;
+}
+
+.next {
+	font-weight: 600;
+}
+
+.detail {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+	gap: var(--space-3);
+	min-width: 0;
+}
+
+/* A chart fills its box, as in a grid cell. A chart or table inside sizes at
+   100%, which resolves against this box, so a box that grew with its content
+   would collapse them to nothing. */
+.detailItem {
+	display: flex;
+	min-width: 0;
+	min-height: 0;
+}
+
+.detailItem > * {
+	width: 100%;
+	height: 100%;
+	min-width: 0;
+	min-height: 0;
+}
+
+.adjustBar {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+}
+
+.link {
+	padding: 0;
+	border: none;
+	background: none;
+	color: var(--brand-text);
+	font: inherit;
+	font-size: var(--text-sm);
+	cursor: pointer;
+}
+
+.link:hover {
+	text-decoration: underline;
+}
+
+.iconButton {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 26px;
+	height: 26px;
+	padding: 0;
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-sm);
+	background: var(--surface-raised);
+	color: var(--text-secondary);
+	cursor: pointer;
+}
+
+.iconButton:hover:not(:disabled) {
+	border-color: var(--border-default);
+	color: var(--text-primary);
+}
+
+.iconButton:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+.link:focus-visible,
+.iconButton:focus-visible,
+.primary:focus-visible,
+.secondary:focus-visible,
+.danger:focus-visible {
+	outline: 2px solid var(--brand);
+	outline-offset: 2px;
+}
+
+/* An author's changes to one section. */
+.settings {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+	padding: var(--space-3);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-md);
+	background: var(--surface-sunken);
+}
+
+.settingField {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	font-size: var(--text-sm);
+}
+
+.settingField > span:first-child {
+	color: var(--text-secondary);
+	font-size: var(--text-xs);
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+
+.settingField input,
+.settingField select,
+.settingField textarea {
+	box-sizing: border-box;
+	width: 100%;
+	padding: var(--space-2);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-sm);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font: inherit;
+}
+
+.settingNote {
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+}
+
+.settingActions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-2);
+}
+
+.spacer {
+	flex: 1;
+}
+
+.primary,
+.secondary,
+.danger {
+	padding: var(--space-1) var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-sm);
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font: inherit;
+	font-size: var(--text-sm);
+	cursor: pointer;
+}
+
+.primary {
+	border-color: var(--brand);
+	background: var(--brand);
+	color: var(--brand-contrast);
+	font-weight: 600;
+}
+
+.danger {
+	border-color: var(--danger);
+	color: var(--danger);
+}
+
+.primary:disabled,
+.danger:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.hiddenList {
+	margin: 0;
+	color: var(--text-secondary);
+	font-size: var(--text-sm);
+}
+
+/* The switch between the two forms, in the report's header. */
+.formSwitch {
+	display: inline-flex;
+	padding: 2px;
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-full);
+	background: var(--surface-sunken);
+}
+
+.formOption {
+	padding: 3px var(--space-3);
+	border: none;
+	border-radius: var(--radius-full);
+	background: none;
+	color: var(--text-secondary);
+	font: inherit;
+	font-size: var(--text-sm);
+	cursor: pointer;
+}
+
+.formOption[aria-pressed="true"] {
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	font-weight: 600;
+	box-shadow: 0 1px 2px rgb(0 0 0 / 0.15);
+}
+
+.formOption:focus-visible {
+	outline: 2px solid var(--brand);
+	outline-offset: 1px;
+}
