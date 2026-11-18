@@ -3289,10 +3289,20 @@ export function buildHeatmap(ctx: ChartContext) {
 		if (value > max) max = value;
 	}
 
+	// Column labels tilt only when there are enough columns to collide. A few
+	// wide columns read flat and leave the height to the cells.
+	const tiltLabels = colValues.length > 6;
+
 	return {
 		animation: false,
 		textStyle: { color: colors.text, fontFamily: colors.font },
-		grid: { left: 8, right: 8, top: 8, bottom: 60, containLabel: true },
+		grid: {
+			left: 8,
+			right: 8,
+			top: 8,
+			bottom: tiltLabels ? 60 : 40,
+			containLabel: true,
+		},
 		tooltip: {
 			...tooltip(ctx, "item"),
 			formatter: (p: unknown) => {
@@ -3306,13 +3316,18 @@ export function buildHeatmap(ctx: ChartContext) {
 		xAxis: {
 			type: "category" as const,
 			data: colValues,
-			axisLabel: { color: colors.axis, hideOverlap: true, rotate: 30 },
+			axisLabel: {
+				color: colors.axis,
+				hideOverlap: true,
+				rotate: tiltLabels ? 30 : 0,
+			},
 			splitArea: { show: true },
 		},
 		yAxis: {
 			type: "category" as const,
 			data: rowValues,
-			axisLabel: { color: colors.axis },
+			// Every row named, since a heatmap row with no label cannot be read.
+			axisLabel: { color: colors.axis, interval: 0 },
 			splitArea: { show: true },
 		},
 		visualMap: {
@@ -3332,7 +3347,15 @@ export function buildHeatmap(ctx: ChartContext) {
 			{
 				type: "heatmap",
 				data,
-				label: { show: rowValues.length * colValues.length <= 80 },
+				// Formatted like every other figure, rather than the raw value.
+				label: {
+					show: rowValues.length * colValues.length <= 80,
+					formatter: (p: unknown) =>
+						formatCompact(
+							(p as { value: [number, number, number] }).value[2],
+							hint,
+						),
+				},
 				itemStyle: { borderColor: colors.surface, borderWidth: 1 },
 			},
 		],

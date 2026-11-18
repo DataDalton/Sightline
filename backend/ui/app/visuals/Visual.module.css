@@ -556,11 +556,33 @@
 }
 
 .notice {
-	padding: var(--space-3) var(--space-4);
+	display: block;
+	width: 100%;
+	flex-shrink: 0;
+	padding: var(--space-2) var(--space-4);
+	font: inherit;
 	font-size: var(--text-sm);
+	line-height: 1.45;
+	text-align: left;
 	color: var(--text-secondary);
 	background: var(--surface-sunken);
+	border: none;
 	border-bottom: 1px solid var(--border-subtle);
+	cursor: pointer;
+}
+
+.notice:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: -2px;
+}
+
+/* Two lines, so a note never takes more than that from the chart below it. */
+.noticeClamped {
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+	line-clamp: 2;
+	overflow: hidden;
 }
 
 /* Drill breadcrumb: where the reader is in a hierarchy, and a way back to any

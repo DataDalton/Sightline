@@ -118,6 +118,7 @@ export function VisualFrame({
 	// The body mounts once the frame is within a screen of being seen, and
 	// the header draws straight away so the page reads as laid out.
 	const [frame, setFrame] = useState<HTMLDivElement | null>(null);
+	const [noteOpen, setNoteOpen] = useState(false);
 	const visibility = useNearScreen(frame, lazy);
 
 	// Offered only where there is a page able to honour it and a visual to
@@ -317,7 +318,20 @@ export function VisualFrame({
 					)}
 				</div>
 			)}
-			{note && <div className={styles.notice}>{note}</div>}
+			{note && (
+				// Held to two lines, because the frame keeps its height and every
+				// line the note takes comes out of the chart. A click shows the
+				// rest.
+				<button
+					type="button"
+					className={`${styles.notice} ${noteOpen ? "" : styles.noticeClamped}`}
+					aria-expanded={noteOpen}
+					title={noteOpen ? undefined : note}
+					onClick={() => setNoteOpen((open) => !open)}
+				>
+					{note}
+				</button>
+			)}
 			{notice && (
 				<div className={styles.driftNotice} role="status">
 					<svg
