@@ -305,7 +305,7 @@ async function versionReport(
 			[reportId],
 		);
 		const header = await client.query(
-			`SELECT title, description, theme FROM reports WHERE report_id = $1`,
+			`SELECT title, description, theme, guide FROM reports WHERE report_id = $1`,
 			[reportId],
 		);
 		await writeVersion(client, {

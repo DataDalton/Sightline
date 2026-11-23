@@ -22,6 +22,7 @@ import {
 	forecastChanges,
 	type ForecastRecord,
 	type OddOne,
+	oddComparison,
 	paceFromRows,
 	rankForecasts,
 	type Scenario,
@@ -340,10 +341,52 @@ export function UnusualProvider({ children }: { children: ReactNode }) {
 }
 
 // Matches the menu's width in Insight.module.css.
-const insightsMenuWidth = 420;
+const insightsMenuWidth = 460;
+
+// Figures shown under one chart before the rest fold behind a "show more".
+const perChart = 3;
+
+// Scrolls a visual into view and gives it the focus, so the reader lands on it.
+function goToVisual(visualId: string) {
+	const visual = document.querySelector<HTMLElement>(
+		`[data-visual-id="${CSS.escape(visualId)}"]`,
+	);
+	if (!visual) return;
+	visual.scrollIntoView({ behavior: "smooth", block: "center" });
+	if (!visual.hasAttribute("tabindex")) visual.setAttribute("tabindex", "-1");
+	visual.focus({ preventScroll: true });
+}
+
+function MenuIcon({ path }: { path: string }) {
+	return (
+		<svg
+			width="15"
+			height="15"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d={path} />
+		</svg>
+	);
+}
+
+const menuIcons = {
+	whatIf: "M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6",
+	chart: "M3 3v18h18M7 15l4-4 3 3 5-6",
+	go: "M9 18l6-6-6-6",
+	calm: "M20 6L9 17l-5-5",
+};
 
 // One button in the report's header for looking into the page: the figures that stand out, and
 // what if. The count of unusual figures rides on the button, so it is seen without opening it.
+//
+// Opened, the figures are grouped under the chart they are on, each as one row: what it is,
+// the figure, and how far it sits from what is usual for that chart.
 export function InsightsMenu({
 	className,
 	whatIf,
@@ -354,6 +397,8 @@ export function InsightsMenu({
 }) {
 	const entries = useContext(UnusualEntriesContext);
 	const [open, setOpen] = useState(false);
+	// Charts whose folded figures the reader asked to see.
+	const [unfolded, setUnfolded] = useState<Set<string>>(new Set());
 	// Opens toward whichever side has room, since the header row sits left on a narrow page
 	// and right on a wide one.
 	const [openLeftward, setOpenLeftward] = useState(false);
@@ -375,13 +420,40 @@ export function InsightsMenu({
 		};
 	}, [open]);
 
+	// One group per chart, the chart with the most unusual figure first, and its figures
+	// most unusual first. Entries arrive already ranked.
+	const groups = useMemo(() => {
+		const byVisual = new Map<
+			string,
+			{ visualId: string; title: string; items: UnusualEntry[] }
+		>();
+		for (const entry of entries) {
+			const group = byVisual.get(entry.visualId) ?? {
+				visualId: entry.visualId,
+				title: entry.visualTitle,
+				items: [],
+			};
+			group.items.push(entry);
+			byVisual.set(entry.visualId, group);
+		}
+		return [...byVisual.values()];
+	}, [entries]);
+
+	const toggleFold = (visualId: string) =>
+		setUnfolded((current) => {
+			const next = new Set(current);
+			if (next.has(visualId)) next.delete(visualId);
+			else next.add(visualId);
+			return next;
+		});
+
 	if (entries.length === 0 && !whatIf.available) return null;
 	return (
 		<div ref={box} className={styles.unusualWrap}>
 			<button
 				type="button"
 				className={className}
-				aria-haspopup="menu"
+				aria-haspopup="dialog"
 				aria-expanded={open}
 				data-on={whatIf.open || undefined}
 				title="What stands out on this page, and what if a figure changed"
@@ -418,92 +490,175 @@ export function InsightsMenu({
 			</button>
 			{open && (
 				<div
-					className={`${styles.unusualMenu} ${openLeftward ? styles.unusualMenuLeftward : ""}`}
-					role="menu"
+					className={`${styles.insightsPanel} ${openLeftward ? styles.unusualMenuLeftward : ""}`}
+					role="dialog"
+					aria-label="Insights on this page"
 				>
 					{whatIf.available && (
 						<button
 							type="button"
-							role="menuitemcheckbox"
+							role="switch"
 							aria-checked={whatIf.open}
-							className={styles.insightsItem}
+							className={styles.whatIfRow}
 							onClick={() => {
 								setOpen(false);
 								whatIf.onToggle();
 							}}
 						>
-							<span className={styles.insightsItemHead}>
-								<strong>What if</strong>
-								{whatIf.open && (
-									<span className={styles.insightsOn}>
-										On
-									</span>
-								)}
+							<span className={styles.whatIfIcon}>
+								<MenuIcon path={menuIcons.whatIf} />
 							</span>
-							<span className={styles.unusualReason}>
-								{whatIf.open
-									? "Close the bar at the foot of the page and put the figures back"
-									: "Change a figure across this page and see the effect"}
+							<span className={styles.whatIfText}>
+								<span className={styles.whatIfTitle}>
+									What if
+								</span>
+								<span className={styles.whatIfHint}>
+									{whatIf.open
+										? "Changing figures across this page"
+										: "Change a figure across this page and see the effect"}
+								</span>
+							</span>
+							<span
+								className={`${styles.switch} ${whatIf.open ? styles.switchOn : ""}`}
+								aria-hidden="true"
+							>
+								<span className={styles.switchKnob} />
 							</span>
 						</button>
 					)}
-					<div className={styles.insightsSection}>
-						<span className={styles.insightsHeading}>
-							What&apos;s unusual
+
+					<div className={styles.standsOutHead}>
+						<span className={styles.standsOutTitle}>
+							Stands out
 						</span>
-						{entries.length === 0 ? (
-							<p className={styles.unusualIntro}>
-								Nothing stands apart on this page right now.
-							</p>
-						) : (
-							<>
-								<p className={styles.unusualIntro}>
-									Figures that stand apart from the rest of
-									their chart. Pick one to go to it, then
-									click it on the chart to ask why.
-								</p>
-								<ol className={styles.unusualList}>
-									{entries.map((entry) => (
-										<li key={entry.key}>
-											<button
-												type="button"
-												role="menuitem"
-												className={styles.unusualItem}
-												onClick={() => {
-													setOpen(false);
-													document
-														.querySelector(
-															`[data-visual-id="${CSS.escape(entry.visualId)}"]`,
-														)
-														?.scrollIntoView({
-															behavior: "smooth",
-															block: "center",
-														});
-												}}
-											>
-												<span>
-													<strong>
-														{entry.label}
-													</strong>{" "}
-													in {entry.visualTitle}
-												</span>
-												<span
-													className={
-														styles.unusualReason
-													}
-												>
-													{entry.reason}
-												</span>
-											</button>
-										</li>
-									))}
-								</ol>
-							</>
+						{entries.length > 0 && (
+							<span className={styles.standsOutCount}>
+								{entries.length}{" "}
+								{entries.length === 1 ? "figure" : "figures"} on{" "}
+								{groups.length}{" "}
+								{groups.length === 1 ? "chart" : "charts"}
+							</span>
 						)}
 					</div>
+
+					{entries.length === 0 ? (
+						<div className={styles.calm}>
+							<span className={styles.calmIcon}>
+								<MenuIcon path={menuIcons.calm} />
+							</span>
+							Nothing on this page stands apart from the rest of
+							its chart.
+						</div>
+					) : (
+						<div className={styles.groups}>
+							{groups.map((group) => {
+								const showAll = unfolded.has(group.visualId);
+								const shown = showAll
+									? group.items
+									: group.items.slice(0, perChart);
+								const folded = group.items.length - perChart;
+								return (
+									<section
+										key={group.visualId}
+										className={styles.group}
+										aria-label={group.title}
+									>
+										<button
+											type="button"
+											className={styles.groupHead}
+											onClick={() => {
+												setOpen(false);
+												goToVisual(group.visualId);
+											}}
+											title="Go to this chart"
+										>
+											<MenuIcon path={menuIcons.chart} />
+											<span className={styles.groupTitle}>
+												{group.title}
+											</span>
+											<MenuIcon path={menuIcons.go} />
+										</button>
+										<ul className={styles.figures}>
+											{shown.map((entry) => (
+												<FigureRow
+													key={entry.key}
+													entry={entry}
+													onPick={() => {
+														setOpen(false);
+														goToVisual(
+															entry.visualId,
+														);
+													}}
+												/>
+											))}
+										</ul>
+										{folded > 0 && (
+											<button
+												type="button"
+												className={styles.moreLink}
+												onClick={() =>
+													toggleFold(group.visualId)
+												}
+											>
+												{showAll
+													? "Show fewer"
+													: `Show ${folded} more`}
+											</button>
+										)}
+									</section>
+								);
+							})}
+						</div>
+					)}
+
+					{entries.length > 0 && (
+						<p className={styles.insightsFoot}>
+							Pick a figure to go to its chart, then click the
+							figure on the chart to ask why it stands out.
+						</p>
+					)}
 				</div>
 			)}
 		</div>
+	);
+}
+
+// One unusual figure: what it is with its usual figure beneath, the figure, and a chip
+// saying how far it sits from usual.
+function FigureRow({
+	entry,
+	onPick,
+}: {
+	entry: UnusualEntry;
+	onPick: () => void;
+}) {
+	const above = entry.value >= entry.usual;
+	const gap = oddComparison(entry.value, entry.usual);
+	return (
+		<li>
+			<button
+				type="button"
+				className={styles.figure}
+				onClick={onPick}
+				title={entry.reason}
+			>
+				<span className={styles.figureName}>
+					<span className={styles.figureLabel}>
+						{entry.label || "(blank)"}
+					</span>
+					<span className={styles.figureUsual}>
+						usual {entry.shownUsual}
+					</span>
+				</span>
+				<span className={styles.figureValue}>{entry.shownValue}</span>
+				<span
+					className={`${styles.gapChip} ${above ? styles.gapUp : styles.gapDown}`}
+				>
+					<span aria-hidden="true">{above ? "▲" : "▼"}</span>
+					{gap ? gap.text : above ? "above usual" : "below usual"}
+				</span>
+			</button>
+		</li>
 	);
 }
 

@@ -64,3 +64,31 @@ test("says which part of the report changes", () => {
 		["Changes the theme"],
 	);
 });
+
+test("an edit to one report setting never reads as clearing another", () => {
+	const current = { description: "Old", theme: "ocean" };
+	assert.deepEqual(
+		describeOperations(
+			[{ type: "updateReport", theme: "" }],
+			titleOf,
+			current,
+		),
+		["Goes back to the app's own colors"],
+	);
+	assert.deepEqual(
+		describeOperations(
+			[{ type: "updateReport", guide: "# What this is for" }],
+			titleOf,
+			current,
+		),
+		["Changes the report's guide"],
+	);
+	assert.deepEqual(
+		describeOperations(
+			[{ type: "updateReport", guide: "  " }],
+			titleOf,
+			current,
+		),
+		["Clears the report's guide"],
+	);
+});

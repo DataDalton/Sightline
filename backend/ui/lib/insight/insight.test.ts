@@ -9,6 +9,7 @@ import {
 	escapeForHtml,
 	fillNarrative,
 	findOddOnes,
+	oddComparison,
 	goalStatus,
 	paceToTarget,
 	parseNarrative,
@@ -61,6 +62,42 @@ test("too few points, or none different, say nothing", () => {
 		findOddOnes(points([5, 5, 5, 5, 5, 5, 5]), "category"),
 		[],
 	);
+});
+
+test("an unusual figure carries its usual one, written as the chart writes them", () => {
+	const odd = findOddOnes(
+		points([10, 11, 9, 10, 12, 95, 10, 11]),
+		"category",
+		(value) => `USD ${value}`,
+	);
+	assert.equal(odd[0].usual, 10.5);
+	assert.equal(odd[0].shownValue, "USD 95");
+	assert.equal(odd[0].shownUsual, "USD 10.5");
+});
+
+test("the gap to usual reads as a multiple, a percent or nothing", () => {
+	assert.deepEqual(oddComparison(485, 31), {
+		direction: "above",
+		text: "16× usual",
+	});
+	assert.deepEqual(oddComparison(51, 15), {
+		direction: "above",
+		text: "3.4× usual",
+	});
+	assert.deepEqual(oddComparison(15, 10), {
+		direction: "above",
+		text: "50% above usual",
+	});
+	assert.deepEqual(oddComparison(4, 10), {
+		direction: "below",
+		text: "60% below usual",
+	});
+	assert.deepEqual(oddComparison(-30, -10), {
+		direction: "below",
+		text: "200% deeper than usual",
+	});
+	assert.equal(oddComparison(5, 0), null);
+	assert.equal(oddComparison(-5, 10), null);
 });
 
 test("worst first when several stand out", () => {

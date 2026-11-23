@@ -409,11 +409,12 @@ export async function restoreVersion(
 
 		if (snapshot.report) {
 			await client.query(
-				// A version from before themes were recorded says nothing about
-				// the theme, so it leaves the current one in place.
+				// A version from before themes or guides were recorded says
+				// nothing about them, so it leaves the current ones in place.
 				`UPDATE reports SET title = COALESCE($2, title),
 				                    description = $3,
-				                    theme = CASE WHEN $4 THEN $5 ELSE theme END
+				                    theme = CASE WHEN $4 THEN $5 ELSE theme END,
+				                    guide = CASE WHEN $6 THEN $7 ELSE guide END
 				 WHERE report_id = $1`,
 				[
 					reportId,
@@ -421,6 +422,8 @@ export async function restoreVersion(
 					snapshot.report.description ?? null,
 					"theme" in snapshot.report,
 					snapshot.report.theme ?? null,
+					"guide" in snapshot.report,
+					snapshot.report.guide ?? null,
 				],
 			);
 		}

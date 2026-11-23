@@ -932,6 +932,7 @@ interface ConfigValues {
 	upkeepDefinitions: boolean;
 	upkeepNewSources: boolean;
 	upkeepPageDescriptions: boolean;
+	upkeepGuides: boolean;
 	upkeepWatchedSchemas: string[];
 }
 
@@ -1637,6 +1638,12 @@ function ConfigurationSection({ group }: { group: PaneId }) {
 							hint="Rewrites a report's description when a page is added to it."
 							checked={values.upkeepPageDescriptions}
 							onChange={(v) => set({ upkeepPageDescriptions: v })}
+						/>
+						<SwitchSetting
+							label="Write and maintain report guides"
+							hint="Drafts a guide for a shared report that has none, and rewrites what a guide says about a field when it is renamed, removed or redefined."
+							checked={values.upkeepGuides}
+							onChange={(v) => set({ upkeepGuides: v })}
 						/>
 						<Field
 							label="Watched schemas"

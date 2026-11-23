@@ -28,6 +28,8 @@ interface SearchResponse {
 
 const kindIcons: Record<TargetKind, string> = {
 	report: "M3 3v18h18M7 15l4-4 3 3 5-6",
+	// An open book, as the report header draws the guide.
+	guide: "M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2zM22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z",
 	category: "M3 7h7v6H3zM14 7h7v6h-7zM3 16h18v5H3z",
 	personal: "M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z",
 	shared: "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M23 21v-2a4 4 0 0 0-3-3.87",
@@ -65,6 +67,7 @@ export function readsAsQuestion(query: string): boolean {
 
 const groupOrder: { kind: TargetKind; label: string }[] = [
 	{ kind: "report", label: "Reports" },
+	{ kind: "guide", label: "Guides" },
 	{ kind: "category", label: "Categories" },
 	{ kind: "personal", label: "My pages" },
 	{ kind: "shared", label: "Shared with me" },

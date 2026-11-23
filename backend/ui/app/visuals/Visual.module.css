@@ -1404,3 +1404,35 @@
 	color: var(--text-secondary);
 	line-height: 1.5;
 }
+
+/* The tile's figure, a button only so it can be focused and copied. It looks
+   exactly like the figure it was. */
+.kpiValueExact {
+	display: inline-flex;
+	align-items: baseline;
+	align-self: flex-start;
+	padding: 0;
+	border: none;
+	border-radius: var(--radius-sm);
+	background: none;
+	font-family: inherit;
+	text-align: left;
+	cursor: copy;
+}
+
+.kpiValueExact:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: 2px;
+}
+
+.kpiCopied {
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+/* Inherits the tile's text color with no weight of its own, so a tone or rule
+   color set on the figure still wins. */
+:where(.kpiValueExact) {
+	color: inherit;
+}

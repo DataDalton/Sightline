@@ -45,6 +45,8 @@ export interface Snapshot {
 		description?: string | null;
 		// Absent from a version written before themes were recorded.
 		theme?: string | null;
+		// Absent from a version written before guides were recorded.
+		guide?: string | null;
 	} | null;
 }
 
@@ -328,6 +330,20 @@ export function diffSnapshots(
 				text: reportAfter.theme
 					? "Changed the theme"
 					: "Went back to the app's own colors",
+			});
+		}
+		if (
+			"guide" in reportBefore &&
+			"guide" in reportAfter &&
+			(reportBefore.guide ?? "") !== (reportAfter.guide ?? "")
+		) {
+			changes.push({
+				kind: "changed",
+				text: !reportBefore.guide
+					? "Wrote the guide"
+					: reportAfter.guide
+						? "Changed the guide"
+						: "Cleared the guide",
 			});
 		}
 	}

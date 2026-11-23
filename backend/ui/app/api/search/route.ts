@@ -9,6 +9,7 @@ import {
 	type SearchTarget,
 } from "@/lib/platform/search";
 import { contentTargets } from "@/lib/platform/searchContent";
+import { guideTargets } from "@/lib/guide/search";
 import { getAccessContext, isAdmin } from "@/lib/platform/access";
 import { adminNav } from "@/app/admin/nav";
 
@@ -44,7 +45,13 @@ export async function GET(request: NextRequest) {
 				listFavourites(identity.email),
 			],
 		);
-		const targets = [...reports, ...content, ...panes];
+		// A guide is offered only on a report the reader can open, so they
+		// are read from the report results rather than beside them.
+		const guides = await guideTargets(reports).catch((error) => {
+			console.warn("Search could not list guides:", error);
+			return [];
+		});
+		const targets = [...reports, ...guides, ...content, ...panes];
 
 		const response = NextResponse.json({ targets, recent, favourites });
 		response.headers.set("Cache-Control", "private, no-store");

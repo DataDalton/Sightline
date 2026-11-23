@@ -333,7 +333,7 @@ export async function suggestionComparison(
 			description: string | null;
 			theme: string | null;
 		}>(
-			`SELECT title, description, theme FROM reports WHERE report_id = $1`,
+			`SELECT title, description, theme, guide FROM reports WHERE report_id = $1`,
 			[reportId],
 		),
 		sql<{ version: string }>(

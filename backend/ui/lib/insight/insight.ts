@@ -16,9 +16,50 @@ function median(values: number[]): number {
 export interface OddOne {
 	label: string;
 	value: number;
+	// What the figure would be expected to be: the middle of its chart, or on a time axis
+	// the middle of the points beside it.
+	usual: number;
+	// The two figures as the chart writes them.
+	shownValue: string;
+	shownUsual: string;
 	// How unusual, as a multiple of the normal spread. Higher ranks first.
 	score: number;
 	reason: string;
+}
+
+// How far a figure is from its usual one, in words that fit a chip: a multiple when it is
+// at least double, otherwise a percentage. Null where the two cannot be compared that way,
+// such as a usual figure of zero or figures either side of zero.
+export function oddComparison(
+	value: number,
+	usual: number,
+): { direction: "above" | "below"; text: string } | null {
+	const direction = value >= usual ? "above" : "below";
+	if (usual === 0 || value === usual) return null;
+	if (Math.sign(value) !== Math.sign(usual) && value !== 0) return null;
+	const ratio = value / usual;
+	if (usual < 0) {
+		// Two losses compare by size, so a loss twice as deep reads as twice.
+		const deeper = Math.abs(value) > Math.abs(usual);
+		const percent = Math.round(Math.abs(ratio - 1) * 100);
+		return {
+			direction,
+			text: `${percent}% ${deeper ? "deeper" : "shallower"} than usual`,
+		};
+	}
+	if (ratio >= 2) {
+		const times =
+			ratio >= 10 ? Math.round(ratio) : Math.round(ratio * 10) / 10;
+		return { direction, text: `${times}× usual` };
+	}
+	const percent = Math.round(Math.abs(ratio - 1) * 100);
+	return {
+		direction,
+		text:
+			direction === "above"
+				? `${percent}% above usual`
+				: `${percent}% below usual`,
+	};
 }
 
 // Too few points cannot show what usual looks like.
@@ -57,12 +98,17 @@ export function findOddOnes(
 		.flatMap((point, index) => {
 			const score = Math.abs(gaps[index]) / spread;
 			if (score < oddScore) return [];
+			const shownValue = format(point.value);
+			const shownUsual = format(usual[index]);
 			return [
 				{
 					label: point.label,
 					value: point.value,
+					usual: usual[index],
+					shownValue,
+					shownUsual,
 					score,
-					reason: `${format(point.value)}, ${gaps[index] > 0 ? "well above" : "well below"} the usual ${format(usual[index])}`,
+					reason: `${shownValue}, ${gaps[index] > 0 ? "well above" : "well below"} the usual ${shownUsual}`,
 				},
 			];
 		})

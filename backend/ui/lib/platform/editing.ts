@@ -1,4 +1,5 @@
 import { sql, transaction } from "../data/lakebase";
+import { maxGuideLength } from "../guide/markdown";
 import type { PolicyClass } from "../auth/policy";
 import { insertLog } from "../activityLog";
 import { invalidateDefinitions } from "./definitionCache";
@@ -106,6 +107,8 @@ export type EditOperation =
 			theme?: string;
 			// What the assistant does with a fix readers agree on.
 			feedbackChanges?: "automatic" | "suggest";
+			// The report's guide in Markdown. An empty string clears it.
+			guide?: string;
 	  }
 	| {
 			type: "updatePage";
@@ -890,7 +893,9 @@ async function runEdits(
 						   theme = CASE WHEN $4::text IS NULL THEN theme
 						                ELSE NULLIF($4, '') END,
 						   feedback_changes = CASE WHEN $5 IN ('automatic', 'suggest')
-						                           THEN $5 ELSE feedback_changes END
+						                           THEN $5 ELSE feedback_changes END,
+						   guide = CASE WHEN $6::text IS NULL THEN guide
+						                ELSE NULLIF(btrim($6), '') END
 						 WHERE report_id = $1`,
 						[
 							request.reportId,
@@ -898,6 +903,9 @@ async function runEdits(
 							op.description ?? null,
 							op.theme ?? null,
 							op.feedbackChanges ?? null,
+							typeof op.guide === "string"
+								? op.guide.slice(0, maxGuideLength)
+								: null,
 						],
 					);
 					break;
@@ -1034,7 +1042,7 @@ async function runEdits(
 			[request.reportId],
 		);
 		const reportSnapshot = await client.query(
-			`SELECT title, description, theme FROM reports WHERE report_id = $1`,
+			`SELECT title, description, theme, guide FROM reports WHERE report_id = $1`,
 			[request.reportId],
 		);
 

@@ -14,6 +14,7 @@ interface PreviewOperation {
 	title?: string | null;
 	description?: string | null;
 	theme?: string;
+	guide?: string;
 	sourceKey?: string | null;
 	slug?: string;
 	config?: Record<string, unknown>;
@@ -111,6 +112,8 @@ export function applyToSnapshot(
 					report.description = op.description;
 				}
 				if (op.theme !== undefined) report.theme = op.theme || null;
+				if (op.guide !== undefined)
+					report.guide = op.guide.trim() || null;
 				break;
 			case "updatePage":
 				pages = pages.map((page) =>

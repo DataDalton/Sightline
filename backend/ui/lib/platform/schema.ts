@@ -2002,6 +2002,38 @@ const migrations: string[] = [
 	// to approve, and "automatic" makes the change itself. See lib/feedback/review.
 	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS feedback_changes TEXT NOT NULL DEFAULT 'suggest'`,
 
+	// A report's guide: what it is for, what its terms mean and how to use it,
+	// written in Markdown by its maintainers or drafted by the assistant. Kept on
+	// the report so it saves, versions and restores with the rest of it. When
+	// somebody last confirmed it is current, and when the assistant last tried
+	// to draft one, so an empty guide is drafted once rather than on every pass.
+	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS guide TEXT`,
+	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS guide_reviewed_on TIMESTAMPTZ`,
+	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS guide_reviewed_by TEXT`,
+	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS guide_draft_tried_on TIMESTAMPTZ`,
+
+	// Files attached to a guide, such as a slide deck, a model or a validation
+	// write-up. The bytes sit in a table of their own, keyed by a hash of them,
+	// so the same file is kept once and its address never changes. Kept apart
+	// from the work queue's files so removing one never takes the other.
+	`CREATE TABLE IF NOT EXISTS report_guide_file_data (
+		hash  TEXT PRIMARY KEY,
+		bytes BYTEA NOT NULL
+	)`,
+	`ALTER TABLE report_guide_file_data ALTER COLUMN bytes SET STORAGE EXTERNAL`,
+	`CREATE TABLE IF NOT EXISTS report_guide_files (
+		file_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		report_id    UUID NOT NULL REFERENCES reports (report_id) ON DELETE CASCADE,
+		hash         TEXT NOT NULL REFERENCES report_guide_file_data (hash),
+		file_name    TEXT NOT NULL,
+		content_type TEXT NOT NULL,
+		size         INTEGER NOT NULL,
+		uploaded_by  TEXT NOT NULL,
+		uploaded_on  TIMESTAMPTZ NOT NULL DEFAULT now(),
+		UNIQUE (report_id, file_name)
+	)`,
+	`CREATE INDEX IF NOT EXISTS report_guide_files_hash_idx ON report_guide_files (hash)`,
+
 	// The days the assistant read the open feedback, so it reads it once a day
 	// whichever replica gets there first.
 	`CREATE TABLE IF NOT EXISTS feedback_review_runs (

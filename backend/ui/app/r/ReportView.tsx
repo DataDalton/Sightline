@@ -12,6 +12,7 @@ import { LoadError } from "../components/shared/ErrorState";
 import { useDeferredLoading } from "../hooks/useDeferredLoading";
 import { titleSeparator, usePageTitle } from "../hooks/usePageTitle";
 import { DataHealth } from "./DataHealth";
+import { GuideButton } from "./guide/GuideButton";
 import { FrameControlsContext } from "../visuals/VisualFrame";
 import { VisualRenderer, type VisualSpec } from "../visuals/VisualRenderer";
 import {
@@ -1290,6 +1291,23 @@ export default function ReportView({
 																				styles.barDivider
 																			}
 																			aria-hidden="true"
+																		/>
+																		<GuideButton
+																			slug={
+																				report.slug
+																			}
+																			reportTitle={
+																				report.title
+																			}
+																			version={
+																				report.version
+																			}
+																			className={
+																				styles.button
+																			}
+																			onSaved={() =>
+																				void mutate()
+																			}
 																		/>
 																		<InsightsMenu
 																			className={

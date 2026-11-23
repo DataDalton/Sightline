@@ -17,6 +17,7 @@ import { resolveKpiGroups, type KpiGroup } from "../../lib/visuals/kpiGroups";
 import {
 	formatCompact,
 	formatDelta,
+	formatValue,
 	toNumber,
 	type FormatHint,
 } from "../../lib/format";
@@ -170,6 +171,8 @@ export function KpiRow({
 }: KpiRowProps) {
 	// The tile whose change is being broken down, if any.
 	const [explaining, setExplaining] = useState<string | null>(null);
+	// The tile whose exact figure was just copied, said for a moment.
+	const [copied, setCopied] = useState<string | null>(null);
 
 	const scenario = useScenario();
 	const { rows, error, isLoading } = useVisualQuery(
@@ -439,11 +442,40 @@ export function KpiRow({
 					text={tooltips?.[name] || fields.get(name)?.description}
 					className={styles.kpiLabel}
 				/>
-				<span
-					className={`${styles.kpiValue} ${explicitColor ? "" : fallbackTone}`}
+				{/* The tile reads short, and the exact figure is on hover or focus,
+				    and copied by a click, for checking or quoting it. */}
+				<button
+					type="button"
+					className={`${styles.kpiValue} ${styles.kpiValueExact} ${explicitColor ? "" : fallbackTone}`}
 					style={{
 						color: explicitColor,
 						fontWeight: match?.bold ? 700 : undefined,
+					}}
+					title={
+						numeric === null
+							? undefined
+							: `${formatValue(raw, hint)}. Click to copy.`
+					}
+					aria-label={
+						numeric === null
+							? undefined
+							: `${fields.get(name)?.displayName || name}: ${formatValue(raw, hint)}. Copy`
+					}
+					onClick={() => {
+						if (numeric === null) return;
+						void navigator.clipboard
+							?.writeText(formatValue(raw, hint))
+							.then(() => {
+								setCopied(name);
+								setTimeout(
+									() =>
+										setCopied((held) =>
+											held === name ? null : held,
+										),
+									1500,
+								);
+							})
+							.catch(() => {});
 					}}
 				>
 					{/* The marker carries the same meaning as the
@@ -454,7 +486,12 @@ export function KpiRow({
 					)}
 					{signed && numeric !== null && numeric > 0 ? "+" : ""}
 					{formatCompact(raw, hint)}
-				</span>
+				</button>
+				{copied === name && (
+					<span className={styles.kpiCopied} role="status">
+						Copied {formatValue(raw, hint)}
+					</span>
+				)}
 
 				{whatIfFactor !== 1 && numeric !== null && (
 					<span className={styles.kpiChange}>

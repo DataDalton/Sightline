@@ -12,6 +12,7 @@ export interface OperationSummaryInput {
 	visualType?: string;
 	description?: string | null;
 	theme?: string | null;
+	guide?: string;
 }
 
 export function describeOperations(
@@ -67,21 +68,40 @@ export function describeOperations(
 				break;
 			case "updateReport": {
 				if (!current) {
-					say("Changes the report's subtitle or theme");
+					say(
+						op.guide !== undefined
+							? "Changes the report's guide"
+							: "Changes the report's subtitle or theme",
+					);
 					break;
 				}
-				if ((op.description ?? "") !== (current.description ?? "")) {
+				// Only what the operation sets is compared, so an edit to one
+				// setting is never described as clearing the others.
+				if (
+					op.description !== undefined &&
+					(op.description ?? "") !== (current.description ?? "")
+				) {
 					say(
 						op.description
 							? `Changes the subtitle to "${op.description}"`
 							: "Removes the subtitle",
 					);
 				}
-				if ((op.theme ?? "") !== (current.theme ?? "")) {
+				if (
+					op.theme !== undefined &&
+					(op.theme ?? "") !== (current.theme ?? "")
+				) {
 					say(
 						op.theme
 							? "Changes the theme"
 							: "Goes back to the app's own colors",
+					);
+				}
+				if (op.guide !== undefined) {
+					say(
+						op.guide.trim()
+							? "Changes the report's guide"
+							: "Clears the report's guide",
 					);
 				}
 				break;

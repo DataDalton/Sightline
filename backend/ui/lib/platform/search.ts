@@ -25,6 +25,7 @@ import { assistantConfigured } from "../assistant/endpoint";
 
 export type TargetKind =
 	| "report"
+	| "guide"
 	| "category"
 	| "personal"
 	| "shared"

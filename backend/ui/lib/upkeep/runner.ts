@@ -1,3 +1,8 @@
+import {
+	draftMissingGuides,
+	renameInGuides,
+	reviseGuides,
+} from "../guide/assistant";
 import { randomUUID } from "node:crypto";
 import { sql, tryAdvisoryLock } from "../data/lakebase";
 import { demoMode } from "../runtime";
@@ -430,6 +435,16 @@ async function rename(
 		result,
 		`Pointed every use of ${action.field} at ${action.to}`,
 	);
+	if (settings().upkeepGuides) {
+		const guides = await renameInGuides({
+			sourceKey: action.sourceKey,
+			from: action.field,
+			to: action.to,
+			updateId: row.update_id,
+		});
+		if (guides.length > 0)
+			summary.push(`Renamed it in the guide of ${nameList(guides)}.`);
+	}
 	return {
 		state: "done",
 		summary:
@@ -493,6 +508,18 @@ async function remove(
 		reportIds: result.reports.map((report) => report.reportId),
 	});
 	await tellItemOwners(result.turnedOff, `${action.field} was removed`);
+	if (settings().upkeepGuides) {
+		const guides = await reviseGuides({
+			sourceKey: action.sourceKey,
+			field: action.field,
+			change: "removed",
+			updateId: row.update_id,
+		});
+		if (guides.length > 0)
+			summary.push(
+				`Rewrote what the guide of ${nameList(guides)} said about it.`,
+			);
+	}
 	return {
 		state: "done",
 		summary:
@@ -955,6 +982,22 @@ async function definitions(rows: ActionRow[]): Promise<GroupOutcome> {
 		);
 	} else {
 		summary.push(`${count}. No shared report shows any of them.`);
+	}
+	if (settings().upkeepGuides) {
+		const guides = new Set<string>();
+		for (const field of fields) {
+			for (const title of await reviseGuides({
+				sourceKey,
+				field,
+				change: "redefined",
+				updateId,
+			}))
+				guides.add(title);
+		}
+		if (guides.size > 0)
+			summary.push(
+				`Updated what the guide of ${nameList([...guides])} says about them.`,
+			);
 	}
 	if (noted + shown.size > 0 && unseen.length > 0) {
 		summary.push(
@@ -1423,6 +1466,12 @@ export async function runUpkeep(): Promise<void> {
 			await findRemovals();
 			if (await routineLooksAllowed()) await watchSchemas();
 			await workDue();
+			// Guides for shared reports that have none. See lib/guide/assistant.
+			if (settings().upkeepGuides) {
+				await draftMissingGuides().catch((error) => {
+					console.warn("No guide was drafted:", error);
+				});
+			}
 			// What readers said about visuals, read once a day. See
 			// lib/feedback/review.
 			await runFeedbackReview().catch((error) => {

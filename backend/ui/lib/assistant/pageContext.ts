@@ -3,6 +3,7 @@ import type { PolicyClass } from "../auth/policy";
 import { getReport } from "../platform/reports";
 import type { SemanticSource } from "../semantic/types";
 import type { PageContext } from "./agent";
+import { guideRow, readableFileText } from "../guide/store";
 
 // What the person asking is looking at, in words the model can use.
 //
@@ -20,6 +21,10 @@ const reportPath = /^\/r\/([^/?#]+)/;
 // Charts listed per page. Enough to resolve "the second chart", few enough
 // that a crowded page does not crowd out the question.
 const maxVisuals = 20;
+
+// The most of a guide put in front of the model, so a long handbook leaves
+// room for the question and the answer.
+const maxGuideInContext = 12_000;
 
 export async function describePage(
 	identity: Identity,
@@ -62,7 +67,11 @@ export async function describePage(
 					? [`by ${v.config.dimensions.join(", ")}`]
 					: []),
 			].join(" ");
-			return `${i + 1}. ${v.title ?? v.visualType} (${v.visualType}: ${fields})`;
+			const note =
+				typeof v.config.options?.note === "string"
+					? ` Its note says: ${v.config.options.note}`
+					: "";
+			return `${i + 1}. ${v.title ?? v.visualType} (${v.visualType}: ${fields}).${note}`;
 		});
 
 	const lines = [
@@ -84,6 +93,30 @@ export async function describePage(
 					)}. When they say "this" or "here", start from these.`
 			: "",
 	].filter(Boolean);
+
+	// The guide its maintainers wrote, and the text of any readable files on
+	// it. The author's word on what the report is for, which figure to quote
+	// and what its terms mean. It never stands in for querying the data.
+	const [guide, files] = await Promise.all([
+		guideRow(report.reportId).catch(() => null),
+		readableFileText(report.reportId).catch(() => []),
+	]);
+	if (guide?.guide) {
+		lines.push(
+			`The report has a guide written by its maintainers. When it answers a question about what the report is for, what a term means or which figure to use, follow it and say the answer comes from the report's guide. Never take a figure from it, and answer every question about the data by querying as usual. The guide:
+<<<guide
+${guide.guide.slice(0, maxGuideInContext)}
+>>>`,
+		);
+	}
+	for (const file of files) {
+		lines.push(
+			`A file attached to the guide, "${file.fileName}", reads:
+<<<file
+${file.text}
+>>>`,
+		);
+	}
 
 	// Each visual as a query, by id. Looked up when somebody points at one, so
 	// the assistant knows exactly what it shows rather than guessing from the

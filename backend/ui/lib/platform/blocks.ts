@@ -352,7 +352,7 @@ export async function updateBlock(
 					[reportId],
 				);
 				const about = await client.query(
-					`SELECT title, description, theme FROM reports
+					`SELECT title, description, theme, guide FROM reports
 					 WHERE report_id = $1`,
 					[reportId],
 				);

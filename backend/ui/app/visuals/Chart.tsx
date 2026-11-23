@@ -50,6 +50,7 @@ import {
 } from "../../lib/query/compare";
 import {
 	blankLabel,
+	formatCompact,
 	formatDate,
 	formatValue,
 	type FormatHint,
@@ -682,7 +683,8 @@ export function Chart({
 				value: Number(row[measure]),
 			})),
 			periodField ? "time" : "category",
-			(value) => formatValue(value, hint),
+			// Short, so a figure reads at a glance in the header menu and on the chart.
+			(value) => formatCompact(value, hint),
 		);
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [

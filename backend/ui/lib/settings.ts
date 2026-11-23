@@ -135,6 +135,10 @@ export interface PlatformSettings {
 	upkeepDefinitions: boolean;
 	upkeepNewSources: boolean;
 	upkeepPageDescriptions: boolean;
+	// Writes a first guide for a shared report that has none, and keeps the text
+	// of every guide right when a field it names is renamed, removed or
+	// redefined. See lib/guide/assistant.
+	upkeepGuides: boolean;
 	// Schemas whose new tables and views become sources on their own, each as
 	// catalog.schema.
 	upkeepWatchedSchemas: string[];
@@ -200,6 +204,7 @@ export const defaultSettings: PlatformSettings = {
 	upkeepDefinitions: true,
 	upkeepNewSources: true,
 	upkeepPageDescriptions: true,
+	upkeepGuides: true,
 	upkeepWatchedSchemas: [],
 
 	alertsEnabled: true,
@@ -415,6 +420,7 @@ export const writableSettings = [
 	"upkeepDefinitions",
 	"upkeepNewSources",
 	"upkeepPageDescriptions",
+	"upkeepGuides",
 	"upkeepWatchedSchemas",
 	"alertsEnabled",
 	"pushEnabled",
