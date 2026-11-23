@@ -1,3 +1,4 @@
+import { markGuidePending } from "../guide/pending";
 import { catalogueChanged } from "./curated";
 import { sql, transaction } from "../data/lakebase";
 import type { Identity } from "../auth/identity";
@@ -560,6 +561,11 @@ export async function publishPage(
 		     modified_by = $3, modified_on = now()
 		 WHERE report_id = $1`,
 		[reportId, categoryId, identity.email],
+	);
+	// Shared now, so its readers get a guide. See lib/guide/pending.
+	await markGuidePending(
+		[reportId],
+		[{ kind: "published", text: "The report was published to a category" }],
 	);
 	// Published some other way than through the request, so nobody is left being
 	// asked about a decision already made.

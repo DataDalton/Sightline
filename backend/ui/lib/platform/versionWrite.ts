@@ -1,5 +1,6 @@
 import type { PoolClient } from "pg";
 import { diffSnapshots, type Snapshot } from "./versionDiff";
+import { markGuidePending } from "../guide/pending";
 
 // Writes one version of a report with its change summary.
 //
@@ -50,4 +51,18 @@ export async function writeVersion(
 			input.updateId ?? null,
 		],
 	);
+
+	// A chart or page added, removed or renamed is something a guide walks a
+	// reader through, so it is noted for the guide to follow. Moves and setting
+	// changes are not, and neither is a change to the guide itself.
+	const structural = changes
+		.filter(
+			(change) =>
+				(change.kind === "added" ||
+					change.kind === "removed" ||
+					change.kind === "renamed") &&
+				change.text !== "Created the report",
+		)
+		.map((change) => ({ kind: "structure" as const, text: change.text }));
+	await markGuidePending([input.reportId], structural, client);
 }

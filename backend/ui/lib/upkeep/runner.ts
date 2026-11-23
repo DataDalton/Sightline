@@ -1,7 +1,9 @@
+import { markGuidePending, reportsFor } from "../guide/pending";
 import {
 	draftMissingGuides,
+	workPendingGuides,
 	renameInGuides,
-	reviseGuides,
+	queueGuideRevisions,
 } from "../guide/assistant";
 import { randomUUID } from "node:crypto";
 import { sql, tryAdvisoryLock } from "../data/lakebase";
@@ -115,8 +117,13 @@ export async function enqueueSyncFindings(found: SyncFindings): Promise<void> {
 }
 
 async function readUpdates(): Promise<void> {
-	const updates = await sql<{ update_id: string; about: AboutLike[] }>(
-		`SELECT update_id::text, about FROM updates
+	const updates = await sql<{
+		update_id: string;
+		about: AboutLike[];
+		title: string;
+		body: string | null;
+	}>(
+		`SELECT update_id::text, about, title, body FROM updates
 		 WHERE status = 'published' AND upkeep_read_on IS NULL
 		   AND posted_on > now() - interval '30 days'
 		 ORDER BY posted_on
@@ -124,11 +131,51 @@ async function readUpdates(): Promise<void> {
 	);
 	for (const update of updates) {
 		await enqueue(planFromAbout(update.about ?? []), update.update_id);
+		// The guides of reports on the data it is about follow what it says.
+		// See lib/guide/pending.
+		await noteUpdateForGuides(update).catch((error) => {
+			console.warn("The update was not noted for guides:", error);
+		});
 		await sql(
 			`UPDATE updates SET upkeep_read_on = now() WHERE update_id = $1`,
 			[update.update_id],
 		);
 	}
+}
+
+// Reports on the data an update is about, told what it says so their guides
+// can follow it. Its body is cut short, since a long one is mostly detail no
+// guide needs.
+async function noteUpdateForGuides(update: {
+	update_id: string;
+	about: AboutLike[];
+	title: string;
+	body: string | null;
+}): Promise<void> {
+	const about = (update.about ?? []) as {
+		kind?: string;
+		id?: string;
+		sourceKey?: string;
+	}[];
+	const sourceKeys = about.flatMap((item) =>
+		item.kind === "source" && item.id
+			? [item.id]
+			: item.kind === "field" && item.sourceKey
+				? [item.sourceKey]
+				: [],
+	);
+	const reportIds = about.flatMap((item) =>
+		item.kind === "report" && item.id ? [item.id] : [],
+	);
+	const reports = await reportsFor({ sourceKeys, reportIds });
+	const body = (update.body ?? "").replace(/\s+/g, " ").trim().slice(0, 1200);
+	await markGuidePending(reports, [
+		{
+			kind: "update",
+			text: `An update was posted, "${update.title}"${body ? `, which says: ${body}` : ""}`,
+			updateId: update.update_id,
+		},
+	]);
 }
 
 // Fields missing for long enough, with no rename in sight, become removals.
@@ -509,7 +556,7 @@ async function remove(
 	});
 	await tellItemOwners(result.turnedOff, `${action.field} was removed`);
 	if (settings().upkeepGuides) {
-		const guides = await reviseGuides({
+		const guides = await queueGuideRevisions({
 			sourceKey: action.sourceKey,
 			field: action.field,
 			change: "removed",
@@ -517,7 +564,7 @@ async function remove(
 		});
 		if (guides.length > 0)
 			summary.push(
-				`Rewrote what the guide of ${nameList(guides)} said about it.`,
+				`Will rewrite what the guide of ${nameList(guides)} says about it.`,
 			);
 	}
 	return {
@@ -847,6 +894,18 @@ async function newFields(rows: ActionRow[]): Promise<GroupOutcome> {
 			)
 		) {
 			applied.push(reportId);
+			if (settings().upkeepGuides) {
+				await markGuidePending(
+					[reportId],
+					[
+						{
+							kind: "field",
+							text: `${nameList(taken)} ${taken.length === 1 ? "was" : "were"} added to the report: ${(doneByReport.get(reportId) ?? []).join(", ")}`,
+							updateId: rows[0].update_id ?? undefined,
+						},
+					],
+				);
+			}
 		}
 	}
 	await tellAboutChanges({
@@ -986,7 +1045,7 @@ async function definitions(rows: ActionRow[]): Promise<GroupOutcome> {
 	if (settings().upkeepGuides) {
 		const guides = new Set<string>();
 		for (const field of fields) {
-			for (const title of await reviseGuides({
+			for (const title of await queueGuideRevisions({
 				sourceKey,
 				field,
 				change: "redefined",
@@ -996,7 +1055,7 @@ async function definitions(rows: ActionRow[]): Promise<GroupOutcome> {
 		}
 		if (guides.size > 0)
 			summary.push(
-				`Updated what the guide of ${nameList([...guides])} says about them.`,
+				`Will update what the guide of ${nameList([...guides])} says about them.`,
 			);
 	}
 	if (noted + shown.size > 0 && unseen.length > 0) {
@@ -1167,6 +1226,19 @@ async function newSource(
 		what: `${report.title} was built for the new source ${source.title}`,
 		reportIds: [created.reportId],
 	});
+	// Its guide is written with it. See lib/guide/pending.
+	if (settings().upkeepGuides) {
+		await markGuidePending(
+			[created.reportId],
+			[
+				{
+					kind: "created",
+					text: `The assistant built the report for the new source ${source.title}`,
+					updateId: row.update_id ?? undefined,
+				},
+			],
+		);
+	}
 	const summary = [
 		`Built ${report.title} for ${source.title} with ${report.pages.length} page${report.pages.length === 1 ? "" : "s"}: ${report.pages.map((page) => page.title).join(", ")}.`,
 	];
@@ -1466,8 +1538,12 @@ export async function runUpkeep(): Promise<void> {
 			await findRemovals();
 			if (await routineLooksAllowed()) await watchSchemas();
 			await workDue();
-			// Guides for shared reports that have none. See lib/guide/assistant.
+			// Guides following what happened to their reports, then, once an
+			// hour, any shared report still without one. See lib/guide.
 			if (settings().upkeepGuides) {
+				await workPendingGuides().catch((error) => {
+					console.warn("Guides were not brought up to date:", error);
+				});
 				await draftMissingGuides().catch((error) => {
 					console.warn("No guide was drafted:", error);
 				});

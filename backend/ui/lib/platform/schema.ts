@@ -2015,6 +2015,12 @@ const migrations: string[] = [
 	// modified stamp, which any edit to the report moves.
 	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS guide_edited_on TIMESTAMPTZ`,
 	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS guide_edited_by TEXT`,
+	// What happened to a report that its guide may need to follow, gathered until
+	// the report has been quiet for a while and then worked in one edit. When the
+	// first reason arrived, and the latest. See lib/guide/pending.
+	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS guide_pending JSONB`,
+	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS guide_pending_since TIMESTAMPTZ`,
+	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS guide_pending_last TIMESTAMPTZ`,
 
 	// Files attached to a guide, such as a slide deck, a model or a validation
 	// write-up. The bytes sit in a table of their own, keyed by a hash of them,

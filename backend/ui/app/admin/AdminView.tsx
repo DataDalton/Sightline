@@ -1641,7 +1641,7 @@ function ConfigurationSection({ group }: { group: PaneId }) {
 						/>
 						<SwitchSetting
 							label="Write and maintain report guides"
-							hint="Drafts a guide for a shared report that has none, and rewrites what a guide says about a field when it is renamed, removed or redefined."
+							hint="Writes a guide when a report is shared or built, and keeps it up to date as charts are added or removed, fields are placed, renamed, removed or redefined, and updates are posted about its data. Changes to one report are gathered for ten quiet minutes and made as one edit."
 							checked={values.upkeepGuides}
 							onChange={(v) => set({ upkeepGuides: v })}
 						/>
