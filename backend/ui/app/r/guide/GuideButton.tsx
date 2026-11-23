@@ -8,13 +8,11 @@ import { GuidePanel } from "./GuidePanel";
 export function GuideButton({
 	slug,
 	reportTitle,
-	version,
 	className,
 	onSaved,
 }: {
 	slug: string;
 	reportTitle: string;
-	version: number;
 	className?: string;
 	onSaved: () => void;
 }) {
@@ -54,7 +52,6 @@ export function GuideButton({
 			<GuidePanel
 				slug={slug}
 				reportTitle={reportTitle}
-				version={version}
 				open={open}
 				onClose={() => setOpen(false)}
 				onSaved={onSaved}

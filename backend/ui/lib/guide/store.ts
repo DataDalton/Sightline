@@ -66,6 +66,9 @@ export interface GuideView {
 	guide: string | null;
 	reviewedOn: string | null;
 	reviewedBy: string | null;
+	// Who last changed the text and when.
+	editedOn: string | null;
+	editedBy: string | null;
 	canEdit: boolean;
 	files: GuideFile[];
 	definitions: GuideDefinition[];
@@ -151,17 +154,28 @@ export function definitionsFor(report: GuideReport): GuideDefinition[] {
 	return out;
 }
 
-export async function guideRow(reportId: string): Promise<{
+export interface GuideRow {
 	guide: string | null;
 	reviewedOn: string | null;
 	reviewedBy: string | null;
-} | null> {
+	editedOn: string | null;
+	editedBy: string | null;
+	// The report's version, read with the text so a save can be made against
+	// exactly what was checked.
+	version: number;
+}
+
+export async function guideRow(reportId: string): Promise<GuideRow | null> {
 	const rows = await sql<{
 		guide: string | null;
 		guide_reviewed_on: string | null;
 		guide_reviewed_by: string | null;
+		guide_edited_on: string | null;
+		guide_edited_by: string | null;
+		version: string;
 	}>(
-		`SELECT guide, guide_reviewed_on::text, guide_reviewed_by
+		`SELECT guide, guide_reviewed_on::text, guide_reviewed_by,
+		        guide_edited_on::text, guide_edited_by, version
 		 FROM reports WHERE report_id = $1`,
 		[reportId],
 	);
@@ -171,6 +185,9 @@ export async function guideRow(reportId: string): Promise<{
 		guide: row.guide,
 		reviewedOn: row.guide_reviewed_on,
 		reviewedBy: row.guide_reviewed_by,
+		editedOn: row.guide_edited_on,
+		editedBy: row.guide_edited_by,
+		version: Number(row.version),
 	};
 }
 
@@ -303,6 +320,8 @@ export async function readGuide(
 		guide: row?.guide ?? null,
 		reviewedOn: row?.reviewedOn ?? null,
 		reviewedBy: row?.reviewedBy ?? null,
+		editedOn: row?.editedOn ?? null,
+		editedBy: row?.editedBy ?? null,
 		canEdit: report.editMode === "edit",
 		files,
 		definitions,

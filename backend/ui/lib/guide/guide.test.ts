@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+	dropUnfinished,
 	guideText,
 	headingsOf,
 	linkTarget,
@@ -9,6 +10,7 @@ import {
 	plainText,
 } from "./markdown";
 import { mentionedFields, renameField } from "./mentions";
+import { diffLines } from "./diff";
 
 test("links are kept only when they go somewhere safe", () => {
 	assert.deepEqual(linkTarget("https://example.com/a"), {
@@ -159,4 +161,52 @@ test("renaming a field leaves longer names that contain it alone", () => {
 		renameField("Nothing here.", "Opportunity", "Gap", names),
 		"Nothing here.",
 	);
+});
+
+test("a line the writer stopped partway through is dropped", () => {
+	assert.deepEqual(
+		dropUnfinished(
+			"## Things to know\n\n- **Capacity.** Latest year only.\n- **Coverage.",
+		),
+		{
+			text: "## Things to know\n\n- **Capacity.** Latest year only.",
+			cut: true,
+		},
+	);
+	assert.deepEqual(
+		dropUnfinished(
+			"Intro.\n\n## Things to know\n\n- Covers the latest year and",
+		),
+		{ text: "Intro.", cut: true },
+	);
+	assert.deepEqual(dropUnfinished("Done.\n\n| a | b |\n"), {
+		text: "Done.\n\n| a | b |",
+		cut: false,
+	});
+	assert.deepEqual(dropUnfinished("- **Bold** item ends here."), {
+		text: "- **Bold** item ends here.",
+		cut: false,
+	});
+});
+
+test("a changed guide reads as kept, added and removed lines", () => {
+	assert.deepEqual(
+		diffLines(
+			"## Terms\n\n- Sales is booked.\n- Opportunity is the gap.",
+			"## Terms\n\n- Sales is invoiced.\n- Opportunity is the gap.\n- Weighted is likely.",
+		),
+		[
+			{ kind: "same", text: "## Terms" },
+			{ kind: "removed", text: "- Sales is booked." },
+			{ kind: "added", text: "- Sales is invoiced." },
+			{ kind: "same", text: "- Opportunity is the gap." },
+			{ kind: "added", text: "- Weighted is likely." },
+		],
+	);
+	assert.deepEqual(diffLines("", "One line."), [
+		{ kind: "added", text: "One line." },
+	]);
+	assert.deepEqual(diffLines("Same.\n\n", "Same."), [
+		{ kind: "same", text: "Same." },
+	]);
 });

@@ -16,6 +16,7 @@
 		"app/visuals/chartOptions.ts",
 		"lib/guide/markdown.ts",
 		"lib/guide/mentions.ts",
+		"lib/guide/diff.ts",
 		"lib/guide/guide.test.ts",
 		"lib/semantic/fieldLabel.ts",
 		"lib/semantic/fieldLabel.test.ts",

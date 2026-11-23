@@ -895,7 +895,16 @@ async function runEdits(
 						   feedback_changes = CASE WHEN $5 IN ('automatic', 'suggest')
 						                           THEN $5 ELSE feedback_changes END,
 						   guide = CASE WHEN $6::text IS NULL THEN guide
-						                ELSE NULLIF(btrim($6), '') END
+						                ELSE NULLIF(btrim($6), '') END,
+						   -- Who last changed the guide's text and when, so somebody
+						   -- editing it can be told who changed it under them. Every
+						   -- column here reads the row as it was before this update.
+						   guide_edited_on = CASE WHEN $6::text IS NOT NULL
+						                           AND NULLIF(btrim($6), '') IS DISTINCT FROM guide
+						                          THEN now() ELSE guide_edited_on END,
+						   guide_edited_by = CASE WHEN $6::text IS NOT NULL
+						                           AND NULLIF(btrim($6), '') IS DISTINCT FROM guide
+						                          THEN $7 ELSE guide_edited_by END
 						 WHERE report_id = $1`,
 						[
 							request.reportId,
@@ -906,6 +915,7 @@ async function runEdits(
 							typeof op.guide === "string"
 								? op.guide.slice(0, maxGuideLength)
 								: null,
+							email,
 						],
 					);
 					break;

@@ -2011,6 +2011,10 @@ const migrations: string[] = [
 	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS guide_reviewed_on TIMESTAMPTZ`,
 	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS guide_reviewed_by TEXT`,
 	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS guide_draft_tried_on TIMESTAMPTZ`,
+	// Who last changed the guide's text and when, apart from the report's own
+	// modified stamp, which any edit to the report moves.
+	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS guide_edited_on TIMESTAMPTZ`,
+	`ALTER TABLE reports ADD COLUMN IF NOT EXISTS guide_edited_by TEXT`,
 
 	// Files attached to a guide, such as a slide deck, a model or a validation
 	// write-up. The bytes sit in a table of their own, keyed by a hash of them,

@@ -267,3 +267,31 @@ export function guideText(blocks: Block[]): string {
 		.filter(Boolean)
 		.join("\n");
 }
+
+// Whether a line of prose stops where a sentence or item could end. Headings,
+// table rows, fences and rules end wherever they end.
+function lineLooksFinished(line: string): boolean {
+	const text = line.trim();
+	if (/^(#{1,4}\s|\||```|(-{3,}|\*{3,}|_{3,})$)/.test(text)) return true;
+	if ((text.match(/\*\*/g) ?? []).length % 2 === 1) return false;
+	if ((text.match(/`/g) ?? []).length % 2 === 1) return false;
+	return /[.!?:)\]`*_"'|]$/.test(text);
+}
+
+// A guide without the line a writer stopped partway through, and without a
+// heading that was left with nothing under it. Says whether anything went, so a
+// caller can refuse text that was cut short rather than save it.
+export function dropUnfinished(text: string): { text: string; cut: boolean } {
+	const lines = text.replace(/\s+$/, "").split("\n");
+	let cut = false;
+	const last = () => lines[lines.length - 1] ?? "";
+	if (lines.length > 0 && !lineLooksFinished(last())) {
+		lines.pop();
+		cut = true;
+	}
+	while (lines.length > 0 && (!last().trim() || headingLine.test(last()))) {
+		if (headingLine.test(last())) cut = true;
+		lines.pop();
+	}
+	return { text: lines.join("\n").trim(), cut };
+}

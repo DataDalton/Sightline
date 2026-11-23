@@ -40,7 +40,7 @@ export async function GET(request: NextRequest, { params }: Params) {
 	}
 }
 
-// { action: "save", guide, baseVersion }
+// { action: "save", guide, startedFrom }
 // { action: "reviewed" }
 // { action: "draft" }
 // { action: "removeFile", fileId }
@@ -62,8 +62,11 @@ export async function POST(request: NextRequest, { params }: Params) {
 
 		if (body.action === "save") {
 			const guide = typeof body.guide === "string" ? body.guide : null;
-			const baseVersion = Number(body.baseVersion);
-			if (guide === null || !Number.isFinite(baseVersion)) {
+			// The text the editor started from, so a change somebody else saved
+			// meanwhile is caught rather than written over.
+			const startedFrom =
+				typeof body.startedFrom === "string" ? body.startedFrom : null;
+			if (guide === null || startedFrom === null) {
 				return privateJson({ error: "Nothing to save" }, 400);
 			}
 			if (guide.length > maxGuideLength) {
@@ -72,9 +75,27 @@ export async function POST(request: NextRequest, { params }: Params) {
 					413,
 				);
 			}
+			const current = await guideRow(report.reportId);
+			if (!current) return privateJson({ error: "Not found" }, 404);
+			if ((current.guide ?? "") !== startedFrom) {
+				return privateJson(
+					{
+						error: "The guide was changed while it was being edited.",
+						changed: {
+							guide: current.guide ?? "",
+							editedBy: current.editedBy,
+							editedOn: current.editedOn,
+						},
+					},
+					409,
+				);
+			}
+			// Against the version read with the text, so only a change to the
+			// report saved after this check, not one made earlier to its charts,
+			// stops the save.
 			const result = await applyEdits(policy, identity.email, {
 				reportId: report.reportId,
-				baseVersion,
+				baseVersion: current.version,
 				operations: [{ type: "updateReport", guide }],
 			});
 			// Saving it is confirming it is current.

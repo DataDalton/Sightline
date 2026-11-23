@@ -12,6 +12,7 @@ import {
 } from "../../../lib/guide/markdown";
 import { guideFileProblem, guideFileType } from "../../../lib/guide/fileRules";
 import type { GuideView } from "../../../lib/guide/store";
+import { diffLines } from "../../../lib/guide/diff";
 import { GuideMarkdown } from "./GuideMarkdown";
 import styles from "./Guide.module.css";
 
@@ -27,6 +28,9 @@ import styles from "./Guide.module.css";
 type TabId = "guide" | "terms" | "data";
 
 const anchorPrefix = "guide-";
+
+// How often the saved guide is read again while somebody edits it.
+const editCheckMs = 20_000;
 
 function day(value: string | null | undefined): string {
 	if (!value) return "";
@@ -91,27 +95,34 @@ const icons = {
 export function GuidePanel({
 	slug,
 	reportTitle,
-	version,
 	open,
 	onClose,
 	onSaved,
 }: {
 	slug: string;
 	reportTitle: string;
-	version: number;
 	open: boolean;
 	onClose: () => void;
 	// The report changed underneath, so its definition should be read again.
 	onSaved: () => void;
 }) {
 	const base = `/api/report/${encodeURIComponent(slug)}/guide`;
+	const [editing, setEditing] = useState(false);
+	// While somebody edits, the saved guide is read again now and then and
+	// whenever they come back to the tab, so a change saved meanwhile by
+	// somebody else or by the assistant is noticed before they save over it.
 	const { data, error, isLoading, mutate } = useSWR<GuideView>(
 		open ? base : null,
+		{ refreshInterval: editing ? editCheckMs : 0, revalidateOnFocus: true },
 	);
 	const { user } = useUser();
 	const [tab, setTab] = useState<TabId>("guide");
-	const [editing, setEditing] = useState(false);
 	const [text, setText] = useState("");
+	// The saved text the edit began from, and so the text a save replaces.
+	const [startedFrom, setStartedFrom] = useState("");
+	// Showing what changed underneath: what the other person changed, or this
+	// person's text against theirs.
+	const [comparing, setComparing] = useState<"theirs" | "mine" | null>(null);
 	const [previewing, setPreviewing] = useState(false);
 	const [busy, setBusy] = useState<string | null>(null);
 	const [problem, setProblem] = useState<string | null>(null);
@@ -133,7 +144,19 @@ export function GuidePanel({
 	);
 	const headings = useMemo(() => headingsOf(blocks), [blocks]);
 	const canDraft = Boolean(user?.capabilities?.includes("assistant.use"));
-	const changedText = editing && text !== (data?.guide ?? "");
+	const changedText = editing && text !== startedFrom;
+	const latest = data?.guide ?? "";
+	const changedUnderneath =
+		editing && Boolean(data) && latest !== startedFrom;
+	const comparison = useMemo(
+		() =>
+			comparing === "theirs"
+				? diffLines(startedFrom, latest)
+				: comparing === "mine"
+					? diffLines(latest, text)
+					: [],
+		[comparing, startedFrom, latest, text],
+	);
 
 	// The heading takes focus on opening, so a keyboard or screen reader lands
 	// in the panel rather than behind it.
@@ -216,6 +239,8 @@ export function GuidePanel({
 
 	const startEditing = () => {
 		setText(data?.guide ?? "");
+		setStartedFrom(data?.guide ?? "");
+		setComparing(null);
 		setPreviewing(false);
 		setEditing(true);
 		setTab("guide");
@@ -223,11 +248,59 @@ export function GuidePanel({
 
 	const save = () =>
 		run("Saving", async () => {
-			await post({ action: "save", guide: text, baseVersion: version });
+			const response = await fetch(base, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					action: "save",
+					guide: text,
+					startedFrom,
+				}),
+			});
+			if (response.status === 409) {
+				// Changed since the edit began. Their text is read so the notice
+				// above the editor can say who and offer the choices, and this
+				// person's text stays as it is.
+				await mutate();
+				return;
+			}
+			if (!response.ok) {
+				const detail = (await response.json().catch(() => null)) as {
+					error?: string;
+				} | null;
+				throw new Error(
+					detail?.error ?? "The guide could not be saved.",
+				);
+			}
 			setEditing(false);
+			setComparing(null);
 			await mutate();
 			onSaved();
 		});
+
+	// Takes the latest saved guide and drops this person's edit.
+	const takeTheirs = () => {
+		setText(latest);
+		setStartedFrom(latest);
+		setComparing(null);
+	};
+
+	// Keeps this person's text, so saving replaces what was changed meanwhile.
+	const keepMine = () => {
+		setStartedFrom(latest);
+		setComparing(null);
+	};
+
+	const changedBy =
+		data?.editedBy === "Assistant"
+			? "The assistant"
+			: (data?.editedBy ?? "Somebody");
+	const changedAt = data?.editedOn
+		? new Date(data.editedOn).toLocaleTimeString("en-US", {
+				hour: "numeric",
+				minute: "2-digit",
+			})
+		: null;
 
 	const draft = () =>
 		run("Writing the guide", async () => {
@@ -451,6 +524,136 @@ export function GuidePanel({
 
 				{data && editing && (
 					<div className={styles.editor}>
+						{changedUnderneath && (
+							<div className={styles.conflict} role="alert">
+								<p className={styles.conflictText}>
+									<strong>{changedBy}</strong> changed this
+									guide{changedAt ? ` at ${changedAt}` : ""}{" "}
+									while it was open here. Saving now would
+									replace their change.
+								</p>
+								<div className={styles.conflictActions}>
+									<button
+										type="button"
+										className={styles.secondary}
+										aria-pressed={comparing !== null}
+										onClick={() =>
+											setComparing((current) =>
+												current ? null : "theirs",
+											)
+										}
+									>
+										{comparing
+											? "Hide changes"
+											: "View changes"}
+									</button>
+									<button
+										type="button"
+										className={styles.secondary}
+										onClick={takeTheirs}
+									>
+										Use theirs
+									</button>
+									<button
+										type="button"
+										className={styles.secondary}
+										onClick={keepMine}
+									>
+										Keep mine
+									</button>
+								</div>
+								{comparing && (
+									<div className={styles.compare}>
+										<div
+											className={styles.segmented}
+											role="group"
+											aria-label="Which comparison"
+										>
+											<button
+												type="button"
+												aria-pressed={
+													comparing === "theirs"
+												}
+												className={
+													comparing === "theirs"
+														? styles.segmentOn
+														: styles.segment
+												}
+												onClick={() =>
+													setComparing("theirs")
+												}
+											>
+												What they changed
+											</button>
+											<button
+												type="button"
+												aria-pressed={
+													comparing === "mine"
+												}
+												className={
+													comparing === "mine"
+														? styles.segmentOn
+														: styles.segment
+												}
+												onClick={() =>
+													setComparing("mine")
+												}
+											>
+												Mine against theirs
+											</button>
+										</div>
+										<ol className={styles.diff}>
+											{comparison.every(
+												(line) => line.kind === "same",
+											) ? (
+												<li className={styles.diffNone}>
+													No difference.
+												</li>
+											) : (
+												comparison.map((line, n) => (
+													<li
+														key={n}
+														className={
+															line.kind ===
+															"added"
+																? styles.diffAdded
+																: line.kind ===
+																	  "removed"
+																	? styles.diffRemoved
+																	: styles.diffSame
+														}
+													>
+														<span
+															className={
+																styles.diffMark
+															}
+															aria-label={
+																line.kind ===
+																"added"
+																	? "Added"
+																	: line.kind ===
+																		  "removed"
+																		? "Removed"
+																		: undefined
+															}
+														>
+															{line.kind ===
+															"added"
+																? "+"
+																: line.kind ===
+																	  "removed"
+																	? "−"
+																	: ""}
+														</span>
+														{line.text}
+													</li>
+												))
+											)}
+										</ol>
+									</div>
+								)}
+							</div>
+						)}
 						<div className={styles.editorBar}>
 							<div
 								className={styles.segmented}

@@ -6,7 +6,12 @@ import { isPageControl } from "../visuals/catalog";
 import { getSource } from "../semantic/registry";
 import { assistantActor } from "../upkeep/actor";
 import { askAsApplication, ModelUnavailable } from "../upkeep/model";
-import { maxGuideLength } from "./markdown";
+import { dropUnfinished, maxGuideLength } from "./markdown";
+
+// Room for a full first guide, and for a rewrite, which returns the whole guide
+// rather than only the passages it changed.
+const draftTokens = 8000;
+const reviseTokens = 12000;
 import { renameField } from "./mentions";
 import { definitionsFor, type GuideReport } from "./store";
 
@@ -33,7 +38,7 @@ const writingRules = [
 	"Name fields exactly as they are given so readers can match them to the report.",
 ].join(" ");
 
-const draftSystem = `You write the guide for a report in a business intelligence app. The guide is what a new reader opens to understand the report. ${writingRules} Answer with only Markdown, no preamble. Use these sections, as level two headings, leaving out any you have nothing true to say for: "What this report is for", "Which figure to quote", "How to read it", "Terms", "Things to know". Under "How to read it" walk through the charts in the order a reader meets them, a short paragraph or bullet each. Under "Terms" give a bullet per key measure or dimension with its meaning in a sentence. Under "Things to know" gather caveats from the chart notes and field definitions, such as partial periods, things left out, or figures that do not add up across rows. Keep it under 900 words.`;
+const draftSystem = `You write the guide for a report in a business intelligence app. The guide is what a new reader opens to understand the report. ${writingRules} Answer with only Markdown, no preamble. Use these sections, as level two headings, leaving out any you have nothing true to say for: "What this report is for", "Which figure to quote", "How to read it", "Terms", "Things to know". Under "How to read it" walk through the charts in the order a reader meets them, a short paragraph or bullet each. Under "Terms" give a bullet for only the ten to fifteen measures and dimensions a reader most needs, each with its meaning in a sentence. The report lists every field elsewhere, so do not try to cover them all. Under "Things to know" gather caveats from the chart notes and field definitions, such as partial periods, things left out, or figures that do not add up across rows. Keep it under 900 words.`;
 
 const reviseSystem = `You keep a report's guide accurate after a field it talks about changed. ${writingRules} You are given the guide in Markdown and what changed. Change only the sentences that are now wrong or incomplete because of the change, and keep every other line exactly as it is, including headings, links and formatting. Answer with only the full revised guide in Markdown, no preamble. If nothing needs to change, answer with the guide unchanged.`;
 
@@ -100,9 +105,10 @@ export async function draftGuide(
 		],
 		[],
 		{},
-		3000,
+		draftTokens,
 	);
-	const text = cleanMarkdown(turn.content ?? "");
+	// A reply that ran out of room ends partway through a line, which is left off.
+	const text = dropUnfinished(cleanMarkdown(turn.content ?? "")).text;
 	if (!text) throw new Error("The assistant did not write a guide.");
 	return text;
 }
@@ -214,7 +220,7 @@ export async function reviseGuides(input: {
 								? `The field "${input.field}" was removed from the dataset and is no longer on the report.`
 								: `The field "${input.field}" was redefined. Its definition is now: ${field?.description ?? "not given"}`,
 					},
-					4000,
+					reviseTokens,
 				),
 			);
 		} catch (error) {
@@ -222,6 +228,14 @@ export async function reviseGuides(input: {
 			throw error;
 		}
 		if (!revised || revised === row.guide.trim()) continue;
+		// A rewrite that ran out of room is missing the end of the guide, so it
+		// is refused rather than saved over the whole one.
+		if (dropUnfinished(revised).cut && !dropUnfinished(row.guide).cut) {
+			console.warn(
+				`The assistant's revision of the guide on ${row.title} was cut short and was not saved.`,
+			);
+			continue;
+		}
 		const ratio = revised.length / Math.max(row.guide.length, 1);
 		if (ratio < 0.7 || ratio > 1.3) {
 			console.warn(
@@ -276,9 +290,10 @@ export async function draftMissingGuides(): Promise<number> {
 				await askAsApplication(
 					draftSystem,
 					outline({ ...report, description: row.description }),
-					3000,
+					draftTokens,
 				),
 			);
+			text = dropUnfinished(text).text;
 		} catch (error) {
 			if (error instanceof ModelUnavailable) return drafted;
 			console.warn(

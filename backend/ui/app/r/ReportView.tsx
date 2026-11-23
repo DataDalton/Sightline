@@ -1299,9 +1299,6 @@ export default function ReportView({
 																			reportTitle={
 																				report.title
 																			}
-																			version={
-																				report.version
-																			}
 																			className={
 																				styles.button
 																			}
