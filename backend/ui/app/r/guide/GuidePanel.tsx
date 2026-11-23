@@ -5,15 +5,12 @@ import useSWR from "swr";
 import Link from "../../components/AppLink";
 import { TabStrip } from "../../components/shared/TabStrip";
 import { useUser } from "../../context/UserContext";
-import {
-	headingsOf,
-	maxGuideLength,
-	parseGuide,
-} from "../../../lib/guide/markdown";
+import { maxGuideLength, parseGuide } from "../../../lib/guide/markdown";
 import { guideFileProblem, guideFileType } from "../../../lib/guide/fileRules";
 import type { GuideView } from "../../../lib/guide/store";
 import { diffLines } from "../../../lib/guide/diff";
 import { GuideMarkdown } from "./GuideMarkdown";
+import { GuideReader } from "./GuideReader";
 import styles from "./Guide.module.css";
 
 // A report's guide, beside the report rather than over it, so a reader can
@@ -90,18 +87,24 @@ const icons = {
 	check: "M20 6L9 17l-5-5",
 	spark: "M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z",
 	edit: "M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z",
+	widen: "M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7",
+	narrow: "M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7",
+	top: "M18 15l-6-6-6 6",
 };
 
 export function GuidePanel({
 	slug,
 	reportTitle,
 	open,
+	initialSection,
 	onClose,
 	onSaved,
 }: {
 	slug: string;
 	reportTitle: string;
 	open: boolean;
+	// A section named in the address, opened and scrolled to.
+	initialSection: string | null;
 	onClose: () => void;
 	// The report changed underneath, so its definition should be read again.
 	onSaved: () => void;
@@ -127,6 +130,17 @@ export function GuidePanel({
 	const [busy, setBusy] = useState<string | null>(null);
 	const [problem, setProblem] = useState<string | null>(null);
 	const [termFilter, setTermFilter] = useState("");
+	// A wider panel for long reading, with the sections down the left. Kept in
+	// this reader's browser.
+	const [wide, setWide] = useState(() => {
+		try {
+			return window.localStorage.getItem("guide.wide") === "1";
+		} catch {
+			return false;
+		}
+	});
+	// Offered once the reader has scrolled a screen or more.
+	const [farDown, setFarDown] = useState(false);
 	// Files dragged over the panel. Counted, because entering a child of the
 	// panel fires a leave on the panel itself before the enter on the child.
 	const [dropping, setDropping] = useState(false);
@@ -142,7 +156,6 @@ export function GuidePanel({
 		() => parseGuide(editing ? text : (data?.guide ?? "")),
 		[editing, text, data?.guide],
 	);
-	const headings = useMemo(() => headingsOf(blocks), [blocks]);
 	const canDraft = Boolean(user?.capabilities?.includes("assistant.use"));
 	const changedText = editing && text !== startedFrom;
 	const latest = data?.guide ?? "";
@@ -157,6 +170,23 @@ export function GuidePanel({
 					: [],
 		[comparing, startedFrom, latest, text],
 	);
+
+	useEffect(() => {
+		try {
+			window.localStorage.setItem("guide.wide", wide ? "1" : "0");
+		} catch {
+			// A browser that keeps nothing opens narrow each time.
+		}
+	}, [wide]);
+
+	useEffect(() => {
+		const root = bodyRef.current;
+		if (!open || !root) return;
+		const watch = () => setFarDown(root.scrollTop > root.clientHeight);
+		watch();
+		root.addEventListener("scroll", watch, { passive: true });
+		return () => root.removeEventListener("scroll", watch);
+	}, [open, data]);
 
 	// The heading takes focus on opening, so a keyboard or screen reader lands
 	// in the panel rather than behind it.
@@ -401,7 +431,7 @@ export function GuidePanel({
 	return (
 		<aside
 			ref={panelRef}
-			className={styles.panel}
+			className={`${styles.panel} ${wide ? styles.panelWide : ""}`}
 			aria-labelledby="guide-panel-title"
 			onDragEnter={(event) => {
 				if (!acceptsDrop(event)) return;
@@ -458,6 +488,27 @@ export function GuidePanel({
 					</h2>
 				</div>
 				<div className={styles.headActions}>
+					<button
+						type="button"
+						className={styles.iconButton}
+						onClick={() => setWide((held) => !held)}
+						aria-pressed={wide}
+						aria-label={
+							wide
+								? "Narrow the guide"
+								: "Widen the guide for reading"
+						}
+						title={
+							wide
+								? "Narrow the guide"
+								: "Widen the guide for reading"
+						}
+					>
+						<Icon
+							path={wide ? icons.narrow : icons.widen}
+							size={16}
+						/>
+					</button>
 					{data?.canEdit && !editing && data.guide && (
 						<button
 							type="button"
@@ -849,36 +900,13 @@ export function GuidePanel({
 											)}
 									</div>
 								)}
-								{headings.length >= 3 && (
-									<nav
-										className={styles.contents}
-										aria-label="Contents"
-									>
-										{headings
-											.filter(
-												(heading) => heading.level <= 2,
-											)
-											.map((heading) => (
-												<button
-													key={heading.id}
-													type="button"
-													className={
-														styles.contentsLink
-													}
-													onClick={() =>
-														onAnchor(heading.id)
-													}
-												>
-													{heading.text}
-												</button>
-											))}
-									</nav>
-								)}
-								<GuideMarkdown
+								<GuideReader
 									blocks={blocks}
-									idPrefix={anchorPrefix}
+									slug={slug}
+									scrollRoot={bodyRef}
+									wide={wide}
+									initialSection={initialSection}
 									fileHref={fileHref}
-									onAnchor={onAnchor}
 								/>
 							</>
 						) : (
@@ -1194,6 +1222,22 @@ export function GuidePanel({
 					</>
 				)}
 			</div>
+			{farDown && (
+				<button
+					type="button"
+					className={styles.backToTop}
+					onClick={() =>
+						bodyRef.current?.scrollTo({
+							top: 0,
+							behavior: "smooth",
+						})
+					}
+					aria-label="Back to the top"
+					title="Back to the top"
+				>
+					<Icon path={icons.top} size={16} />
+				</button>
+			)}
 		</aside>
 	);
 }

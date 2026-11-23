@@ -8,6 +8,7 @@ import {
 	parseGuide,
 	parseInline,
 	plainText,
+	sectionsOf,
 } from "./markdown";
 import { mentionedFields, renameField } from "./mentions";
 import { diffLines } from "./diff";
@@ -209,4 +210,25 @@ test("a changed guide reads as kept, added and removed lines", () => {
 	assert.deepEqual(diffLines("Same.\n\n", "Same."), [
 		{ kind: "same", text: "Same." },
 	]);
+});
+
+test("a guide splits at its top-level headings", () => {
+	const { lead, sections } = sectionsOf(
+		parseGuide(
+			"Opening line.\n\n## For\n\nWhat it is for.\n\n### Detail\n\nMore.\n\n## Terms\n\n- **Sales** is booked.",
+		),
+	);
+	assert.equal(lead.length, 1);
+	assert.deepEqual(
+		sections.map((section) => [
+			section.id,
+			section.title,
+			section.blocks.length,
+		]),
+		[
+			["for", "For", 3],
+			["terms", "Terms", 1],
+		],
+	);
+	assert.equal(sections[1].text, "Terms\nSales is booked.");
 });

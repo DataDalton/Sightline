@@ -8,7 +8,7 @@ import styles from "./Guide.module.css";
 // A guide's blocks drawn as elements. Nothing is ever set as HTML, so text an
 // author or the assistant wrote cannot become markup.
 
-interface Targets {
+export interface Targets {
 	// The address of a file attached to the guide, by its name, or null when
 	// no file of that name is attached.
 	fileHref: (name: string) => string | null;
@@ -88,6 +88,15 @@ function inline(parts: Inline[], targets: Targets): ReactNode[] {
 			}
 		}
 	});
+}
+
+// Inline content alone, for a section heading the reader draws with its own
+// controls beside it.
+export function GuideInline({
+	parts,
+	...targets
+}: Targets & { parts: Inline[] }) {
+	return <>{inline(parts, targets)}</>;
 }
 
 export function GuideMarkdown({

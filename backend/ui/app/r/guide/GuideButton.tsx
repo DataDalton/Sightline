@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { GuidePanel } from "./GuidePanel";
 
 // Opens a report's guide beside it. Arriving from a search result about the
-// guide, which carries guide=1 in the address, opens it straight away.
+// guide, or from a link to one of its sections, carries guide=1 in the address
+// and opens it straight away, at that section when one is named.
 export function GuideButton({
 	slug,
 	reportTitle,
@@ -17,9 +18,13 @@ export function GuideButton({
 	onSaved: () => void;
 }) {
 	const [open, setOpen] = useState(false);
+	// A section named in the address, from a link copied out of the guide.
+	const [section, setSection] = useState<string | null>(null);
 
 	useEffect(() => {
-		if (new URLSearchParams(window.location.search).get("guide") === "1") {
+		const address = new URLSearchParams(window.location.search);
+		if (address.get("guide") === "1") {
+			setSection(address.get("section"));
 			setOpen(true);
 		}
 	}, []);
@@ -53,6 +58,7 @@ export function GuideButton({
 				slug={slug}
 				reportTitle={reportTitle}
 				open={open}
+				initialSection={section}
 				onClose={() => setOpen(false)}
 				onSaved={onSaved}
 			/>

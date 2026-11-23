@@ -295,3 +295,44 @@ export function dropUnfinished(text: string): { text: string; cut: boolean } {
 	}
 	return { text: lines.join("\n").trim(), cut };
 }
+
+export interface GuideSection {
+	id: string;
+	title: string;
+	// The heading that opens the section, drawn by the reader with its own
+	// controls, so the blocks below leave it out.
+	heading: Extract<Block, { t: "heading" }>;
+	blocks: Block[];
+	// Every word in the section, for finding text in a folded one.
+	text: string;
+}
+
+// A guide split at its top-level headings, the level one and two headings a
+// reader folds and jumps between, with whatever comes before the first of them
+// kept apart as its opening.
+export function sectionsOf(blocks: Block[]): {
+	lead: Block[];
+	sections: GuideSection[];
+} {
+	const lead: Block[] = [];
+	const sections: GuideSection[] = [];
+	for (const block of blocks) {
+		if (block.t === "heading" && block.level <= 2) {
+			sections.push({
+				id: block.id,
+				title: plainText(block.c),
+				heading: block,
+				blocks: [],
+				text: "",
+			});
+		} else if (sections.length > 0) {
+			sections[sections.length - 1].blocks.push(block);
+		} else {
+			lead.push(block);
+		}
+	}
+	for (const section of sections) {
+		section.text = `${section.title}\n${guideText(section.blocks)}`;
+	}
+	return { lead, sections };
+}
