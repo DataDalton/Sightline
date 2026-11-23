@@ -1287,6 +1287,7 @@ function VisualBody({
 			<VisualFrame
 				visualId={visual.visualId}
 				title={isHeader ? null : displayTitle(visual)}
+				bare={isHeader}
 				notice={driftNote}
 				note={note}
 			>

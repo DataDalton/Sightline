@@ -38,6 +38,10 @@ interface VisualFrameProps {
 	// controls sit in the same place.
 	actions?: ReactNode;
 	title?: string | null;
+	// No bar across the top. The controls sit over the top right corner of the
+	// content instead, for a visual such as a record header whose content names
+	// it and has no title.
+	bare?: boolean;
 	meta?: QueryMeta;
 	flush?: boolean;
 	drill?: DrillInfo;
@@ -101,6 +105,7 @@ export function VisualFrame({
 	visualId,
 	actions,
 	title,
+	bare = false,
 	meta,
 	flush,
 	drill,
@@ -149,8 +154,12 @@ export function VisualFrame({
 				onZoomOut ||
 				actions ||
 				canExpand) && (
-				<div className={styles.header}>
-					{title && <span className={styles.title}>{title}</span>}
+				<div
+					className={`${styles.header} ${bare ? styles.headerBare : ""}`}
+				>
+					{title && !bare && (
+						<span className={styles.title}>{title}</span>
+					)}
 					{changes.length > 0 && (
 						<Link
 							href={`/status?tab=updates&open=${changes[0].updateId}`}

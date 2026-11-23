@@ -522,14 +522,20 @@ export function PropertiesPanel({
 						<span>{definition.label}</span>
 						<Chevron open={false} />
 					</button>
-					<input
-						className={`${styles.titleInput} ${styles.headTitle}`}
-						value={visual.title ?? ""}
-						placeholder="Untitled"
-						aria-label="Title"
-						readOnly={readOnly}
-						onChange={(e) => update({ title: e.target.value })}
-					/>
+					{/* A record header names itself with its content, so it has
+					    no title to set. The space keeps the actions on the right. */}
+					{visual.visualType === "entityHeader" ? (
+						<span className={styles.headTitle} aria-hidden="true" />
+					) : (
+						<input
+							className={`${styles.titleInput} ${styles.headTitle}`}
+							value={visual.title ?? ""}
+							placeholder="Untitled"
+							aria-label="Title"
+							readOnly={readOnly}
+							onChange={(e) => update({ title: e.target.value })}
+						/>
+					)}
 					<span className={styles.visualHeadActions}>
 						<button
 							type="button"

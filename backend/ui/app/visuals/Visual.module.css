@@ -1436,3 +1436,14 @@
 :where(.kpiValueExact) {
 	color: inherit;
 }
+
+/* A record header has no bar across its top. Its controls sit over the top
+   right corner of its content instead. */
+.headerBare {
+	position: absolute;
+	top: var(--space-2);
+	right: var(--space-2);
+	z-index: 1;
+	padding: 0;
+	border-bottom: none;
+}
