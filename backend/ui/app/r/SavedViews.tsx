@@ -56,9 +56,23 @@ interface SavedViewsProps {
 	// own default view is put on it. A link says what it wants, and that wins.
 	mayOpenOnDefault?: boolean;
 	onApply: (view: SavedView | null) => void;
-	// A word before the view's name, such as "Viewing". Given, the trigger is drawn as
-	// a quiet switcher with a chevron rather than as a button.
-	prefix?: string;
+	// Drawn as the first control of the filter bar: the view's name and a
+	// chevron, with a dot when the filters no longer match the view.
+	inBar?: boolean;
+	// The filters the page opens with, which the default view is compared to.
+	opening?: Record<string, FilterClause[]>;
+}
+
+// Filters by widget, written the same whatever order they were set in and
+// without widgets that hold nothing, so two sets that mean the same compare
+// equal.
+function filterKey(
+	filters: Record<string, FilterClause[]> | undefined,
+): string {
+	const entries = Object.entries(filters ?? {})
+		.filter(([, clauses]) => clauses.length > 0)
+		.sort(([a], [b]) => a.localeCompare(b));
+	return JSON.stringify(entries);
 }
 
 export function SavedViews({
@@ -69,7 +83,8 @@ export function SavedViews({
 	requestedViewId,
 	mayOpenOnDefault = false,
 	onApply: applyToPage,
-	prefix,
+	inBar = false,
+	opening,
 }: SavedViewsProps) {
 	const { applySelection } = usePageFilters();
 
@@ -233,17 +248,27 @@ export function SavedViews({
 		}
 	};
 
-	const activeName =
-		views.find((v) => v.viewId === activeViewId)?.name ?? "Default view";
+	const activeView = views.find((v) => v.viewId === activeViewId);
+	const activeName = activeView?.name ?? "Default view";
+	// The filters differ from what the view holds, so there is something the
+	// reader could save.
+	const changed =
+		filterKey(current.pageFilters) !==
+		filterKey(activeView ? activeView.config.pageFilters : opening);
 
 	return (
 		<div className={styles.wrapper} ref={wrapperRef}>
 			<button
 				type="button"
 				className={
-					prefix
-						? `${styles.trigger} ${styles.triggerQuiet}`
+					inBar
+						? `${styles.trigger} ${styles.triggerBar}`
 						: styles.trigger
+				}
+				title={
+					changed
+						? "The filters have changed since this view. Open to save them."
+						: "Saved views of this page"
 				}
 				onClick={() => setOpen((v) => !v)}
 				aria-expanded={open}
@@ -261,11 +286,15 @@ export function SavedViews({
 				>
 					<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
 				</svg>
-				{prefix ? (
+				{inBar ? (
 					<>
-						<span>
-							{prefix}: {activeName}
-						</span>
+						<span>{activeName}</span>
+						{changed && (
+							<span
+								className={styles.triggerDot}
+								aria-label="Filters changed"
+							/>
+						)}
 						<svg
 							className={styles.triggerChevron}
 							width="13"

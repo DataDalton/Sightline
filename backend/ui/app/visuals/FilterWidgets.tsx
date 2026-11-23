@@ -1349,7 +1349,15 @@ export function DimensionSwitch({
 
 // --- The strip that holds them ---------------------------------------------
 
-export function FilterBar({ children }: { children: React.ReactNode }) {
+export function FilterBar({
+	lead,
+	children,
+}: {
+	// First in the bar and set apart from the filters by a rule, such as the
+	// page's saved views, which are saved settings of these filters.
+	lead?: React.ReactNode;
+	children: React.ReactNode;
+}) {
 	const {
 		activeClauses,
 		clearAll,
@@ -1365,10 +1373,18 @@ export function FilterBar({ children }: { children: React.ReactNode }) {
 	// load, and that could not be selected in the editor because it was not
 	// one.
 	const hasControls = Children.toArray(children).some(Boolean);
-	if (!hasControls && !hasAnything) return null;
+	if (!lead && !hasControls && !hasAnything) return null;
 
 	return (
 		<div className={styles.bar}>
+			{lead && (
+				<>
+					{lead}
+					{(hasControls || hasAnything) && (
+						<span className={styles.barRule} aria-hidden="true" />
+					)}
+				</>
+			)}
 			{children}
 
 			{/* A selection made by clicking a chart is shown here as well, so

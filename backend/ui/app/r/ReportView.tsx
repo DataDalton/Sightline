@@ -485,6 +485,7 @@ export default function ReportView({
 	const [stateEpoch, setStateEpoch] = useState(0);
 	const [printFailure, setPrintFailure] = useState<string | null>(null);
 	const [whatIfOpen, setWhatIfOpen] = useState(false);
+	const [descriptionOpen, setDescriptionOpen] = useState(false);
 	const [scenarios, setScenarios] = useState<Scenario[]>([]);
 	const { data: decksAnswer } = useDecks(slug);
 
@@ -1531,35 +1532,116 @@ export default function ReportView({
 																			</button>
 																		)}
 																	</div>
+																	{/* What the report is for, under its name. One line until clicked, and
+    left off once the bar is pinned so the bar stays one row tall. */}
+																	{report.description && (
+																		<button
+																			type="button"
+																			className={`${styles.headerDescription} ${descriptionOpen ? styles.headerDescriptionOpen : ""}`}
+																			onClick={() =>
+																				setDescriptionOpen(
+																					(
+																						open,
+																					) =>
+																						!open,
+																				)
+																			}
+																			aria-expanded={
+																				descriptionOpen
+																			}
+																			title={
+																				descriptionOpen
+																					? undefined
+																					: report.description
+																			}
+																		>
+																			{
+																				report.description
+																			}
+																		</button>
+																	)}
 																</div>
-																{/* What the report is for, and at the right end of the
-																	    same line which saved view of the page is showing. */}
-																{(report.description ||
-																	page) && (
+
+																{report.pages
+																	.length >
+																	1 && (
 																	<div
 																		className={
-																			styles.descriptionRow
+																			styles.tabs
 																		}
+																		role="tablist"
 																	>
-																		{report.description && (
-																			<p
-																				className={
-																					styles.description
-																				}
-																			>
-																				{
-																					report.description
-																				}
-																			</p>
+																		{report.pages.map(
+																			(
+																				p,
+																			) => (
+																				<button
+																					key={
+																						p.pageId
+																					}
+																					type="button"
+																					role="tab"
+																					data-page-tab={
+																						p.pageId
+																					}
+																					aria-selected={
+																						page?.pageId ===
+																						p.pageId
+																					}
+																					className={`${styles.tab} ${
+																						page?.pageId ===
+																						p.pageId
+																							? styles.tabActive
+																							: ""
+																					}`}
+																					onClick={() => {
+																						// A step the back button can return to, unlike a filter.
+																						if (
+																							p.pageId !==
+																							page?.pageId
+																						)
+																							window.history.pushState(
+																								window
+																									.history
+																									.state,
+																								"",
+																								window
+																									.location
+																									.href,
+																							);
+																						openPage(
+																							p.pageId,
+																						);
+																					}}
+																				>
+																					{
+																						p.title
+																					}
+																				</button>
+																			),
 																		)}
-																		{page && (
-																			<div
-																				className={
-																					styles.viewing
-																				}
-																			>
+																	</div>
+																)}
+
+																{/* The page filters, above the report area. Sticky when
+																    the page asks for it. */}
+																{page && (
+																	<div
+																		className={`${styles.filterStrip} ${
+																			page
+																				?.config
+																				?.stickyFilters
+																				? styles.filterStripSticky
+																				: ""
+																		}`}
+																	>
+																		<FilterBar
+																			lead={
 																				<SavedViews
-																					prefix="Viewing"
+																					inBar
+																					opening={
+																						opening
+																					}
 																					reportId={
 																						report.reportId
 																					}
@@ -1692,85 +1774,8 @@ export default function ReportView({
 																						);
 																					}}
 																				/>
-																			</div>
-																		)}
-																	</div>
-																)}
-
-																{report.pages
-																	.length >
-																	1 && (
-																	<div
-																		className={
-																			styles.tabs
-																		}
-																		role="tablist"
-																	>
-																		{report.pages.map(
-																			(
-																				p,
-																			) => (
-																				<button
-																					key={
-																						p.pageId
-																					}
-																					type="button"
-																					role="tab"
-																					data-page-tab={
-																						p.pageId
-																					}
-																					aria-selected={
-																						page?.pageId ===
-																						p.pageId
-																					}
-																					className={`${styles.tab} ${
-																						page?.pageId ===
-																						p.pageId
-																							? styles.tabActive
-																							: ""
-																					}`}
-																					onClick={() => {
-																						// A step the back button can return to, unlike a filter.
-																						if (
-																							p.pageId !==
-																							page?.pageId
-																						)
-																							window.history.pushState(
-																								window
-																									.history
-																									.state,
-																								"",
-																								window
-																									.location
-																									.href,
-																							);
-																						openPage(
-																							p.pageId,
-																						);
-																					}}
-																				>
-																					{
-																						p.title
-																					}
-																				</button>
-																			),
-																		)}
-																	</div>
-																)}
-
-																{/* The page filters, above the report area. Sticky when
-																    the page asks for it. */}
-																{page && (
-																	<div
-																		className={`${styles.filterStrip} ${
-																			page
-																				?.config
-																				?.stickyFilters
-																				? styles.filterStripSticky
-																				: ""
-																		}`}
-																	>
-																		<FilterBar>
+																			}
+																		>
 																			{filterWidgets.map(
 																				(
 																					visual,

@@ -60,6 +60,26 @@
 	color: var(--brand-text);
 }
 
+/* Leading the filter bar, the same height and shape as the filters beside it. */
+.triggerBar {
+	gap: var(--space-1);
+	min-height: 30px;
+	padding: 5px var(--space-3) 5px var(--space-2);
+	border-radius: var(--radius-full);
+	color: var(--text-primary);
+	font-size: var(--text-xs);
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+/* The filters have changed since the view was applied. */
+.triggerDot {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--brand);
+}
+
 .triggerChevron {
 	color: var(--text-muted);
 }

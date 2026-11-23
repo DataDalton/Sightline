@@ -544,3 +544,11 @@
 	font-size: var(--text-xs);
 	color: var(--text-muted);
 }
+
+/* Between the saved views that lead the bar and the filters they save. */
+.barRule {
+	align-self: stretch;
+	width: 1px;
+	margin: 2px var(--space-1);
+	background: var(--border-default);
+}

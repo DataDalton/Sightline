@@ -125,32 +125,6 @@
 	white-space: nowrap;
 }
 
-/* The description, with the saved view at the right end of the same line. */
-.descriptionRow {
-	display: flex;
-	align-items: center;
-	gap: var(--space-4);
-	margin: var(--space-4) 0 var(--space-2);
-}
-
-.descriptionRow > .description {
-	flex: 1 1 auto;
-}
-
-.viewing {
-	display: flex;
-	align-items: center;
-	gap: var(--space-2);
-	margin-left: auto;
-	flex-shrink: 0;
-}
-
-.description {
-	min-width: 0;
-	font-size: var(--text-md);
-	color: var(--text-secondary);
-}
-
 .actions {
 	display: flex;
 	align-items: center;
@@ -601,4 +575,47 @@
 .tourButton:focus-visible {
 	outline: 2px solid var(--brand);
 	outline-offset: 2px;
+}
+
+/* What the report is for, as the bar's second line under its name. One line
+   until clicked, and left off once the bar is pinned, so the pinned bar stays
+   one row tall. */
+.reportBar {
+	flex-wrap: wrap;
+}
+
+.headerDescription {
+	flex-basis: 100%;
+	min-width: 0;
+	margin: calc(var(--space-2) * -1) 0 0;
+	padding: 0;
+	border: none;
+	background: none;
+	overflow: hidden;
+	color: var(--text-muted);
+	font: inherit;
+	font-size: var(--text-sm);
+	line-height: 1.45;
+	text-align: left;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.headerDescription:hover {
+	color: var(--text-secondary);
+}
+
+.headerDescription:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: 2px;
+	border-radius: var(--radius-sm);
+}
+
+.headerDescriptionOpen {
+	white-space: normal;
+}
+
+.reportBarPinned .headerDescription {
+	display: none;
 }
