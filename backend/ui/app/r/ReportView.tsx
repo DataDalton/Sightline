@@ -485,7 +485,6 @@ export default function ReportView({
 	const [stateEpoch, setStateEpoch] = useState(0);
 	const [printFailure, setPrintFailure] = useState<string | null>(null);
 	const [whatIfOpen, setWhatIfOpen] = useState(false);
-	const [descriptionOpen, setDescriptionOpen] = useState(false);
 	const [scenarios, setScenarios] = useState<Scenario[]>([]);
 	const { data: decksAnswer } = useDecks(slug);
 
@@ -1532,33 +1531,18 @@ export default function ReportView({
 																			</button>
 																		)}
 																	</div>
-																	{/* What the report is for, under its name. One line until clicked, and
-    left off once the bar is pinned so the bar stays one row tall. */}
+																	{/* What the report is for, in full under its name. Left off once the
+																	    bar is pinned so the bar stays one row tall. */}
 																	{report.description && (
-																		<button
-																			type="button"
-																			className={`${styles.headerDescription} ${descriptionOpen ? styles.headerDescriptionOpen : ""}`}
-																			onClick={() =>
-																				setDescriptionOpen(
-																					(
-																						open,
-																					) =>
-																						!open,
-																				)
-																			}
-																			aria-expanded={
-																				descriptionOpen
-																			}
-																			title={
-																				descriptionOpen
-																					? undefined
-																					: report.description
+																		<p
+																			className={
+																				styles.headerDescription
 																			}
 																		>
 																			{
 																				report.description
 																			}
-																		</button>
+																		</p>
 																	)}
 																</div>
 
