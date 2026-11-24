@@ -316,7 +316,10 @@ export function SavedViews({
 			</button>
 
 			{open && (
-				<div className={styles.panel} style={{ width: 300 }}>
+				<div
+					className={`${styles.panel} ${inBar ? styles.panelFromLeft : ""}`}
+					style={{ width: 300 }}
+				>
 					<div className={styles.list}>
 						<button
 							type="button"

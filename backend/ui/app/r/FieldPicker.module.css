@@ -60,6 +60,13 @@
 	color: var(--brand-text);
 }
 
+/* Opens under its button toward the right, for a button at the left edge of
+   the page, where opening leftward would run under the navigation. */
+.panelFromLeft {
+	right: auto;
+	left: 0;
+}
+
 /* Leading the filter bar, the same height and shape as the filters beside it. */
 .triggerBar {
 	gap: var(--space-1);

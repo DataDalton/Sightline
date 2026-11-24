@@ -582,6 +582,9 @@
    one row tall. */
 .reportBar {
 	flex-wrap: wrap;
+	/* The room the description row used to give, so what follows the bar does
+	   not sit against it. */
+	margin-bottom: var(--space-4);
 }
 
 .headerDescription {
