@@ -1531,20 +1531,21 @@ export default function ReportView({
 																			</button>
 																		)}
 																	</div>
-																	{/* What the report is for, in full under its name. Left off once the
-																	    bar is pinned so the bar stays one row tall. */}
-																	{report.description && (
-																		<p
-																			className={
-																				styles.headerDescription
-																			}
-																		>
-																			{
-																				report.description
-																			}
-																		</p>
-																	)}
 																</div>
+																{/* What the report is for, in full under its name. Outside the bar, so
+																    it scrolls away under the pinned bar rather than the bar changing
+																    height as it pins, which made the page jump. */}
+																{report.description && (
+																	<p
+																		className={
+																			styles.headerDescription
+																		}
+																	>
+																		{
+																			report.description
+																		}
+																	</p>
+																)}
 
 																{report.pages
 																	.length >

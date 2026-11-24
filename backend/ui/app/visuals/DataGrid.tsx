@@ -40,6 +40,7 @@ import {
 import { readThemeColors } from "./colors";
 import { useTheme } from "../context/ThemeContext";
 import { ColumnFilter } from "./ColumnFilter";
+import { Select } from "../components/shared/Select";
 import { useFindHighlight } from "./useFindHighlight";
 import {
 	columnKind,
@@ -1612,8 +1613,8 @@ export function DataGrid({
 							supplied
 								? "Search"
 								: searchIn
-									? `Search ${nameOf(searchIn)}, or type revenue > 50k`
-									: "Search every column, or type revenue > 50k"
+									? `Search ${nameOf(searchIn)}`
+									: "Search every column"
 						}
 						value={search}
 						onChange={(e) => setSearch(e.target.value)}
@@ -1636,21 +1637,21 @@ export function DataGrid({
 					)}
 				</div>
 				{!supplied && dimensions.length > 1 && (
-					<select
-						className={styles.searchScope}
-						value={searchIn ?? ""}
-						onChange={(e) =>
-							setSearchIn(e.target.value || undefined)
-						}
-						aria-label="Columns to search"
-					>
-						<option value="">All columns</option>
-						{dimensions.map((dimension) => (
-							<option key={dimension} value={dimension}>
-								{nameOf(dimension)}
-							</option>
-						))}
-					</select>
+					<div className={styles.searchScope}>
+						<Select
+							searchable
+							ariaLabel="Columns to search"
+							value={searchIn ?? ""}
+							onChange={(next) => setSearchIn(next || undefined)}
+							options={[
+								{ value: "", label: "All columns" },
+								...dimensions.map((dimension) => ({
+									value: dimension,
+									label: nameOf(dimension),
+								})),
+							]}
+						/>
+					</div>
 				)}
 
 				<div className={styles.spacer} />

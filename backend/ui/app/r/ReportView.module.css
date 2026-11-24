@@ -577,24 +577,36 @@
 	outline-offset: 2px;
 }
 
-/* What the report is for, in full as the bar's second line under its name, and
-   left off once the bar is pinned, so the pinned bar stays one row tall. */
+/* What the report is for, in full under its name. A row of its own under the
+   bar rather than inside it, drawn to read as the bar's second line. It scrolls
+   away under the bar, which only takes its rule and shadow once it pins, so
+   nothing changes height as the page scrolls. */
 .reportBar {
-	flex-wrap: wrap;
-	/* The room the description row used to give, so what follows the bar does
-	   not sit against it. */
 	margin-bottom: var(--space-4);
 }
 
+.reportBar:has(+ .headerDescription) {
+	margin-bottom: 0;
+	border-bottom-color: transparent;
+}
+
+.reportBarPinned:has(+ .headerDescription) {
+	border-bottom-color: var(--border-default);
+}
+
 .headerDescription {
-	flex-basis: 100%;
-	min-width: 0;
-	margin: calc(var(--space-2) * -1) 0 0;
+	margin: 0 calc(var(--space-5) * -1) var(--space-4);
+	padding: 0 var(--space-5) var(--space-3);
+	border-bottom: 1px solid var(--border-default);
+	background: var(--surface-raised);
 	color: var(--text-muted);
 	font-size: var(--text-sm);
 	line-height: 1.45;
 }
 
-.reportBarPinned .headerDescription {
-	display: none;
+@media (max-width: 720px) {
+	.headerDescription {
+		margin: 0 calc(var(--space-3) * -1) var(--space-3);
+		padding: 0 var(--space-3) var(--space-3);
+	}
 }
