@@ -370,3 +370,54 @@ test("child order does not change a tree's key, grouping does", () => {
 		key({ any: [{ all: [a, b] }, c] }),
 	);
 });
+
+test("a search naming several fields becomes any of them, every word", () => {
+	const spec = parseQuerySpec({
+		sourceKey: "s",
+		dimensions: ["Name"],
+		measures: [],
+		filters: [
+			{
+				field: "Name",
+				op: "contains",
+				value: "texas ortho",
+				fields: ["Name", "State"],
+			},
+			{ field: "Region", op: "eq", value: "West" },
+		],
+	});
+	assert.deepEqual(spec.filters, [
+		{ field: "Region", op: "eq", value: "West" },
+	]);
+	assert.deepEqual(spec.where, {
+		all: [
+			{
+				any: [
+					{ field: "Name", op: "contains", value: "texas" },
+					{ field: "State", op: "contains", value: "texas" },
+				],
+			},
+			{
+				any: [
+					{ field: "Name", op: "contains", value: "ortho" },
+					{ field: "State", op: "contains", value: "ortho" },
+				],
+			},
+		],
+	});
+});
+
+test("a search naming one field stays a plain filter", () => {
+	const spec = parseQuerySpec({
+		sourceKey: "s",
+		dimensions: [],
+		measures: [],
+		filters: [
+			{ field: "Name", op: "contains", value: "north", fields: ["Name"] },
+		],
+	});
+	assert.deepEqual(spec.filters, [
+		{ field: "Name", op: "contains", value: "north" },
+	]);
+	assert.equal(spec.where, undefined);
+});

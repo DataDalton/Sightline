@@ -62,3 +62,29 @@ test("nothing chosen counts as empty", () => {
 	assert.equal(isEmptyGridState({ filters: { Region: [] } }), true);
 	assert.equal(isEmptyGridState({ search: "x" }), false);
 });
+
+test("conditions, left out values and the search column survive the address", () => {
+	const states: Record<string, GridState> = {
+		[idA]: {
+			filters: { Region: ["East"] },
+			excluded: ["Region"],
+			conditions: {
+				Revenue: { op: "gt", value: "50k" },
+				Orders: { op: "between", value: "10", value2: "20" },
+				State: { op: "is_empty" },
+			},
+			search: "north",
+			searchIn: "Name",
+		},
+	};
+	assert.deepEqual(roundTrip(states, [idA]), states);
+	assert.equal(
+		isEmptyGridState({ conditions: { Revenue: { op: "gt", value: "1" } } }),
+		false,
+	);
+});
+
+test("a condition with an unknown operator is dropped", () => {
+	const params = new URLSearchParams("1a2b3c4d.c.Revenue=bigger:5");
+	assert.deepEqual(decodeGridParams(params, [idA]), { [idA]: {} });
+});

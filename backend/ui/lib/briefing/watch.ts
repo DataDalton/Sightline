@@ -18,7 +18,7 @@ export interface WatchItem {
 	hint: FormatHint;
 	timeField: string;
 	// Breakdowns the report itself charts, which is how a movement is
-	// described: "mostly Joint Replacement". The report's author chose them as
+	// described: "mostly Hardware". The report's author chose them as
 	// the ways this figure is worth splitting.
 	splitBy: string[];
 	// Which way is good news, from the report's own target where it sets one.

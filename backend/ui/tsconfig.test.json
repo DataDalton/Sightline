@@ -14,6 +14,8 @@
 	"include": [],
 	"files": [
 		"app/visuals/chartOptions.ts",
+		"lib/query/searchText.ts",
+		"lib/query/searchText.test.ts",
 		"lib/guide/markdown.ts",
 		"lib/guide/mentions.ts",
 		"lib/guide/diff.ts",

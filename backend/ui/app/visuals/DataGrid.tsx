@@ -40,6 +40,16 @@ import {
 import { readThemeColors } from "./colors";
 import { useTheme } from "../context/ThemeContext";
 import { ColumnFilter } from "./ColumnFilter";
+import { useFindHighlight } from "./useFindHighlight";
+import {
+	columnKind,
+	conditionClauses,
+	describeCondition,
+	parseTypedCondition,
+	searchTree,
+	type ColumnCondition,
+	type ColumnKind,
+} from "../../lib/query/searchText";
 import { VisualLoadingState } from "./LoadingState";
 import { useGridState } from "./GridStates";
 import {
@@ -138,6 +148,7 @@ interface QueryFilterShape {
 	op: string;
 	value?: string;
 	values?: string[];
+	negate?: boolean;
 }
 
 // Row heights the author can pick between.
@@ -298,6 +309,68 @@ export function DataGrid({
 		[updateGridState],
 	);
 
+	const conditionState = useMemo(
+		() => gridState.conditions ?? {},
+		[gridState.conditions],
+	);
+	const excludedKey = (gridState.excluded ?? []).join("\u001f");
+	const excluded = useMemo(
+		() => new Set(excludedKey ? excludedKey.split("\u001f") : []),
+		[excludedKey],
+	);
+	// A column gets values or a condition, so setting one clears the other.
+	const setColumnCondition = useCallback(
+		(field: string, condition: ColumnCondition | null) =>
+			updateGridState((current) => {
+				const conditions = { ...(current.conditions ?? {}) };
+				if (condition) conditions[field] = condition;
+				else delete conditions[field];
+				const filters = { ...(current.filters ?? {}) };
+				if (condition) delete filters[field];
+				return {
+					...current,
+					filters,
+					conditions:
+						Object.keys(conditions).length > 0
+							? conditions
+							: undefined,
+				};
+			}),
+		[updateGridState],
+	);
+	const setColumnValues = useCallback(
+		(field: string, values: string[], leaveOut: boolean) =>
+			updateGridState((current) => {
+				const conditions = { ...(current.conditions ?? {}) };
+				if (values.length > 0) delete conditions[field];
+				const others = (current.excluded ?? []).filter(
+					(name) => name !== field,
+				);
+				const nextExcluded =
+					leaveOut && values.length > 0 ? [...others, field] : others;
+				return {
+					...current,
+					filters: { ...(current.filters ?? {}), [field]: values },
+					conditions:
+						Object.keys(conditions).length > 0
+							? conditions
+							: undefined,
+					excluded:
+						nextExcluded.length > 0 ? nextExcluded : undefined,
+				};
+			}),
+		[updateGridState],
+	);
+	const setSearchIn = useCallback(
+		(field: string | undefined) =>
+			updateGridState((current) =>
+				current.searchIn === field
+					? current
+					: { ...current, searchIn: field },
+			),
+		[updateGridState],
+	);
+
 	// The fields the query can sort and filter on. A breakdown switch can take
 	// away the column a sort or a column filter names, and sending it anyway
 	// fails the query, so both are read through this set. A transform's column
@@ -317,6 +390,23 @@ export function DataGrid({
 		}
 		return kept;
 	}, [columnFilterState, queryFields]);
+	const columnConditions = useMemo(() => {
+		const kept: Record<string, ColumnCondition> = {};
+		for (const [field, condition] of Object.entries(conditionState)) {
+			if (queryFields.has(field)) kept[field] = condition;
+		}
+		return kept;
+	}, [conditionState, queryFields]);
+
+	// What each column holds, which decides the filter it offers.
+	const kindOf = useCallback(
+		(column: string): ColumnKind =>
+			columnKind(fields.get(column)?.dataType, measures.includes(column)),
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[fields, queryFieldKey],
+	);
+	const nameOf = (column: string) =>
+		fields.get(column)?.displayName || column;
 
 	// Dropped from state as well, so a column that comes back later starts
 	// unsorted and unfiltered rather than picking up an old choice.
@@ -478,18 +568,44 @@ export function DataGrid({
 		];
 
 		for (const [field, values] of Object.entries(columnFilters)) {
-			if (values.length > 0) result.push({ field, op: "eq", values });
+			if (values.length > 0) {
+				result.push({
+					field,
+					op: "eq",
+					values,
+					...(excluded.has(field) ? { negate: true } : {}),
+				});
+			}
 		}
-
-		if (debouncedSearch.trim() !== "" && dimensions.length > 0) {
-			result.push({
-				field: dimensions[0],
-				op: "contains",
-				value: debouncedSearch.trim(),
-			});
+		for (const [field, condition] of Object.entries(columnConditions)) {
+			result.push(
+				...conditionClauses(
+					field,
+					condition,
+					kindOf(field) === "number",
+				),
+			);
 		}
 		return result;
-	}, [baseFilters, columnFilters, debouncedSearch, dimensions]);
+	}, [baseFilters, columnFilters, columnConditions, excluded, kindOf]);
+
+	// Free text across the columns on show, or the one picked: every word has
+	// to be found, each in any of them. See lib/query/searchText.
+	const searchIn =
+		gridState.searchIn && dimensions.includes(gridState.searchIn)
+			? gridState.searchIn
+			: undefined;
+	const searchNode = useMemo(
+		() =>
+			supplied
+				? null
+				: searchTree(
+						debouncedSearch,
+						searchIn ? [searchIn] : dimensions,
+					),
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[debouncedSearch, searchIn, dimensions.join("\u001f"), supplied],
+	);
 
 	// Held by value, so a new array with the same conditions is the same
 	// query rather than a refetch.
@@ -500,9 +616,15 @@ export function DataGrid({
 		[anyOfKey],
 	);
 
-	const whereKey = JSON.stringify(where ?? null);
+	const whereKey = JSON.stringify(where ?? null) + JSON.stringify(searchNode);
 	const tree = useMemo(
-		() => where ?? undefined,
+		() => {
+			const parts = [where, searchNode].filter(
+				(part) => part !== undefined && part !== null,
+			);
+			if (parts.length === 0) return undefined;
+			return parts.length === 1 ? parts[0] : { all: parts };
+		},
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 		[whereKey],
 	);
@@ -1428,9 +1550,37 @@ export function DataGrid({
 	// empty.
 	const emptyGuidance = useEmptyGuidance();
 
-	const activeChips = Object.entries(columnFilters).filter(
+	const valueChips = Object.entries(columnFilters).filter(
 		([, values]) => values.length > 0,
 	);
+	const conditionChips = Object.entries(columnConditions);
+	const chipCount = valueChips.length + conditionChips.length;
+
+	// A condition typed into the search box, such as "revenue > 50k", offered
+	// to apply with Enter rather than searched for as words.
+	const typed = supplied
+		? null
+		: parseTypedCondition(
+				search,
+				[...dimensions, ...measures].map((name) => ({
+					name,
+					label: nameOf(name),
+					numeric: kindOf(name) === "number",
+				})),
+			);
+
+	// The searched words marked in the cells on show.
+	useFindHighlight(
+		scrollerRef,
+		`grid-find-${(visualId ?? "grid").slice(0, 8).replace(/[^a-z0-9]/gi, "")}`,
+		supplied ? [] : debouncedSearch.trim().split(/\s+/),
+		rows,
+	);
+
+	const openFilterAt = (field: string, element: HTMLElement) => {
+		const rect = element.getBoundingClientRect();
+		setOpenFilter({ field, x: rect.left, y: rect.bottom + 4 });
+	};
 
 	if (error && rows.length === 0) return <VisualError error={error} />;
 
@@ -1459,14 +1609,49 @@ export function DataGrid({
 						type="text"
 						className={styles.searchInput}
 						placeholder={
-							dimensions.length > 0 && !supplied
-								? `Search ${dimensions[0]}`
-								: "Search"
+							supplied
+								? "Search"
+								: searchIn
+									? `Search ${nameOf(searchIn)}, or type revenue > 50k`
+									: "Search every column, or type revenue > 50k"
 						}
 						value={search}
 						onChange={(e) => setSearch(e.target.value)}
+						onKeyDown={(e) => {
+							if (e.key !== "Enter" || !typed) return;
+							e.preventDefault();
+							setColumnCondition(typed.field, typed.condition);
+							setSearch("");
+						}}
+						aria-label="Search the table"
 					/>
+					{typed && (
+						<span className={styles.typedHint} role="status">
+							<kbd>Enter</kbd> to filter{" "}
+							{describeCondition(
+								nameOf(typed.field),
+								typed.condition,
+							)}
+						</span>
+					)}
 				</div>
+				{!supplied && dimensions.length > 1 && (
+					<select
+						className={styles.searchScope}
+						value={searchIn ?? ""}
+						onChange={(e) =>
+							setSearchIn(e.target.value || undefined)
+						}
+						aria-label="Columns to search"
+					>
+						<option value="">All columns</option>
+						{dimensions.map((dimension) => (
+							<option key={dimension} value={dimension}>
+								{nameOf(dimension)}
+							</option>
+						))}
+					</select>
+				)}
 
 				<div className={styles.spacer} />
 
@@ -1522,27 +1707,61 @@ export function DataGrid({
 				)}
 			</div>
 
-			{activeChips.length > 0 && (
+			{chipCount > 0 && (
 				<div className={styles.chips}>
-					{activeChips.map(([field, values]) => (
+					{valueChips.map(([field, values]) => (
 						<span key={field} className={styles.chip}>
-							<span className={styles.chipField}>{field}</span>
-							<span>
-								{values.length === 1
-									? values[0]
-									: `${values.length} selected`}
-							</span>
+							<button
+								type="button"
+								className={styles.chipEdit}
+								onClick={(e) =>
+									openFilterAt(field, e.currentTarget)
+								}
+								title="Change this filter"
+							>
+								<span className={styles.chipField}>
+									{nameOf(field)}
+								</span>
+								{excluded.has(field) && (
+									<span className={styles.chipLeftOut}>
+										not
+									</span>
+								)}
+								<span>
+									{values.length === 1
+										? values[0]
+										: `${values.length} selected`}
+								</span>
+							</button>
 							<button
 								type="button"
 								className={styles.chipRemove}
-								aria-label={`Remove ${field} filter`}
+								aria-label={`Remove ${nameOf(field)} filter`}
 								onClick={() =>
-									setColumnFilters((prev) => {
-										const next = { ...prev };
-										delete next[field];
-										return next;
-									})
+									setColumnValues(field, [], false)
 								}
+							>
+								✕
+							</button>
+						</span>
+					))}
+					{conditionChips.map(([field, condition]) => (
+						<span key={`c:${field}`} className={styles.chip}>
+							<button
+								type="button"
+								className={styles.chipEdit}
+								onClick={(e) =>
+									openFilterAt(field, e.currentTarget)
+								}
+								title="Change this filter"
+							>
+								{describeCondition(nameOf(field), condition)}
+							</button>
+							<button
+								type="button"
+								className={styles.chipRemove}
+								aria-label={`Remove ${nameOf(field)} filter`}
+								onClick={() => setColumnCondition(field, null)}
 							>
 								✕
 							</button>
@@ -1551,7 +1770,14 @@ export function DataGrid({
 					<button
 						type="button"
 						className={styles.clearAll}
-						onClick={() => setColumnFilters(() => ({}))}
+						onClick={() =>
+							updateGridState((current) => ({
+								...current,
+								filters: {},
+								conditions: undefined,
+								excluded: undefined,
+							}))
+						}
 					>
 						Clear all
 					</button>
@@ -1600,8 +1826,8 @@ export function DataGrid({
 						const hint = hints.get(column) ?? "text";
 						const isSorted = sort?.field === column;
 						const hasFilter =
-							(columnFilters[column]?.length ?? 0) > 0;
-						const isDimension = dimensions.includes(column);
+							(columnFilters[column]?.length ?? 0) > 0 ||
+							Boolean(columnConditions[column]);
 						const isPinned = pinned.includes(column);
 						const isLastPin = isPinned && column === lastPinned;
 
@@ -1733,9 +1959,10 @@ export function DataGrid({
 									</svg>
 								</button>
 
-								{/* Only a dimension has a meaningful value list;
-								    a measure is an aggregate. */}
-								{isDimension && !supplied && (
+								{/* Every column filters. A dimension by its values or,
+								    for a figure or a date, a condition. A measure by a
+								    condition on its figure. */}
+								{!supplied && (
 									<button
 										type="button"
 										className={`${styles.filterButton} ${
@@ -1925,6 +2152,16 @@ export function DataGrid({
 						(f) =>
 							(f as QueryFilterShape).field !== openFilter.field,
 					)}
+					label={nameOf(openFilter.field)}
+					kind={kindOf(openFilter.field)}
+					allowValues={dimensions.includes(openFilter.field)}
+					canExclude
+					excluded={excluded.has(openFilter.field)}
+					condition={columnConditions[openFilter.field] ?? null}
+					onCondition={(condition) => {
+						setColumnCondition(openFilter.field, condition);
+						setOpenFilter(null);
+					}}
 					selected={columnFilters[openFilter.field] ?? []}
 					sortDirection={
 						sort?.field === openFilter.field ? sort.direction : null
@@ -1937,11 +2174,12 @@ export function DataGrid({
 								: null,
 						);
 					}}
-					onApply={(values) => {
-						setColumnFilters((prev) => ({
-							...prev,
-							[openFilter.field]: values,
-						}));
+					onApply={(values, leaveOut) => {
+						setColumnValues(
+							openFilter.field,
+							values,
+							Boolean(leaveOut),
+						);
 						setOpenFilter(null);
 					}}
 					onClose={() => setOpenFilter(null)}

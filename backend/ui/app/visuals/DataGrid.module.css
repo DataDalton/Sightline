@@ -761,3 +761,157 @@
 .rowDimmed .dataBar {
 	opacity: 0.4;
 }
+
+/* Choosing between a condition and a list of values, for a column that
+   offers both. */
+.popoverModes {
+	display: flex;
+	gap: 2px;
+	margin: var(--space-2) var(--space-2) 0;
+	padding: 2px;
+	border-radius: var(--radius-md);
+	background: var(--surface-sunken);
+}
+
+.popoverMode,
+.popoverModeOn {
+	flex: 1;
+	padding: var(--space-1) var(--space-2);
+	border: none;
+	border-radius: var(--radius-sm);
+	background: none;
+	color: var(--text-secondary);
+	font: inherit;
+	font-size: var(--text-xs);
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.popoverModeOn {
+	background: var(--surface-raised);
+	color: var(--text-primary);
+	box-shadow: var(--shadow-sm);
+}
+
+/* A condition on a figure or a date. */
+.condition {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	padding: var(--space-3) var(--space-2) var(--space-2);
+}
+
+.conditionSelect,
+.conditionInput {
+	width: 100%;
+	min-width: 0;
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-base);
+	color: var(--text-primary);
+	font: inherit;
+	font-size: var(--text-sm);
+}
+
+.conditionSelect:focus-visible,
+.conditionInput:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: -1px;
+	border-color: transparent;
+}
+
+.conditionValues {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+}
+
+.conditionAnd {
+	flex-shrink: 0;
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+}
+
+.conditionHint {
+	margin: 0;
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.excludeToggle {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	padding: var(--space-2) var(--space-3);
+	border-top: 1px solid var(--border-subtle);
+	font-size: var(--text-xs);
+	color: var(--text-secondary);
+	cursor: pointer;
+}
+
+/* The column a search looks in, beside the box. */
+.searchScope {
+	flex-shrink: 0;
+	max-width: 180px;
+	padding: var(--space-2) var(--space-2);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-md);
+	background: var(--surface-base);
+	color: var(--text-secondary);
+	font: inherit;
+	font-size: var(--text-xs);
+}
+
+.searchScope:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: -1px;
+}
+
+/* Under the search box, when what is typed reads as a condition. */
+.typedHint {
+	position: absolute;
+	top: calc(100% + 4px);
+	left: 0;
+	z-index: 5;
+	padding: var(--space-1) var(--space-2);
+	border: 1px solid var(--border-default);
+	border-radius: var(--radius-sm);
+	background: var(--surface-float);
+	box-shadow: var(--shadow-md);
+	font-size: var(--text-xs);
+	color: var(--text-secondary);
+	white-space: nowrap;
+}
+
+.typedHint kbd {
+	padding: 0 4px;
+	border: 1px solid var(--border-default);
+	border-radius: 3px;
+	font-family: inherit;
+	font-size: 0.95em;
+}
+
+.chipEdit {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+	padding: 0;
+	border: none;
+	background: none;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+}
+
+.chipEdit:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: 2px;
+	border-radius: var(--radius-sm);
+}
+
+.chipLeftOut {
+	color: var(--danger);
+	font-weight: 600;
+}

@@ -1,5 +1,6 @@
 "use client";
 
+import { parseAmount } from "../../lib/query/searchText";
 import {
 	Children,
 	Fragment,
@@ -330,12 +331,16 @@ export function SearchFilter({
 				setWidgetFilter(visualId, []);
 				return;
 			}
-			// One clause per field. The query builder combines a widget's
-			// clauses with AND, so multi-field search is expressed as a single
-			// clause against the first field until grouped filters are
-			// supported end to end.
+			// One clause naming every field. The query reads it as each word
+			// found in any of them, so a search for a name, a city or a ZIP
+			// code finds the row whichever it matches. See lib/query/spec.
 			setWidgetFilter(visualId, [
-				{ field: fields[0], op: "contains", value: trimmed },
+				{
+					field: fields[0],
+					op: "contains",
+					value: trimmed,
+					...(fields.length > 1 ? { fields } : {}),
+				},
 			]);
 		}, 300);
 		return () => clearTimeout(timer);
@@ -854,12 +859,17 @@ export function NumericRangeFilter({
 	const showSlider =
 		(mode === "slider" || mode === "combined") && !degenerate;
 
+	// Amounts are read the way people type them, so 50k is 50,000. A box
+	// holding something that is not an amount sets no bound rather than a
+	// filter the warehouse cannot read.
 	const apply = (lo: string, hi: string) => {
 		const clauses: FilterClause[] = [];
-		if (lo.trim() !== "")
-			clauses.push({ field, op: "gte", value: lo.trim() });
-		if (hi.trim() !== "")
-			clauses.push({ field, op: "lte", value: hi.trim() });
+		const low = parseAmount(lo);
+		const high = parseAmount(hi);
+		if (low !== null)
+			clauses.push({ field, op: "gte", value: String(low) });
+		if (high !== null)
+			clauses.push({ field, op: "lte", value: String(high) });
 		setWidgetFilter(visualId, clauses);
 	};
 
@@ -875,8 +885,8 @@ export function NumericRangeFilter({
 
 	const sliderValue = useMemo((): [number, number] => {
 		if (!bounds) return [0, 1];
-		const lo = min === "" ? bounds.min : Number(min);
-		const hi = max === "" ? bounds.max : Number(max);
+		const lo = parseAmount(min) ?? bounds.min;
+		const hi = parseAmount(max) ?? bounds.max;
 		return [
 			Number.isFinite(lo) ? lo : bounds.min,
 			Number.isFinite(hi) ? hi : bounds.max,
@@ -896,13 +906,15 @@ export function NumericRangeFilter({
 					? `${(v / 1e3).toFixed(0)}K`
 					: v.toFixed(Math.abs(v) < 10 ? 2 : 0);
 
+	const low = parseAmount(min);
+	const high = parseAmount(max);
 	const summary =
-		min && max
-			? `${compact(Number(min))} to ${compact(Number(max))}`
-			: min
-				? `over ${compact(Number(min))}`
-				: max
-					? `under ${compact(Number(max))}`
+		low !== null && high !== null
+			? `${compact(low)} to ${compact(high)}`
+			: low !== null
+				? `over ${compact(low)}`
+				: high !== null
+					? `under ${compact(high)}`
 					: null;
 
 	return (
@@ -951,7 +963,8 @@ export function NumericRangeFilter({
 					{showInputs && (
 						<div className={styles.row}>
 							<input
-								type="number"
+								type="text"
+								inputMode="decimal"
 								className={styles.input}
 								placeholder={
 									bounds ? compact(bounds.min) : "Min"
@@ -967,7 +980,8 @@ export function NumericRangeFilter({
 								to
 							</span>
 							<input
-								type="number"
+								type="text"
+								inputMode="decimal"
 								className={styles.input}
 								placeholder={
 									bounds ? compact(bounds.max) : "Max"

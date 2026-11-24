@@ -1,3 +1,5 @@
+import type { ColumnCondition, ConditionOp } from "../query/searchText";
+
 // What a reader has chosen inside one table or matrix: its sort, its column
 // filters and its search.
 //
@@ -18,10 +20,52 @@ export interface GridState {
 	sort?: { key: string; direction: "asc" | "desc" };
 	// Chosen values by field.
 	filters?: Record<string, string[]>;
+	// Fields whose chosen values are left out rather than kept.
+	excluded?: string[];
+	// Conditions by field, such as greater than 50k. A field has values or a
+	// condition, not both.
+	conditions?: Record<string, ColumnCondition>;
 	search?: string;
+	// The one column the search looks in. Absent searches every column.
+	searchIn?: string;
 }
 
 const idLength = 8;
+
+const conditionOps = new Set<ConditionOp>([
+	"gt",
+	"gte",
+	"lt",
+	"lte",
+	"eq",
+	"neq",
+	"between",
+	"is_empty",
+	"is_not_empty",
+]);
+
+// A condition in the address, such as "gt:50k" or "between:10~20".
+function encodeCondition(condition: ColumnCondition): string {
+	if (condition.op === "between") {
+		return `between:${condition.value ?? ""}~${condition.value2 ?? ""}`;
+	}
+	return condition.value === undefined
+		? condition.op
+		: `${condition.op}:${condition.value}`;
+}
+
+function decodeCondition(text: string): ColumnCondition | null {
+	const at = text.indexOf(":");
+	const op = (at < 0 ? text : text.slice(0, at)) as ConditionOp;
+	if (!conditionOps.has(op)) return null;
+	if (at < 0) return { op };
+	const rest = text.slice(at + 1);
+	if (op === "between") {
+		const [value, value2] = rest.split("~");
+		return { op, value, value2 };
+	}
+	return { op, value: rest };
+}
 
 function escapeValue(value: string): string {
 	return value.replace(/\\/g, "\\\\").replace(/,/g, "\\,");
@@ -50,7 +94,8 @@ export function isEmptyGridState(state: GridState): boolean {
 	return (
 		!state.sort &&
 		!state.search &&
-		Object.values(state.filters ?? {}).every((v) => v.length === 0)
+		Object.values(state.filters ?? {}).every((v) => v.length === 0) &&
+		Object.keys(state.conditions ?? {}).length === 0
 	);
 }
 
@@ -67,6 +112,18 @@ export function encodeGridParams(
 			]);
 		}
 		if (state.search) params.push([`${prefix}.search`, state.search]);
+		if (state.searchIn) params.push([`${prefix}.in`, state.searchIn]);
+		const excluded = (state.excluded ?? []).filter(
+			(field) => (state.filters?.[field]?.length ?? 0) > 0,
+		);
+		if (excluded.length > 0) {
+			params.push([`${prefix}.x`, excluded.map(escapeValue).join(",")]);
+		}
+		for (const [field, condition] of Object.entries(
+			state.conditions ?? {},
+		)) {
+			params.push([`${prefix}.c.${field}`, encodeCondition(condition)]);
+		}
 		for (const [field, values] of Object.entries(state.filters ?? {})) {
 			if (values.length > 0) {
 				params.push([
@@ -98,6 +155,18 @@ export function decodeGridParams(
 
 		if (rest === "search") {
 			state.search = value;
+		} else if (rest === "in") {
+			state.searchIn = value;
+		} else if (rest === "x") {
+			state.excluded = splitValues(value);
+		} else if (rest.startsWith("c.")) {
+			const condition = decodeCondition(value);
+			if (condition) {
+				state.conditions = {
+					...state.conditions,
+					[rest.slice(2)]: condition,
+				};
+			}
 		} else if (rest === "sort") {
 			const at = value.lastIndexOf(":");
 			const direction = value.slice(at + 1);

@@ -23,6 +23,9 @@ export interface FilterClause {
 	op: string;
 	value?: string;
 	values?: string[];
+	// A search across several fields, matching when the text is in any of
+	// them. The query layer writes it as a condition tree.
+	fields?: string[];
 }
 
 // A selection made by clicking inside a visual. Attributed to the visual that

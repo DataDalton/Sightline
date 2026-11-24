@@ -66,7 +66,7 @@ export function movementText(
 	return `${pct}% ${move > 0 ? "above" : "below"} usual`;
 }
 
-// "Mostly Joint Replacement (Division), +1.2M, 70% of the change". A member
+// "Mostly Hardware (Category), +1.2M, 70% of the change". A member
 // carrying under half the change led it rather than made it.
 export function driverText(driver: Driver, hint: FormatHint): string {
 	const sign = driver.change > 0 ? "+" : "-";

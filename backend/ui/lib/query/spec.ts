@@ -179,6 +179,47 @@ function parseFilter(item: unknown, label: string): QueryFilter {
 	};
 }
 
+// The most fields one search clause may look in.
+const maxSearchFields = 40;
+
+// Search clauses, which name several fields and match when the text is in any
+// of them, split from the plain filters and written as condition trees: every
+// word has to be found, each in any of the fields. A clause naming one field
+// stays a plain filter.
+function splitSearches(raw: unknown): { plain: unknown; searches: unknown[] } {
+	if (!Array.isArray(raw)) return { plain: raw, searches: [] };
+	const plain: unknown[] = [];
+	const searches: unknown[] = [];
+	for (const item of raw) {
+		const o = item as Record<string, unknown> | null;
+		const fields = Array.isArray(o?.fields)
+			? (o.fields as unknown[]).filter(
+					(f): f is string => typeof f === "string" && f !== "",
+				)
+			: [];
+		if (
+			!o ||
+			o.op !== "contains" ||
+			typeof o.value !== "string" ||
+			fields.length < 2
+		) {
+			plain.push(item);
+			continue;
+		}
+		const words = o.value
+			.trim()
+			.split(/\s+/)
+			.filter((w) => w !== "");
+		const named = [...new Set(fields)].slice(0, maxSearchFields);
+		if (words.length === 0) continue;
+		const perWord = words.map((word) => ({
+			any: named.map((field) => ({ field, op: "contains", value: word })),
+		}));
+		searches.push(perWord.length === 1 ? perWord[0] : { all: perWord });
+	}
+	return { plain, searches };
+}
+
 function parseFilters(raw: unknown): QueryFilter[] {
 	if (raw === undefined || raw === null) return [];
 	if (!Array.isArray(raw)) {
@@ -396,17 +437,31 @@ export function parseQuerySpec(raw: unknown): QuerySpec {
 	const measures = parseNameList(o.measures, "measures", maxMeasures);
 
 	const distribution = parseDistribution(o.distribution);
-	const filters = parseFilters(o.filters);
+	// A search over several fields arrives as one clause naming them all and is
+	// taken out of the plain list, since "any of these fields" cannot be said
+	// as conditions that all hold. It joins the condition tree instead.
+	const { plain, searches } = splitSearches(o.filters);
+	const filters = parseFilters(plain);
 	const anyOf = parseAnyOf(o.anyOf, filters.length);
 	// Counted against the same limit, so nesting is not a way around it.
 	const count = {
 		leaves:
 			filters.length + (anyOf ?? []).reduce((n, g) => n + g.length, 0),
 	};
-	const where =
+	const given =
 		o.where === undefined || o.where === null
 			? null
 			: parseNode(o.where, "where", 1, count);
+	const searched = searches.map((search, i) =>
+		parseNode(search, `search ${i}`, 1, count),
+	);
+	const parts = [...(given ? [given] : []), ...searched];
+	const where: FilterNode | null =
+		parts.length === 0
+			? null
+			: parts.length === 1
+				? parts[0]
+				: { all: parts };
 	if (count.leaves > maxFilters) {
 		throw new QuerySpecError(`at most ${maxFilters} filters are allowed`);
 	}
